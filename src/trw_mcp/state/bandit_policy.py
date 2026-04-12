@@ -9,9 +9,13 @@ Local-first behavior per Vision Principle 6: no backend connection needed.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 import structlog
 
@@ -86,6 +90,192 @@ def resolve_client_class(client_profile: str) -> str:
     Returns "full_mode" or "light_mode". Unknown profiles default to "full_mode".
     """
     return _CLIENT_CLASS_MAP.get(client_profile, "full_mode")
+
+
+# ---------------------------------------------------------------------------
+# Bandit state envelope load/save (C-5 Model Generation Preparedness)
+# ---------------------------------------------------------------------------
+
+
+def _compute_heuristic_reward(learning: dict[str, object]) -> float:
+    """Compute a heuristic reward from a learning's evidence quality (P0 fix).
+
+    Prefers the ``impact`` field (0.0-1.0) so higher-impact learnings
+    converge faster.  Falls back to ``score`` / ``utility_score``, then
+    neutral 0.5 so Thompson sampling still learns without impact data.
+
+    Using a deterministic heuristic tied to evidence quality gives the
+    bandit a better signal than a constant 0.7 reward -- better learnings
+    will therefore converge to higher selection probability over time.
+    """
+    for key in ("impact", "score", "utility_score"):
+        raw = learning.get(key)
+        if raw is not None:
+            try:
+                r = float(str(raw))
+                return max(0.0, min(1.0, r))
+            except (ValueError, TypeError):
+                pass
+    return 0.5  # Neutral fallback when no evidence quality signal available
+
+
+def load_bandit_state(
+    trw_dir: Path,
+    client_profile: str = "full_mode",
+    model_family: str = "",
+) -> BanditSelector:
+    """Load bandit state from the C-5 spec-compliant envelope.
+
+    Handles three cases automatically:
+    1. Missing file → returns fresh BanditSelector with Beta(2,1) priors.
+    2. Legacy raw state (``arms`` at top level, no ``bandit_state`` key) →
+       migrates in-memory to the envelope format.
+    3. New ``model_family`` that doesn't match the stored key → quarantines
+       existing posteriors under ``quarantined[old_model_family]`` and
+       returns a fresh BanditSelector for the new model family (C-5).
+
+    Args:
+        trw_dir: Path to the ``.trw`` directory.
+        client_profile: Current client class (e.g. ``"full_mode"``).
+        model_family: Current model family string (e.g. ``"claude-sonnet-4"``).
+            Empty string disables quarantine check.
+
+    Returns:
+        A BanditSelector with restored arm posteriors, or a fresh one.
+    """
+    bandit_state_path = trw_dir / "meta" / "bandit_state.json"
+    if not bandit_state_path.exists():
+        return BanditSelector()
+
+    try:
+        raw_text = bandit_state_path.read_text(encoding="utf-8")
+        data: object = json.loads(raw_text)
+        if not isinstance(data, dict):
+            _logger.warning("bandit_state_bad_format", path=str(bandit_state_path))
+            return BanditSelector()
+
+        # Migration: legacy raw state has ``arms`` at top level without envelope
+        if "arms" in data and "bandit_state" not in data:
+            _logger.info(
+                "bandit_state_migrate_legacy",
+                arm_count=len(data.get("arms", {})),  # type: ignore[union-attr]
+            )
+            data = {
+                "client_profile": client_profile,
+                "model_family": model_family,
+                "bandit_state": dict(data),  # type: ignore[arg-type]
+                "quarantined": {},
+            }
+
+        # C-5: Quarantine on model_family mismatch
+        stored_model_family: str = str(data.get("model_family", ""))
+        if (
+            model_family
+            and stored_model_family
+            and model_family != stored_model_family
+        ):
+            old_bandit_raw = data.get("bandit_state", {})
+            _logger.info(
+                "bandit_model_family_quarantine",
+                old_model_family=stored_model_family,
+                new_model_family=model_family,
+                quarantined_arm_count=len(
+                    old_bandit_raw.get("arms", {})  # type: ignore[union-attr]
+                    if isinstance(old_bandit_raw, dict) else {}
+                ),
+            )
+            # Return fresh selector; save_bandit_state will persist quarantine
+            return BanditSelector()
+
+        bandit_raw = data.get("bandit_state", {})
+        if isinstance(bandit_raw, dict) and bandit_raw:
+            return BanditSelector.from_json(json.dumps(bandit_raw))
+        return BanditSelector()
+
+    except Exception:  # justified: fail-open, corrupt state → fresh start
+        _logger.warning("bandit_state_load_failed", exc_info=True)
+        return BanditSelector()
+
+
+def save_bandit_state(
+    trw_dir: Path,
+    bandit: BanditSelector,
+    client_profile: str = "full_mode",
+    model_family: str = "",
+) -> None:
+    """Persist bandit state with C-5 spec-compliant envelope using atomic write.
+
+    Envelope format::
+
+        {
+          "client_profile": "full_mode",
+          "model_family": "claude-sonnet-4",
+          "bandit_state": { ...raw BanditSelector JSON... },
+          "quarantined": { "old-model-family": { ...old state... } }
+        }
+
+    Uses the temp-file + ``os.rename`` pattern for atomic writes.
+
+    When the stored ``model_family`` differs from the current one, the old
+    ``bandit_state`` is automatically moved to ``quarantined`` so no arm
+    data is lost (C-5 requirement).
+
+    Args:
+        trw_dir: Path to the ``.trw`` directory.
+        bandit: BanditSelector whose state to persist.
+        client_profile: Current client class tag.
+        model_family: Current model family tag.
+    """
+    bandit_state_path = trw_dir / "meta" / "bandit_state.json"
+    tmp_path = bandit_state_path.with_suffix(f".tmp.{os.getpid()}")
+
+    # Preserve existing quarantined data; handle model_family migration on save
+    existing_quarantined: dict[str, object] = {}
+    if bandit_state_path.exists():
+        try:
+            existing_data: object = json.loads(
+                bandit_state_path.read_text(encoding="utf-8")
+            )
+            if isinstance(existing_data, dict):
+                raw_q = existing_data.get("quarantined", {})
+                if isinstance(raw_q, dict):
+                    existing_quarantined = raw_q
+
+                # C-5: If saving under a new model_family, quarantine old state
+                stored_mf = str(existing_data.get("model_family", ""))
+                if model_family and stored_mf and model_family != stored_mf:
+                    old_bandit_raw = existing_data.get("bandit_state", {})
+                    if old_bandit_raw and isinstance(old_bandit_raw, dict):
+                        existing_quarantined = dict(existing_quarantined)
+                        existing_quarantined[stored_mf] = old_bandit_raw
+                        _logger.debug(
+                            "bandit_state_quarantine_on_save",
+                            old_model_family=stored_mf,
+                            new_model_family=model_family,
+                        )
+        except Exception:  # justified: fail-open on read
+            pass
+
+    bandit_raw: object = json.loads(bandit.to_json())
+    envelope: dict[str, object] = {
+        "client_profile": client_profile,
+        "model_family": model_family,
+        "bandit_state": bandit_raw,
+        "quarantined": existing_quarantined,
+    }
+
+    try:
+        bandit_state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(
+            json.dumps(envelope, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.rename(tmp_path, bandit_state_path)
+    except Exception:  # justified: persist failure must not block nudge
+        _logger.debug("bandit_state_save_failed", exc_info=True)
+        with contextlib.suppress(Exception):
+            tmp_path.unlink()
+
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +448,7 @@ def select_nudge_learning_bandit(
     phase: str,
     previous_phase: str,
     phase_transition_withhold_rate: float = 0.10,
+    decisions_out: list[BanditDecision] | None = None,
 ) -> tuple[list[dict[str, object]], bool]:
     """Select learning(s) for nudge display using bandit-based selection (FR04/FR06).
 
@@ -269,6 +460,10 @@ def select_nudge_learning_bandit(
         previous_phase: Previous ceremony phase (empty string if first).
         phase_transition_withhold_rate: Fraction of non-critical learnings to
             withhold at phase boundaries (FR06 configurable, default 0.10).
+        decisions_out: Optional list to receive each ``BanditDecision`` made
+            during selection. Callers can inspect ``decisions_out[0]`` for
+            ``selection_probability``, ``runner_up_id``, and ``exploration``
+            metadata to include in propensity logs.
 
     Returns:
         Tuple of (selected_learnings, is_transition).
@@ -310,6 +505,10 @@ def select_nudge_learning_bandit(
             decision: BanditDecision = bandit.select(eligible_ids)
         except ValueError:
             break
+
+        # Capture decision metadata for caller logging (propensity logs)
+        if decisions_out is not None:
+            decisions_out.append(decision)
 
         # Check withholding for selected candidate
         candidate = candidate_map.get(decision.selected_id)

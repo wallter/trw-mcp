@@ -386,8 +386,83 @@ __all__ = [
     "_PendingUpdate",
     "_batch_sync_to_sqlite",
     "_default_lookup_entry",
+    "_find_session_start_ts",
     "_load_entries_from_dir",
     "_read_recall_tracking_jsonl",
     "_sync_to_sqlite",
     "_write_pending_entries",
 ]
+
+
+def _find_session_start_ts(trw_dir: Path) -> "datetime | None":
+    """Find the timestamp of the most recent session-start event.
+
+    Scans all events.jsonl files under runs_root/**/ for the most recent
+    ``run_init`` or ``session_start`` event. Uses glob to handle all
+    directory layouts (PROPER, FLAT, OLD_NESTED).
+
+    PRD-FIX-061-FR05: Reimplemented without state.persistence import.
+    PRD-FIX-070-FR01: glob-based discovery replaces iter_run_dirs.
+
+    Restored during PRD-CORE-105 remediation wave: this function was lost
+    in the 7002b33c merge but is still imported by _correlation.py.
+
+    Args:
+        trw_dir: Path to .trw directory.
+
+    Returns:
+        Timestamp of the most recent session-start event, or None.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from trw_mcp.scoring._utils import TRWConfig, get_config
+
+    project_root = trw_dir.parent
+    cfg: TRWConfig = get_config()
+    runs_root = project_root / cfg.runs_root
+
+    if not runs_root.exists():
+        return None
+
+    events_files: list[tuple[float, Path]] = []
+    for events_path in runs_root.glob("**/meta/events.jsonl"):
+        try:
+            mtime = events_path.stat().st_mtime
+            events_files.append((mtime, events_path))
+        except OSError:
+            continue
+
+    events_files.sort(reverse=True)
+
+    for _mtime, events_path in events_files[:5]:
+        records: list[dict[str, object]] = []
+        try:
+            with events_path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                        if isinstance(record, dict):
+                            records.append(record)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+
+        for record in reversed(records):
+            if str(record.get("event", "")) in ("run_init", "session_start"):
+                ts_str = str(record.get("ts", ""))
+                if ts_str:
+                    try:
+                        dt = datetime.fromisoformat(ts_str)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        return dt
+                    except ValueError:
+                        continue
+
+    logger.debug("session_scope_fallback_to_window")
+    return None
