@@ -315,6 +315,113 @@ class TestSelectNudgeLearningBandit:
         assert is_transition is False
         assert [learning["id"] for learning in selected] == ["L-1"]
 
+    def test_phase_transition_withheld_learning_is_retired_for_rest_of_burst(self) -> None:
+        """FR06: a phase-transition withheld learning must not resurface later in the burst."""
+        from trw_memory.bandit import BanditDecision, BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+
+        class StubContextualSelector:
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+
+            def select_decision(self, eligible_ids, context_vector=None):
+                self.calls.append(list(eligible_ids))
+                if len(self.calls) == 1:
+                    return BanditDecision(
+                        selected_id="L-0",
+                        selection_probability=0.9,
+                        runner_up_id="L-1",
+                        runner_up_probability=0.6,
+                        exploration=True,
+                    )
+                return BanditDecision(
+                    selected_id=eligible_ids[0],
+                    selection_probability=0.8,
+                    runner_up_id=eligible_ids[1] if len(eligible_ids) > 1 else None,
+                    runner_up_probability=0.2 if len(eligible_ids) > 1 else None,
+                    exploration=False,
+                )
+
+        class StubPolicy(WithholdingPolicy):
+            def should_withhold(self, learning, page_hinkley_fired=False):
+                return False
+
+        bandit = BanditSelector(cold_start_min=0)
+        policy = StubPolicy(client_class="full_mode")
+        selector = StubContextualSelector()
+        candidates = self._make_candidates(3)
+
+        with (
+            patch("trw_mcp.state.bandit_policy.random.randint", return_value=2),
+            patch("trw_mcp.state.bandit_policy.random.random", side_effect=[0.0, 1.0]),
+        ):
+            selected, is_transition = select_nudge_learning_bandit(
+                candidates,
+                bandit,
+                policy,
+                phase="validate",
+                previous_phase="implement",
+                phase_transition_withhold_rate=0.5,
+                contextual_selector=selector,
+                context_vector=[1.0, 0.0],
+            )
+
+        assert is_transition is True
+        assert [learning["id"] for learning in selected] == ["L-1", "L-2"]
+        assert selector.calls == [["L-0", "L-1", "L-2"], ["L-2"]]
+
+    def test_policy_withheld_learning_is_retired_for_rest_of_burst(self) -> None:
+        """Withholding-policy substitutions must also retire the withheld learning for the burst."""
+        from trw_memory.bandit import BanditDecision, BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+
+        class StubContextualSelector:
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+
+            def select_decision(self, eligible_ids, context_vector=None):
+                self.calls.append(list(eligible_ids))
+                if len(self.calls) == 1:
+                    return BanditDecision(
+                        selected_id="L-0",
+                        selection_probability=0.9,
+                        runner_up_id="L-1",
+                        runner_up_probability=0.6,
+                        exploration=True,
+                    )
+                return BanditDecision(
+                    selected_id=eligible_ids[0],
+                    selection_probability=0.8,
+                    runner_up_id=eligible_ids[1] if len(eligible_ids) > 1 else None,
+                    runner_up_probability=0.2 if len(eligible_ids) > 1 else None,
+                    exploration=False,
+                )
+
+        class StubPolicy(WithholdingPolicy):
+            def should_withhold(self, learning, page_hinkley_fired=False):
+                return str(learning.get("id", "")) == "L-0"
+
+        bandit = BanditSelector(cold_start_min=0)
+        policy = StubPolicy(client_class="full_mode")
+        selector = StubContextualSelector()
+        candidates = self._make_candidates(3)
+
+        with patch("trw_mcp.state.bandit_policy.random.randint", return_value=2):
+            selected, is_transition = select_nudge_learning_bandit(
+                candidates,
+                bandit,
+                policy,
+                phase="validate",
+                previous_phase="implement",
+                phase_transition_withhold_rate=0.0,
+                contextual_selector=selector,
+                context_vector=[1.0, 0.0],
+            )
+
+        assert is_transition is True
+        assert [learning["id"] for learning in selected] == ["L-1", "L-2"]
+        assert selector.calls == [["L-0", "L-1", "L-2"], ["L-2"]]
+
 
 # ---------------------------------------------------------------------------
 # render_nudge_content — FR04
@@ -630,6 +737,37 @@ class TestAppendCeremonyStatusNudgeContent:
             # Should not raise, ceremony_status still set
             assert "ceremony_status" in result
             assert result["status"] == "ok"
+
+    def test_legacy_learning_missing_bandit_fields_uses_deterministic_fallback(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Legacy learnings bypass bandit selection and use deterministic summary fallback."""
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True)
+        (trw_dir / "meta").mkdir(parents=True)
+
+        legacy_learning = {
+            "id": "L-legacy",
+            "summary": "Always checkpoint before risky refactors",
+            "impact": 0.9,
+        }
+
+        with (
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[legacy_learning],
+            ),
+            patch(
+                "trw_mcp.state.bandit_policy.select_nudge_learning_bandit",
+                side_effect=AssertionError("bandit selection should be skipped"),
+            ),
+        ):
+            from trw_mcp.tools._ceremony_status import append_ceremony_status
+
+            result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+        assert result["nudge_content"] == "Always checkpoint before risky refactors"
 
 
 # ---------------------------------------------------------------------------

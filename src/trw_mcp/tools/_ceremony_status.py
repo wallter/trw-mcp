@@ -209,6 +209,41 @@ def _contextualize_candidates(
     return [candidate_map[arm_id] for arm_id in ranked_ids if arm_id in candidate_map]
 
 
+def _is_bandit_compatible_learning(learning: dict[str, object]) -> bool:
+    """Return True when a learning has the PRD-CORE-104 fields bandit mode needs."""
+    nudge_line = learning.get("nudge_line")
+    protection_tier = learning.get("protection_tier")
+    return (
+        isinstance(nudge_line, str)
+        and bool(nudge_line.strip())
+        and isinstance(protection_tier, str)
+        and bool(protection_tier.strip())
+    )
+
+
+def _deterministic_fallback_text(learning: dict[str, object]) -> str:
+    """Render the legacy deterministic learning text for backward compatibility."""
+    nudge_line = learning.get("nudge_line")
+    if isinstance(nudge_line, str) and nudge_line.strip():
+        return nudge_line.strip()
+
+    summary = learning.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()[:80]
+
+    return ""
+
+
+def _select_deterministic_fallback_learning(
+    candidates: list[dict[str, object]],
+) -> dict[str, object] | None:
+    """Pick the first contentful learning from the deterministic ranking."""
+    for candidate in candidates:
+        if _deterministic_fallback_text(candidate):
+            return candidate
+    return None
+
+
 def build_ceremony_status_line(state: CeremonyState) -> str:
     """Render a compact, deterministic summary of current ceremony progress."""
     parts = [
@@ -306,9 +341,46 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             # Fall back to full pool if all candidates are already deduplicated
             eligible_candidates = candidates
 
+        recall_context = build_recall_context(trw_dir, "*")
+        is_transition = bool(state.previous_phase and state.previous_phase != state.phase)
+        deterministic_candidates = _contextualize_candidates(
+            eligible_candidates,
+            recall_context=recall_context,
+            is_transition=is_transition,
+        )
+        if not deterministic_candidates:
+            deterministic_candidates = eligible_candidates
+
+        legacy_candidates = [
+            candidate
+            for candidate in deterministic_candidates
+            if not _is_bandit_compatible_learning(candidate)
+        ]
+        compatible_candidates = [
+            candidate
+            for candidate in deterministic_candidates
+            if _is_bandit_compatible_learning(candidate)
+        ]
+
+        def _render_deterministic_fallback(
+            fallback_candidates: list[dict[str, object]],
+        ) -> str | None:
+            fallback_learning = _select_deterministic_fallback_learning(fallback_candidates)
+            if fallback_learning is None:
+                return None
+            fallback_id = str(fallback_learning.get("id", ""))
+            if fallback_id:
+                try:
+                    record_nudge_shown(trw_dir, fallback_id, state.phase)
+                except Exception:  # justified: fail-open
+                    logger.debug("record_nudge_shown_failed", exc_info=True)
+            return _deterministic_fallback_text(fallback_learning) or None
+
+        if not compatible_candidates:
+            return _render_deterministic_fallback(legacy_candidates or deterministic_candidates)
+
         # ── Load bandit state and pre-populated policy with restored detectors ─
         bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
-        recall_context = build_recall_context(trw_dir, "*")
         contextual_selector = load_contextual_bandit_state(
             trw_dir,
             model_family=model_family,
@@ -317,14 +389,14 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
             contextual_selector.seed_thompson_fallback(bandit)
         context_vector = _build_live_context_vector(recall_context, state.phase)
         selection_candidates = _contextualize_candidates(
-            eligible_candidates,
+            compatible_candidates,
             recall_context=recall_context,
-            is_transition=bool(state.previous_phase and state.previous_phase != state.phase),
+            is_transition=is_transition,
             contextual_selector=contextual_selector,
             context_vector=context_vector,
         )
         if not selection_candidates:
-            selection_candidates = eligible_candidates
+            selection_candidates = compatible_candidates
 
         def _persist_bandit_state() -> None:
             try:
@@ -398,12 +470,12 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
 
         if not selected_learnings:
             _persist_bandit_state()
-            return None
+            return _render_deterministic_fallback(legacy_candidates)
 
         content = render_nudge_content(selected_learnings, is_transition)
         if not content:
             _persist_bandit_state()
-            return None
+            return _render_deterministic_fallback(legacy_candidates)
 
         # ── P0 + FR05: Update bandit posteriors and Page-Hinkley detectors ──
         for learning in selected_learnings:
