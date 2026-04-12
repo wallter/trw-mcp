@@ -797,6 +797,44 @@ def score_implementation_readiness(
     frontmatter: dict[str, object],
     content: str,
     config: object = None,
-) -> float:
-    """Stub for implementation readiness scoring — restored after merge conflict."""
-    return 0.0
+) -> DimensionScore:
+    """Score implementation readiness based on traceability file paths and test references.
+
+    Checks for concrete file paths in the traceability matrix, test file references,
+    and acceptance criteria specificity as signals of implementation readiness.
+    """
+    _config: TRWConfig = config if config is not None else get_config()  # type: ignore[assignment]
+    max_score = _config.validation_implementation_readiness_weight
+
+    signals: dict[str, float] = {}
+
+    # Check for concrete file paths (backtick-wrapped repo-relative paths)
+    file_path_pattern = re.compile(r"`[a-zA-Z_][a-zA-Z0-9_/\-]*\.[a-z]{1,4}(?::\d+)?`")
+    file_refs = file_path_pattern.findall(content)
+    signals["file_path_refs"] = min(len(file_refs) / 6.0, 1.0)
+
+    # Check for test file references
+    test_refs = [r for r in file_refs if "test" in r.lower()]
+    signals["test_file_refs"] = min(len(test_refs) / 3.0, 1.0)
+
+    # Check for acceptance criteria with Given/When/Then or concrete assertions
+    ac_pattern = re.compile(r"(?:Given|When|Then|GIVEN|WHEN|THEN)\b", re.IGNORECASE)
+    ac_matches = ac_pattern.findall(content)
+    signals["acceptance_criteria"] = min(len(ac_matches) / 6.0, 1.0)
+
+    # Check for FR/NFR IDs present (indicates structured requirements)
+    fr_pattern = re.compile(r"PRD-[A-Z]+-\d+-(?:FR|NFR)\d+")
+    fr_matches = fr_pattern.findall(content)
+    signals["requirement_ids"] = min(len(fr_matches) / 4.0, 1.0)
+
+    # Composite score
+    weights = {"file_path_refs": 0.35, "test_file_refs": 0.25, "acceptance_criteria": 0.20, "requirement_ids": 0.20}
+    composite = sum(signals[k] * weights[k] for k in weights)
+    score = composite * max_score
+
+    return DimensionScore(
+        name="implementation_readiness",
+        score=round(min(score, max_score), 2),
+        max_score=max_score,
+        details={"signals": signals, "file_refs_found": len(file_refs), "test_refs_found": len(test_refs)},
+    )
