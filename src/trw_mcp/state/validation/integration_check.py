@@ -70,7 +70,7 @@ def check_integration(source_dir: Path) -> dict[str, object]:
         except OSError:
             server_content = ""
 
-        # Find all import statements: from trw_mcp.tools.X import register_X_tools
+        # Find server imports that target tool modules and register_* functions
         for match in re.finditer(
             r"from\s+trw_mcp\.tools\.(\w+)\s+import\s+(register_\w+_tools)",
             server_content,
