@@ -310,6 +310,47 @@ def _update_copilot_artifacts(
         result.setdefault("warnings", []).append(f"copilot skills update skipped: {exc}")
 
 
+# ---------------------------------------------------------------------------
+# Gemini CLI update helper
+# ---------------------------------------------------------------------------
+
+
+def _update_gemini_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
+) -> None:
+    """Update Gemini CLI artifacts when Gemini is detected.
+
+    Generates ``GEMINI.md``, ``.gemini/settings.json`` MCP config,
+    and ``.gemini/agents/trw-*.md`` subagent definitions.
+
+    Fail-open: errors are captured in ``result["warnings"]`` so they never
+    break the overall update flow.
+    """
+    from ._gemini import (
+        generate_gemini_agents,
+        generate_gemini_instructions,
+        generate_gemini_mcp_config,
+    )
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "gemini" not in ide_targets:
+        return
+
+    for name, fn in [
+        ("GEMINI.md", generate_gemini_instructions),
+        ("MCP config", generate_gemini_mcp_config),
+        ("agents", generate_gemini_agents),
+    ]:
+        try:
+            sub_result = fn(target_dir)
+            _absorb_sub_result(result, sub_result)
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f"gemini {name} update skipped: {exc}")
+
+
 def _extract_trw_section_content() -> str:
     """Extract the content between trw:start and trw:end from _minimal_claude_md."""
     full = _minimal_claude_md()
