@@ -5,9 +5,11 @@ from __future__ import annotations
 import importlib.util
 import sys
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -259,6 +261,40 @@ def test_wheel_runtime_dependencies_satisfied_returns_false_when_a_dependency_is
     monkeypatch.setattr(module.importlib_metadata, "version", fake_version)
 
     assert module._wheel_runtime_dependencies_satisfied(wheel_path) is False
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_wheel_runtime_dependencies_satisfied_returns_false_when_packaging_is_unavailable(
+    installer_path: Path, tmp_path: Path
+) -> None:
+    module = _load_installer_module(installer_path)
+    wheel_path = tmp_path / "demo-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel_path, "w") as wheel:
+        wheel.writestr(
+            "demo-0.1.0.dist-info/METADATA",
+            (
+                "Metadata-Version: 2.1\n"
+                "Name: demo\n"
+                "Version: 0.1.0\n"
+                "Requires-Dist: fastmcp>=3.0.0\n"
+            ),
+        )
+
+    real_import = __import__
+
+    def fake_import(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "packaging.requirements":
+            raise ModuleNotFoundError("No module named 'packaging'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    with patch("builtins.__import__", side_effect=fake_import):
+        assert module._wheel_runtime_dependencies_satisfied(wheel_path) is False
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

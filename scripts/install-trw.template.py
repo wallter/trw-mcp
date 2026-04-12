@@ -32,8 +32,6 @@ import zipfile
 from email.parser import BytesParser
 from pathlib import Path
 
-from packaging.requirements import Requirement
-
 # ── Configuration (substituted by build_installer.py) ────────────────
 TRW_VERSION = "{{VERSION}}"
 WHEEL_FILENAME = "{{WHEEL_FILENAME}}"
@@ -535,10 +533,12 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
 def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
     """Return True when installed packages already satisfy wheel dependencies."""
     try:
+        from packaging.requirements import Requirement
+
         with zipfile.ZipFile(wheel_path) as wheel:
             metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
             metadata = BytesParser().parsebytes(wheel.read(metadata_name))
-    except (OSError, StopIteration, zipfile.BadZipFile, KeyError):
+    except (ModuleNotFoundError, OSError, StopIteration, zipfile.BadZipFile, KeyError):
         return False
 
     for requirement_text in metadata.get_all("Requires-Dist", []):
