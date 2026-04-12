@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from unittest.mock import patch
 
 import trw_mcp.state.ceremony_progress as ceremony_progress
 from trw_mcp.tools import (
@@ -61,3 +62,36 @@ def test_append_ceremony_status_adds_summary_when_state_exists(tmp_path: Path) -
     assert isinstance(result["ceremony_status"], str)
     assert "checkpoints=0" in result["ceremony_status"]
     assert "learnings=0" in result["ceremony_status"]
+
+
+def test_append_ceremony_status_prefers_cached_learning_nudge(tmp_path: Path) -> None:
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9}})
+
+    learnings = [
+        {"id": "L-1", "summary": "Document the health check", "impact": 0.9},
+        {
+            "id": "L-2",
+            "summary": "Retry failed queue workers",
+            "nudge_line": "Retry the failed queue workers before closing the run.",
+            "impact": 0.7,
+            "domain": ["backend"],
+            "phase_affinity": ["implement"],
+        },
+    ]
+    recall_context = type(
+        "RecallContext",
+        (),
+        {"inferred_domains": {"backend"}, "current_phase": "implement", "modified_files": []},
+    )()
+
+    with (
+        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
+        patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert result["nudge_content"] == "Retry the failed queue workers before closing the run."

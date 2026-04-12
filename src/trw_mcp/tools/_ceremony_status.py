@@ -84,35 +84,6 @@ def _domain_match_score(
     return len(overlap) / len(union)
 
 
-def _posterior_mean(bandit: object, arm_id: str) -> float:
-    """Best-effort estimate of the Thompson posterior mean for an arm."""
-    arms = getattr(bandit, "_arms", {})
-    if not isinstance(arms, dict):
-        return 0.5
-    arm = arms.get(arm_id)
-    if arm is None:
-        return 0.5
-
-    alpha = getattr(arm, "alpha", None)
-    beta = getattr(arm, "beta", None)
-    if alpha is None or beta is None:
-        return 0.5
-
-    total = float(alpha) + float(beta)
-    if total <= 0:
-        return 0.5
-    return max(0.0, min(1.0, float(alpha) / total))
-
-
-def _phase_progress(phase: str) -> float:
-    """Map ceremony phase to a normalized session-progress scalar."""
-    ordered_phases = ("research", "plan", "implement", "validate", "review", "deliver")
-    try:
-        return ordered_phases.index(phase.strip().lower()) / (len(ordered_phases) - 1)
-    except ValueError:
-        return 0.0
-
-
 def _normalized_modified_files(recall_context: object | None) -> list[str]:
     """Return best-effort normalized modified file paths from recall context."""
     modified_files = getattr(recall_context, "modified_files", [])
@@ -123,109 +94,6 @@ def _normalized_modified_files(recall_context: object | None) -> list[str]:
         for path in modified_files
         if str(path).strip()
     ]
-
-
-def _infer_live_agent_type(recall_context: object | None, current_phase: str) -> str:
-    """Infer a reasonable live agent type from phase and client profile."""
-    normalized_phase = current_phase.strip().lower()
-    if normalized_phase in {"research", "plan"}:
-        return "orchestrator"
-    if normalized_phase == "implement":
-        return "implementer"
-    if normalized_phase == "validate":
-        return "tester"
-    if normalized_phase in {"review", "deliver"}:
-        return "reviewer"
-
-    client_profile = str(getattr(recall_context, "client_profile", "")).strip().lower()
-    if client_profile in {"claude-code", "cursor"}:
-        return "orchestrator"
-    if client_profile in {"opencode", "codex", "aider"}:
-        return "implementer"
-    if _normalized_modified_files(recall_context):
-        return "implementer"
-    return "orchestrator"
-
-
-def _infer_live_task_type(recall_context: object | None, current_phase: str) -> str:
-    """Infer a lightweight task-type hint for the live contextual bandit path."""
-    normalized_phase = current_phase.strip().lower()
-    modified_files = _normalized_modified_files(recall_context)
-    inferred_domains = getattr(recall_context, "inferred_domains", set())
-    if not isinstance(inferred_domains, set):
-        inferred_domains = set()
-    normalized_domains = {
-        str(domain).strip().lower()
-        for domain in inferred_domains
-        if str(domain).strip()
-    }
-
-    if any(
-        path.endswith((".md", ".rst", ".txt")) or "/docs/" in path or path.startswith("docs/")
-        for path in modified_files
-    ) or normalized_domains & {"docs", "documentation"}:
-        return "docs"
-
-    if any(
-        token in path
-        for path in modified_files
-        for token in (
-            "/docker",
-            "docker-compose",
-            "/grafana/",
-            "/aws/",
-            "/scripts/",
-            ".github/workflows",
-            "/infra/",
-            "/infrastructure/",
-        )
-    ) or normalized_domains & {"infra", "infrastructure", "platform", "devops", "deployment"}:
-        return "infrastructure"
-
-    if normalized_phase in {"research", "plan"} and not modified_files:
-        return "investigation"
-    if normalized_phase == "validate":
-        return "bugfix"
-    if len(modified_files) >= 20:
-        return "refactor"
-    if normalized_phase == "review" and modified_files:
-        return "refactor"
-    if modified_files:
-        return "feature"
-    return "investigation"
-
-
-def _build_live_context_vector(recall_context: object | None, phase: str) -> list[float] | None:
-    """Build the real engineering context vector for live bandit selection."""
-    try:
-        from trw_mcp.state.bandit_policy import build_context_vector
-    except Exception:  # justified: fail-open
-        return None
-
-    current_phase = str(getattr(recall_context, "current_phase", "") or phase).strip().lower()
-    inferred_domains = getattr(recall_context, "inferred_domains", set())
-    if not isinstance(inferred_domains, set):
-        inferred_domains = set()
-    modified_files = _normalized_modified_files(recall_context)
-
-    return build_context_vector(
-        phase=current_phase,
-        agent_type=_infer_live_agent_type(recall_context, current_phase),
-        task_type=_infer_live_task_type(recall_context, current_phase),
-        session_progress=_phase_progress(current_phase),
-        domain_similarity=1.0 if inferred_domains else 0.0,
-        files_count=len(modified_files),
-    )
-
-
-def _session_progress_label(phase: str) -> str:
-    """Map ceremony phase to the propensity-log progress bucket."""
-    normalized_phase = phase.strip().lower()
-    if normalized_phase in {"research", "plan"}:
-        return "early"
-    if normalized_phase in {"review", "deliver"}:
-        return "late"
-    return "mid"
 
 
 def _contextualize_candidates(
@@ -291,18 +159,6 @@ def _contextualize_candidates(
     return [candidate_map[arm_id] for arm_id in ranked_ids if arm_id in candidate_map]
 
 
-def _is_bandit_compatible_learning(learning: dict[str, object]) -> bool:
-    """Return True when a learning has the PRD-CORE-104 fields bandit mode needs."""
-    nudge_line = learning.get("nudge_line")
-    protection_tier = learning.get("protection_tier")
-    return (
-        isinstance(nudge_line, str)
-        and bool(nudge_line.strip())
-        and isinstance(protection_tier, str)
-        and bool(protection_tier.strip())
-    )
-
-
 def _deterministic_fallback_text(learning: dict[str, object]) -> str:
     """Render the legacy deterministic learning text for backward compatibility."""
     nudge_line = learning.get("nudge_line")
@@ -316,6 +172,25 @@ def _deterministic_fallback_text(learning: dict[str, object]) -> str:
     return ""
 
 
+def _cached_bandit_weight(
+    learning: dict[str, object],
+    bandit_params: dict[str, float] | None,
+) -> float:
+    """Return the cached backend-provided bandit weight for one learning."""
+    if not bandit_params:
+        return 1.0
+    learning_id = str(learning.get("id", ""))
+    if not learning_id:
+        return 1.0
+    raw_score = bandit_params.get(learning_id)
+    if raw_score is None:
+        return 1.0
+    try:
+        return max(0.5, min(2.0, float(raw_score)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _select_deterministic_fallback_learning(
     candidates: list[dict[str, object]],
 ) -> dict[str, object] | None:
@@ -324,6 +199,35 @@ def _select_deterministic_fallback_learning(
         if _deterministic_fallback_text(candidate):
             return candidate
     return None
+
+
+def _select_cached_or_deterministic_learning(
+    candidates: list[dict[str, object]],
+    *,
+    phase: str,
+    inferred_domains: set[str],
+    bandit_params: dict[str, float] | None,
+) -> dict[str, object] | None:
+    """Prefer cached backend weights, else preserve deterministic recall order."""
+    contentful = [
+        candidate
+        for candidate in candidates
+        if _deterministic_fallback_text(candidate)
+    ]
+    if not contentful:
+        return None
+    if not bandit_params:
+        return contentful[0]
+
+    return max(
+        contentful,
+        key=lambda candidate: (
+            _cached_bandit_weight(candidate, bandit_params),
+            _phase_match_score(candidate, phase),
+            _domain_match_score(candidate, inferred_domains),
+            float(candidate.get("impact", 0.0) or 0.0),
+        ),
+    )
 
 
 def build_ceremony_status_line(state: CeremonyState) -> str:
@@ -346,60 +250,32 @@ def build_ceremony_status_line(state: CeremonyState) -> str:
     return "; ".join(parts)
 
 
-def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None:
-    """Attempt to produce bandit-selected learning nudge content.
+def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None:
+    """Attempt to produce cache-ranked or deterministic learning nudge content.
 
-    Returns a nudge content string (may be multi-line on phase transition) or
-    None when the bandit path is unavailable or produces no output.
-
-    Addresses PRD-CORE-105 audit findings:
-    - P0: calls bandit.update() with impact-based heuristic reward after selection
-    - P0: saves state with C-5 envelope (client_profile, model_family, quarantined)
-    - P1: applies nudge dedup from ceremony state before selection
-    - P1: calls log_selection + log_surface_event with full metadata
-    - P1: calls record_nudge_shown for dedup tracking
-    - P1: wires phase_transition_withhold_rate from config
-    - P1: routes through select_nudge_learning_bandit with decisions_out for metadata
-
-    Always fail-open — never raises.
+    Uses backend-provided cache weights when available, but never runs the
+    backend-only local policy/state machine in the public client. Falls back to
+    deterministic recall order when the cache is empty or stale.
     """
     try:
         from trw_mcp.state._ceremony_progress_state import (
             is_nudge_eligible,
             record_nudge_shown,
         )
-        from trw_mcp.state.bandit_policy import (
-            WithheldEvent,
-            WithholdingPolicy,
-            _compute_heuristic_reward,
-            load_bandit_state_and_policy,
-            load_contextual_bandit_state,
-            render_nudge_content,
-            resolve_client_class,
-            save_bandit_state,
-            select_nudge_learning_bandit,
-        )
         from trw_mcp.state.memory_adapter import recall_learnings
-        from trw_mcp.state.propensity_log import log_selection
         from trw_mcp.state.surface_tracking import log_surface_event
+        from trw_mcp.sync.cache import IntelligenceCache
         from trw_mcp.tools._recall_impl import build_recall_context
 
         # ── Resolve config metadata (best-effort, fail-open) ────────────────
-        client_class = "full_mode"
         client_profile_name = ""
         model_family = "generic"
-        phase_transition_withhold_rate = 0.10
 
         try:
             from trw_mcp.models.config import TRWConfig
             cfg = TRWConfig(trw_dir=str(trw_dir))
             client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
-            client_class = resolve_client_class(client_profile_name)
-            # cfg.model_family is always non-empty via validator (P1-A fix)
             model_family = cfg.model_family or "generic"
-            phase_transition_withhold_rate = float(
-                getattr(cfg, "phase_transition_withhold_rate", 0.10)
-            )
         except Exception:  # justified: config may not be available, use defaults
             pass
 
@@ -425,250 +301,69 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
 
         recall_context = build_recall_context(trw_dir, "*")
         is_transition = bool(state.previous_phase and state.previous_phase != state.phase)
-        deterministic_candidates = _contextualize_candidates(
+        selection_candidates = _contextualize_candidates(
             eligible_candidates,
             recall_context=recall_context,
             is_transition=is_transition,
         )
-        if not deterministic_candidates:
-            deterministic_candidates = eligible_candidates
-
-        legacy_candidates = [
-            candidate
-            for candidate in deterministic_candidates
-            if not _is_bandit_compatible_learning(candidate)
-        ]
-        compatible_candidates = [
-            candidate
-            for candidate in deterministic_candidates
-            if _is_bandit_compatible_learning(candidate)
-        ]
-
-        def _render_deterministic_fallback(
-            fallback_candidates: list[dict[str, object]],
-        ) -> str | None:
-            fallback_learning = _select_deterministic_fallback_learning(fallback_candidates)
-            if fallback_learning is None:
-                return None
-            fallback_id = str(fallback_learning.get("id", ""))
-            if fallback_id:
-                try:
-                    record_nudge_shown(trw_dir, fallback_id, state.phase)
-                except Exception:  # justified: fail-open
-                    logger.debug("record_nudge_shown_failed", exc_info=True)
-            return _deterministic_fallback_text(fallback_learning) or None
-
-        if not compatible_candidates:
-            return _render_deterministic_fallback(legacy_candidates or deterministic_candidates)
-
-        # ── Load bandit state and pre-populated policy with restored detectors ─
-        bandit, policy = load_bandit_state_and_policy(trw_dir, client_class, model_family)
-        contextual_selector = load_contextual_bandit_state(
-            trw_dir,
-            client_profile=client_class,
-            model_family=model_family,
-        )
-        if contextual_selector is not None and hasattr(contextual_selector, "seed_thompson_fallback"):
-            contextual_selector.seed_thompson_fallback(bandit)
-        context_vector = _build_live_context_vector(recall_context, state.phase)
-        selection_candidates = _contextualize_candidates(
-            compatible_candidates,
-            recall_context=recall_context,
-            is_transition=is_transition,
-            contextual_selector=contextual_selector,
-            context_vector=context_vector,
-        )
         if not selection_candidates:
-            selection_candidates = compatible_candidates
+            selection_candidates = eligible_candidates
 
-        def _persist_bandit_state() -> None:
-            try:
-                save_bandit_state(
-                    trw_dir,
-                    bandit,
-                    client_class,
-                    model_family,
-                    policy=policy,
-                    contextual_bandit=contextual_selector,
-                )
-            except Exception:  # justified: state persistence must not block nudge
-                logger.debug("bandit_state_persist_failed", exc_info=True)
-
-        # ── Bandit selection with decisions captured for logging ─────────────
-        decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
-        withheld_events: list[WithheldEvent] = []
-        selected_learnings, is_transition = select_nudge_learning_bandit(
-            selection_candidates,
-            bandit,
-            policy,
-            phase=state.phase,
-            previous_phase=state.previous_phase,
-            phase_transition_withhold_rate=phase_transition_withhold_rate,
-            decisions_out=decisions,
-            withheld_events_out=withheld_events,
-            contextual_selector=contextual_selector,
-            context_vector=context_vector,
-        )
-
-        # ── P1-D: Log withheld phase-transition events to propensity.jsonl ───
-        # Must happen before the early-return so withheld events are always
-        # persisted even when no candidates were ultimately selected.
-        candidate_ids_for_log = [
-            str(c.get("id", "")) for c in selection_candidates if c.get("id")
-        ]
-        context_domains = (
-            sorted(
-                str(domain).strip()
-                for domain in getattr(recall_context, "inferred_domains", set())
+        inferred_domains = getattr(recall_context, "inferred_domains", set())
+        if isinstance(inferred_domains, (list, tuple, set, frozenset)):
+            normalized_domains = {
+                str(domain).strip().lower()
+                for domain in inferred_domains
                 if str(domain).strip()
-            )
-            if recall_context is not None else []
+            }
+        else:
+            normalized_domains = set()
+        bandit_params = IntelligenceCache(trw_dir).get_bandit_params()
+        selected_learning = _select_cached_or_deterministic_learning(
+            selection_candidates,
+            phase=state.phase,
+            inferred_domains=normalized_domains,
+            bandit_params=bandit_params,
         )
-        files_modified = (
-            len(getattr(recall_context, "modified_files", []))
-            if recall_context is not None
-            and isinstance(getattr(recall_context, "modified_files", []), list)
-            else 0
-        )
-        session_progress = _session_progress_label(state.phase)
-        for wev in withheld_events:
-            try:
-                log_selection(
-                    trw_dir,
-                    selected=wev["learning_id"],
-                    candidate_set=candidate_ids_for_log,
-                    runner_up=wev["runner_up_id"],
-                    selection_probability=wev["selection_probability"],
-                    exploration=True,
-                    withheld=True,
-                    context_phase=state.phase,
-                    context_domain=context_domains,
-                    context_files_modified=files_modified,
-                    context_session_progress=session_progress,
-                    client_profile=client_profile_name,
-                    model_family=model_family,
-                )
-            except Exception:  # justified: fail-open
-                logger.debug("propensity_withheld_log_failed", exc_info=True)
+        if selected_learning is None:
+            return None
 
-        if not selected_learnings:
-            _persist_bandit_state()
-            return _render_deterministic_fallback(legacy_candidates)
-
-        content = render_nudge_content(selected_learnings, is_transition)
+        content = _deterministic_fallback_text(selected_learning)
         if not content:
-            _persist_bandit_state()
-            return _render_deterministic_fallback(legacy_candidates)
+            return None
 
-        # ── P0 + FR05: Update bandit posteriors and Page-Hinkley detectors ──
-        for learning in selected_learnings:
-            arm_id = str(learning.get("id", ""))
-            if arm_id:
-                reward = _compute_heuristic_reward(learning)
-                bandit.update(arm_id, reward)
-                if contextual_selector is not None and context_vector:
-                    contextual_selector.update(
-                        arm_id,
-                        reward,
-                        context_vector=context_vector,
-                    )
-                # FR05: feed reward into per-arm Page-Hinkley detector so
-                # trigger #4 (distributional shift) accumulates across calls
-                alarm_fired = policy.update_reward(arm_id, reward)
-                if alarm_fired:
-                    bandit.soft_reset_arm(arm_id)
-                logger.debug(
-                    "bandit_posterior_updated",
-                    arm_id=arm_id,
-                    reward=round(reward, 4),
-                    alarm_fired=alarm_fired,
-                )
-
-        # ── P0 + FR05: Persist updated bandit + detector states (atomic) ────
-        _persist_bandit_state()
-
-        # Extract first decision for propensity metadata (P1 fix)
-        first_decision = decisions[0] if decisions else None
-
-        # ── P1: Record nudge in ceremony state for dedup ──────────────────────
-        for learning in selected_learnings:
-            arm_id = str(learning.get("id", ""))
-            if arm_id:
-                try:
-                    record_nudge_shown(trw_dir, arm_id, state.phase)
-                except Exception:  # justified: fail-open
-                    logger.debug("record_nudge_shown_failed", exc_info=True)
-
-        # ── P1: Surface event logging with metadata ───────────────────────────
-        for index, learning in enumerate(selected_learnings):
-            arm_id = str(learning.get("id", ""))
-            if arm_id:
-                decision = decisions[index] if index < len(decisions) else None
-                try:
-                    log_surface_event(
-                        trw_dir,
-                        learning_id=arm_id,
-                        surface_type="phase_transition" if is_transition else "nudge",
-                        phase=state.phase,
-                        exploration=decision.exploration if decision else False,
-                        bandit_score=(
-                            decision.selection_probability if decision else 0.0
-                        ),
-                        client_profile=client_profile_name,
-                        model_family=model_family,
-                    )
-                except Exception:  # justified: fail-open
-                    logger.debug("surface_event_log_failed", exc_info=True)
-
-        # ── P1: Propensity log with full BanditDecision metadata ──────────────
-        for index, learning in enumerate(selected_learnings):
-            learning_id = str(learning.get("id", ""))
-            if not learning_id:
-                continue
-            decision = decisions[index] if index < len(decisions) else None
+        learning_id = str(selected_learning.get("id", ""))
+        if learning_id:
             try:
-                log_selection(
+                record_nudge_shown(trw_dir, learning_id, state.phase)
+            except Exception:  # justified: fail-open
+                logger.debug("record_nudge_shown_failed", exc_info=True)
+
+            try:
+                log_surface_event(
                     trw_dir,
-                    selected=learning_id,
-                    candidate_set=candidate_ids_for_log,
-                    runner_up=decision.runner_up_id if decision and decision.runner_up_id else "",
-                    runner_up_probability=(
-                        decision.runner_up_probability
-                        if decision and decision.runner_up_probability is not None
-                        else 0.0
-                    ),
-                    selection_probability=decision.selection_probability if decision else 1.0,
-                    exploration=decision.exploration if decision else False,
-                    withheld=False,
-                    context_phase=state.phase,
-                    context_domain=context_domains,
-                    context_files_modified=files_modified,
-                    context_session_progress=session_progress,
+                    learning_id=learning_id,
+                    surface_type="phase_transition" if is_transition else "nudge",
+                    phase=state.phase,
+                    exploration=False,
+                    bandit_score=_cached_bandit_weight(selected_learning, bandit_params),
                     client_profile=client_profile_name,
                     model_family=model_family,
                 )
             except Exception:  # justified: fail-open
-                logger.debug("propensity_log_failed", exc_info=True)
-
-        primary = selected_learnings[0]
-        primary_id = str(primary.get("id", ""))
+                logger.debug("surface_event_log_failed", exc_info=True)
 
         logger.info(
-            "bandit_decision",
-            selected=primary_id,
+            "learning_nudge_selected",
+            selected=learning_id,
             phase=state.phase,
             is_transition=is_transition,
-            client_class=client_class,
-            sel_prob=round(
-                first_decision.selection_probability if first_decision else 1.0, 4
-            ),
-            exploration=first_decision.exploration if first_decision else False,
+            used_cached_bandit=bool(bandit_params),
         )
-
         return content
 
     except Exception:  # justified: nudge content must never block tool responses
-        logger.debug("bandit_nudge_content_failed", exc_info=True)
+        logger.debug("learning_nudge_content_failed", exc_info=True)
         return None
 
 
@@ -676,10 +371,10 @@ def append_ceremony_status(
     response: dict[str, object],
     trw_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Attach a live ceremony progress summary and bandit nudge content to a tool response.
+    """Attach a live ceremony progress summary and learning nudge content to a tool response.
 
-    Sets ``ceremony_status`` (always) and ``nudge_content`` (when bandit
-    selection produces learning-backed content).
+    Sets ``ceremony_status`` (always) and ``nudge_content`` (when cache-ranked
+    or deterministic learning selection produces content).
 
     Fail-open: if the state cannot be read, the original response is returned.
     """
@@ -688,8 +383,8 @@ def append_ceremony_status(
         state = read_ceremony_state(effective_dir)
         response["ceremony_status"] = build_ceremony_status_line(state)
 
-        # Attempt bandit-backed learning nudge (PRD-CORE-105 FR04)
-        nudge_content = _try_bandit_nudge_content(effective_dir, state)
+        # Attempt cache-ranked / deterministic learning nudge.
+        nudge_content = _try_learning_nudge_content(effective_dir, state)
         if nudge_content:
             response["nudge_content"] = nudge_content
 
