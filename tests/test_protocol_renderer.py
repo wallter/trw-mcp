@@ -1,12 +1,16 @@
-"""Tests for the unified ProtocolRenderer."""
+"""Tests for the unified ProtocolRenderer (PRD-CORE-131)."""
 
 from __future__ import annotations
 
 import pytest
 
 from trw_mcp.models.config._client_profile import ClientProfile
-from trw_mcp.state.claude_md._renderer import ProtocolRenderer
-from trw_mcp.state.claude_md._templates import CEREMONY_TOOLS
+from trw_mcp.state.claude_md._renderer import (
+    SESSION_BOUNDARY_TEXT,
+    CeremonyMode,
+    ProtocolRenderer,
+)
+from trw_mcp.state.claude_md._templates import CEREMONY_TOOLS, PHASE_DESCRIPTIONS
 
 
 def test_renderer_initialization() -> None:
@@ -35,13 +39,17 @@ def test_render_ceremony_table() -> None:
     assert trw_learn_tool.what in table
 
 
-def test_render_ceremony_quick_ref_has_critical_learn_note() -> None:
-    """FR02: Verify critical trw_learn note is in the quick reference table."""
+def test_render_ceremony_quick_ref_generated_from_ceremony_tools() -> None:
+    """FR02: Quick ref is generated from CEREMONY_TOOLS, not hardcoded."""
     renderer = ProtocolRenderer(
         client_profile=ClientProfile(client_id="gemini", display_name="gemini")
     )
     table = renderer.render_ceremony_quick_ref()
-    assert "**CRITICAL: Only record actual technical insights.**" in table
+    # All 4 quick-ref tools should appear (from CEREMONY_TOOLS data)
+    for tool_name in ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver"):
+        ct = next(t for t in CEREMONY_TOOLS if t.tool == tool_name)
+        assert ct.what in table, f"{tool_name} 'what' text missing from quick ref"
+        assert ct.example in table, f"{tool_name} example missing from quick ref"
 
 
 def test_model_specific_reasoning_injection_qwen() -> None:
@@ -78,14 +86,9 @@ def test_model_specific_reasoning_injection_gpt() -> None:
 
 def test_ceremony_mode_switching_full_vs_minimal() -> None:
     """FR04: Verify renderer output changes with ceremony mode."""
-    full_renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="claude-code", display_name="claude-code"),
-        ceremony_mode="FULL",
-    )
-    minimal_renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="claude-code", display_name="claude-code"),
-        ceremony_mode="MINIMAL",
-    )
+    profile = ClientProfile(client_id="claude-code", display_name="claude-code")
+    full_renderer = ProtocolRenderer(client_profile=profile, ceremony_mode="FULL")
+    minimal_renderer = ProtocolRenderer(client_profile=profile, ceremony_mode="MINIMAL")
 
     full_output = full_renderer.render_behavioral_protocol()
     minimal_output = minimal_renderer.render_minimal_protocol()
@@ -93,6 +96,32 @@ def test_ceremony_mode_switching_full_vs_minimal() -> None:
     assert "Execution Phases" in full_output
     assert "Execution Phases" not in minimal_output
     assert "Run tests after each change" in minimal_output
+
+
+def test_ceremony_mode_compact() -> None:
+    """FR04: COMPACT mode includes quick-ref table but omits phases and flows."""
+    profile = ClientProfile(client_id="claude-code", display_name="claude-code")
+    compact_renderer = ProtocolRenderer(client_profile=profile, ceremony_mode="COMPACT")
+    full_renderer = ProtocolRenderer(client_profile=profile, ceremony_mode="FULL")
+
+    compact_output = compact_renderer.render_compact_protocol()
+    full_output = full_renderer.render_behavioral_protocol()
+
+    # COMPACT includes the quick-ref table
+    assert "TRW Behavioral Protocol (Auto-Generated)" in compact_output
+    assert "trw_session_start" in compact_output
+    assert "trw_deliver" in compact_output
+
+    # COMPACT omits detailed sections that FULL includes
+    assert "Execution Phases" not in compact_output
+    assert "Tool Lifecycle" not in compact_output
+    assert "Example Flows" not in compact_output
+
+    # COMPACT includes session boundary text
+    assert "trw_session_start()" in compact_output
+
+    # COMPACT is meaningfully shorter than FULL
+    assert len(compact_output) < len(full_output) / 2
 
 
 def test_gemini_instructions_parity() -> None:
@@ -205,3 +234,123 @@ def test_render_table_gemini_platform() -> None:
     output = renderer.render_gemini_instructions()
     assert "mcp_trw_" in output
     assert "Gemini" in output
+
+
+# ---------------------------------------------------------------------------
+# FR01: All generators delegate to ProtocolRenderer
+# ---------------------------------------------------------------------------
+
+
+def test_static_sections_delegate_to_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR01: _static_sections functions delegate to ProtocolRenderer."""
+    from trw_mcp.state.claude_md import _static_sections
+
+    # Patch get_config to return a profile
+    from trw_mcp.models.config import TRWConfig
+
+    mock_config = TRWConfig()
+    monkeypatch.setattr(_static_sections, "get_config", lambda: mock_config)
+
+    # Each function should produce non-empty output from the renderer
+    assert "TRW Behavioral Protocol" in _static_sections.render_ceremony_quick_ref()
+    assert "RESEARCH" in _static_sections.render_phase_descriptions()
+    assert "Tool Lifecycle" in _static_sections.render_ceremony_table()
+    assert "Quick Task" in _static_sections.render_ceremony_flows()
+
+
+def test_opencode_sections_delegate_to_renderer() -> None:
+    """FR01: _opencode_sections.render_opencode_instructions delegates to renderer."""
+    from trw_mcp.state.claude_md._opencode_sections import render_opencode_instructions
+
+    output = render_opencode_instructions("qwen")
+    assert "/think" in output
+    assert "Qwen" in output
+
+
+# ---------------------------------------------------------------------------
+# FR02: Ceremony table contains ALL CEREMONY_TOOLS entries
+# ---------------------------------------------------------------------------
+
+
+def test_ceremony_table_has_all_tools() -> None:
+    """FR02: Every tool in CEREMONY_TOOLS appears in the rendered table."""
+    renderer = ProtocolRenderer(
+        client_profile=ClientProfile(client_id="test", display_name="test")
+    )
+    table = renderer.render_ceremony_table()
+    for ct in CEREMONY_TOOLS:
+        assert ct.tool in table, f"Tool '{ct.tool}' missing from ceremony table"
+
+
+def test_phase_descriptions_has_all_phases() -> None:
+    """FR02: All 6 phases appear in the phase descriptions output."""
+    renderer = ProtocolRenderer(
+        client_profile=ClientProfile(client_id="test", display_name="test")
+    )
+    output = renderer.render_phase_descriptions()
+    for name, purpose in PHASE_DESCRIPTIONS:
+        assert name in output, f"Phase '{name}' missing"
+        assert purpose in output, f"Purpose for '{name}' missing"
+
+
+# ---------------------------------------------------------------------------
+# FR03: Model-specific reasoning — parametrized
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "family,expected_text",
+    [
+        ("qwen", "/think"),
+        ("gpt", "chain-of-thought"),
+        ("claude", "extended thinking"),
+        ("generic", "32K context window"),
+        ("unknown-llm", "32K context window"),  # Falls back to generic
+    ],
+)
+def test_opencode_model_specific_content(family: str, expected_text: str) -> None:
+    """FR03: Each model family produces materially different instructions."""
+    renderer = ProtocolRenderer(
+        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
+        model_family=family,
+    )
+    output = renderer.render_opencode_instructions()
+    assert expected_text in output
+
+
+def test_opencode_families_differ() -> None:
+    """FR03: Different families produce different output (not just a rename)."""
+    profile = ClientProfile(client_id="opencode", display_name="opencode")
+    outputs = {
+        family: ProtocolRenderer(client_profile=profile, model_family=family).render_opencode_instructions()
+        for family in ("qwen", "gpt", "claude", "generic")
+    }
+    # Each pair should be different
+    families = list(outputs.keys())
+    for i, a in enumerate(families):
+        for b in families[i + 1 :]:
+            assert outputs[a] != outputs[b], f"{a} and {b} produced identical output"
+
+
+# ---------------------------------------------------------------------------
+# DRY: SESSION_BOUNDARY_TEXT is canonical
+# ---------------------------------------------------------------------------
+
+
+def test_session_boundary_text_is_canonical() -> None:
+    """SESSION_BOUNDARY_TEXT in _renderer.py is the single source of truth."""
+    from trw_mcp.state.claude_md._static_sections import _SESSION_BOUNDARY_TEXT
+
+    assert _SESSION_BOUNDARY_TEXT is SESSION_BOUNDARY_TEXT
+
+
+# ---------------------------------------------------------------------------
+# Legacy compat: platform= kwarg
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_platform_kwarg() -> None:
+    """Legacy: platform= kwarg creates a ClientProfile automatically."""
+    renderer = ProtocolRenderer(platform="gemini")
+    assert renderer.platform == "gemini"
+    assert renderer.client_profile.client_id == "gemini"
