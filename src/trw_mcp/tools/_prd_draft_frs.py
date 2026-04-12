@@ -9,7 +9,31 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TypedDict
+
+import structlog
+
+_logger = structlog.get_logger(__name__)
+
+
+class FRBlock(TypedDict):
+    """A single AARE-F Functional Requirement block."""
+
+    id: str
+    priority: str
+    status: str
+    description: str
+    acceptance: str
+    confidence: str
+
+
+class DraftFRsResult(TypedDict):
+    """Return type for ``draft_frs_from_research``."""
+
+    functional_requirements: list[FRBlock]
+    key_symbols: list[str]
+    relevant_locations: list[str]
+    fr_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +54,22 @@ _FILE_PATH_RE = re.compile(
     re.MULTILINE,
 )
 
+# Common English words that look like PascalCase but aren't code symbols.
+# Module-level frozenset for O(1) lookup and single allocation.
+_COMMON_WORDS: frozenset[str] = frozenset({
+    "The", "This", "That", "When", "Where", "What", "How", "Why",
+    "Note", "See", "Also", "Must", "Should", "Could", "Would",
+    "Phase", "Step", "Section", "Table", "Summary", "Analysis",
+    "Research", "Report", "Background", "Context", "Description",
+    "Priority", "Status", "Finding", "Findings", "Key", "Recommendation",
+    "Recommendations", "Changes", "Current", "Existing", "Returns",
+    "Add", "Remove", "Update", "Create", "Delete", "Fix", "Replace",
+    "Configure", "Implement", "Test", "Verify", "Check", "Run",
+    "Build", "Deploy", "Install", "Start", "Stop", "Read", "Write",
+    "Load", "Save", "Send", "Fetch", "Get", "Set", "Put", "Post",
+    "All", "Any", "Each", "Every", "Some", "None", "True", "False",
+})
+
 
 def _extract_symbols_from_text(text: str) -> list[str]:
     """Extract code symbols from text content."""
@@ -40,19 +80,6 @@ def _extract_symbols_from_text(text: str) -> list[str]:
         symbols.add(match.group(1))
 
     # PascalCase identifiers (lower signal, skip common words)
-    _COMMON_WORDS = {
-        "The", "This", "That", "When", "Where", "What", "How", "Why",
-        "Note", "See", "Also", "Must", "Should", "Could", "Would",
-        "Phase", "Step", "Section", "Table", "Summary", "Analysis",
-        "Research", "Report", "Background", "Context", "Description",
-        "Priority", "Status", "Finding", "Findings", "Key", "Recommendation",
-        "Recommendations", "Changes", "Current", "Existing", "Returns",
-        "Add", "Remove", "Update", "Create", "Delete", "Fix", "Replace",
-        "Configure", "Implement", "Test", "Verify", "Check", "Run",
-        "Build", "Deploy", "Install", "Start", "Stop", "Read", "Write",
-        "Load", "Save", "Send", "Fetch", "Get", "Set", "Put", "Post",
-        "All", "Any", "Each", "Every", "Some", "None", "True", "False",
-    }
     for match in _PASCAL_OR_UPPER_RE.finditer(text):
         name = match.group(1)
         if name not in _COMMON_WORDS and len(name) > 2:
@@ -69,7 +96,7 @@ def _extract_paths_from_text(text: str) -> list[str]:
     return sorted(paths)
 
 
-def _extract_from_json(data: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+def _extract_from_json(data: dict[str, object]) -> tuple[list[str], list[str], list[str]]:
     """Extract symbols, paths, and recommendations from JSON research."""
     symbols: list[str] = []
     locations: list[str] = []
@@ -85,9 +112,10 @@ def _extract_from_json(data: dict[str, Any]) -> tuple[list[str], list[str], list
 
     # Also extract from text fields
     for field in ("summary", "title", "description", "content"):
-        if field in data and isinstance(data[field], str):
-            symbols.extend(_extract_symbols_from_text(data[field]))
-            locations.extend(_extract_paths_from_text(data[field]))
+        val = data.get(field)
+        if isinstance(val, str):
+            symbols.extend(_extract_symbols_from_text(val))
+            locations.extend(_extract_paths_from_text(val))
 
     return (
         sorted(set(symbols)),
@@ -99,14 +127,6 @@ def _extract_from_json(data: dict[str, Any]) -> tuple[list[str], list[str], list
 # ---------------------------------------------------------------------------
 # FR block generation
 # ---------------------------------------------------------------------------
-
-_FR_TEMPLATE = """\
-### {{prd_id}}-FR{seq:02d}: {title}
-**Priority**: {priority}
-**Status**: active
-**Description**: {description}
-**Acceptance**: {acceptance}
-**Confidence**: {confidence}"""
 
 
 def _build_acceptance(
@@ -133,9 +153,9 @@ def _generate_frs(
     symbols: list[str],
     locations: list[str],
     extra_context: str,
-) -> list[dict[str, str]]:
+) -> list[FRBlock]:
     """Generate AARE-F FR blocks from extracted data."""
-    frs: list[dict[str, str]] = []
+    frs: list[FRBlock] = []
 
     if not recommendations:
         # If no explicit recommendations, create a single FR from the research
@@ -191,7 +211,7 @@ def _generate_frs(
 def draft_frs_from_research(
     research_report: str,
     extra_context: str = "",
-) -> dict[str, object]:
+) -> DraftFRsResult:
     """Convert a research report into AARE-F FR blocks.
 
     Args:
@@ -238,12 +258,20 @@ def draft_frs_from_research(
 
     frs = _generate_frs(recommendations, symbols, locations, extra_context)
 
-    return {
-        "functional_requirements": frs,
-        "key_symbols": symbols,
-        "relevant_locations": locations,
-        "fr_count": len(frs),
-    }
+    _logger.info(
+        "draft_frs_complete",
+        fr_count=len(frs),
+        symbol_count=len(symbols),
+        location_count=len(locations),
+        recommendation_count=len(recommendations),
+    )
+
+    return DraftFRsResult(
+        functional_requirements=frs,
+        key_symbols=symbols,
+        relevant_locations=locations,
+        fr_count=len(frs),
+    )
 
 
 def _extract_recommendations_from_markdown(text: str) -> list[str]:
