@@ -247,7 +247,10 @@ def check_and_handle_dedup(
                         # PRD-CORE-086 FR05: Include assertions in merge data
                         if params.assertions:
                             entry_dict["assertions"] = params.assertions
-                        merged_path = merge_entries(yaml_file, entry_dict, reader, writer)
+                        merged_path = merge_entries(
+                            yaml_file, entry_dict, reader, writer,
+                            max_merge_tags=config.max_consolidated_tags,
+                        )
                         merged_yaml_path = merged_path if isinstance(merged_path, Path) else yaml_file
                         _sync_merged_entry_to_backend(entries_dir, reader.read_yaml(merged_yaml_path))
                         logger.info(

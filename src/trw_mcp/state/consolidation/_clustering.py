@@ -104,18 +104,23 @@ def _tag_overlap_clusters(
     entries: list[LearningEntryDict],
     *,
     min_cluster_size: int = 3,
-    min_shared_tags: int = 2,
+    min_shared_tags: int = 3,
+    max_cluster_size: int = 10,
 ) -> list[list[LearningEntryDict]]:
     """Cluster entries by tag overlap using union-find.
 
     PRD-FIX-052-FR03: Fallback clustering when embeddings are unavailable.
     Two entries are considered similar if they share >= *min_shared_tags* tags.
     Clusters smaller than *min_cluster_size* are discarded.
+    PRD-FIX-071-FR01/FR05: Clusters are capped at *max_cluster_size* to prevent
+    runaway super-clusters from transitive tag overlap.
 
     Args:
         entries: List of entry dicts with "tags" field.
         min_cluster_size: Minimum cluster size to keep (default 3).
-        min_shared_tags: Minimum number of shared tags to merge entries (default 2).
+        min_shared_tags: Minimum number of shared tags to merge entries (default 3).
+        max_cluster_size: Maximum cluster size (default 10). Merges that would
+            exceed this are skipped.
 
     Returns:
         List of clusters; each cluster is a list of entry dicts.
@@ -129,21 +134,31 @@ def _tag_overlap_clusters(
         {str(t) for t in (e.get("tags") or [] if isinstance(e.get("tags"), list) else [])} for e in entries
     ]
 
-    # Union-Find parent array with path compression
+    # Union-Find parent array with path compression + component sizes (FIX-071-FR01)
     parent = list(range(n))
+    sizes = [1] * n
 
     def find(i: int) -> int:
         if parent[i] != i:
             parent[i] = find(parent[i])  # recursive path compression
         return parent[i]
 
-    # Union entries with sufficient tag overlap
+    # Union entries with sufficient tag overlap, respecting max_cluster_size
     for i in range(n):
         for j in range(i + 1, n):
             if len(tag_sets[i] & tag_sets[j]) >= min_shared_tags:
                 pi, pj = find(i), find(j)
                 if pi != pj:
-                    parent[pi] = pj
+                    # FIX-071-FR01: Skip merge if combined size would exceed cap
+                    if sizes[pi] + sizes[pj] > max_cluster_size:
+                        continue
+                    # Union by size — attach smaller to larger
+                    if sizes[pi] < sizes[pj]:
+                        parent[pi] = pj
+                        sizes[pj] += sizes[pi]
+                    else:
+                        parent[pj] = pi
+                        sizes[pi] += sizes[pj]
 
     # Collect groups by root
     groups: dict[int, list[LearningEntryDict]] = {}
@@ -201,11 +216,16 @@ def find_clusters(
             return []
         # Tag-fallback: load ALL active entries (no max_entries cap)
         all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
+        # FIX-071-FR01/FR05: Load max_cluster_size from config
+        from trw_mcp.models.config import get_config as _get_cfg
+
+        _cfg = _get_cfg()
         try:
             clusters: list[list[LearningEntryDict]] = _tag_overlap_clusters(
                 all_entries,
                 min_cluster_size=min_cluster_size,
-                min_shared_tags=2,
+                min_shared_tags=3,
+                max_cluster_size=_cfg.max_cluster_size,
             )
         except Exception:  # justified: boundary, tag-overlap clustering may fail on malformed entry data
             logger.warning("tag_overlap_clustering_failed", exc_info=True)
