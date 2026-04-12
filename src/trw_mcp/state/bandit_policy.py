@@ -255,6 +255,7 @@ def load_bandit_state_and_policy(
                 arm_count=len(detector_states),
                 model_family=model_family,
             )
+        policy_inst.load_pending_alarm_ids(data.get("pending_alarm_ids", []))
         return bandit, policy_inst
 
     except Exception:  # justified: fail-open
@@ -283,7 +284,8 @@ def save_bandit_state(
           "model_family": "claude-sonnet-4",
           "bandit_state": { ...raw BanditSelector JSON... },
           "quarantined": { "old-model-family": { ...old state... } },
-          "detector_states": { "arm-id": { ...PageHinkleyDetector.to_dict()... } }
+          "detector_states": { "arm-id": { ...PageHinkleyDetector.to_dict()... } },
+          "pending_alarm_ids": ["arm-id"]
         }
 
     Uses the temp-file + ``os.rename`` pattern for atomic writes.
@@ -339,6 +341,7 @@ def save_bandit_state(
         "bandit_state": bandit_raw,
         "quarantined": existing_quarantined,
         "detector_states": policy.get_detector_states() if policy is not None else {},
+        "pending_alarm_ids": policy.get_pending_alarm_ids() if policy is not None else [],
     }
 
     try:
@@ -377,6 +380,7 @@ class WithholdingPolicy:
         self._force_trial_threshold = force_trial_threshold
         # Per-arm Page-Hinkley detectors (FR05 trigger #4)
         self._detectors: dict[str, PageHinkleyDetector] = {}
+        self._pending_alarm_ids: set[str] = set()
 
     def update_reward(self, arm_id: str, reward: float) -> bool:
         """Update the Page-Hinkley detector for an arm; returns True on alarm.
@@ -386,7 +390,10 @@ class WithholdingPolicy:
         """
         if arm_id not in self._detectors:
             self._detectors[arm_id] = PageHinkleyDetector()
-        return self._detectors[arm_id].update(reward)
+        fired = self._detectors[arm_id].update(reward)
+        if fired:
+            self._pending_alarm_ids.add(arm_id)
+        return fired
 
     def get_detector_states(self) -> dict[str, dict[str, int | float | None]]:
         """Serialize all per-arm Page-Hinkley detector states for JSON persistence.
@@ -409,6 +416,25 @@ class WithholdingPolicy:
                 with contextlib.suppress(Exception):
                     self._detectors[str(arm_id)] = PageHinkleyDetector.from_dict(raw)
 
+    def get_pending_alarm_ids(self) -> list[str]:
+        """Return pending FR05 alarms that must be consumed on next selection."""
+        return sorted(self._pending_alarm_ids)
+
+    def load_pending_alarm_ids(self, pending_alarm_ids: object) -> None:
+        """Restore pending FR05 alarms from persisted state."""
+        if not isinstance(pending_alarm_ids, list):
+            return
+        self._pending_alarm_ids = {
+            str(arm_id) for arm_id in pending_alarm_ids if str(arm_id)
+        }
+
+    def consume_pending_alarm(self, arm_id: str) -> bool:
+        """Consume a one-shot FR05 forced re-evaluation alarm for *arm_id*."""
+        if arm_id in self._pending_alarm_ids:
+            self._pending_alarm_ids.remove(arm_id)
+            return True
+        return False
+
     def page_hinkley_alarm(self, arm_id: str) -> bool:
         """Return True if the Page-Hinkley detector for *arm_id* has fired.
 
@@ -416,14 +442,7 @@ class WithholdingPolicy:
         signal per detection event. Callers should check this after
         ``update_reward``.
         """
-        # Current detector state cannot be queried for "did it just fire" --
-        # the alarm is returned by update_reward() directly. This helper
-        # exists so that should_withhold() can accept the alarm state from
-        # the caller via the learning metadata dict.
-        detector = self._detectors.get(arm_id)
-        if detector is None:
-            return False
-        return False  # Alarm is communicated via update_reward() return value
+        return arm_id in self._pending_alarm_ids
 
     def should_withhold(
         self,
@@ -440,18 +459,24 @@ class WithholdingPolicy:
         4. For others: pick random rate in [floor, ceiling] and compare to random()
         """
         tier = str(learning.get("protection_tier", "normal"))
+        learning_id = str(learning.get("id", ""))
         metadata = learning.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
 
         # Check forced re-evaluation triggers
-        forced = self._check_forced_triggers(tier, metadata, page_hinkley_fired=page_hinkley_fired)
+        pending_alarm = self.consume_pending_alarm(learning_id) if learning_id else False
+        forced = self._check_forced_triggers(
+            tier,
+            metadata,
+            page_hinkley_fired=(page_hinkley_fired or pending_alarm),
+        )
         if forced:
             # Override to normal-tier rate regardless of actual tier
             tier = "normal"
             _logger.debug(
                 "withholding_forced_trigger",
-                learning_id=str(learning.get("id", "")),
+                learning_id=learning_id,
                 original_tier=str(learning.get("protection_tier", "normal")),
             )
 

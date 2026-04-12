@@ -160,11 +160,14 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
                 bandit.update(arm_id, reward)
                 # FR05: feed reward into per-arm Page-Hinkley detector so
                 # trigger #4 (distributional shift) accumulates across calls
-                policy.update_reward(arm_id, reward)
+                alarm_fired = policy.update_reward(arm_id, reward)
+                if alarm_fired:
+                    bandit.soft_reset_arm(arm_id)
                 logger.debug(
                     "bandit_posterior_updated",
                     arm_id=arm_id,
                     reward=round(reward, 4),
+                    alarm_fired=alarm_fired,
                 )
 
         # ── P0 + FR05: Persist updated bandit + detector states (atomic) ────

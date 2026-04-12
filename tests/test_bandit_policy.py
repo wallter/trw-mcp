@@ -1413,6 +1413,7 @@ class TestFR05ProductionPath:
         ds = detector_states["L-persist-test"]
         assert "n" in ds, f"Detector state must have 'n' field, got: {ds}"
         assert ds["n"] >= 1, f"Expected n >= 1 after one reward update, got n={ds['n']}"
+        assert stored.get("pending_alarm_ids") == []
 
     def test_detector_state_restored_on_next_load(self, tmp_path: Path) -> None:
         """load_bandit_state_and_policy restores Page-Hinkley state from envelope.
@@ -1512,3 +1513,74 @@ class TestFR05ProductionPath:
             "production before FR05 cross-session persistence was wired in"
         )
 
+    def test_pending_alarm_persisted_and_consumed_once(self, tmp_path: Path) -> None:
+        """Pending FR05 alarms survive restart and force one normal-tier re-evaluation."""
+        from trw_mcp.state.bandit_policy import (
+            WithholdingPolicy,
+            load_bandit_state_and_policy,
+            save_bandit_state,
+        )
+        from trw_memory.bandit import BanditSelector
+        from trw_memory.bandit.change_detection import PageHinkleyDetector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        arm_id = "L-pending-alarm"
+        learning = {"id": arm_id, "protection_tier": "critical"}
+        bandit = BanditSelector()
+        policy = WithholdingPolicy(client_class="full_mode")
+        policy._detectors[arm_id] = PageHinkleyDetector(delta=0.01, alarm_threshold=3.0)
+
+        for _ in range(10):
+            policy.update_reward(arm_id, 0.9)
+        for _ in range(15):
+            if policy.update_reward(arm_id, 0.1):
+                break
+
+        save_bandit_state(trw_dir, bandit, "full_mode", "test-model", policy=policy)
+        _, restored_policy = load_bandit_state_and_policy(trw_dir, "full_mode", "test-model")
+
+        assert arm_id in restored_policy._pending_alarm_ids
+        with (
+            patch("random.uniform", return_value=0.2),
+            patch("random.random", side_effect=[0.1, 0.9]),
+        ):
+            assert restored_policy.should_withhold(learning) is True
+            assert restored_policy.should_withhold(learning) is False
+
+    def test_live_path_soft_resets_bandit_arm_on_alarm(self, tmp_path: Path) -> None:
+        """The live FR05 path soft-resets the arm posterior when the alarm fires."""
+        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state.bandit_policy import WithholdingPolicy
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        learning = self._make_learning("L-soft-reset")
+        bandit = BanditSelector(cold_start_min=0)
+        for _ in range(8):
+            bandit.update("L-soft-reset", 0.9)
+
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]),
+            patch(
+                "trw_mcp.state.bandit_policy.load_bandit_state_and_policy",
+                return_value=(bandit, policy),
+            ),
+            patch.object(policy, "update_reward", return_value=True),
+        ):
+            _try_bandit_nudge_content(
+                trw_dir,
+                CeremonyState(phase="implement", previous_phase=""),
+            )
+
+        arm = bandit._arms["L-soft-reset"]
+        assert arm.alpha == pytest.approx(2.0)
+        assert arm.beta == pytest.approx(1.0)
+        assert arm.window == []
