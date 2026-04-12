@@ -6,12 +6,9 @@ from trw_memory.graph import list_org_shared_entries
 from trw_memory.models.config import MemoryConfig
 
 from trw_mcp.models.config import get_config
+from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.claude_md._templates import (
-    BEHAVIORAL_PROTOCOL_CAP,
-    CEREMONY_TOOLS,
-    PHASE_DESCRIPTIONS,
-)
+from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.persistence import FileStateReader
 
 
@@ -35,6 +32,7 @@ def _format_learning_session_claim() -> str:
     session_label = "session" if sessions_tracked == 1 else "sessions"
     learning_label = "learning" if total_learnings == 1 else "learnings"
     return f"{total_learnings} {learning_label} from {sessions_tracked} prior {session_label}"
+
 
 _SESSION_BOUNDARY_TEXT = (
     "Every session that loads learnings via `trw_session_start()` should persist "
@@ -84,37 +82,13 @@ def render_imperative_opener() -> str:
 
 
 def render_ceremony_quick_ref() -> str:
-    """Render compact ceremony quick-reference card for CLAUDE.md.
-
-    Table format for scannability. Each tool gets when + what in one row.
-    No redundancy with the imperative opener (which names tools briefly
-    but doesn't explain them). Pointer to /trw-ceremony-guide for the
-    full lifecycle reference.
-
-    Returns:
-        Markdown string with quick-reference table.
-    """
-    return (
-        "## TRW Behavioral Protocol (Auto-Generated)\n"
-        "\n"
-        "| Tool | When | Why |\n"
-        "|------|------|-----|\n"
-        "| `trw_session_start()` | First action | Loads prior learnings so you don't repeat solved problems or rediscover known gotchas |\n"
-        "| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual technical insights.** NEVER record \"task completed\" or routine status updates |\n"
-        "| `trw_checkpoint(message)` | After milestones | If context compacts, you resume here instead of re-implementing from scratch |\n"
-        "| `trw_deliver()` | Last action | Persists your session's discoveries for future agents \u2014 without it, your learnings die with your context window |\n"
-        "\n"
-        "Full tool lifecycle: `/trw-ceremony-guide`\n"
-        "\n"
-    )
+    """Render compact ceremony quick-reference card for CLAUDE.md."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_ceremony_quick_ref()
 
 
 def render_behavioral_protocol() -> str:
-    """Render behavioral directives from .trw/context/behavioral_protocol.yaml.
-
-    Returns:
-        Markdown bullet list of directives, or empty string if file missing.
-    """
+    """Render behavioral directives from .trw/context/behavioral_protocol.yaml."""
     from trw_mcp.exceptions import StateError
 
     config = get_config()
@@ -130,72 +104,27 @@ def render_behavioral_protocol() -> str:
     directives = data.get("directives", [])
     if not directives or not isinstance(directives, list):
         return ""
-    lines = [f"- {d}" for d in directives[:BEHAVIORAL_PROTOCOL_CAP]]
+    lines = [f"- {d}" for d in directives[:12]]
     lines.append("")
     return "\n".join(lines) + "\n"
 
 
 def render_phase_descriptions() -> str:
-    """Render phase arrow diagram and description list.
-
-    Returns:
-        Markdown string with phase flow and descriptions.
-    """
-    phase_names = [p[0] for p in PHASE_DESCRIPTIONS]
-    lines = [
-        "### Execution Phases",
-        "",
-        "```",
-        " \u2192 ".join(phase_names),
-        "```",
-        "",
-    ]
-    lines.extend(f"- **{name}**: {purpose}" for name, purpose in PHASE_DESCRIPTIONS)
-    lines.append("")
-    return "\n".join(lines) + "\n"
+    """Render phase arrow diagram and description list."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_phase_descriptions()
 
 
 def render_ceremony_table() -> str:
-    """Render ceremony tools as a markdown table.
-
-    Returns:
-        Markdown table with Phase, Tool, When, What, Example columns.
-    """
-    lines = [
-        "### Tool Lifecycle",
-        "",
-        "| Phase | Tool | When to Use | What It Does | Example |",
-        "|-------|------|-------------|--------------|---------|",
-    ]
-    lines.extend(f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |" for ct in CEREMONY_TOOLS)
-    lines.append("")
-    return "\n".join(lines) + "\n"
+    """Render ceremony tools as a markdown table."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_ceremony_table()
 
 
 def render_ceremony_flows() -> str:
-    """Render quick task and full run example flows.
-
-    Returns:
-        Markdown string with two flow diagrams.
-    """
-    return (
-        "### Example Flows\n"
-        "\n"
-        "**Quick Task** (no run needed):\n"
-        "```\n"
-        "trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()\n"
-        "```\n"
-        "\n"
-        "**Full Run**:\n"
-        "```\n"
-        "trw_session_start -> trw_init(task_name, prd_scope)\n"
-        "  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)\n"
-        "  -> trw_build_check(scope='full')           [VALIDATE]\n"
-        "  -> review diff, fix gaps, trw_learn         [REVIEW]\n"
-        "  -> trw_deliver()\n"
-        "```\n"
-        "\n"
-    )
+    """Render quick task and full run example flows."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_ceremony_flows()
 
 
 def render_delegation_protocol() -> str:
@@ -294,30 +223,9 @@ def render_rationalization_watchlist() -> str:
 
 
 def render_framework_reference() -> str:
-    """Render framework reference directive for CLAUDE.md.
-
-    PRD-CORE-125-FR10: Gated by ``include_framework_ref`` on client profile.
-
-    Points agents to the methodology document. Compact per PRD-CORE-061
-    progressive disclosure \u2014 the framework itself explains why, this
-    section just says where and when to read it.
-
-    Returns:
-        Markdown string with framework pointer and reading schedule,
-        or empty string if disabled.
-    """
-    config = get_config()
-    if not config.client_profile.include_framework_ref:
-        return ""
-
-    return (
-        "### Framework Reference\n"
-        "\n"
-        "Read `.trw/frameworks/FRAMEWORK.md` at session start \u2014 it defines "
-        "phase gates, exit criteria, quality rubrics, and formation selection. "
-        "Re-read after context compaction.\n"
-        "\n"
-    )
+    """Render framework reference directive for CLAUDE.md."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_framework_reference()
 
 
 def render_memory_harmonization() -> str:
@@ -390,56 +298,21 @@ def render_shared_learnings() -> str:
 
 
 def render_closing_reminder() -> str:
-    """Render closing reminder that bookends the auto-generated section.
-
-    Position bias research (Liu et al. 2024) shows the end of a prompt
-    gets elevated attention weight. This repeats the two most-skipped
-    ceremony tools in a different semantic frame from the imperative opener.
-
-    Returns:
-        Markdown string with closing reminder.
-    """
-    return "### Session Boundaries\n\n" + _SESSION_BOUNDARY_TEXT + "\n"
+    """Render closing reminder that bookends the auto-generated section."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile)
+    return renderer.render_closing_reminder()
 
 
 def generate_behavioral_protocol_md() -> str:
-    """Generate the full behavioral protocol as a static markdown file.
-
-    PRD-CORE-093 FR03: This content is written to
-    ``.trw/context/behavioral_protocol.md`` during ``update_project`` and
-    read by the session-start hook once per session event. It replaces the
-    verbose CLAUDE.md injection that previously loaded on every message.
-
-    Returns:
-        Complete markdown string for behavioral_protocol.md.
-    """
-    parts: list[str] = [
-        "# TRW Behavioral Protocol\n",
-        render_ceremony_quick_ref(),
-        render_phase_descriptions(),
-        render_ceremony_table(),
-        render_ceremony_flows(),
-        render_framework_reference(),
-        render_closing_reminder(),
-    ]
-    return "\n".join(parts)
+    """Generate the full behavioral protocol as a static markdown file."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile, ceremony_mode="FULL")
+    return renderer.render_behavioral_protocol()
 
 
 def render_minimal_protocol() -> str:
-    """Render a shortened ceremony protocol for local model AGENTS.md.
-
-    Must be under 200 tokens. Contains only:
-    - Call trw_session_start() first
-    - Call trw_deliver() when done
-    - Run tests after each change
-    """
-    return (
-        "TRW tools persist your work across sessions:\n"
-        "- **Start**: call `trw_session_start()` to load prior learnings\n"
-        "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
-        "- **Verify**: Run tests after each change \u2014 fix failures before moving on.\n"
-        "\n" + _SESSION_BOUNDARY_TEXT
-    )
+    """Render a shortened ceremony protocol for local model AGENTS.md."""
+    renderer = ProtocolRenderer(client_profile=get_config().client_profile, ceremony_mode="MINIMAL")
+    return renderer.render_minimal_protocol()
 
 
 def render_agents_trw_section() -> str:
@@ -614,7 +487,7 @@ def render_codex_instructions() -> str:
         "\n"
         "1. **Start**: call `trw_session_start()` — loads prior learnings and any active run\n"
         "2. **Delegate**: use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
-        "3. **Verify**: keep prompts and working set bounded, and run tests after each change before moving on\n"
+        "3. **Verify**: keep the working set small and run tests after each change before moving on\n"
         "4. **Learn**: Call `trw_learn()` for reusable gotchas or patterns\n"
         "5. **Finish**: call `trw_deliver()` — persists work for future sessions\n"
         "\n"
@@ -635,7 +508,7 @@ def render_codex_instructions() -> str:
         "\n"
         "- **Context limits vary**: avoid hardcoding a fixed Codex context budget in plans or prompts\n"
         "- **Hooks are optional**: treat them as additive hints, not correctness gates\n"
-        "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
+fs- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
         "\n"
     )
@@ -705,6 +578,8 @@ def render_opencode_instructions(model_family: str) -> str:
     Returns:
         Markdown string for OpenCode-specific instructions.
     """
-    from trw_mcp.state.claude_md._opencode_sections import render_opencode_instructions as _render
-
-    return _render(model_family)
+    renderer = ProtocolRenderer(
+        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
+        model_family=model_family,
+    )
+    return renderer.render_opencode_instructions()
