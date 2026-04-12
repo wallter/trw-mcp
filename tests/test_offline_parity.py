@@ -91,8 +91,8 @@ class TestOfflineParity:
         assert selected["id"] == "L-1"
         assert is_fallback is False
 
-    def test_session_recall_helpers_no_bandit_import(self, tmp_path: Path) -> None:
-        """_session_recall_helpers uses neutral client_class without bandit_policy."""
+    def test_session_recall_helpers_works_offline(self, tmp_path: Path) -> None:
+        """_session_recall_helpers works offline — bandit_policy is local-first (PRD-CORE-105)."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -112,7 +112,7 @@ class TestOfflineParity:
             learnings, auto_recalled, extras = perform_session_recalls(
                 trw_dir, "*", config, reader
             )
-            # Should complete without ImportError from bandit_policy
+            # Should complete successfully (bandit_policy is local, not backend)
             assert isinstance(learnings, list)
 
     def test_no_meta_tune_in_tool_registry(self) -> None:
