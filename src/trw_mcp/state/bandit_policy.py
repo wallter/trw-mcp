@@ -126,6 +126,49 @@ def _trim_trailing_default_keys(
     return trimmed
 
 
+def _canonicalize_detector_number(value: int | float | None) -> int | float | None:
+    """Shorten persisted numeric values without changing detector semantics."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value == 0:
+        return 0
+    rounded = round(float(value))
+    if abs(float(value) - rounded) <= 1e-12:
+        return int(rounded)
+    return value
+
+
+def _compact_detector_state_values(
+    values: list[int | float | None],
+) -> list[int | float | None]:
+    """Collapse neutral detector state down to observation count and sum only."""
+    observations = values[0]
+    if observations is None or int(observations) <= 0:
+        return _trim_trailing_default_keys(_DETECTOR_STATE_KEYS, values)
+    if all(_matches_default(value, 0.0) for value in (values[2], values[3], values[4], values[5])):
+        return values[:2]
+    return _trim_trailing_default_keys(_DETECTOR_STATE_KEYS, values)
+
+
+def _restore_compact_detector_state_values(
+    restored: dict[str, int | float | None],
+    values: list[int | float | None],
+) -> None:
+    """Apply compact state values and recover neutral minima when omitted."""
+    for key, value in zip(_DETECTOR_STATE_KEYS, values, strict=False):
+        restored[key] = value
+    observations = restored.get("n")
+    if len(values) <= 2 and observations is not None and int(observations) > 0:
+        restored["h"] = 0.0
+        restored["m"] = 0.0
+        restored["h_down"] = 0.0
+        restored["m_down"] = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Public API: resolve_client_class
 # ---------------------------------------------------------------------------
@@ -353,13 +396,18 @@ def _compact_detector_state(
     state: dict[str, int | float | None],
 ) -> list[int | float | None] | dict[str, list[int | float | None]]:
     """Persist detector state in a compact envelope-friendly shape."""
-    state_values = _trim_trailing_default_keys(
-        _DETECTOR_STATE_KEYS,
-        [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_STATE_KEYS],
+    state_values = _compact_detector_state_values(
+        [
+            _canonicalize_detector_number(state.get(key, _DETECTOR_DEFAULT_STATE[key]))
+            for key in _DETECTOR_STATE_KEYS
+        ]
     )
     param_values = _trim_trailing_default_keys(
         _DETECTOR_PARAM_KEYS,
-        [state.get(key, _DETECTOR_DEFAULT_STATE[key]) for key in _DETECTOR_PARAM_KEYS],
+        [
+            _canonicalize_detector_number(state.get(key, _DETECTOR_DEFAULT_STATE[key]))
+            for key in _DETECTOR_PARAM_KEYS
+        ],
     )
     uses_default_params = all(
         param == _DETECTOR_DEFAULT_STATE[key]
@@ -377,16 +425,14 @@ def _expand_detector_state(raw: object) -> dict[str, int | float | None]:
     """Restore compact detector state shapes to Page-Hinkley dict format."""
     if isinstance(raw, list):
         restored = dict(_DETECTOR_DEFAULT_STATE)
-        for key, value in zip(_DETECTOR_STATE_KEYS, raw, strict=False):
-            restored[key] = value
+        _restore_compact_detector_state_values(restored, raw)
         return restored
 
     if isinstance(raw, dict) and ("s" in raw or "p" in raw):
         restored = dict(_DETECTOR_DEFAULT_STATE)
         state_values = raw.get("s")
         if isinstance(state_values, list):
-            for key, value in zip(_DETECTOR_STATE_KEYS, state_values, strict=False):
-                restored[key] = value
+            _restore_compact_detector_state_values(restored, state_values)
         param_values = raw.get("p")
         if isinstance(param_values, list):
             for key, value in zip(_DETECTOR_PARAM_KEYS, param_values, strict=False):
