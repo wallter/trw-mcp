@@ -11,6 +11,7 @@ to eliminate layer violations (scoring -> state).
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -168,11 +169,10 @@ def _default_lookup_entry(
     # SQLite-primary for data, YAML-fallback
     data: dict[str, object] | None = sqlite_find_entry_by_id(trw_dir, lid)
 
-    if data is not None and entry_path is not None:
+    if data is not None:
         return entry_path, data
 
-    # Read from YAML directly when SQLite misses, or when SQLite hit but the
-    # cached path index does not yet know the authoritative YAML path.
+    # Read from YAML directly when SQLite misses.
     if entry_path is not None:
         try:
             from trw_mcp.state.persistence import FileStateReader
@@ -196,8 +196,6 @@ def _default_lookup_entry(
         result = yaml_find_entry_by_id(entries_dir, lid)
         if result is not None:
             _backfill_yaml_path_index(lid, result[0])
-            if data is not None:
-                return result[0], data
             return result
     except Exception:  # justified: fail-open, fallback scan is best-effort
         logger.debug("yaml_entry_lookup_failed", learning_id=lid, exc_info=True)
@@ -442,8 +440,17 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
 
     from trw_mcp.scoring._utils import TRWConfig, get_config
 
+    correlation_mod = sys.modules.get("trw_mcp.scoring._correlation")
+    if correlation_mod is not None:
+        patched_get_config = getattr(correlation_mod, "get_config", None)
+        if callable(patched_get_config):
+            cfg: TRWConfig = patched_get_config()
+        else:
+            cfg = get_config()
+    else:
+        cfg = get_config()
+
     project_root = trw_dir.parent
-    cfg: TRWConfig = get_config()
     runs_root = project_root / cfg.runs_root
 
     if not runs_root.exists():
