@@ -22,11 +22,11 @@ from trw_mcp.state.claude_md._review_md import recall_learnings as _default_reca
 logger = structlog.get_logger(__name__)
 
 RecallFn = Callable[..., list[dict[str, object]]]
-InstructionClientId: TypeAlias = Literal["opencode", "codex", "copilot"]
+InstructionClientId: TypeAlias = Literal["opencode", "codex", "copilot", "gemini"]
 InstructionGeneratorResult: TypeAlias = dict[str, list[str]]
 InstructionSyncGenerator: TypeAlias = Callable[[Path, bool], InstructionGeneratorResult]
 
-_INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = ("opencode", "codex", "copilot")
+_INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = ("opencode", "codex", "copilot", "gemini")
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -111,10 +111,18 @@ def _generate_copilot_instruction_target(project_root: Path, force: bool = False
     return generate_copilot_instructions(project_root, force=force)
 
 
+def _generate_gemini_instruction_target(project_root: Path, force: bool = False) -> InstructionGeneratorResult:
+    """Generate the Gemini CLI instruction file (GEMINI.md)."""
+    from trw_mcp.bootstrap._gemini import generate_gemini_instructions
+
+    return generate_gemini_instructions(project_root, force=force)
+
+
 _INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator] = {
     "opencode": _generate_opencode_instruction_target,
     "codex": _generate_codex_instruction_target,
     "copilot": _generate_copilot_instruction_target,
+    "gemini": _generate_gemini_instruction_target,
 }
 
 
