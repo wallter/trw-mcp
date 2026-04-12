@@ -43,6 +43,7 @@ TOOL_GROUP_MEMORY: tuple[str, ...] = (
     "trw_knowledge_sync",
 )
 TOOL_GROUP_QUALITY: tuple[str, ...] = (
+    "trw_preflight_log",
     "trw_build_check",
     "trw_review",
     "trw_prd_create",
@@ -64,7 +65,6 @@ TOOL_GROUP_ADMIN: tuple[str, ...] = (
     "trw_pre_compact_checkpoint",
     "trw_init",
     "trw_claude_md_sync",
-    "trw_meta_tune",
 )
 
 TOOL_PRESETS: dict[str, tuple[str, ...]] = {

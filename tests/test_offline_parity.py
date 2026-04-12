@@ -1,76 +1,104 @@
-"""Offline parity tests — verify MCP tools work with empty intelligence cache.
+"""Offline parity tests — verify registry + lifecycle tools work with empty intel cache.
 
-PRD-INFRA-054 FR11: After intelligence code removal, all remaining MCP tools
-must produce valid responses without a backend connection and with an empty
-(or missing) intel-cache.json.
+PRD-INFRA-054 FR11: After intelligence code removal, the public registry and
+critical lifecycle tools must produce valid responses without a backend
+connection and with an empty (or missing) intel-cache.json.
 """
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tests.conftest import _run_async, make_test_server
+
+
+def _prepare_trw_dir(tmp_path: Path) -> Path:
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    (trw_dir / "context").mkdir()
+    (trw_dir / "intel-cache.json").write_text("{}", encoding="utf-8")
+    return trw_dir
+
+
+def _tool_patches(trw_dir: Path) -> tuple[object, ...]:
+    return (
+        patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.telemetry.resolve_trw_dir", return_value=trw_dir),
+    )
 
 
 class TestOfflineParity:
     """All MCP tools work with empty intelligence cache (no backend)."""
 
     def test_session_start_empty_cache(self, tmp_path: Path) -> None:
-        """trw_session_start succeeds with empty intel cache and no backend."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
-        (trw_dir / "context").mkdir()
+        """trw_session_start runs through the registered tool wrapper offline."""
+        trw_dir = _prepare_trw_dir(tmp_path)
+        server = make_test_server("ceremony")
 
-        # Empty intel cache
-        (trw_dir / "intel-cache.json").write_text("{}", encoding="utf-8")
+        with ExitStack() as stack:
+            for context_manager in _tool_patches(trw_dir):
+                stack.enter_context(context_manager)
+            stack.enter_context(
+                patch("trw_mcp.tools.ceremony.find_active_run", return_value=None)
+            )
+            stack.enter_context(
+                patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[])
+            )
+            stack.enter_context(
+                patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=[])
+            )
+            result = _run_async(server.call_tool("trw_session_start", {"query": "test"}))
 
-        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir), \
-             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]), \
-             patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=[]):
-            from trw_mcp.state.ceremony_nudge import compute_nudge, read_ceremony_state
-
-            state = read_ceremony_state(trw_dir)
-            nudge = compute_nudge(state, available_learnings=0)
-            # Should produce a valid nudge string without error
-            assert isinstance(nudge, str)
+        payload = result.structured_content
+        assert payload["success"] is True
+        assert payload["query"] == "test"
+        assert isinstance(payload["ceremony_status"], str)
 
     def test_recall_empty_cache(self, tmp_path: Path) -> None:
-        """trw_recall logic works with empty intel cache (intel_boost=1.0)."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        """trw_recall works via the registered tool wrapper with neutral intel_boost."""
+        trw_dir = _prepare_trw_dir(tmp_path)
+        server = make_test_server("learning")
 
-        # Verify scoring with neutral intel_boost
-        from trw_mcp.scoring import rank_by_utility
+        with ExitStack() as stack:
+            for context_manager in _tool_patches(trw_dir):
+                stack.enter_context(context_manager)
+            _run_async(
+                server.call_tool(
+                    "trw_learn",
+                    {"summary": "test learning", "detail": "test detail"},
+                )
+            )
+            result = _run_async(server.call_tool("trw_recall", {"query": "test"}))
 
-        learnings = [
-            {"id": "L-1", "summary": "test learning", "impact": 0.8},
-            {"id": "L-2", "summary": "another learning", "impact": 0.5},
-        ]
-        ranked = rank_by_utility(learnings, ["test"], lambda_weight=0.3)
-        assert len(ranked) == 2
-        # Rankings should work without any intelligence enrichment
-        assert all(isinstance(e, dict) for e in ranked)
+        payload = result.structured_content
+        assert payload["query"] == "test"
+        assert isinstance(payload["learnings"], list)
+        assert payload["learnings"]
 
     def test_learn_empty_cache(self, tmp_path: Path) -> None:
-        """Learning storage works without intelligence modules."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        """trw_learn records a learning via the registered tool wrapper offline."""
+        trw_dir = _prepare_trw_dir(tmp_path)
+        server = make_test_server("learning")
 
-        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir), \
-             patch("trw_mcp.state.memory_adapter.store_learning") as mock_store:
-            mock_store.return_value = {"id": "test-id", "status": "created"}
-            from trw_mcp.state.memory_adapter import store_learning
-
-            result = store_learning(
-                trw_dir,
-                summary="test learning",
-                detail="test detail",
+        with ExitStack() as stack:
+            for context_manager in _tool_patches(trw_dir):
+                stack.enter_context(context_manager)
+            result = _run_async(
+                server.call_tool(
+                    "trw_learn",
+                    {"summary": "test learning", "detail": "test detail"},
+                )
             )
-            assert result is not None
+
+        payload = result.structured_content
+        assert payload["status"] == "recorded"
+        assert isinstance(payload["learning_id"], str)
 
     def test_nudge_selection_deterministic_without_bandit(self) -> None:
         """Nudge selection uses deterministic ranking without local policy code."""
@@ -93,10 +121,7 @@ class TestOfflineParity:
 
     def test_session_recall_helpers_works_offline(self, tmp_path: Path) -> None:
         """_session_recall_helpers works offline without backend-only intelligence."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
-        (trw_dir / "context").mkdir()
+        trw_dir = _prepare_trw_dir(tmp_path)
 
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir), \
              patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[
@@ -114,12 +139,30 @@ class TestOfflineParity:
             )
             assert isinstance(learnings, list)
 
+    def test_deliver_empty_cache(self, tmp_path: Path) -> None:
+        """trw_deliver succeeds offline without any backend-only intelligence."""
+        trw_dir = _prepare_trw_dir(tmp_path)
+        server = make_test_server("ceremony")
+
+        with ExitStack() as stack:
+            for context_manager in _tool_patches(trw_dir):
+                stack.enter_context(context_manager)
+            stack.enter_context(
+                patch("trw_mcp.tools.ceremony.find_active_run", return_value=None)
+            )
+            result = _run_async(server.call_tool("trw_deliver", {}))
+
+        payload = result.structured_content
+        assert payload["success"] is True
+        assert payload["errors"] == []
+
     def test_no_meta_tune_in_tool_registry(self) -> None:
-        """trw_meta_tune tool is not registered after PRD-INFRA-054."""
+        """The full tool registry loads offline and excludes trw_meta_tune."""
         # Import must succeed
         import trw_mcp  # noqa: F401
 
         # Check that meta_tune is not in the registered tools
+        from trw_mcp.models.config._defaults import TOOL_PRESETS
         from trw_mcp.server._tools import mcp
 
         import asyncio
@@ -140,4 +183,6 @@ class TestOfflineParity:
         else:
             tool_names = asyncio.run(_list())
 
+        assert len(tool_names) == 25
+        assert set(tool_names) == set(TOOL_PRESETS["all"])
         assert "trw_meta_tune" not in tool_names
