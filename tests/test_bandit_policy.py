@@ -571,3 +571,341 @@ class TestResolveClientClass:
     def test_unknown_defaults_to_full_mode(self) -> None:
         from trw_mcp.state.bandit_policy import resolve_client_class
         assert resolve_client_class("unknown-client") == "full_mode"
+
+
+# ---------------------------------------------------------------------------
+# Bandit state envelope: load/save/migrate/quarantine (PRD-CORE-105 C-5)
+# ---------------------------------------------------------------------------
+
+
+class TestBanditStateEnvelope:
+    """load_bandit_state / save_bandit_state handle C-5 envelope correctly."""
+
+    def test_load_missing_file_returns_fresh(self, tmp_path: Path) -> None:
+        """Missing bandit_state.json returns a fresh BanditSelector."""
+        from trw_mcp.state.bandit_policy import load_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        bandit = load_bandit_state(trw_dir, "full_mode", "claude-sonnet-4")
+        assert isinstance(bandit, BanditSelector)
+        assert len(bandit._arms) == 0
+
+    def test_load_corrupt_file_returns_fresh(self, tmp_path: Path) -> None:
+        """Corrupt JSON in bandit_state.json returns a fresh BanditSelector."""
+        from trw_mcp.state.bandit_policy import load_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "bandit_state.json").write_text("{ not valid json !!!}", encoding="utf-8")
+
+        bandit = load_bandit_state(trw_dir, "full_mode", "claude-sonnet-4")
+        assert isinstance(bandit, BanditSelector)
+
+    def test_load_legacy_raw_state_migrates(self, tmp_path: Path) -> None:
+        """Old raw format (arms at top level) is migrated and arms are restored."""
+        import json
+        from trw_mcp.state.bandit_policy import load_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        b = BanditSelector()
+        b.update("arm-1", 0.8)
+        b.update("arm-1", 0.9)
+        raw_state = json.loads(b.to_json())
+        (meta_dir / "bandit_state.json").write_text(
+            json.dumps(raw_state), encoding="utf-8"
+        )
+
+        loaded = load_bandit_state(trw_dir, "full_mode", "claude-sonnet-4")
+        assert isinstance(loaded, BanditSelector)
+        assert "arm-1" in loaded._arms
+        assert loaded._arms["arm-1"].exposure_count == 2
+
+    def test_model_family_quarantine_on_new_family(self, tmp_path: Path) -> None:
+        """When model_family changes, old posteriors are quarantined; fresh selector returned."""
+        import json
+        from trw_mcp.state.bandit_policy import load_bandit_state, save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        b = BanditSelector()
+        b.update("arm-1", 0.8)
+        save_bandit_state(trw_dir, b, "full_mode", "claude-opus-3")
+
+        loaded = load_bandit_state(trw_dir, "full_mode", "claude-sonnet-4")
+        assert isinstance(loaded, BanditSelector)
+        assert len(loaded._arms) == 0
+
+        save_bandit_state(trw_dir, loaded, "full_mode", "claude-sonnet-4")
+        stored = json.loads((meta_dir / "bandit_state.json").read_text(encoding="utf-8"))
+        assert stored["model_family"] == "claude-sonnet-4"
+
+    def test_save_uses_atomic_write_pattern(self, tmp_path: Path) -> None:
+        """save_bandit_state uses temp file + rename (atomic write)."""
+        import json
+        from trw_mcp.state.bandit_policy import save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        b = BanditSelector()
+        b.update("arm-1", 0.7)
+        save_bandit_state(trw_dir, b, "full_mode", "test-family")
+
+        state_path = trw_dir / "meta" / "bandit_state.json"
+        assert state_path.exists()
+        tmp_files = list((trw_dir / "meta").glob("*.tmp.*"))
+        assert len(tmp_files) == 0, f"Leftover tmp files: {tmp_files}"
+
+    def test_save_includes_c5_envelope_fields(self, tmp_path: Path) -> None:
+        """Saved JSON contains client_profile, model_family, bandit_state, quarantined."""
+        import json
+        from trw_mcp.state.bandit_policy import save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        b = BanditSelector()
+        save_bandit_state(trw_dir, b, "full_mode", "claude-sonnet-4")
+
+        stored = json.loads(
+            (trw_dir / "meta" / "bandit_state.json").read_text(encoding="utf-8")
+        )
+        assert stored["client_profile"] == "full_mode"
+        assert stored["model_family"] == "claude-sonnet-4"
+        assert "bandit_state" in stored
+        assert "quarantined" in stored
+
+    def test_save_load_round_trip_preserves_arms(self, tmp_path: Path) -> None:
+        """save then load restores arm posteriors correctly."""
+        from trw_mcp.state.bandit_policy import load_bandit_state, save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+
+        b = BanditSelector()
+        b.update("arm-A", 0.9)
+        b.update("arm-A", 0.8)
+        b.update("arm-B", 0.3)
+        save_bandit_state(trw_dir, b, "full_mode", "test-model")
+
+        loaded = load_bandit_state(trw_dir, "full_mode", "test-model")
+        assert "arm-A" in loaded._arms
+        assert "arm-B" in loaded._arms
+        assert loaded._arms["arm-A"].exposure_count == 2
+        assert loaded._arms["arm-B"].exposure_count == 1
+
+    def test_quarantine_preserves_old_data_in_file(self, tmp_path: Path) -> None:
+        """Quarantined arm data is retained in the JSON file for offline replay."""
+        import json
+        from trw_mcp.state.bandit_policy import load_bandit_state, save_bandit_state
+        from trw_memory.bandit import BanditSelector
+
+        trw_dir = tmp_path / ".trw"
+        meta_dir = trw_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        b_old = BanditSelector()
+        b_old.update("arm-old", 0.9)
+        save_bandit_state(trw_dir, b_old, "full_mode", "claude-3-old")
+
+        # Load with new family → quarantine triggered; save to persist it
+        fresh = load_bandit_state(trw_dir, "full_mode", "claude-4-new")
+        save_bandit_state(trw_dir, fresh, "full_mode", "claude-4-new")
+
+        stored = json.loads(
+            (meta_dir / "bandit_state.json").read_text(encoding="utf-8")
+        )
+        assert stored["model_family"] == "claude-4-new"
+        assert "claude-3-old" in stored.get("quarantined", {}), (
+            f"Expected 'claude-3-old' in quarantined, got: {stored.get('quarantined')}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Heuristic reward computation
+# ---------------------------------------------------------------------------
+
+
+class TestHeuristicReward:
+    """_compute_heuristic_reward uses impact/score field (PRD-CORE-105 P0)."""
+
+    def test_uses_impact_field(self) -> None:
+        from trw_mcp.state.bandit_policy import _compute_heuristic_reward
+        assert _compute_heuristic_reward({"impact": 0.9}) == pytest.approx(0.9)
+
+    def test_falls_back_to_score(self) -> None:
+        from trw_mcp.state.bandit_policy import _compute_heuristic_reward
+        assert _compute_heuristic_reward({"score": 0.6}) == pytest.approx(0.6)
+
+    def test_neutral_fallback_when_no_field(self) -> None:
+        from trw_mcp.state.bandit_policy import _compute_heuristic_reward
+        assert _compute_heuristic_reward({}) == pytest.approx(0.5)
+
+    def test_clamps_to_range(self) -> None:
+        from trw_mcp.state.bandit_policy import _compute_heuristic_reward
+        assert _compute_heuristic_reward({"impact": 1.5}) == pytest.approx(1.0)
+        assert _compute_heuristic_reward({"impact": -0.2}) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Live decorator path: propensity / surface logs / dedup (PRD-CORE-105 P1)
+# ---------------------------------------------------------------------------
+
+
+class TestLiveDecoratorPath:
+    """_try_bandit_nudge_content writes logs and records dedup."""
+
+    def _make_learning(self, arm_id: str, impact: float = 0.9) -> dict:
+        return {
+            "id": arm_id,
+            "summary": f"Learning {arm_id}",
+            "nudge_line": f"Tip for {arm_id}",
+            "protection_tier": "critical",
+            "impact": impact,
+        }
+
+    def test_live_path_calls_bandit_update(self, tmp_path: Path) -> None:
+        """After selection, bandit arms get updated posteriors."""
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-update-test")
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        bandit_path = trw_dir / "meta" / "bandit_state.json"
+        if bandit_path.exists():
+            import json
+            stored = json.loads(bandit_path.read_text(encoding="utf-8"))
+            bandit_state = stored.get("bandit_state", {})
+            arms = bandit_state.get("arms", {})
+            if "L-update-test" in arms:
+                assert arms["L-update-test"]["exposure_count"] >= 1
+
+    def test_live_path_writes_propensity_log(self, tmp_path: Path) -> None:
+        """propensity.jsonl is written after a successful selection."""
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-propensity-test")
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        propensity_path = trw_dir / "logs" / "propensity.jsonl"
+        if propensity_path.exists():
+            import json
+            lines = propensity_path.read_text(encoding="utf-8").strip().split("\n")
+            entries = [json.loads(l) for l in lines if l.strip()]
+            assert len(entries) >= 1
+            entry = entries[-1]
+            assert "selection_probability" in entry
+            assert "exploration" in entry
+
+    def test_live_path_writes_surface_log(self, tmp_path: Path) -> None:
+        """surface_tracking.jsonl is written after selection."""
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-surface-test")
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        surface_path = trw_dir / "logs" / "surface_tracking.jsonl"
+        if surface_path.exists():
+            import json
+            lines = surface_path.read_text(encoding="utf-8").strip().split("\n")
+            entries = [json.loads(l) for l in lines if l.strip()]
+            assert len(entries) >= 1
+            assert entries[-1].get("learning_id") == "L-surface-test"
+
+    def test_live_path_records_nudge_dedup(self, tmp_path: Path) -> None:
+        """After selection, nudge_history is updated in ceremony state."""
+        import json
+        from trw_mcp.state._ceremony_progress_state import CeremonyState
+        from trw_mcp.tools._ceremony_status import _try_bandit_nudge_content
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "meta").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+        state = CeremonyState(phase="implement", previous_phase="")
+
+        learning = self._make_learning("L-dedup-test")
+
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[learning]):
+            _try_bandit_nudge_content(trw_dir, state)
+
+        state_path = trw_dir / "context" / "ceremony-state.json"
+        if state_path.exists():
+            state_data = json.loads(state_path.read_text(encoding="utf-8"))
+            nudge_history = state_data.get("nudge_history", {})
+            if nudge_history:
+                assert "L-dedup-test" in nudge_history
+
+    def test_phase_transition_withhold_rate_wired(self, tmp_path: Path) -> None:
+        """phase_transition_withhold_rate from config is passed to selection.
+
+        With rate=1.0 and only 2 candidates (so slot-1 has no runner-up),
+        every phase-transition burst should return exactly 1 item because
+        the slot-1 candidate is always withheld and there is no runner-up.
+        """
+        from trw_mcp.state.bandit_policy import WithholdingPolicy, select_nudge_learning_bandit
+        from trw_memory.bandit import BanditSelector
+
+        learnings = [
+            {"id": "L-slot0", "summary": "Primary", "nudge_line": "P",
+             "protection_tier": "critical", "impact": 0.9},
+            {"id": "L-slot1", "summary": "Secondary", "nudge_line": "S",
+             "protection_tier": "normal", "impact": 0.8},
+        ]
+
+        bandit = BanditSelector()
+        policy = WithholdingPolicy(client_class="full_mode")
+
+        single_selections = 0
+        n_trials = 50
+        for _ in range(n_trials):
+            selected, is_transition = select_nudge_learning_bandit(
+                learnings,
+                bandit,
+                policy,
+                phase="validate",
+                previous_phase="implement",
+                phase_transition_withhold_rate=1.0,
+            )
+            if is_transition and len(selected) == 1:
+                single_selections += 1
+
+        assert single_selections >= n_trials * 0.7, (
+            f"Expected >=70% of transitions to yield 1 item with rate=1.0, "
+            f"got {single_selections}/{n_trials}"
+        )

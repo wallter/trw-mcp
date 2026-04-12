@@ -67,14 +67,16 @@ class TestProcessOutcomeSQLitePath:
         mock_yaml.assert_not_called()
 
     def test_yaml_fallback_when_sqlite_returns_none(self, tmp_path: Path) -> None:
-        """When SQLite returns None, YAML glob scan is attempted as fallback."""
+        """When SQLite returns None, YAML file is read via index as fallback."""
+        from trw_mcp.scoring._io_boundary import _reset_yaml_path_index
+
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         _write_receipt(trw_dir, "old-lr-002")
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
 
-        entry_path = entries_dir / "old-lr-002.yaml"
+        # Write the actual YAML file so the path index can find it
         yaml_data: dict[str, object] = {
             "id": "old-lr-002",
             "summary": "pre-migration learning",
@@ -83,45 +85,45 @@ class TestProcessOutcomeSQLitePath:
             "recurrence": 1,
             "outcome_history": [],
         }
+        from ruamel.yaml import YAML
+
+        _y = YAML(typ="safe")
+        entry_path = entries_dir / "old-lr-002.yaml"
+        with entry_path.open("w") as fh:
+            _y.dump(yaml_data, fh)
+
+        # Reset the cached index so it rebuilds for this temp dir
+        _reset_yaml_path_index()
 
         with (
             patch(
                 "trw_mcp.state.memory_adapter.find_entry_by_id",
                 return_value=None,
             ) as mock_sqlite,
-            patch(
-                "trw_mcp.state.analytics.find_entry_by_id",
-                return_value=(entry_path, yaml_data),
-            ) as mock_yaml,
             patch("trw_mcp.state.persistence.FileStateWriter.write_yaml"),
         ):
             updated = process_outcome(trw_dir, 0.8, "tests_passed")
 
         assert "old-lr-002" in updated
-        # Both paths attempted: SQLite first, then YAML fallback
+        # SQLite attempted first, returned None -> fell through to YAML
         mock_sqlite.assert_called_once_with(trw_dir, "old-lr-002")
-        # YAML fallback must be called exactly once for the entry
-        assert mock_yaml.call_count == 1, (
-            f"YAML fallback must be called exactly once (not {mock_yaml.call_count}x) when SQLite returns None"
-        )
 
     def test_entry_skipped_when_both_sources_return_none(self, tmp_path: Path) -> None:
         """When both SQLite and YAML return None, the entry is skipped."""
+        from trw_mcp.scoring._io_boundary import _reset_yaml_path_index
+
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         _write_receipt(trw_dir, "missing-lr-003")
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
+        # No YAML file written — both SQLite and index will miss
 
-        with (
-            patch(
-                "trw_mcp.state.memory_adapter.find_entry_by_id",
-                return_value=None,
-            ),
-            patch(
-                "trw_mcp.state.analytics.find_entry_by_id",
-                return_value=None,
-            ),
+        _reset_yaml_path_index()
+
+        with patch(
+            "trw_mcp.state.memory_adapter.find_entry_by_id",
+            return_value=None,
         ):
             updated = process_outcome(trw_dir, 0.8, "tests_passed")
 

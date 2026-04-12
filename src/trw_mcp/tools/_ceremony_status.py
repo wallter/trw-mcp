@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import structlog
@@ -37,28 +36,56 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
     """Attempt to produce bandit-selected learning nudge content.
 
     Returns a nudge content string (may be multi-line on phase transition) or
-    None when the bandit path is unavailable or produces no output. Always
-    fail-open — never raises.
+    None when the bandit path is unavailable or produces no output.
+
+    Addresses PRD-CORE-105 audit findings:
+    - P0: calls bandit.update() with impact-based heuristic reward after selection
+    - P0: saves state with C-5 envelope (client_profile, model_family, quarantined)
+    - P1: applies nudge dedup from ceremony state before selection
+    - P1: calls log_selection + log_surface_event with full metadata
+    - P1: calls record_nudge_shown for dedup tracking
+    - P1: wires phase_transition_withhold_rate from config
+    - P1: routes through select_nudge_learning_bandit with decisions_out for metadata
+
+    Always fail-open — never raises.
     """
     try:
-        from trw_memory.bandit import BanditSelector
+        from trw_mcp.state._ceremony_progress_state import (
+            is_nudge_eligible,
+            record_nudge_shown,
+        )
         from trw_mcp.state.bandit_policy import (
             WithholdingPolicy,
+            _compute_heuristic_reward,
+            load_bandit_state,
             render_nudge_content,
             resolve_client_class,
+            save_bandit_state,
             select_nudge_learning_bandit,
         )
         from trw_mcp.state.memory_adapter import recall_learnings
+        from trw_mcp.state.propensity_log import log_selection
+        from trw_mcp.state.surface_tracking import log_surface_event
 
-        # Load bandit state (fail-open on missing file)
-        bandit_state_path = trw_dir / "meta" / "bandit_state.json"
-        if bandit_state_path.exists():
-            raw = bandit_state_path.read_text(encoding="utf-8")
-            bandit = BanditSelector.from_json(raw)
-        else:
-            bandit = BanditSelector()
+        # ── Resolve config metadata (best-effort, fail-open) ────────────────
+        client_class = "full_mode"
+        client_profile_name = ""
+        model_family = ""
+        phase_transition_withhold_rate = 0.10
 
-        # Quick candidate recall (max 10, high-impact only to keep it fast)
+        try:
+            from trw_mcp.models.config import TRWConfig
+            cfg = TRWConfig(trw_dir=str(trw_dir))
+            client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
+            client_class = resolve_client_class(client_profile_name)
+            model_family = getattr(cfg, "model_family", "") or ""
+            phase_transition_withhold_rate = float(
+                getattr(cfg, "phase_transition_withhold_rate", 0.10)
+            )
+        except Exception:  # justified: config may not be available, use defaults
+            pass
+
+        # ── Recall candidates ────────────────────────────────────────────────
         candidates = recall_learnings(
             trw_dir,
             query="*",
@@ -69,23 +96,29 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         if not candidates:
             return None
 
-        # Determine client class from config if available
-        client_class = "full_mode"
-        try:
-            from trw_mcp.models.config import TRWConfig
-            cfg = TRWConfig(trw_dir=str(trw_dir))
-            client_class = resolve_client_class(cfg.client_profile.name)
-        except Exception:  # justified: config may not be available, use default
-            pass
+        # ── Dedup: filter candidates already shown in current phase (P1 fix) ─
+        eligible_candidates = [
+            c for c in candidates
+            if is_nudge_eligible(state, str(c.get("id", "")), state.phase)
+        ]
+        if not eligible_candidates:
+            # Fall back to full pool if all candidates are already deduplicated
+            eligible_candidates = candidates
 
+        # ── Load bandit state with C-5 envelope (P0 fix) ────────────────────
+        bandit = load_bandit_state(trw_dir, client_class, model_family)
         policy = WithholdingPolicy(client_class=client_class)
 
+        # ── Bandit selection with decisions captured for logging ─────────────
+        decisions: list = []  # list[BanditDecision] populated by select_nudge_learning_bandit
         selected_learnings, is_transition = select_nudge_learning_bandit(
-            candidates,
+            eligible_candidates,
             bandit,
             policy,
             phase=state.phase,
             previous_phase=state.previous_phase,
+            phase_transition_withhold_rate=phase_transition_withhold_rate,
+            decisions_out=decisions,
         )
 
         if not selected_learnings:
@@ -95,29 +128,110 @@ def _try_bandit_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None
         if not content:
             return None
 
-        # Persist updated bandit state atomically (temp-file + rename pattern)
+        # ── P0: Update bandit posteriors with impact-based heuristic reward ──
+        for learning in selected_learnings:
+            arm_id = str(learning.get("id", ""))
+            if arm_id:
+                reward = _compute_heuristic_reward(learning)
+                bandit.update(arm_id, reward)
+                logger.debug(
+                    "bandit_posterior_updated",
+                    arm_id=arm_id,
+                    reward=round(reward, 4),
+                )
+
+        # ── P0: Persist updated state with C-5 envelope (atomic) ─────────────
         try:
-            bandit_state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = bandit_state_path.with_suffix(f".tmp.{os.getpid()}")
-            tmp_path.write_text(bandit.to_json(), encoding="utf-8")
-            os.rename(tmp_path, bandit_state_path)
+            save_bandit_state(trw_dir, bandit, client_class, model_family)
         except Exception:  # justified: state persistence must not block nudge
             logger.debug("bandit_state_persist_failed", exc_info=True)
 
-        # Log bandit decision via structlog (interim until PRD-CORE-103 propensity log wired)
+        # Extract first decision for propensity metadata (P1 fix)
+        first_decision = decisions[0] if decisions else None
+
+        # ── P1: Record nudge in ceremony state for dedup ──────────────────────
         for learning in selected_learnings:
-            logger.info(
-                "bandit_decision",
-                selected=str(learning.get("id", "")),
-                phase=state.phase,
-                is_transition=is_transition,
-                client_class=client_class,
-            )
+            arm_id = str(learning.get("id", ""))
+            if arm_id:
+                try:
+                    record_nudge_shown(trw_dir, arm_id, state.phase)
+                except Exception:  # justified: fail-open
+                    logger.debug("record_nudge_shown_failed", exc_info=True)
+
+        # ── P1: Surface event logging with metadata ───────────────────────────
+        for learning in selected_learnings:
+            arm_id = str(learning.get("id", ""))
+            if arm_id:
+                try:
+                    log_surface_event(
+                        trw_dir,
+                        learning_id=arm_id,
+                        surface_type="phase_transition" if is_transition else "nudge",
+                        phase=state.phase,
+                        exploration=(
+                            first_decision.exploration if first_decision else False
+                        ),
+                        bandit_score=(
+                            first_decision.selection_probability
+                            if first_decision else 0.0
+                        ),
+                        client_profile=client_profile_name,
+                        model_family=model_family,
+                    )
+                except Exception:  # justified: fail-open
+                    logger.debug("surface_event_log_failed", exc_info=True)
+
+        # ── P1: Propensity log with full BanditDecision metadata ──────────────
+        primary = selected_learnings[0]
+        primary_id = str(primary.get("id", ""))
+        if primary_id:
+            try:
+                candidate_ids = [
+                    str(c.get("id", "")) for c in candidates if c.get("id")
+                ]
+                runner_up = ""
+                runner_up_prob = 0.0
+                sel_prob = 1.0
+                exploration = False
+                if first_decision:
+                    runner_up = first_decision.runner_up_id or ""
+                    runner_up_prob = first_decision.runner_up_probability or 0.0
+                    sel_prob = first_decision.selection_probability
+                    exploration = first_decision.exploration
+
+                log_selection(
+                    trw_dir,
+                    selected=primary_id,
+                    candidate_set=candidate_ids,
+                    runner_up=runner_up,
+                    runner_up_probability=runner_up_prob,
+                    selection_probability=sel_prob,
+                    exploration=exploration,
+                    context_phase=state.phase,
+                    client_profile=client_profile_name,
+                    model_family=model_family,
+                )
+            except Exception:  # justified: fail-open
+                logger.debug("propensity_log_failed", exc_info=True)
+
+        logger.info(
+            "bandit_decision",
+            selected=primary_id,
+            phase=state.phase,
+            is_transition=is_transition,
+            client_class=client_class,
+            sel_prob=round(
+                first_decision.selection_probability if first_decision else 1.0, 4
+            ),
+            exploration=first_decision.exploration if first_decision else False,
+        )
 
         return content
 
     except Exception:  # justified: nudge content must never block tool responses
         logger.debug("bandit_nudge_content_failed", exc_info=True)
+        return None
+
         return None
 
 
