@@ -172,12 +172,30 @@ def register_learning_tools(server: FastMCP) -> None:
         High-impact learnings surface automatically via trw_session_start()
         and trw_recall(), becoming part of every future session's context.
 
-        Most learnings need only summary and optionally detail + tags.
-        All other fields are auto-detected when omitted.
+        Only record learnings that:
+        1. prevent repeated mistakes
+        2. document non-obvious gotchas or architecture decisions
+        3. capture validated patterns that change workflow
+        4. preserve hard-to-rediscover knowledge
 
-        Only record learnings that prevent repeated mistakes, document
-        non-obvious gotchas, or capture architecture decisions not obvious
-        from code.
+        Routine observations ("I read the file", "the test passed") degrade recall quality.
+
+        Required:
+            summary: One-line discovery.
+            detail: What failed, what worked, and why it matters.
+
+        Recommended:
+            tags: Recall tags.
+            impact: Impact score 0.0-1.0.
+
+        Advanced (auto-detected if omitted):
+            shard_id, source_type, source_identity, client_profile, model_id,
+            consolidated_from, assertions, type, nudge_line, expires,
+            confidence, task_type, domain, phase_origin, phase_affinity,
+            team_origin, protection_tier.
+
+        Most learnings need only summary and detail. Adding tags and impact
+        improves recall precision. All other fields are auto-detected.
 
         Args:
             summary: One-line summary of the discovery.
@@ -420,6 +438,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         max_results: int | None = None,
         compact: bool | None = None,
+        ultra_compact: bool = False,
         topic: str | None = None,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
@@ -441,6 +460,8 @@ def register_learning_tools(server: FastMCP) -> None:
             max_results: Maximum learnings to return (default 25, 0 = unlimited).
             compact: When True, return only essential fields per learning.
                 When None (default), auto-enables for wildcard queries.
+            ultra_compact: When True, return only ``{learnings, count, ceremony_hint}``
+                with each learning reduced to ``{id, summary}``.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
 
@@ -460,6 +481,7 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id=shard_id,
             max_results=max_results,
             compact=compact,
+            ultra_compact=ultra_compact,
             topic=topic,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
@@ -470,10 +492,11 @@ def register_learning_tools(server: FastMCP) -> None:
         )
 
         # PRD-CORE-095 FR15: Annotate already-injected learnings
-        _annotate_injected_learnings(
-            result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
-            trw_dir,
-        )
+        if not ultra_compact:
+            _annotate_injected_learnings(
+                result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
+                trw_dir,
+            )
 
         return result
 
@@ -484,11 +507,11 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync the auto-generated CLAUDE.md section — keeps ceremony protocol and session instructions current.
+        """Sync TRW protocol and ceremony guidance into CLAUDE.md.
 
         Renders behavioral protocol and ceremony guidance into the auto-generated
-        CLAUDE.md section. Learnings are delivered via trw_session_start() recall,
-        not embedded in CLAUDE.md (per PRD-CORE-093).
+        CLAUDE.md section. Learnings are not promoted into CLAUDE.md; use
+        trw_session_start() recall instead (per PRD-CORE-093).
 
         Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
         requested via the ``client`` parameter.

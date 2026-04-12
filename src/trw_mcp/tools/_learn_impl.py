@@ -448,6 +448,7 @@ def _save_yaml_backup(
     """Save YAML backup via analytics (dual-write for rollback safety)."""
     try:
         from trw_mcp.models.learning import LearningEntry
+        from trw_mcp.scoring._io_boundary import _backfill_yaml_path_index
 
         entry = LearningEntry(
             id=params.learning_id,
@@ -482,6 +483,9 @@ def _save_yaml_backup(
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
         update_analytics_fn(trw_dir, 1)
+        # Keep the scoring-side YAML lookup cache aware of freshly written
+        # backups so outcome correlation preserves the dual-write contract.
+        _backfill_yaml_path_index(params.learning_id, entry_path)
     except (OSError, ValueError, TypeError) as _save_exc:
         logger.warning(
             "learn_db_write_failed",

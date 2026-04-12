@@ -132,6 +132,7 @@ def execute_recall(
     shard_id: str | None = None,
     max_results: int | None = None,
     compact: bool | None = None,
+    ultra_compact: bool = False,
     topic: str | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
@@ -152,6 +153,8 @@ def execute_recall(
         shard_id: Optional shard identifier.
         max_results: Maximum learnings to return (default from config, 0 = unlimited).
         compact: When True, return only essential fields per learning.
+        ultra_compact: When True, return only learning IDs, compact summaries,
+            a result count, and a ceremony hint.
         topic: Optional topic slug from knowledge topology.
         _adapter_recall: Injected recall function.
         _adapter_update_access: Injected access tracking function.
@@ -180,7 +183,7 @@ def execute_recall(
         max_results = config.recall_max_results
     is_wildcard = query.strip() in ("*", "")
     query_tokens = [] if is_wildcard else query.lower().split()
-    use_compact = compact if compact is not None else is_wildcard
+    use_compact = ultra_compact or (compact if compact is not None else is_wildcard)
 
     # Build recall context for contextual boosting (PRD-CORE-102)
     recall_context: RecallContext | None = None
@@ -282,6 +285,19 @@ def execute_recall(
         compact=use_compact,
     )
 
+    if ultra_compact:
+        return {
+            "learnings": [
+                {
+                    "id": str(entry.get("id", "")),
+                    "summary": _truncate_ultra_compact_summary(str(entry.get("summary", ""))),
+                }
+                for entry in ranked_learnings
+            ],
+            "count": len(ranked_learnings),
+            "ceremony_hint": "Call trw_session_start() first to load prior learnings and active run state.",
+        }
+
     recall_result: RecallResultDict = {
         "query": query,
         "learnings": ranked_learnings,
@@ -341,8 +357,33 @@ def _augment_with_remote(
         if remote:
             return list(matching_learnings) + [dict(r) for r in remote]
     except Exception:  # justified: boundary, remote recall hits network/auth
-        logger.debug("remote_recall_failed", exc_info=True)
+        logger.warning(
+            "remote_recall_failed_unexpected",
+            component="recall",
+            op="augment_with_remote",
+            outcome="fail_open",
+            query_excerpt=query[:80],
+            exc_info=True,
+        )
     return list(matching_learnings)
+
+
+def _truncate_ultra_compact_summary(summary: str, token_limit: int = 32) -> str:
+    """Trim summaries to a small token budget while preserving a readable suffix."""
+    from trw_memory.retrieval.token_budget import estimate_tokens
+
+    normalized = " ".join(summary.split())
+    if estimate_tokens(normalized) <= token_limit:
+        return normalized
+
+    words = normalized.split()
+    while words:
+        candidate = " ".join(words) + "…"
+        if estimate_tokens(candidate) <= token_limit:
+            return candidate
+        words.pop()
+
+    return "…"
 
 
 def _verify_assertions(
