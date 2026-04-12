@@ -898,10 +898,14 @@ def select_nudge_learning_bandit(
 
     selected: list[dict[str, object]] = []
     selected_ids: set[str] = set()
+    retired_ids: set[str] = set()
 
     for slot in range(select_count):
-        # Get eligible IDs (not already selected)
-        eligible_ids = [cid for cid in candidate_map if cid not in selected_ids]
+        # Get eligible IDs (not already selected or withheld earlier in this burst)
+        eligible_ids = [
+            cid for cid in candidate_map
+            if cid not in selected_ids and cid not in retired_ids
+        ]
         if not eligible_ids:
             break
 
@@ -947,8 +951,13 @@ def select_nudge_learning_bandit(
                                 phase=phase,
                             )
                         )
+                    retired_ids.add(decision.selected_id)
                     # Replace withheld slot with runner-up if available
-                    if decision.runner_up_id and decision.runner_up_id not in selected_ids:
+                    if (
+                        decision.runner_up_id
+                        and decision.runner_up_id not in selected_ids
+                        and decision.runner_up_id not in retired_ids
+                    ):
                         runner_up = candidate_map.get(decision.runner_up_id)
                         if runner_up is not None:
                             selected.append(runner_up)
@@ -972,21 +981,29 @@ def select_nudge_learning_bandit(
                 learning_id=decision.selected_id,
                 runner_up=decision.runner_up_id,
             )
-            if decision.runner_up_id and decision.runner_up_id not in selected_ids:
+            retired_ids.add(decision.selected_id)
+            if (
+                decision.runner_up_id
+                and decision.runner_up_id not in selected_ids
+                and decision.runner_up_id not in retired_ids
+            ):
                 runner_up = candidate_map.get(decision.runner_up_id)
-                if runner_up is not None and not policy.should_withhold(runner_up):
-                    selected.append(runner_up)
-                    selected_ids.add(decision.runner_up_id)
-                    if decisions_out is not None:
-                        decisions_out.append(
-                            BanditDecision(
-                                selected_id=decision.runner_up_id,
-                                selection_probability=decision.runner_up_probability or 0.0,
-                                runner_up_id=decision.selected_id,
-                                runner_up_probability=decision.selection_probability,
-                                exploration=True,
+                if runner_up is not None:
+                    if policy.should_withhold(runner_up):
+                        retired_ids.add(decision.runner_up_id)
+                    else:
+                        selected.append(runner_up)
+                        selected_ids.add(decision.runner_up_id)
+                        if decisions_out is not None:
+                            decisions_out.append(
+                                BanditDecision(
+                                    selected_id=decision.runner_up_id,
+                                    selection_probability=decision.runner_up_probability or 0.0,
+                                    runner_up_id=decision.selected_id,
+                                    runner_up_probability=decision.selection_probability,
+                                    exploration=True,
+                                )
                             )
-                        )
             # If runner-up also withheld or missing, skip this slot
         else:
             selected.append(candidate)
