@@ -39,57 +39,12 @@ _GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
 # ---------------------------------------------------------------------------
 
 
+from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+from trw_mcp.models.config._client_profile import ClientProfile
 def _gemini_instructions_content() -> str:
     """Generate GEMINI.md TRW ceremony section."""
-    return f"""{_GEMINI_TRW_START_MARKER}
-<!-- TRW AUTO-GENERATED — do not edit between markers -->
-
-## TRW Framework Integration
-
-This project uses the [TRW Framework](https://trwframework.com) for structured
-AI-assisted development. TRW gives your Gemini CLI sessions persistent engineering
-memory — patterns, gotchas, and project knowledge accumulate across sessions.
-
-### Session Protocol
-
-| Tool | When | Why |
-|------|------|-----|
-| `trw_session_start()` | First action | Loads prior learnings |
-| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
-| `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action | Persists session work |
-
-### MCP Tools
-
-All TRW tools are available via MCP as `mcp_trw_<tool_name>`.
-Call `mcp_trw_trw_session_start` first in every session.
-
-Key tools: `trw_session_start`, `trw_learn`, `trw_checkpoint`, `trw_deliver`,
-`trw_init`, `trw_status`, `trw_recall`, `trw_build_check`, `trw_review`,
-`trw_prd_create`, `trw_prd_validate`.
-
-### Subagents
-
-TRW provides specialized agents in `.gemini/agents/`:
-- `@trw-explorer` — Fast codebase search and analysis (read-only)
-- `@trw-implementer` — TDD implementation with full tool access
-- `@trw-reviewer` — Code review specialist (read-only)
-- `@trw-lead` — Orchestration and delegation
-
-### Memory Routing
-
-- Code patterns, gotchas, build tricks → `mcp_trw_trw_learn()`
-- User preferences → Gemini's built-in `/memory add`
-
-### Conventions
-
-- Run tests after each change — fix failures before moving on
-- Use `trw_learn()` to record discoveries, patterns, and gotchas
-- Use `trw_checkpoint()` after working milestones
-- Commit messages: `feat(scope): msg` (Conventional Commits)
-
-{_GEMINI_TRW_END_MARKER}
-"""
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
+    return renderer.render_gemini_instructions()
 
 
 # ---------------------------------------------------------------------------
