@@ -7,7 +7,10 @@ DimensionScore / SectionScore values without making pass/fail decisions.
 
 from __future__ import annotations
 
+import functools
+import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
@@ -222,6 +225,57 @@ _REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
+@functools.lru_cache(maxsize=1)
+def get_project_files(project_root: Path) -> frozenset[str]:
+    """Cache the set of all repository files relative to project_root to make grounding checks fast."""
+    files = set()
+    for root, _, filenames in os.walk(project_root):
+        if ".git" in root or "node_modules" in root or ".venv" in root:
+            continue
+        rel_root = Path(root).relative_to(project_root)
+        for name in filenames:
+            files.add(str(rel_root / name) if str(rel_root) != "." else name)
+    return frozenset(files)
+
+
+def compute_grounding_penalty(content: str, project_root: Path | None) -> tuple[float, list[str]]:
+    """Compute multiplicative penalty for hallucinated file paths (PRD-QUAL-063).
+
+    Checks all backtick-wrapped paths against the cached project file listing.
+    Paths containing 'new: ' or ending with '(new)' are exempt.
+
+    Returns:
+        tuple[penalty_multiplier, list[hallucinated_paths]]
+    """
+    if not project_root:
+        return 1.0, []
+
+    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE)
+    test_refs = _collect_reference_matches(content, _TEST_REF_RE)
+    all_refs = impl_refs | test_refs
+
+    hallucinated: list[str] = []
+    try:
+        project_files = get_project_files(project_root)
+        for ref in all_refs:
+            # Strip markdown/prose exemptions
+            clean_ref = ref.strip("` ").split()[0]  # Take first token if spaces exist
+            clean_ref = _normalize_reference_token(clean_ref)
+            
+            # Exempt 'new:' or '(new)'
+            # We match raw 'ref' for text exemptions but clean_ref for existence.
+            if "(new)" in ref.lower() or "new:" in ref.lower() or "new " in ref.lower():
+                continue
+
+            if clean_ref not in project_files:
+                hallucinated.append(clean_ref)
+
+        penalty = 0.9 ** len(hallucinated)
+        return penalty, sorted(hallucinated)
+    except Exception:
+        # Fail open if filesystem access fails
+        return 1.0, []
 
 def _get_section_weights(config: TRWConfig) -> dict[str, float]:
     """Build per-section weight map from TRWConfig (PRD-CORE-080-FR04).
@@ -770,6 +824,7 @@ def score_traceability_v2(
     frontmatter: dict[str, object],
     content: str,
     config: TRWConfig | None = None,
+    project_root: Path | None = None,
 ) -> DimensionScore:
     """Score the Traceability dimension (20 points max).
 
@@ -779,6 +834,7 @@ def score_traceability_v2(
         frontmatter: Parsed YAML frontmatter.
         content: Full PRD markdown content.
         config: Optional config for weight override.
+        project_root: Optional absolute path to project root for grounding checks.
 
     Returns:
         DimensionScore for traceability.
@@ -917,8 +973,18 @@ def score_traceability_v2(
     coverage_bonus = (file_path_cov * 0.5 + assertion_cov * 0.5) * 0.15 * max_score
     score = min(score + coverage_bonus, max_score)
 
+    # PRD-QUAL-063: Filesystem Grounding Penalty
+    if project_root is not None:
+        penalty_mult, hallucinated = compute_grounding_penalty(content, project_root)
+        if hallucinated:
+            score *= penalty_mult
+            details["grounding_penalty_mult"] = round(penalty_mult, 4)
+            details["hallucinated_paths"] = len(hallucinated)
+
     # Suggestions when coverage is low
     suggestions: list[str] = []
+    if project_root is not None and hallucinated:
+        suggestions.append(f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding.")
     if file_path_cov < 0.7:
         suggestions.append(
             "Add implementation and test file paths to FR acceptance "
@@ -944,6 +1010,7 @@ def score_implementation_readiness(
     frontmatter: dict[str, object],
     content: str,
     config: TRWConfig | None = None,
+    project_root: Path | None = None,
 ) -> DimensionScore:
     """Score execution-readiness signals distinct from raw prose density.
 
@@ -1094,6 +1161,19 @@ def score_implementation_readiness(
         )
 
     score = composite * max_score
+    
+    # PRD-QUAL-063: Filesystem Grounding Penalty
+    if project_root is not None:
+        penalty_mult, hallucinated = compute_grounding_penalty(content, project_root)
+        if hallucinated:
+            score *= penalty_mult
+            details["grounding_penalty_mult"] = round(penalty_mult, 4)
+            details["hallucinated_paths"] = len(hallucinated)
+            
+            suggestions: list[str] = details.get("suggestions", []) # type: ignore
+            suggestions.append(f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding.")
+            details["suggestions"] = suggestions
+            
     return DimensionScore(
         name="implementation_readiness",
         score=round(min(score, max_score), 2),

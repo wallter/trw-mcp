@@ -169,6 +169,9 @@ def validate_prd_quality_v2(
     _config = get_risk_scaled_config(_config, effective_risk)
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
+    from pathlib import Path as _Path
+    _proj_root_path = _Path(project_root) if project_root else None
+
     # Score active dimensions -- density, structure, implementation readiness,
     # and traceability.
     # Stub dimensions (smell_score, readability, ears_coverage) are reserved for future
@@ -188,12 +191,12 @@ def validate_prd_quality_v2(
         ),
         (
             "implementation_readiness",
-            lambda: score_implementation_readiness(frontmatter, content, _config),
+            lambda: score_implementation_readiness(frontmatter, content, _config, project_root=_proj_root_path),
             _config.validation_implementation_readiness_weight,
         ),
         (
             "traceability",
-            lambda: score_traceability_v2(frontmatter, content, _config),
+            lambda: score_traceability_v2(frontmatter, content, _config, project_root=_proj_root_path),
             _config.validation_traceability_weight,
         ),
     ]
