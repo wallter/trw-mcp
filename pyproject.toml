@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.41.1"
+version = "0.40.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -155,7 +155,7 @@ unfixable = ["F841"]
 "src/trw_mcp/tools/_recall_impl.py" = ["ANN401"]
 # register_learning_tools has 16 inner tool registrations — complexity is structural
 "src/trw_mcp/tools/learning.py" = ["C901"]
-# correlate_recalls/_get_last_active_run are algorithmic — complexity is inherent
+# correlate_recalls and _get_last_active_run are algorithmic — complexity is inherent
 "src/trw_mcp/scoring/_correlation.py" = ["C901"]
 # rank_by_utility applies 10+ scoring boosts in sequence — structural complexity
 "src/trw_mcp/scoring/_recall.py" = ["C901"]

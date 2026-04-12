@@ -113,7 +113,7 @@ def _check_duplicate_via_backend(
 
         return DedupResult("store", None, best_similarity)
 
-    except Exception:  # justified: fail-open, backend dedup availability falls back to YAML heuristics
+    except Exception:
         logger.debug("dedup_backend_unavailable_fallback_to_yaml", exc_info=True)
         return None
 
@@ -316,22 +316,14 @@ def merge_entries(
     raw_existing_assertions = existing.get("assertions") or []
     raw_new_assertions = new_entry_data.get("assertions") or []
     if raw_new_assertions and isinstance(raw_new_assertions, list):
-        existing_assertions = (
-            list(raw_existing_assertions) if isinstance(raw_existing_assertions, list) else []
-        )
+        existing_assertions = list(raw_existing_assertions) if isinstance(raw_existing_assertions, list) else []
         seen_keys: set[tuple[str, str, str]] = set()
         for a in existing_assertions:
             if isinstance(a, dict):
-                seen_keys.add(
-                    (str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", "")))
-                )
+                seen_keys.add((str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", ""))))
         for a in raw_new_assertions:
             if isinstance(a, dict):
-                key = (
-                    str(a.get("type", "")),
-                    str(a.get("pattern", "")),
-                    str(a.get("target", "")),
-                )
+                key = (str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", "")))
                 if key not in seen_keys:
                     existing_assertions.append(a)
                     seen_keys.add(key)

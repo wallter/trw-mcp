@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re as _re
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import FastMCP
@@ -165,33 +166,42 @@ def register_learning_tools(server: FastMCP) -> None:
         team_origin: str = "",
         protection_tier: str = "normal",
     ) -> LearnResultDict:
-        """Save a discovery so future agents avoid the same mistake.
+        """Save a discovery so no future agent repeats your mistakes — this is how institutional knowledge grows.
 
-        When to call: the moment you identify a root cause, before writing the fix,
-        or right after an approach works.
+        Writes a learning entry to the knowledge store with utility scoring.
+        High-impact learnings surface automatically via trw_session_start()
+        and trw_recall(), becoming part of every future session's context.
 
-        Only record learnings that: (1) prevent repeated mistakes,
-        (2) document non-obvious gotchas or architecture decisions,
-        (3) capture validated patterns that change workflow, or
-        (4) preserve hard-to-rediscover knowledge.
-        Routine observations ("I read the file", "the test passed") degrade recall quality.
+        Most learnings need only summary and optionally detail + tags.
+        All other fields are auto-detected when omitted.
 
-        Most learnings need only summary and detail. Adding tags and impact improves recall precision.
-        All other fields are auto-detected.
+        Only record learnings that prevent repeated mistakes, document
+        non-obvious gotchas, or capture architecture decisions not obvious
+        from code.
 
         Args:
-            Required:
-                summary: One-line discovery.
-                detail: What failed, what worked, and why it matters.
-            Recommended:
-                tags: Recall tags.
-                impact: Impact score 0.0-1.0.
-                evidence: Supporting files or errors.
-            Advanced (auto-detected if omitted):
-                type, nudge_line, expires, confidence, task_type, domain,
-                phase_origin, phase_affinity, team_origin, protection_tier,
-                source_type, source_identity, client_profile, model_id,
-                shard_id, consolidated_from, assertions.
+            summary: One-line summary of the discovery.
+            detail: Full context including what you tried, what failed, and what worked.
+            tags: Categorization tags (e.g., ["testing", "gotcha"]) for filtered recall.
+            evidence: Supporting evidence (file paths, error messages) that validates the learning.
+            impact: Impact score 0.0-1.0 — learnings at 0.7+ surface prominently in recall and may be promoted to project instructions.
+            shard_id: Optional shard identifier for sub-agent attribution.
+            source_type: Learning provenance — "human", "agent", "tool", or "consolidated".
+            source_identity: Name of source (e.g., "Tyler", "claude-opus-4-6").
+            client_profile: IDE/client override (e.g., "claude-code"). Auto-detected when None.
+            model_id: Model override (e.g., "claude-opus-4-6"). Auto-detected when None.
+            consolidated_from: IDs of superseded entries to auto-mark as obsolete (PRD-FIX-052-FR04).
+            assertions: Machine-verifiable assertions (PRD-CORE-086). Each dict has type, pattern, target.
+            type: Learning type — "incident", "pattern", "convention", "hypothesis", or "workaround".
+            nudge_line: Compact text for ceremony nudge display (max 80 chars, auto-truncated).
+            expires: Expiration date/condition (ISO 8601 or free text like "when v2 ships").
+            confidence: Validation confidence — "unverified", "low", "medium", "high", or "verified".
+            task_type: Task type identifier (e.g., "bug-fix", "feature", "refactor").
+            domain: Domain tags (e.g., ["testing", "security"]) for contextual recall boosting.
+            phase_origin: Framework phase when created (auto-detected when empty).
+            phase_affinity: Phases where most relevant (e.g., ["implement", "validate"]).
+            team_origin: Team identifier for team-aware recall boosting.
+            protection_tier: Protection level — "critical", "high", "normal", "low".
 
         See Also: trw_recall, trw_learn_update
         """
@@ -305,20 +315,16 @@ def register_learning_tools(server: FastMCP) -> None:
             return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
 
         # Validate and store assertions via backend (PRD-CORE-086 FR12)
-        serialized_assertions: list[dict[str, object]] | None = None
         if assertions is not None:
-            try:
-                from trw_memory.models.memory import Assertion
+            from trw_memory.models.memory import Assertion
 
-                validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
-                serialized_assertions = [a.model_dump() for a in validated]
+            validated: list[Assertion] = [Assertion.model_validate(a) for a in assertions]
+            try:
                 backend = get_backend(trw_dir)
                 existing = backend.get(learning_id)
                 if existing is not None:
                     existing.assertions = validated
-                    backend.update(learning_id, assertions=serialized_assertions)
-            except (ValueError, TypeError) as exc:
-                return {"error": f"invalid assertion: {exc}", "status": "invalid"}
+                    backend.update(learning_id, assertions=[a.model_dump() for a in validated])
             except Exception:  # justified: fail-open, assertion persistence must not block learn_update
                 logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
 
@@ -397,8 +403,6 @@ def register_learning_tools(server: FastMCP) -> None:
                         data["team_origin"] = team_origin
                     if protection_tier is not None:
                         data["protection_tier"] = protection_tier
-                    if assertions is not None and serialized_assertions is not None:
-                        data["assertions"] = serialized_assertions
                     writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
@@ -416,9 +420,7 @@ def register_learning_tools(server: FastMCP) -> None:
         shard_id: str | None = None,
         max_results: int | None = None,
         compact: bool | None = None,
-        ultra_compact: bool = False,
         topic: str | None = None,
-        token_budget: int | None = None,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
 
@@ -439,20 +441,14 @@ def register_learning_tools(server: FastMCP) -> None:
             max_results: Maximum learnings to return (default 25, 0 = unlimited).
             compact: When True, return only essential fields per learning.
                 When None (default), auto-enables for wildcard queries.
-            ultra_compact: When True, return only ``id`` and ``summary`` per learning,
-                plus top-level ``count`` and ``ceremony_hint`` fields for constrained contexts.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
-            token_budget: Optional maximum token budget for recall results.
-                When provided, results are truncated to fit within the budget.
-                Must be a positive integer. None means no budget constraint.
 
         See Also: trw_learn, trw_knowledge_sync
         """
         from trw_mcp.tools._recall_impl import execute_recall
 
         trw_dir = resolve_trw_dir()
-        injected_ids = _read_injected_ids(trw_dir)
         # Resolve from this module's namespace so test patches work
         result = execute_recall(
             query=query,
@@ -464,10 +460,7 @@ def register_learning_tools(server: FastMCP) -> None:
             shard_id=shard_id,
             max_results=max_results,
             compact=compact,
-            ultra_compact=ultra_compact,
             topic=topic,
-            token_budget=token_budget,
-            deprioritized_ids=injected_ids,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,
@@ -476,13 +469,11 @@ def register_learning_tools(server: FastMCP) -> None:
             _collect_context=collect_context,
         )
 
-        # PRD-CORE-095 FR15: Annotate already-injected learnings.
-        # Preserve the strict FR09 ultra-compact payload contract.
-        if not ultra_compact:
-            _annotate_injected_learnings(
-                result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
-                trw_dir,
-            )
+        # PRD-CORE-095 FR15: Annotate already-injected learnings
+        _annotate_injected_learnings(
+            result,  # type: ignore[arg-type]  # RecallResultDict is a dict subclass
+            trw_dir,
+        )
 
         return result
 
@@ -493,10 +484,11 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync TRW protocol and ceremony guidance into CLAUDE.md -- the next session starts with your operational framework built in.
+        """Sync the auto-generated CLAUDE.md section — keeps ceremony protocol and session instructions current.
 
-        Renders behavioral protocol, ceremony guidance, and memory routing into the auto-generated CLAUDE.md section.
-        Learnings are not promoted into CLAUDE.md (per PRD-CORE-093); they are delivered via trw_session_start() recall instead.
+        Renders behavioral protocol and ceremony guidance into the auto-generated
+        CLAUDE.md section. Learnings are delivered via trw_session_start() recall,
+        not embedded in CLAUDE.md (per PRD-CORE-093).
 
         Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
         requested via the ``client`` parameter.
@@ -513,4 +505,4 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
+        return cast("ClaudeMdSyncResultDict", execute_claude_md_sync(scope, target_dir, config, reader, llm, client))

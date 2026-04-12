@@ -8,6 +8,7 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
+import json as _json
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,11 +21,13 @@ from trw_mcp.models.run import EventType
 from trw_mcp.scoring._io_boundary import (
     _batch_sync_to_sqlite,
     _PendingUpdate,
-    _read_recall_tracking_jsonl,
     _write_pending_entries,
 )
 from trw_mcp.scoring._io_boundary import (
     _default_lookup_entry as _default_lookup_entry,
+)
+from trw_mcp.scoring._io_boundary import (
+    _find_session_start_ts as _find_session_start_ts,
 )
 from trw_mcp.scoring._io_boundary import (
     _sync_to_sqlite as _sync_to_sqlite,
@@ -130,79 +133,6 @@ EVENT_ALIASES: dict[str, str | float | None] = {
 }
 
 
-def _find_session_start_ts(trw_dir: Path) -> datetime | None:
-    """Find the timestamp of the most recent session-start event.
-
-    Scans all events.jsonl files under runs_root/**/ for the most recent
-    ``run_init`` or ``session_start`` event. Uses glob to handle all
-    directory layouts (PROPER, FLAT, OLD_NESTED).
-
-    PRD-FIX-061-FR05: Reimplemented without state.persistence import.
-    PRD-FIX-070-FR01: glob-based discovery replaces iter_run_dirs.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Timestamp of the most recent session-start event, or None.
-    """
-    import json
-
-    project_root = trw_dir.parent
-    cfg: TRWConfig = get_config()
-    runs_root = project_root / cfg.runs_root
-
-    if not runs_root.exists():
-        return None
-
-    # Glob across all directory layouts (PROPER, FLAT, OLD_NESTED)
-    events_files: list[tuple[float, Path]] = []
-    for events_path in runs_root.glob("**/meta/events.jsonl"):
-        try:
-            mtime = events_path.stat().st_mtime
-            events_files.append((mtime, events_path))
-        except OSError:  # noqa: PERF203 — fail-open per-file
-            continue
-
-    events_files.sort(reverse=True)  # Most recent first
-
-    for _mtime, events_path in events_files[:5]:
-        records: list[dict[str, object]] = []
-        try:
-            with events_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        record = json.loads(stripped)
-                        if isinstance(record, dict):
-                            records.append(record)
-                    except json.JSONDecodeError:
-                        continue
-        except OSError:
-            continue
-        for record in reversed(records):
-            if str(record.get("event", "")) in ("run_init", "session_start"):
-                ts_str = str(record.get("ts", ""))
-                if ts_str:
-                    try:
-                        result = _ensure_utc(
-                            datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                        )
-                        logger.debug(
-                            "session_scope_resolved",
-                            source=str(events_path),
-                            ts=str(result),
-                        )
-                        return result
-                    except ValueError:
-                        continue
-
-    logger.debug("session_scope_fallback_to_window")
-    return None
-
-
 def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
     """Return learning IDs only for actual recall receipts.
 
@@ -222,6 +152,16 @@ def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
         return []
 
     return [lid_single]
+
+
+_CONSECUTIVE_OLD_EARLY_EXIT = 50
+"""Number of consecutive out-of-window records before ``correlate_recalls``
+stops scanning (PRD-FIX-070-FR06).  Allows for minor non-chronological
+records while still providing early exit on chronological files."""
+
+
+# Backward-compat alias (tests may patch this name directly)
+_lookup_learning_entry = _default_lookup_entry
 
 
 def correlate_recalls(
@@ -270,15 +210,33 @@ def correlate_recalls(
     total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
     results: list[tuple[str, float]] = []
 
-    # PRD-FIX-061-FR05: file I/O delegated to _io_boundary
-    records = _read_recall_tracking_jsonl(receipt_path)
-    for record in records:
-        # Support both receipt formats:
-        # - Legacy receipts: {"ts": ISO string, "matched_ids": [...]}
-        # - recall_tracking: {"timestamp": unix float, "learning_id": str}
+    # Read raw lines and iterate in reverse for early-exit optimization
+    # (PRD-FIX-070-FR02/FR06). Since recall_tracking.jsonl is append-only
+    # and chronological, once we hit a record older than the cutoff, ALL
+    # remaining records are also older -- we can break.
+    try:
+        raw_lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        logger.debug("recall_tracking_read_failed", exc_info=True)
+        return []
+
+    records_scanned = 0
+    records_in_window = 0
+    consecutive_old = 0
+
+    for line in reversed(raw_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        records_scanned += 1
+        try:
+            record: dict[str, object] = _json.loads(stripped)
+        except (ValueError, _json.JSONDecodeError):
+            continue
+
+        # Extract timestamp (supports both formats)
         ts_str = str(record.get("ts", ""))
         if not ts_str:
-            # Try recall_tracking format: unix timestamp float
             ts_raw = record.get("timestamp")
             if ts_raw is not None:
                 try:
@@ -292,18 +250,26 @@ def correlate_recalls(
                 continue
         else:
             try:
-                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
+                receipt_ts = _ensure_utc(
+                    datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                )
             except ValueError:
                 continue
 
-        # Skip receipts outside the correlation scope
+        # Early exit: after enough consecutive old records, assume all
+        # remaining are also old (file is mostly chronological).
+        # PRD-FIX-070-FR06
         if receipt_ts < cutoff_ts:
+            consecutive_old += 1
+            if consecutive_old >= _CONSECUTIVE_OLD_EARLY_EXIT:
+                break
             continue
+        consecutive_old = 0
+
         elapsed_secs = (now - receipt_ts).total_seconds()
         if elapsed_secs < 0:
             continue
 
-        # Recency discount: 1.0 at t=0, floor at t=window_edge
         discount = max(
             cfg_corr.scoring_recency_discount_floor,
             1.0 - elapsed_secs / total_window_secs,
@@ -312,6 +278,15 @@ def correlate_recalls(
         recalled_ids = _extract_recalled_ids(record)
         if recalled_ids:
             results.extend((lid, discount) for lid in recalled_ids)
+            records_in_window += 1
+
+    logger.debug(
+        "correlate_recalls_stats",
+        total_lines=len(raw_lines),
+        records_scanned=records_scanned,
+        records_in_window=records_in_window,
+        unique_ids=len({lid for lid, _ in results}),
+    )
 
     return results
 
@@ -325,11 +300,6 @@ def _deduplicate_recalls(
         if lid not in best_discount or discount > best_discount[lid]:
             best_discount[lid] = discount
     return best_discount
-
-
-# _default_lookup_entry re-exported from _io_boundary (PRD-FIX-061-FR05).
-# Backward-compat alias (tests may patch this name directly)
-_lookup_learning_entry = _default_lookup_entry
 
 
 def _update_entry_q_values(
@@ -382,10 +352,6 @@ def _update_entry_history(
     return data
 
 
-# _sync_to_sqlite re-exported from _io_boundary (PRD-FIX-061-FR05).
-# _PendingUpdate type alias re-exported from _io_boundary for backward compat.
-
-
 def process_outcome(
     trw_dir: Path,
     reward: float,
@@ -431,19 +397,6 @@ def process_outcome(
     best_discount = _deduplicate_recalls(correlated)
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
 
-    # Cap the number of entries to process.  With 1,200+ YAML files and a
-    # corrupted SQLite, each lookup is O(N).  526 lookups x 1,217 files
-    # caused 13-minute build_check calls.  Cap at 50 (highest-discount first).
-    _MAX_CORRELATIONS = 50
-    if len(best_discount) > _MAX_CORRELATIONS:
-        top_items = sorted(best_discount.items(), key=lambda x: x[1], reverse=True)[:_MAX_CORRELATIONS]
-        best_discount = dict(top_items)
-        logger.info(
-            "outcome_correlation_capped",
-            original=len(correlated),
-            capped=_MAX_CORRELATIONS,
-        )
-
     # Phase 1: Compute all Q-values (no I/O writes) -- PRD-FIX-070-FR04
     pending_updates: list[_PendingUpdate] = []
     for lid, discount in best_discount.items():
@@ -460,10 +413,10 @@ def process_outcome(
             history = []
         pending_updates.append((lid, entry_path, data, q_new, q_obs, history))
 
-    # Phase 2: Batch YAML writes -- PRD-FIX-070-FR04 / PRD-FIX-061-FR05
+    # Phase 2: Batch YAML writes (PRD-FIX-070-FR04)
     updated_ids = _write_pending_entries(pending_updates)
 
-    # Phase 3: Batch SQLite syncs -- PRD-FIX-070-FR03
+    # Phase 3: Batch SQLite syncs (PRD-FIX-070-FR03)
     _batch_sync_to_sqlite(pending_updates, trw_dir)
 
     if updated_ids:

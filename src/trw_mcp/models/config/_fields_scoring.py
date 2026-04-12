@@ -37,7 +37,7 @@ class _ScoringFields:
 
     # -- Outcome correlation --
 
-    learning_outcome_correlation_window_minutes: int = 480
+    learning_outcome_correlation_window_minutes: int = 60
     learning_outcome_correlation_scope: str = "session"
     learning_outcome_history_cap: int = 20
     recall_utility_lambda: float = 0.3

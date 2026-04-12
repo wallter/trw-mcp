@@ -4,7 +4,7 @@ Covers:
 - enforce_tier_distribution: forced distribution cap enforcement
 - apply_time_decay: Ebbinghaus decay for impact scores
 - apply_impact_decay: batch impact decay for stale learnings (FR03)
-- Config defaults: outcome_window = 480, impact_high_threshold_pct, impact_decay_half_life_days
+- Config defaults: outcome_window = 60 (PRD-FIX-070-FR05), impact_high_threshold_pct, impact_decay_half_life_days
 - Integration: wiring into trw_learn (demotion side effects)
 - Integration: decay applied during recall ranking via _entry_utility
 """
@@ -508,13 +508,13 @@ class TestRecallRankingDecayIntegration:
 
 
 class TestOutcomeWindowDefault:
-    """Verify the outcome correlation window default is 480 minutes (FR02)."""
+    """Verify the outcome correlation window default (PRD-FIX-070-FR05: 480→60)."""
 
-    def test_outcome_window_default_is_480(self) -> None:
+    def test_outcome_window_default_is_60(self) -> None:
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig()
-        assert cfg.learning_outcome_correlation_window_minutes == 480
+        assert cfg.learning_outcome_correlation_window_minutes == 60
 
 
 # ---------------------------------------------------------------------------

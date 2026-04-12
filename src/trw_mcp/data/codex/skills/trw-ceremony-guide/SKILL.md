@@ -75,8 +75,8 @@ If you catch yourself thinking any of these, stop and follow the process:
 |---------|---------------|-------------|
 | "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint, context compacts, you re-implement from scratch |
 | "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings |
-| "I already know the codebase" | Prior learnings contain gotchas for exactly this area | Sprint 26 had 6 P0/P1 defects from agents who skipped recall |
-| "I can implement directly, delegation is overhead" | Subagent implementation has 3x fewer P0 defects | Your focused context is valuable -- subagents get deeper context per task |
+| "I already know the codebase" | Prior learnings contain gotchas for exactly this area | Agents who skip recall consistently re-discover known gotchas, spending avoidable time on solved problems |
+| "I can implement directly, delegation is overhead" | Focused subagents produce fewer defects due to deeper focus | Your focused context is valuable -- subagents get deeper context per task |
 | "The build check can wait until the end" | Late build failures cascade into multi-file rework | 2x rework when caught at DELIVER vs catching at VALIDATE |
 
 ### Rigid Tools (never skip, unconditional)

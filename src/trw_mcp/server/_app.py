@@ -20,14 +20,15 @@ from trw_mcp.models.config import TRWConfig
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_INSTRUCTIONS = (
-    "TRW gives you engineering memory that compounds across sessions. "
-    "Agents that record discoveries solve 30% more problems. "
-    "Workflow: understand the task \u2192 plan your approach \u2192 implement \u2192 verify. "
-    "Three essential calls: "
-    "trw_session_start() loads prior learnings so you don't repeat solved problems. "
-    "trw_learn() records what you discovered \u2014 the root cause, the fix, the gotcha. "
-    "trw_deliver() persists everything for future sessions. "
-    "Without trw_deliver, your learnings die with your context window."
+    "TRW gives you engineering memory that persists across sessions "
+    "\u2014 patterns, gotchas, and project knowledge that accumulate over time. "
+    "Call trw_session_start() first to load your prior learnings and any active run state. "
+    "Pass a query for focused recall: trw_session_start(query='auth patterns'). "
+    "Read .trw/frameworks/FRAMEWORK.md \u2014 it defines the 6-phase execution model, "
+    "exit criteria, formations, and quality gates that your tools implement. "
+    "Re-read it after context compaction. "
+    "Workflow: trw_session_start \u2192 work \u2192 trw_learn (discoveries) \u2192 trw_deliver. "
+    "Without trw_deliver, your session's progress isn't checkpointed and maintenance tasks don't run — future sessions start with less context."
 )
 
 
@@ -131,27 +132,6 @@ def _build_middleware() -> list[object]:
     return middleware
 
 
-def _resolve_instructions(instructions: str | None) -> str:
-    """Resolve server instructions, respecting the MCP instructions gate.
-
-    PRD-CORE-125-FR04: When ``effective_mcp_instructions_enabled`` is False,
-    return an empty string so no instructions are injected into the MCP server
-    response.  Fail-open: if config loading fails, use the default instructions.
-    """
-    if instructions is not None:
-        return instructions
-    try:
-        from trw_mcp.models.config import get_config
-
-        config = get_config()
-        if not config.effective_mcp_instructions_enabled:
-            logger.debug("surface_gated", surface="mcp_instructions")
-            return ""
-    except Exception:  # justified: fail-open, config failure uses default instructions
-        logger.debug("mcp_instructions_gate_unavailable", exc_info=True)
-    return _load_server_instructions()
-
-
 def create_app(
     *,
     instructions: str | None = None,
@@ -168,7 +148,7 @@ def create_app(
     """
     return FastMCP(
         "trw",
-        instructions=_resolve_instructions(instructions),
+        instructions=instructions or _load_server_instructions(),
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
     )
 
