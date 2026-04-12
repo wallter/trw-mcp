@@ -21,6 +21,7 @@ import pytest
 _SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 _STATE_DIR = _SRC_ROOT / "state"
 _SCORING_DIR = _SRC_ROOT / "scoring"
+_TOOLS_DIR = _SRC_ROOT / "tools"
 
 # Pattern matches "from trw_mcp.tools" or "import trw_mcp.tools" but not
 # inside comments or string literals (simple heuristic: line must not start
@@ -134,6 +135,24 @@ def test_scoring_correlation_module_under_500_lines() -> None:
     assert line_count < 500, f"_correlation.py is {line_count} lines, should be < 500"
 
 
+@pytest.mark.unit
+def test_deferred_steps_learning_module_under_500_lines() -> None:
+    """_deferred_steps_learning.py stays below the review threshold after FIX-061 refactor."""
+    learning_src = _TOOLS_DIR / "_deferred_steps_learning.py"
+    line_count = len(learning_src.read_text(encoding="utf-8").splitlines())
+    assert line_count < 500, f"_deferred_steps_learning.py is {line_count} lines, should be < 500"
+
+
+@pytest.mark.unit
+def test_rework_metrics_helper_lives_outside_deferred_steps_learning() -> None:
+    """Audit rework metric parsing stays extracted for module-size hygiene."""
+    from trw_mcp.tools._deferred_steps_learning import _step_collect_rework_metrics
+
+    assert _step_collect_rework_metrics.__module__ == (
+        "trw_mcp.tools._deferred_learning_rework"
+    )
+
+
 # --- FR05-T06: correlation accepts injected finder (no hard-coded state imports) ---
 
 
@@ -211,6 +230,6 @@ def test_scoring_no_direct_state_io_imports() -> None:
                 violations.append(f"{module_name}: contains '{pattern}'")
 
     assert not violations, (
-        f"scoring/ I/O layer violations (FR03/FR05/FR06):\n"
+        "scoring/ I/O layer violations (FR03/FR05/FR06):\n"
         + "\n".join(violations)
     )
