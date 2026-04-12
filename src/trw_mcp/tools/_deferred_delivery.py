@@ -126,7 +126,25 @@ def _persist_deferred_results(
                     "source": "consolidation",
                     "audit_pattern_promotions": promotions,
                     "audit_pattern_promotion_threshold": consolidation.get("audit_pattern_promotion_threshold"),
+                    # PRD-QUAL-056-FR10: make the current production wiring
+                    # explicit. CORE-093 removed automatic CLAUDE.md learning
+                    # promotion, and there is no shipped trw_meta_tune() tool.
+                    # These candidates are currently persisted as delivery
+                    # metadata for later reconciliation/follow-up, not auto-
+                    # promoted into another surface.
+                    "promotion_path": "metadata_only",
+                    "delivery_surface": "run.yaml",
+                    "claude_md_sync_integration": "not_applicable_prd_core_093",
+                    "meta_tune_integration": "tool_unavailable",
                 }
+                logger.info(
+                    "audit_pattern_promotions_persisted",
+                    count=len(promotions),
+                    promotion_path="metadata_only",
+                    delivery_surface="run.yaml",
+                    claude_md_sync_integration="not_applicable_prd_core_093",
+                    meta_tune_integration="tool_unavailable",
+                )
 
         writer.write_yaml(run_yaml_path, run_data)
         logger.info("deferred_results_persisted", path=str(run_yaml_path))

@@ -25,6 +25,7 @@ _safe_float = safe_float
 _safe_int = safe_int
 
 __all__ = [
+    "_AUDIT_FINDING_TAG",
     "_ERROR_KEYWORDS",
     "_NOISE_PREFIXES",
     "_SLUG_MAX_LEN",
@@ -42,6 +43,7 @@ __all__ = [
     "is_error_event",
     "is_noise_summary",
     "is_success_event",
+    "normalize_audit_learning_metadata",
 ]
 
 
@@ -138,6 +140,34 @@ _TOPIC_KEYWORD_MAP: dict[str, str] = {
 }
 
 _TOPIC_TAG_MAX = 3
+
+_AUDIT_FINDING_TAG = "audit-finding"
+_AUDIT_FINDING_PHASE_AFFINITY: dict[str, list[str]] = {
+    "spec_gap": ["plan", "implement"],
+    "impl_gap": ["implement"],
+    "test_gap": ["implement", "validate"],
+    "integration_gap": ["implement"],
+    "traceability_gap": ["implement", "deliver"],
+}
+_AUDIT_FINDING_DOMAIN_HINTS: dict[str, list[str]] = {
+    "spec_gap": ["planning"],
+    "impl_gap": ["implementation"],
+    "test_gap": ["testing"],
+    "integration_gap": ["integration"],
+    "traceability_gap": ["traceability"],
+}
+_PRD_CATEGORY_DOMAIN_HINTS: dict[str, list[str]] = {
+    "API": ["api"],
+    "CORE": ["product"],
+    "DATA": ["data"],
+    "FIX": ["maintenance", "quality"],
+    "INFRA": ["infrastructure", "operations"],
+    "OPS": ["operations"],
+    "PERF": ["performance"],
+    "QUAL": ["testing", "quality"],
+    "SEC": ["security"],
+    "UX": ["ux"],
+}
 
 # Auto-generated noise prefixes that should never be persisted as learnings.
 # These are produced by ceremony/telemetry tools and add no institutional value.
@@ -242,6 +272,68 @@ def infer_topic_tags(
         return list(inferred.values())
     except Exception:  # justified: fail-open, tag inference is best-effort enrichment
         return []
+
+
+def normalize_audit_learning_metadata(
+    tags: list[str] | None,
+    *,
+    type: str = "pattern",
+    confidence: str = "unverified",
+    domain: list[str] | None = None,
+    phase_affinity: list[str] | None = None,
+) -> dict[str, object]:
+    """Fill missing audit-finding metadata required by PRD-QUAL-056-FR06.
+
+    Audit-originated learnings are expected to carry richer typed metadata than
+    ordinary ad-hoc learnings. When callers tag an entry with ``audit-finding``
+    but omit those fields, infer sensible defaults from the PRD tag and finding
+    category taxonomy so recall/promotion logic sees a consistent artifact
+    shape.
+    """
+    normalized_tags = [str(tag) for tag in (tags or []) if str(tag)]
+    if _AUDIT_FINDING_TAG not in normalized_tags:
+        return {
+            "type": type,
+            "confidence": confidence,
+            "domain": list(domain or []),
+            "phase_affinity": list(phase_affinity or []),
+        }
+
+    normalized_type = type
+    if normalized_type in ("", "pattern"):
+        normalized_type = "incident"
+
+    normalized_confidence = confidence
+    if normalized_confidence in ("", "hypothesis", "unverified"):
+        normalized_confidence = "verified"
+
+    normalized_domain = list(domain or [])
+    if not normalized_domain:
+        inferred_domain: list[str] = []
+        for tag in normalized_tags:
+            if not tag.startswith("PRD-"):
+                continue
+            parts = tag.split("-")
+            if len(parts) >= 3:
+                inferred_domain.extend(_PRD_CATEGORY_DOMAIN_HINTS.get(parts[1].upper(), []))
+        for tag in normalized_tags:
+            inferred_domain.extend(_AUDIT_FINDING_DOMAIN_HINTS.get(tag, []))
+        normalized_domain = list(dict.fromkeys(inferred_domain))
+
+    normalized_phase_affinity = list(phase_affinity or [])
+    if not normalized_phase_affinity:
+        for tag in normalized_tags:
+            mapped = _AUDIT_FINDING_PHASE_AFFINITY.get(tag)
+            if mapped is not None:
+                normalized_phase_affinity = list(mapped)
+                break
+
+    return {
+        "type": normalized_type,
+        "confidence": normalized_confidence,
+        "domain": normalized_domain,
+        "phase_affinity": normalized_phase_affinity,
+    }
 
 
 def _entries_path(trw_dir: Path) -> Path:

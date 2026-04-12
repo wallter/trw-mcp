@@ -246,6 +246,41 @@ class TestLearnWithNewFields:
         assert entry.team_origin == "sprint-80"
         assert entry.task_type == "testing"
 
+    def test_audit_finding_defaults_typed_metadata(self, trw_dir: Path, config: TRWConfig) -> None:
+        """Audit-tagged learnings auto-fill the FR06-required typed fields."""
+        from trw_mcp.models.learning import LearningEntry
+
+        store_fn = _make_store_fn()
+        captured_entries: list[LearningEntry] = []
+
+        def _fake_save(td: Path, entry: LearningEntry) -> Path:
+            captured_entries.append(entry)
+            return td / "learnings" / "entries" / f"{entry.id}.yaml"
+
+        execute_learn(
+            summary="Sprint 90: FR06 audit gap reproduced",
+            detail="Audit found missing runtime wiring.",
+            trw_dir=trw_dir,
+            config=config,
+            tags=["audit-finding", "PRD-QUAL-056", "impl_gap"],
+            _adapter_store=store_fn,
+            _generate_learning_id=lambda: "L-audit",
+            _save_learning_entry=_fake_save,
+            _update_analytics=MagicMock(),
+            _list_active_learnings=MagicMock(return_value=[]),
+            _check_and_handle_dedup=MagicMock(return_value=None),
+        )
+
+        assert store_fn.calls[0]["type"] == "incident"
+        assert store_fn.calls[0]["confidence"] == "verified"
+        assert store_fn.calls[0]["domain"] == ["testing", "quality", "implementation"]
+        assert store_fn.calls[0]["phase_affinity"] == ["implement"]
+        assert len(captured_entries) == 1
+        assert captured_entries[0].type == "incident"
+        assert captured_entries[0].confidence == "verified"
+        assert captured_entries[0].domain == ["testing", "quality", "implementation"]
+        assert captured_entries[0].phase_affinity == ["implement"]
+
     def test_learn_phase_origin_from_run_yaml(self, trw_dir: Path, config: TRWConfig) -> None:
         """Auto-detection delegates to detect_current_phase from _paths."""
         store_fn = _make_store_fn()

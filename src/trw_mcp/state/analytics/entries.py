@@ -446,7 +446,18 @@ def extract_learnings_from_llm(
         if is_noise_summary(summary):
             continue
         raw_tags = item.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
+        tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
+        normalized_audit = _ac.normalize_audit_learning_metadata(
+            tags,
+            type=str(item.get("type", "pattern")),
+            confidence=str(item.get("confidence", "unverified")),
+            domain=[str(v) for v in item.get("domain", [])] if isinstance(item.get("domain"), list) else None,
+            phase_affinity=(
+                [str(v) for v in item.get("phase_affinity", [])]
+                if isinstance(item.get("phase_affinity"), list)
+                else None
+            ),
+        )
         entry = LearningEntry(
             id=_ac.generate_learning_id(),
             summary=summary,
@@ -455,6 +466,10 @@ def extract_learnings_from_llm(
             impact=_ac._safe_float(item, "impact", 0.6),
             source_type="agent",
             source_identity="trw_reflect:llm",
+            type=str(normalized_audit["type"]),
+            confidence=str(normalized_audit["confidence"]),
+            domain=[str(value) for value in normalized_audit["domain"]],
+            phase_affinity=[str(value) for value in normalized_audit["phase_affinity"]],
         )
         _save_and_record(trw_dir, entry, new_learnings)
 
