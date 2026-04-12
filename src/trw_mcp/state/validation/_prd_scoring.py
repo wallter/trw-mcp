@@ -151,9 +151,17 @@ _ASSERTION_RE = re.compile(
     r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
 )
 _ASSERTION_BLOCK_RE = re.compile(r"```assertions\b.*?```", re.IGNORECASE | re.DOTALL)
+_ASSERTIONS_HEADING_RE = re.compile(
+    r"^\s*(?:\*\*|__)?Assertions(?:\*\*|__)?\s*:\s*$",
+    re.IGNORECASE,
+)
 _ASSERTION_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?`?(?:grep_present|grep_absent|file_exists|command_succeeds|glob_exists)\b",
     re.MULTILINE,
+)
+_ASSERTION_JSON_TYPE_RE = re.compile(
+    r'"type"\s*:\s*"(?:grep_present|grep_absent|file_exists|command_succeeds|glob_exists)"',
+    re.IGNORECASE,
 )
 
 # Recognizable verification commands in PRD text.
@@ -469,7 +477,24 @@ def _extract_traceability_matrix_rows(content: str) -> dict[str, str]:
 
 def _has_assertion_evidence(content: str) -> bool:
     """Return True when content contains explicit assertion syntax, not prose mentions."""
-    return bool(_ASSERTION_BLOCK_RE.search(content) or _ASSERTION_LINE_RE.search(content))
+    if _ASSERTION_BLOCK_RE.search(content) or _ASSERTION_LINE_RE.search(content):
+        return True
+
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if not _ASSERTIONS_HEADING_RE.match(line):
+            continue
+
+        for assertion_line in lines[index + 1 :]:
+            stripped = assertion_line.strip()
+            if not stripped:
+                break
+            if not re.match(r"^[-*]\s+", stripped):
+                break
+            if _ASSERTION_JSON_TYPE_RE.search(stripped):
+                return True
+
+    return False
 
 
 def _count_impl_refs(content: str) -> int:
