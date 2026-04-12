@@ -106,6 +106,7 @@ class WriteTargets(BaseModel):
     agents_md: bool = False
     cursor_rules: bool = False
     copilot_instructions: bool = False
+    gemini_md: bool = False
     instruction_path: str = ""
 
 

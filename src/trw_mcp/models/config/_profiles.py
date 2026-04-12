@@ -1,7 +1,7 @@
 """Built-in client profile registry and resolution.
 
-Six profiles (claude-code, opencode, cursor, codex, copilot, aider) with
-eval-data-calibrated ceremony and scoring weights. Unknown client IDs
+Seven profiles (claude-code, opencode, cursor, codex, copilot, gemini, aider)
+with eval-data-calibrated ceremony and scoring weights. Unknown client IDs
 fall back to claude-code with a structured warning.
 """
 
@@ -128,6 +128,34 @@ _PROFILES: dict[str, ClientProfile] = {
         response_format="json",
         hooks_enabled=True,
         include_agent_teams=True,
+        tool_exposure_mode="all",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
+    ),
+    "gemini": ClientProfile(
+        client_id="gemini",
+        display_name="Google Gemini CLI",
+        write_targets=WriteTargets(
+            claude_md=False,
+            agents_md=True,
+            gemini_md=True,
+            instruction_path="GEMINI.md",
+        ),
+        instruction_max_lines=500,
+        context_window_tokens=1_000_000,
+        ceremony_mode="full",
+        ceremony_weights=CeremonyWeights(),  # defaults: 25/25/15/10/10/15
+        nudge_pool_weights=NudgePoolWeights(),  # defaults: 40/30/20/10
+        scoring_weights=ScoringDimensionWeights(),
+        response_format="yaml",
+        hooks_enabled=True,
+        agents_md_enabled=True,
+        include_framework_ref=True,
+        include_agent_teams=False,  # uses native .gemini/agents/ instead
+        include_delegation=True,
+        # Surface control (PRD-CORE-125)
+        nudge_enabled=True,
         tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
