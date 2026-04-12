@@ -131,6 +131,8 @@ def execute_recall(
     status: str | None = None,
     shard_id: str | None = None,
     max_results: int | None = None,
+    token_budget: int | None = None,
+    deprioritized_ids: set[str] | None = None,
     compact: bool | None = None,
     ultra_compact: bool = False,
     topic: str | None = None,
@@ -181,6 +183,8 @@ def execute_recall(
 
     # Input validation (PRD-QUAL-042-FR06): impact bounds
     min_impact = max(0.0, min(1.0, min_impact))
+    if token_budget is not None and token_budget <= 0:
+        raise ValueError(f"token_budget must be positive, got {token_budget}")
 
     reader = FileStateReader()
     if max_results is None:
@@ -238,6 +242,28 @@ def execute_recall(
 
     # Capture pre-cap counts for the total_available response field
     total_available = len(ranked_learnings) + len(matching_patterns)
+
+    # Move already-in-context learnings behind fresh results before truncation.
+    if deprioritized_ids:
+        prioritized = [
+            entry for entry in ranked_learnings if str(entry.get("id", "")) not in deprioritized_ids
+        ]
+        deferred = [
+            entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids
+        ]
+        ranked_learnings = prioritized + deferred
+
+    from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
+
+    tokens_used = 0
+    tokens_truncated = False
+    if token_budget is not None and ranked_learnings:
+        ranked_learnings, tokens_used, tokens_truncated = apply_token_budget(
+            ranked_learnings,
+            token_budget,
+        )
+    else:
+        tokens_used = sum(estimate_entry_tokens(entry) for entry in ranked_learnings)
 
     # Apply result cap
     if max_results > 0:
@@ -312,6 +338,9 @@ def execute_recall(
         "compact": use_compact,
         "max_results": max_results,
         "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
+        "tokens_used": tokens_used,
+        "tokens_budget": token_budget,
+        "tokens_truncated": tokens_truncated,
     }
 
     return recall_result
@@ -390,6 +419,21 @@ def _truncate_ultra_compact_summary(summary: str, token_limit: int = 32) -> str:
     return "…"
 
 
+def _assertion_result_detail(
+    entry_id: str,
+    index: int,
+    assertion: Any,
+    result: Any,
+) -> dict[str, object]:
+    """Normalize verification result payloads to the recall response contract."""
+    detail = cast("dict[str, object]", result.model_dump())
+    detail["id"] = f"{entry_id}:{index}"
+    detail.setdefault("type", getattr(assertion, "type", ""))
+    detail.setdefault("pattern", getattr(assertion, "pattern", ""))
+    detail.setdefault("target", getattr(assertion, "target", ""))
+    return detail
+
+
 def _verify_assertions(
     ranked_learnings: list[dict[str, object]],
     query_tokens: list[str],
@@ -413,9 +457,6 @@ def _verify_assertions(
     except Exception:  # justified: fail-open
         logger.debug("assertion_project_root_resolve_failed", exc_info=True)
 
-    if not project_root_path:
-        return ranked_learnings
-
     try:
         from trw_memory.lifecycle.verification import verify_assertions
         from trw_memory.models.memory import Assertion
@@ -430,7 +471,7 @@ def _verify_assertions(
             entry_id = str(learning.get("id", ""))
             try:
                 assertions_list = [
-                    Assertion.model_validate(a) for a in raw_assertions if isinstance(a, dict)
+                    Assertion.model_validate(a, strict=False) for a in raw_assertions if isinstance(a, dict)
                 ]
                 results = verify_assertions(assertions_list, project_root_path)
 
@@ -442,7 +483,13 @@ def _verify_assertions(
                     "passing": passing,
                     "failing": failing,
                     "stale": stale,
-                    "details": [r.model_dump() for r in results],
+                    "details": [
+                        _assertion_result_detail(entry_id, index, assertion, result)
+                        for index, (assertion, result) in enumerate(
+                            zip(assertions_list, results, strict=False),
+                            start=1,
+                        )
+                    ],
                 }
 
                 if failing > 0:
