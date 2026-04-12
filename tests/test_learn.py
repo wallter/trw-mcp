@@ -303,12 +303,20 @@ class TestLearnWithNewFields:
         # Should be uppercased from detect_current_phase "implement" -> "IMPLEMENT"
         assert store_fn.calls[0].get("phase_origin") == "IMPLEMENT"
 
+    @patch("trw_mcp.clients.llm.LLMClient")
     @patch("trw_mcp.tools._learn_validator.is_high_utility")
-    def test_learn_rejects_low_utility(self, mock_is_high_utility: MagicMock, trw_dir: Path, config: TRWConfig) -> None:
+    def test_learn_rejects_low_utility(
+        self,
+        mock_is_high_utility: MagicMock,
+        mock_llm_client: MagicMock,
+        trw_dir: Path,
+        config: TRWConfig,
+    ) -> None:
         """execute_learn rejects summaries if LLM utility validation fails."""
         mock_is_high_utility.return_value = (False, "Too vague")
+        mock_llm_client.return_value._available = True
         store_fn = _make_store_fn()
-        
+
         result = execute_learn(
             summary="PRD-123 groomed",
             detail="Did some work",
