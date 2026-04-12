@@ -19,6 +19,26 @@ from ._file_ops import _new_result, _record_write
 
 logger = structlog.get_logger(__name__)
 
+
+def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
+    """Resolve fully-qualified trw-mcp command and args.
+
+    FR02 (PRD-FIX-072): Use ``shutil.which`` to find an absolute path for
+    the ``trw-mcp`` executable. Falls back to ``sys.executable -m trw_mcp``
+    when the command is not on PATH.
+
+    Returns:
+        Tuple of (command, args) for the MCP server entry.
+    """
+    import shutil  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    resolved = shutil.which("trw-mcp")
+    if resolved is not None:
+        return resolved, ["serve"]
+    return sys.executable, ["-m", "trw_mcp", "serve"]
+
+
 # ---------------------------------------------------------------------------
 # Path constants
 # ---------------------------------------------------------------------------
@@ -39,10 +59,11 @@ _GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
 # ---------------------------------------------------------------------------
 
 
-from trw_mcp.state.claude_md._renderer import ProtocolRenderer
-from trw_mcp.models.config._client_profile import ClientProfile
 def _gemini_instructions_content() -> str:
     """Generate GEMINI.md TRW ceremony section."""
+    from trw_mcp.models.config._client_profile import ClientProfile
+    from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+
     renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
     return renderer.render_gemini_instructions()
 
@@ -143,9 +164,10 @@ def generate_gemini_mcp_config(
         mcp_servers = {}
     existing["mcpServers"] = mcp_servers
 
+    cmd, args = _resolve_trw_mcp_command()
     trw_entry: dict[str, object] = {
-        "command": "trw-mcp",
-        "args": ["serve"],
+        "command": cmd,
+        "args": args,
         "trust": True,
     }
     mcp_servers["trw"] = trw_entry
