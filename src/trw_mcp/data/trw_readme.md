@@ -506,11 +506,10 @@ Writes structured JSON logs to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 |------|------|-------------|
 | `trw_build_check` | Before delivery | Runs pytest + mypy, caches results |
 
-### Code Review (2)
+### Code Review (1)
 
 | Tool | When | What It Does |
 |------|------|-------------|
-| `trw_preflight_log` | Before implementation/audit | Records preflight checklist and self-review evidence for a run |
 | `trw_review` | After validation | Produces structured review findings with pass/warn/block verdict |
 
 ### Reporting (3)

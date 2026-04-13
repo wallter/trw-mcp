@@ -532,17 +532,19 @@ class TestAgentDefinitions:
             required_snippets,
         )
 
-    def test_implementer_agent_variants_include_preflight_logging_contract(
+    def test_implementer_agent_variants_include_fr03_checklist_contract(
         self,
         agents_dir: Path,
         root_agents_dir: Path,
     ) -> None:
-        """Root and bundled implementer agents retain the FR03 checklist logging contract."""
+        """Root and bundled implementer agents retain the FR03 pre-implementation checklist contract.
+
+        Note: trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
+        The checklist guidance itself remains in the agent prompt.
+        """
 
         required_snippets = [
-            "mcp__trw__trw_preflight_log",
             "Pre-Implementation Checklist (PRD-QUAL-056-FR03)",
-            "trw_preflight_log(prd_id=\"<PRD-ID>\", checklist_complete=True)",
         ]
 
         self._assert_variants_include_snippets(
@@ -715,7 +717,11 @@ class TestSkillDefinitions:
         )
 
     def test_skill_variants_include_preflight_logging_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Root and bundled skill variants retain the preflight logging/verification contract."""
+        """Root and bundled skill variants retain the pre-implementation checklist/self-review contract.
+
+        Note: trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
+        Tests verify the checklist concept and self-review structure remain, not the removed tool call.
+        """
         variant_paths = {
             "root_exec_plan": root_skills_dir / "trw-exec-plan" / "SKILL.md",
             "bundled_exec_plan": skills_dir / "trw-exec-plan" / "SKILL.md",
@@ -733,11 +739,9 @@ class TestSkillDefinitions:
         required_snippets = {
             "exec_plan": [
                 "Pre-Implementation Checklist (PRD-QUAL-056-FR03)",
-                'trw_preflight_log(prd_id="{PRD-ID}", checklist_complete=True)',
             ],
             "self_review": [
-                'trw_preflight_log(prd_id="{PRD-ID}", self_review={...})',
-                "pre_audit_self_review",
+                "Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)",
             ],
             "audit": [
                 "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
