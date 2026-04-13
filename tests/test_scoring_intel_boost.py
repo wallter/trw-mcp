@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from time import perf_counter
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -171,6 +171,32 @@ def test_intel_boost_reads_bandit_params_once_per_scoring_call() -> None:
     rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
 
     mock_cache.get_bandit_params.assert_called_once_with()
+
+
+def test_intel_boost_logs_structured_summary_once_per_scoring_call() -> None:
+    """Boost observability stays structured without logging every boosted entry."""
+    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+
+    mock_cache = MagicMock()
+    mock_cache.get_bandit_params.return_value = {"L-boosted": 1.8}
+    ctx = RecallContext(intel_cache=mock_cache)
+    entries = [_make_entry("L-boosted"), _make_entry("L-normal")]
+
+    with (
+        patch("trw_mcp.scoring._recall._logger.is_enabled_for", return_value=True),
+        patch("trw_mcp.scoring._recall._logger.debug") as mock_debug,
+    ):
+        rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
+
+    mock_debug.assert_called_once()
+    args, kwargs = mock_debug.call_args
+    assert args == ("recall_boost_applied",)
+    assert kwargs["entry_id"] == "L-boosted"
+    assert kwargs["intel_boost"] == 1.8
+    assert kwargs["final_boost"] == 1.8
+    assert kwargs["boosted_entries"] == 1
+    assert kwargs["intel_boosted_entries"] == 1
+    assert kwargs["matches_count"] == 2
 
 
 def test_intel_boost_adds_under_one_ms_overhead_per_100_entries() -> None:

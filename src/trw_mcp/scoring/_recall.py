@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import logging
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
@@ -307,6 +308,9 @@ def rank_by_utility(
     today = datetime.now(tz=timezone.utc).date()
     scored: list[tuple[float, dict[str, object]]] = []
     bandit_params: dict[str, float] | None = None
+    boosted_entries = 0
+    intel_boosted_entries = 0
+    boost_log_payload: dict[str, object] | None = None
 
     if context is not None and context.intel_cache is not None:
         bandit_params = context.intel_cache.get_bandit_params()
@@ -387,20 +391,31 @@ def rank_by_utility(
                 if entry_id in bandit_params:
                     intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
 
-            # Log when any factor differs from 1.0
             if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)):
-                _logger.debug(
-                    "recall_boost_applied",
-                    entry_id=str(entry.get("id", "")),
-                    domain_boost=domain_boost,
-                    phase_boost=phase_boost,
-                    team_boost=team_boost,
-                    outcome_boost=outcome_boost,
-                    anchor_validity=anchor_val,
-                    prd_boost=prd_boost,
-                    intel_boost=intel_boost,
-                    final_boost=round(domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost * intel_boost, 4),
-                )
+                boosted_entries += 1
+                if intel_boost != 1.0:
+                    intel_boosted_entries += 1
+                if boost_log_payload is None:
+                    boost_log_payload = {
+                        "entry_id": str(entry.get("id", "")),
+                        "domain_boost": domain_boost,
+                        "phase_boost": phase_boost,
+                        "team_boost": team_boost,
+                        "outcome_boost": outcome_boost,
+                        "anchor_validity": anchor_val,
+                        "prd_boost": prd_boost,
+                        "intel_boost": intel_boost,
+                        "final_boost": round(
+                            domain_boost
+                            * phase_boost
+                            * team_boost
+                            * outcome_boost
+                            * anchor_val
+                            * prd_boost
+                            * intel_boost,
+                            4,
+                        ),
+                    }
 
         combined *= domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost * intel_boost
         # Clamp final score
@@ -409,6 +424,15 @@ def rank_by_utility(
         entry_copy = dict(entry)
         entry_copy["combined_score"] = round(combined, 4)
         scored.append((combined, entry_copy))
+
+    if boost_log_payload is not None and _logger.is_enabled_for(logging.DEBUG):
+        _logger.debug(
+            "recall_boost_applied",
+            boosted_entries=boosted_entries,
+            intel_boosted_entries=intel_boosted_entries,
+            matches_count=len(matches),
+            **boost_log_payload,
+        )
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [entry for _, entry in scored]
