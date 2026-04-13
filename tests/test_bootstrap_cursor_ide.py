@@ -169,3 +169,25 @@ class TestUpdateCursorArtifactsCursorIde:
         assert not (tmp_path / ".cursor").exists(), (
             ".cursor/ should not be created for opencode target"
         )
+
+    def test_bootstrap_emits_tool_ceiling_advisory(self, tmp_path: Path) -> None:
+        """cursor-ide bootstrap includes tool-ceiling advisory in result['info']."""
+        result = self._call_update(tmp_path, ide_override="cursor-ide")
+
+        info = result.get("info", [])
+        assert any("24 MCP tools" in msg for msg in info), (
+            f"Expected tool-ceiling advisory in result['info'], got: {info}"
+        )
+        assert any("cursor-ide" in msg for msg in info), (
+            "Tool-ceiling advisory should mention cursor-ide"
+        )
+
+    def test_no_tool_ceiling_advisory_for_cli_only(self, tmp_path: Path) -> None:
+        """cursor-cli-only bootstrap does NOT emit the IDE tool-ceiling advisory."""
+        result = self._call_update(tmp_path, ide_override="cursor-cli")
+
+        info = result.get("info", [])
+        # Advisory is cursor-ide specific; CLI should not include it
+        assert not any("24 MCP tools" in msg for msg in info), (
+            f"Tool-ceiling advisory should not appear for cursor-cli-only: {info}"
+        )

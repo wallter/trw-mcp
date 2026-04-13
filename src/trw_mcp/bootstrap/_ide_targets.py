@@ -491,6 +491,20 @@ def _update_cursor_artifacts(
             )
 
     # ------------------------------------------------------------------
+    # cursor-ide advisory: tool-ceiling awareness (PRD-CORE-136 NFR)
+    # ------------------------------------------------------------------
+    if "cursor-ide" in ide_targets:
+        # TRW exposes 24 MCP tools. Cursor IDE has a ~40-tool ceiling when
+        # combining all MCP servers. If the user has additional MCP servers
+        # configured alongside TRW, they may approach or exceed this limit.
+        result.setdefault("info", []).append(
+            "cursor-ide: TRW exposes 24 MCP tools (tool_exposure_mode=all). "
+            "Cursor has a ~40-tool ceiling across all MCP servers — adding "
+            "other servers alongside TRW may exhaust the per-turn budget. "
+            "See docs/CLIENT-PROFILES.md for mitigation options."
+        )
+
+    # ------------------------------------------------------------------
     # cursor-cli specific steps — dispatched to existing helper
     # ------------------------------------------------------------------
     if "cursor-cli" in ide_targets:
