@@ -56,7 +56,7 @@ class SyncPuller:
         trw_version: str = "",
         client_id: str | None = None,
     ) -> PullResult | None:
-        """GET /v1/intel/state. Returns None on 304 or error."""
+        """GET /v1/intel/state. Returns a typed 304 result or None on real failure."""
         import httpx
 
         started_at = perf_counter()

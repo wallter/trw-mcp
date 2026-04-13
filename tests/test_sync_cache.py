@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import math
 import json
 import time
 from pathlib import Path
 
 import pytest
+
+
+def _build_large_state() -> dict[str, object]:
+    """Generate a payload large enough to exercise cache performance paths."""
+    return {
+        "bandit_params": {f"L-{idx:05d}": round((idx % 100) / 100, 4) for idx in range(4000)},
+        "synthesis_overlay": {"overlay_content": "x" * 350_000},
+    }
+
+
+def _p99_ms(samples: list[float]) -> float:
+    ordered = sorted(samples)
+    percentile_index = max(math.ceil(len(ordered) * 0.99) - 1, 0)
+    return ordered[percentile_index] * 1000
 
 
 def test_cache_update_and_read(tmp_path: Path) -> None:
@@ -122,6 +137,40 @@ def test_cache_etag_none_when_expired(tmp_path: Path) -> None:
     cache.update({"bandit_params": {}}, etag="stale-etag")
 
     assert cache.etag is None
+
+
+def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
+    """Large cache writes stay within the PRD latency budget."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    state = _build_large_state()
+    cache.update(state, etag="warmup")
+
+    samples: list[float] = []
+    for idx in range(20):
+        started_at = time.perf_counter()
+        cache.update(state, etag=f"etag-{idx}")
+        samples.append(time.perf_counter() - started_at)
+
+    assert _p99_ms(samples) < 50
+
+
+def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
+    """Large cache reads stay within the PRD latency budget."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    state = _build_large_state()
+    cache.update(state, etag="etag-v1")
+
+    samples: list[float] = []
+    for _ in range(100):
+        started_at = time.perf_counter()
+        params = cache.get_bandit_params()
+        samples.append(time.perf_counter() - started_at)
+    assert params is not None
+    assert _p99_ms(samples) < 10
 
 
 def test_cache_get_attribution_results(tmp_path: Path) -> None:

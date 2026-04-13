@@ -8,6 +8,7 @@ behavior (no cache / empty cache) is backward-compatible (intel_boost=1.0).
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from time import perf_counter
 from unittest.mock import MagicMock
 
 import pytest
@@ -170,3 +171,38 @@ def test_intel_boost_reads_bandit_params_once_per_scoring_call() -> None:
     rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
 
     mock_cache.get_bandit_params.assert_called_once_with()
+
+
+def test_intel_boost_adds_under_one_ms_overhead_per_100_entries() -> None:
+    """The hot-path boost adds only dict-lookup overhead once cache data is loaded."""
+    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+
+    class StaticIntelCache:
+        def __init__(self, params: dict[str, float]) -> None:
+            self._params = params
+
+        def get_bandit_params(self) -> dict[str, float]:
+            return self._params
+
+    entries = [_make_entry(f"L-{idx:03d}") for idx in range(100)]
+    cached_params = {entry["id"]: 1.1 for entry in entries}
+    baseline_ctx = RecallContext()
+    boosted_ctx = RecallContext(intel_cache=StaticIntelCache(cached_params))
+
+    # Warm caches and Python internals before timing.
+    rank_by_utility(entries, ["test"], lambda_weight=0.5, context=baseline_ctx)
+    rank_by_utility(entries, ["test"], lambda_weight=0.5, context=boosted_ctx)
+
+    iterations = 200
+    started_at = perf_counter()
+    for _ in range(iterations):
+        rank_by_utility(entries, ["test"], lambda_weight=0.5, context=baseline_ctx)
+    baseline_duration = perf_counter() - started_at
+
+    started_at = perf_counter()
+    for _ in range(iterations):
+        rank_by_utility(entries, ["test"], lambda_weight=0.5, context=boosted_ctx)
+    boosted_duration = perf_counter() - started_at
+
+    overhead_ms = max((boosted_duration - baseline_duration) * 1000 / iterations, 0.0)
+    assert overhead_ms < 1.0
