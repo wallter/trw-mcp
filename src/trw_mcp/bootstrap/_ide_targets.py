@@ -562,14 +562,43 @@ def _update_cursor_cli_artifacts(
 # ---------------------------------------------------------------------------
 
 
+# Legacy → modern profile identifier renames silently applied by
+# _update_config_target_platforms. Keys are removed; values are appended to
+# the list (deduplicated). Add new entries here when a future profile rename
+# lands; the migration runs once on the next update-project call.
+_LEGACY_PROFILE_RENAMES: dict[str, str] = {
+    # Sprint 91 (PRD-CORE-136 / PRD-CORE-137): bare `cursor` was split into
+    # cursor-ide (full ceremony, GUI) and cursor-cli (light, headless).
+    # Migrate the legacy identifier to cursor-ide so existing dev configs
+    # still resolve to a sensible profile after upgrade.
+    "cursor": "cursor-ide",
+}
+
+
 def _update_config_target_platforms(
     target_dir: Path,
     ide_targets: list[str],
     result: dict[str, list[str]],
 ) -> None:
-    """Update target_platforms in config.yaml to match detected/override IDE targets.
+    """Augment target_platforms in config.yaml without narrowing the user list.
 
-    Preserves all other config fields. Fail-open: errors go to result["warnings"].
+    Behavior contract (v0.44.1 — fixes PRD-FIX-076):
+      - The user's existing target_platforms list is **never narrowed**. New
+        entries from ``ide_targets`` are appended in order; existing entries
+        are preserved.
+      - Legacy profile identifiers (currently: ``cursor`` → ``cursor-ide``)
+        are silently migrated. See ``_LEGACY_PROFILE_RENAMES``.
+      - Duplicates are de-duplicated, preserving first occurrence.
+      - When the merged list equals the existing list (no new IDEs and no
+        legacy rename triggered), the file is preserved (not rewritten).
+      - All other config fields preserved.
+
+    Prior behavior (pre-0.44.1) replaced the entire list with ``ide_targets``,
+    which destroyed multi-platform configurations when ``--ide <single>`` was
+    passed. The current contract guarantees augmentation, never narrowing.
+
+    Fail-open: errors go to result["warnings"]; YAML/IO failures do not block
+    other dispatch steps.
     """
     import yaml
 
@@ -580,18 +609,55 @@ def _update_config_target_platforms(
     try:
         content = config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(content) or {}
-        current: list[str] = data.get("target_platforms", ["claude-code"])
-        if sorted(current) == sorted(ide_targets):
+        existing: list[str] = list(data.get("target_platforms", ["claude-code"]))
+
+        # Build the merged list:
+        #   1. Migrate legacy identifiers in existing entries
+        #   2. Deduplicate (first occurrence wins)
+        #   3. Append any ide_targets entries not already present
+        merged: list[str] = []
+        for entry in existing:
+            normalized = _LEGACY_PROFILE_RENAMES.get(entry, entry)
+            if normalized not in merged:
+                merged.append(normalized)
+        added: list[str] = []
+        for new_id in ide_targets:
+            if new_id not in merged:
+                merged.append(new_id)
+                added.append(new_id)
+
+        if merged == existing:
             result["preserved"].append(str(config_path))
+            logger.debug(
+                "config_target_platforms_unchanged",
+                target_platforms=merged,
+                requested=ide_targets,
+            )
             return
-        data["target_platforms"] = ide_targets
+
+        data["target_platforms"] = merged
         config_path.write_text(
             yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
             encoding="utf-8",
         )
         result["updated"].append(str(config_path))
-    except Exception as exc:  # justified: fail-open, config update is best-effort
-        result.setdefault("warnings", []).append(f"target_platforms config update skipped: {exc}")
+        logger.info(
+            "config_target_platforms_augmented",
+            outcome="success",
+            previous=existing,
+            current=merged,
+            added=added,
+            requested=ide_targets,
+        )
+    except (OSError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
+        result.setdefault("warnings", []).append(
+            f"target_platforms config update skipped: {type(exc).__name__}: {exc}"
+        )
+        logger.warning(
+            "config_target_platforms_update_failed",
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
 
 
 # ---------------------------------------------------------------------------
