@@ -113,17 +113,125 @@ def _install_opencode_artifacts(
     _extend_result(result, install_opencode_skills(target_dir, force=force))
 
 
-def _install_cursor_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
-    """Install Cursor-specific bootstrap artifacts."""
-    from ._cursor import generate_cursor_hooks, generate_cursor_mcp_config, generate_cursor_rules
+def _install_cursor_artifacts(
+    target_dir: Path,
+    *,
+    force: bool,
+    result: dict[str, list[str]],
+    ide_targets: list[str] | None = None,
+) -> None:
+    """Install Cursor-specific bootstrap artifacts (cursor-ide and/or cursor-cli).
+
+    Shared steps (hooks.json legacy, rules.mdc, mcp.json) run once for either
+    surface.  CLI-specific generators (cli.json, AGENTS.md, 5-event hook subset)
+    are gated on "cursor-cli" in *ide_targets*.
+
+    PRD-CORE-137-FR07: dispatcher wiring.
+    """
+    from ._cursor import generate_cursor_mcp_config, generate_cursor_rules_mdc
     from ._update_project import _extract_trw_section_content
 
-    _extend_result(result, generate_cursor_hooks(target_dir, force=force))
-    _extend_result(
-        result,
-        generate_cursor_rules(target_dir, _extract_trw_section_content(), force=force),
-    )
+    resolved_targets = ide_targets or []
+
+    # Shared: .cursor/mcp.json (run once for either surface)
     _extend_result(result, generate_cursor_mcp_config(target_dir, force=force))
+
+    # IDE-specific artifacts (PRD-CORE-136-FR03, FR04, FR05, FR06, FR08)
+    if "cursor-ide" in resolved_targets:
+        from ._cursor_ide import (
+            generate_cursor_ide_commands,
+            generate_cursor_ide_hooks,
+            generate_cursor_ide_skills,
+            generate_cursor_ide_subagents,
+        )
+
+        # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
+        try:
+            _extend_result(
+                result,
+                generate_cursor_rules_mdc(
+                    target_dir,
+                    _extract_trw_section_content(),
+                    client_id="cursor-ide",
+                    force=force,
+                ),
+                include_updated=True,
+            )
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/rules/trw-ceremony.mdc generation skipped: {exc}"
+            )
+
+        # FR03: .cursor/agents/trw-*.md
+        try:
+            _extend_result(result, generate_cursor_ide_subagents(target_dir), include_updated=True)
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f".cursor/agents/ generation skipped: {exc}")
+
+        # FR05: .cursor/commands/trw-*.md
+        try:
+            _extend_result(result, generate_cursor_ide_commands(target_dir), include_updated=True)
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f".cursor/commands/ generation skipped: {exc}")
+
+        # FR04: .cursor/skills/<name>/
+        try:
+            _extend_result(result, generate_cursor_ide_skills(target_dir, force=force), include_updated=True)
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f".cursor/skills/ generation skipped: {exc}")
+
+        # FR08: 8-event hook set + .cursor/hooks/trw-*.sh
+        try:
+            _extend_result(result, generate_cursor_ide_hooks(target_dir, force=force), include_updated=True)
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(f".cursor/hooks/ generation skipped: {exc}")
+
+    # CLI-specific artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a)
+    if "cursor-cli" in resolved_targets:
+        _install_cursor_cli_artifacts(target_dir, force=force, result=result)
+
+
+def _install_cursor_cli_artifacts(
+    target_dir: Path,
+    *,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Install cursor-cli-only artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a).
+
+    Called from ``_install_cursor_artifacts`` when cursor-cli is in ide_targets.
+    Fail-open: each generator is wrapped in try/except so one failure doesn't
+    abort the others.
+    """
+    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+    from ._cursor_cli import (
+        generate_cursor_cli_agents_md,
+        generate_cursor_cli_config,
+        generate_cursor_cli_hooks,
+    )
+
+    # FR03: .cursor/cli.json permissions (also emits TTY reminder via FR08a)
+    try:
+        cli_result = generate_cursor_cli_config(target_dir, force=force)
+        _extend_result(result, cli_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, cli.json update is best-effort
+        result.setdefault("warnings", []).append(f".cursor/cli.json generation skipped: {exc}")
+
+    # FR04: AGENTS.md with TRW sentinel block
+    try:
+        trw_section = render_agents_trw_section()
+        agents_result = generate_cursor_cli_agents_md(target_dir, trw_section, force=force)
+        _extend_result(result, agents_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
+        result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) generation skipped: {exc}")
+
+    # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
+    try:
+        hooks_result = generate_cursor_cli_hooks(target_dir, force=force)
+        _extend_result(result, hooks_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, hooks.json update is best-effort
+        result.setdefault("warnings", []).append(f".cursor/hooks.json (cursor-cli) generation skipped: {exc}")
 
 
 def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
@@ -496,7 +604,7 @@ def init_project(
 
     # 7c. Cursor artifacts (FR05, FR06, FR07: cursor-ide and cursor-cli support)
     if "cursor-ide" in ide_targets or "cursor-cli" in ide_targets:
-        _install_cursor_artifacts(target_dir, force=force, result=result)
+        _install_cursor_artifacts(target_dir, force=force, result=result, ide_targets=ide_targets)
 
     # 7d. Codex artifacts
     if "codex" in ide_targets:

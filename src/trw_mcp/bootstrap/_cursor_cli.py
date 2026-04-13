@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -66,7 +67,7 @@ _DEFAULT_DENY = [
 # permitting the operation.
 # ---------------------------------------------------------------------------
 
-_CLI_HOOK_EVENTS: dict[str, list[dict]] = {
+_CLI_HOOK_EVENTS: dict[str, list[dict[str, Any]]] = {
     "beforeShellExecution": [
         {
             "command": ".cursor/hooks/trw-before-shell.sh",
@@ -155,7 +156,7 @@ def generate_cursor_cli_config(
     cursor_dir.mkdir(parents=True, exist_ok=True)
     cli_file = cursor_dir / "cli.json"
 
-    default_config: dict = {
+    default_config: dict[str, Any] = {
         "_note": (
             "TRW baseline permissions for cursor-agent CI. "
             "Read(**/*) is appropriate for trusted-repo CI; tighten for untrusted content. "
@@ -169,10 +170,10 @@ def generate_cursor_cli_config(
 
     if cli_file.exists() and not force:
         try:
-            existing: dict = json.loads(cli_file.read_text(encoding="utf-8"))
-            perms = existing.setdefault("permissions", {})
-            allow: list = perms.setdefault("allow", [])
-            deny: list = perms.setdefault("deny", [])
+            existing: dict[str, Any] = json.loads(cli_file.read_text(encoding="utf-8"))
+            perms: dict[str, Any] = existing.setdefault("permissions", {})
+            allow: list[str] = perms.setdefault("allow", [])
+            deny: list[str] = perms.setdefault("deny", [])
             # Add TRW allow-tokens not already in allow or deny
             for token in _DEFAULT_ALLOW:
                 if token not in allow and token not in deny:
@@ -310,10 +311,9 @@ def generate_cursor_cli_hooks(
 
     # 1. Install bash adapters via shared helper (idempotent; missing scripts warned+skipped)
     script_result = generate_cursor_hook_scripts(target_dir, _CLI_HOOK_SCRIPTS, force=force)
-    for key in ("created", "updated", "preserved"):
-        existing = result.get(key, [])
-        existing.extend(script_result.get(key, []))
-        result[key] = existing  # type: ignore[literal-required]
+    result["created"].extend(script_result.get("created", []))
+    result["updated"].extend(script_result.get("updated", []))
+    result["preserved"].extend(script_result.get("preserved", []))
 
     # 2. Build the hook config payload and merge via shared helper.
     #    When cursor-ide has already written its 8 events, smart_merge_cursor_json
@@ -326,10 +326,9 @@ def generate_cursor_cli_hooks(
         trw_hooks_body,
         identity_prefix=".cursor/hooks/trw-",
     )
-    for key in ("created", "updated", "preserved"):
-        existing = result.get(key, [])
-        existing.extend(merge_result.get(key, []))
-        result[key] = existing  # type: ignore[literal-required]
+    result["created"].extend(merge_result.get("created", []))
+    result["updated"].extend(merge_result.get("updated", []))
+    result["preserved"].extend(merge_result.get("preserved", []))
 
     logger.debug(
         "generate_cursor_cli_hooks",
