@@ -279,6 +279,50 @@ def test_cursor_hook_scripts_missing_bundled_script_warns(tmp_path: Path) -> Non
     assert not (tmp_path / ".cursor" / "hooks" / "nonexistent.sh").exists()
 
 
+@pytest.mark.integration
+def test_cursor_hook_scripts_force_overwrites_existing(tmp_path: Path) -> None:
+    """generate_cursor_hook_scripts with force=True overwrites existing scripts and reports updated."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hook_scripts
+
+    fake_data = tmp_path / "fake_data" / "hooks" / "cursor"
+    fake_data.mkdir(parents=True)
+    (fake_data / "trw-stop.sh").write_text("#!/usr/bin/env bash\necho v2", encoding="utf-8")
+
+    # First write
+    with patch("trw_mcp.bootstrap._cursor._CURSOR_HOOKS_DATA_DIR", fake_data):
+        generate_cursor_hook_scripts(tmp_path, ["trw-stop.sh"])
+
+    # Second call with force=True — should overwrite and report "updated"
+    with patch("trw_mcp.bootstrap._cursor._CURSOR_HOOKS_DATA_DIR", fake_data):
+        result = generate_cursor_hook_scripts(tmp_path, ["trw-stop.sh"], force=True)
+
+    assert ".cursor/hooks/trw-stop.sh" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_cursor_skills_mirror_force_removes_existing(tmp_path: Path) -> None:
+    """generate_cursor_skills_mirror with force=True removes and re-copies skill dirs."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_skills_mirror
+
+    # Seed the skill in both source and destination
+    source_dir = tmp_path / "fake_skills"
+    (source_dir / "trw-deliver").mkdir(parents=True)
+    (source_dir / "trw-deliver" / "SKILL.md").write_text("# v2", encoding="utf-8")
+
+    dest_skill = tmp_path / ".cursor" / "skills" / "trw-deliver"
+    dest_skill.mkdir(parents=True)
+    (dest_skill / "SKILL.md").write_text("# v1 (stale)", encoding="utf-8")
+    (dest_skill / "stale-extra.md").write_text("stale", encoding="utf-8")
+
+    # force=True should clean and re-copy
+    result = generate_cursor_skills_mirror(tmp_path, ["trw-deliver"], source_dir=source_dir, force=True)
+
+    updated = result.get("created", []) + result.get("updated", [])
+    assert ".cursor/skills/trw-deliver" in updated
+    # Stale file should be gone (dir was rmtree'd before copy)
+    assert not (dest_skill / "stale-extra.md").exists()
+
+
 # ===========================================================================
 # 6. build_cursor_hook_config
 # ===========================================================================
@@ -413,3 +457,124 @@ def test_smart_merge_cursor_json_creates_parent_dirs(tmp_path: Path) -> None:
     assert target.is_file()
     data = json.loads(target.read_text(encoding="utf-8"))
     assert data["key"] == "value"
+
+
+# ===========================================================================
+# 8. generate_cursor_hooks (legacy backward-compat function)
+# ===========================================================================
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_fresh_write(tmp_path: Path) -> None:
+    """generate_cursor_hooks (legacy) creates .cursor/hooks.json on first call."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    result = generate_cursor_hooks(tmp_path)
+    hooks_file = tmp_path / ".cursor" / "hooks.json"
+
+    assert hooks_file.is_file()
+    data = json.loads(hooks_file.read_text(encoding="utf-8"))
+    assert "hooks" in data
+    assert isinstance(data["hooks"], list)
+    assert len(data["hooks"]) > 0
+    assert ".cursor/hooks.json" in result.get("created", [])
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_smart_merge_preserves_user(tmp_path: Path) -> None:
+    """generate_cursor_hooks smart-merges without losing user hooks on second run."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    user_hooks_data: dict[str, Any] = {
+        "hooks": [
+            {
+                "event": "stop",
+                "command": "echo user-stop",
+                "description": "User custom stop hook",
+            }
+        ]
+    }
+    (cursor_dir / "hooks.json").write_text(json.dumps(user_hooks_data), encoding="utf-8")
+
+    generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    commands = [h.get("command", "") for h in data["hooks"]]
+    # User hook should survive the merge
+    assert any("user-stop" in cmd for cmd in commands), (
+        "User hook was lost during generate_cursor_hooks smart merge"
+    )
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_malformed_json_overwrites(tmp_path: Path) -> None:
+    """generate_cursor_hooks overwrites malformed hooks.json with fresh content."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "hooks.json").write_text("{{{invalid json", encoding="utf-8")
+
+    generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert "hooks" in data
+    assert isinstance(data["hooks"], list)
+
+
+# ===========================================================================
+# 9. _get_trw_mcp_entry_cursor (entry detection helper)
+# ===========================================================================
+
+
+@pytest.mark.unit
+def test_get_trw_mcp_entry_cursor_uses_binary_when_on_path() -> None:
+    """_get_trw_mcp_entry_cursor returns command='trw-mcp' when binary on PATH."""
+    from unittest.mock import patch
+
+    from trw_mcp.bootstrap._cursor import _get_trw_mcp_entry_cursor
+
+    with patch("trw_mcp.bootstrap._cursor.shutil.which", return_value="/usr/local/bin/trw-mcp"):
+        entry = _get_trw_mcp_entry_cursor()
+
+    assert entry["command"] == "trw-mcp"
+    assert "--debug" in entry.get("args", [])
+
+
+@pytest.mark.unit
+def test_get_trw_mcp_entry_cursor_falls_back_to_python_module() -> None:
+    """_get_trw_mcp_entry_cursor falls back to sys.executable when binary absent."""
+    import sys
+    from unittest.mock import patch
+
+    from trw_mcp.bootstrap._cursor import _get_trw_mcp_entry_cursor
+
+    with patch("trw_mcp.bootstrap._cursor.shutil.which", return_value=None):
+        entry = _get_trw_mcp_entry_cursor()
+
+    # command should be a list [sys.executable, "-m", "trw_mcp.server"]
+    assert isinstance(entry["command"], list)
+    assert entry["command"][0] == sys.executable
+    assert "-m" in entry["command"]
+
+
+# ===========================================================================
+# 10. HookHandlerEntry / CursorHooksV1Config TypedDicts
+# ===========================================================================
+
+
+@pytest.mark.unit
+def test_hook_handler_entry_typeddict_exported() -> None:
+    """HookHandlerEntry and CursorHooksV1Config are importable from _cursor."""
+    from trw_mcp.bootstrap._cursor import CursorHooksV1Config, HookHandlerEntry
+
+    # Verify they can be used as expected (runtime dicts, not classes to instantiate)
+    handler: HookHandlerEntry = {"command": "trw-stop.sh", "type": "command", "timeout": 5}
+    config: CursorHooksV1Config = {
+        "version": 1,
+        "hooks": {"stop": [handler]},
+    }
+    assert config["version"] == 1
+    assert "stop" in config["hooks"]

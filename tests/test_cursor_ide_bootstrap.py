@@ -421,3 +421,80 @@ class TestGenerateCursorIdeHooks:
                 cmd = handler.get("command", "")
                 if cmd.startswith(".cursor/hooks/trw-"):
                     assert cmd.endswith(".sh"), f"{event}: handler command lacks .sh suffix"
+
+    def test_hooks_beforeMCPExecution_fail_closed_false(self, tmp_path: Path) -> None:
+        """beforeMCPExecution handler has failClosed=False (advisory, not blocking)."""
+        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_hooks
+
+        generate_cursor_ide_hooks(tmp_path)
+
+        hooks_file = tmp_path / ".cursor" / "hooks.json"
+        hooks_data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        before_mcp = hooks_data["hooks"].get("beforeMCPExecution", [])
+        assert len(before_mcp) > 0, "beforeMCPExecution has no handlers"
+        # Verify failClosed is explicitly false — this is a critical contract
+        assert before_mcp[0].get("failClosed") is False, (
+            "beforeMCPExecution must have failClosed=False (advisory, not blocking)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fallback template coverage
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackTemplateBehavior:
+    """Verify fallback behavior when bundled templates are absent."""
+
+    def test_subagents_fallback_when_template_missing(self, tmp_path: Path) -> None:
+        """generate_cursor_ide_subagents falls back to inline body when template absent."""
+        from unittest.mock import patch
+
+        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
+
+        # Patch the pkg_files traversable to point to an empty dir so templates are missing
+        empty_dir = tmp_path / "empty_pkg"
+        empty_dir.mkdir()
+
+        class _FakeTraversable:
+            def joinpath(self, name: str) -> "_FakeTraversable":
+                return self
+
+            def read_text(self, encoding: str = "utf-8") -> str:
+                raise FileNotFoundError("bundled template missing")
+
+        with patch("trw_mcp.bootstrap._cursor_ide._pkg_files", return_value=_FakeTraversable()):
+            result = generate_cursor_ide_subagents(tmp_path)
+
+        # Should still succeed (fail-open) — fallback body used
+        agents_dir = tmp_path / ".cursor" / "agents"
+        created_and_updated = result["created"] + result.get("updated", [])
+        assert len(created_and_updated) == 4, f"Expected 4 agents, got: {created_and_updated}"
+        for name in ["trw-explorer", "trw-implementer", "trw-reviewer", "trw-researcher"]:
+            assert (agents_dir / f"{name}.md").is_file(), f"Agent file missing: {name}.md"
+
+    def test_commands_fallback_when_template_missing(self, tmp_path: Path) -> None:
+        """generate_cursor_ide_commands falls back to inline body when template absent."""
+        from unittest.mock import patch
+
+        from trw_mcp.bootstrap._cursor_ide import _TRW_COMMANDS, generate_cursor_ide_commands
+
+        class _FakeTraversable:
+            def joinpath(self, name: str) -> "_FakeTraversable":
+                return self
+
+            def read_text(self, encoding: str = "utf-8") -> str:
+                raise FileNotFoundError("bundled template missing")
+
+        with patch("trw_mcp.bootstrap._cursor_ide._pkg_files", return_value=_FakeTraversable()):
+            result = generate_cursor_ide_commands(tmp_path)
+
+        commands_dir = tmp_path / ".cursor" / "commands"
+        assert len(result["created"]) == len(_TRW_COMMANDS)
+        for cmd_name, _ in _TRW_COMMANDS:
+            cmd_file = commands_dir / f"{cmd_name}.md"
+            assert cmd_file.is_file(), f"Command file missing: {cmd_name}.md"
+            content = cmd_file.read_text(encoding="utf-8")
+            # Inline fallback body should contain the command name and a heading
+            assert "#" in content
+            assert cmd_name in content
