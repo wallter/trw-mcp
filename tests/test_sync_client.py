@@ -103,6 +103,7 @@ async def test_run_one_cycle_applies_server_next_poll_hint(tmp_path) -> None:
     await client._run_one_cycle()
 
     assert client._next_sleep_seconds == 120
+    assert client._scheduled_interval_seconds == 120
     assert client._next_cycle_force is False
 
 
@@ -134,7 +135,79 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
     await client._run_one_cycle()
 
     assert client._next_sleep_seconds == 0.0
+    assert client._scheduled_interval_seconds == 0.0
     assert client._next_cycle_force is True
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_passes_scheduled_interval_to_coordinator(tmp_path) -> None:
+    """Backend-scheduled delays are enforced through the coordinator gate."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._scheduled_interval_seconds = 120
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 0
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    client._coordinator.should_sync.assert_called_once_with(sync_interval=120)
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_records_not_modified_pull_as_success(tmp_path) -> None:
+    """304 pulls are successful syncs, not failures."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 5
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    client._coordinator.record_sync_success.assert_called_once_with(pushed=0, pulled=0, pull_seq=5)
+    client._coordinator.record_sync_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_records_pull_failures_as_failures(tmp_path) -> None:
+    """Transport failures keep sync bookkeeping truthful."""
+    from trw_mcp.sync.client import BackendSyncClient
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 5
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = None
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    client._coordinator.record_sync_failure.assert_called_once_with("pull failed")
+    client._coordinator.record_sync_success.assert_not_called()
 
 
 @pytest.mark.asyncio

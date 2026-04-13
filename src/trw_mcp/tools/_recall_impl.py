@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -21,6 +21,9 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.surface_tracking import log_surface_event
 
 logger = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from trw_mcp.scoring._recall import _IntelCacheProtocol
 
 
 def _detect_surface_phase() -> str:
@@ -36,6 +39,22 @@ def _detect_surface_phase() -> str:
         return phase.upper() if phase else ""
     except Exception:  # justified: fail-open, phase detection is optional
         return ""
+
+
+def _load_recall_intel_cache(trw_dir: Path) -> _IntelCacheProtocol | None:
+    """Return the local intelligence cache when it has bandit params."""
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.sync.cache import IntelligenceCache
+
+        config = get_config()
+        cache = IntelligenceCache(
+            trw_dir,
+            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
+        )
+        return cast("_IntelCacheProtocol", cache) if cache.get_bandit_params() is not None else None
+    except Exception:  # noqa: S110 — justified: fail-open, intel cache wiring is optional
+        return None
 
 
 def build_recall_context(
@@ -69,9 +88,6 @@ def build_recall_context(
 
     inferred_domains = infer_domains(file_paths=modified_files, query=query)
 
-    if not current_phase and not inferred_domains:
-        return None
-
     # Thread client_profile and model_family from config (PRD-CORE-116)
     client_profile = ""
     model_family = ""
@@ -102,6 +118,11 @@ def build_recall_context(
     except Exception:  # noqa: S110 — justified: fail-open, PRD knowledge ID loading is best-effort
         pass
 
+    intel_cache = _load_recall_intel_cache(trw_dir)
+
+    if not current_phase and not inferred_domains and not prd_knowledge_ids and intel_cache is None:
+        return None
+
     logger.debug(
         "recall_context_built",
         phase=current_phase,
@@ -118,6 +139,7 @@ def build_recall_context(
         client_profile=client_profile,
         model_family=model_family,
         prd_knowledge_ids=prd_knowledge_ids,
+        intel_cache=intel_cache,
     )
 
 

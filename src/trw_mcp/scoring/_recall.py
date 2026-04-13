@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
+from typing import Protocol
 
 import structlog
 
@@ -20,6 +21,12 @@ from trw_mcp.scoring._decay import _entry_utility
 from trw_mcp.scoring._utils import TRWConfig, get_config, safe_float, safe_int
 
 _logger = structlog.get_logger(__name__)
+
+
+class _IntelCacheProtocol(Protocol):
+    """Minimal cache protocol used by recall scoring."""
+
+    def get_bandit_params(self) -> dict[str, float] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +52,7 @@ class RecallContext:
     modified_files: list[str]
     client_profile: str
     model_family: str
+    intel_cache: _IntelCacheProtocol | None
 
     def __init__(
         self,
@@ -56,6 +64,7 @@ class RecallContext:
         modified_files: list[str] | None = None,
         client_profile: str = "",
         model_family: str = "",
+        intel_cache: _IntelCacheProtocol | None = None,
         # Deprecated aliases (backward compat)
         active_domains: list[str] | set[str] | None = None,
         team_id: str | None = None,
@@ -82,6 +91,7 @@ class RecallContext:
         object.__setattr__(self, "modified_files", modified_files if modified_files is not None else [])
         object.__setattr__(self, "client_profile", client_profile)
         object.__setattr__(self, "model_family", model_family)
+        object.__setattr__(self, "intel_cache", intel_cache)
 
     @property
     def active_domains(self) -> set[str]:
@@ -368,7 +378,7 @@ def rank_by_utility(
                     prd_boost = 1.5
 
             # 7. Intel boost from backend bandit params (PRD-INFRA-053)
-            intel_cache = getattr(context, "intel_cache", None)
+            intel_cache = context.intel_cache
             if intel_cache is not None:
                 get_fn = getattr(intel_cache, "get_bandit_params", None)
                 if callable(get_fn):

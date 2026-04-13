@@ -6,6 +6,7 @@ never raises, returns PushResult on all paths.
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 import structlog
@@ -50,9 +51,19 @@ class SyncPusher:
         if not entries:
             return PushResult()
 
+        started_at = perf_counter()
         total_pushed = 0
         total_failed = 0
         total_skipped = 0
+
+        logger.info(
+            "sync_push_start",
+            event_type="sync_push_start",
+            client_id=self._client_id,
+            entry_count=len(entries),
+            batch_size=self._batch_size,
+            outcome="start",
+        )
 
         # Batch entries
         for i in range(0, len(entries), self._batch_size):
@@ -73,15 +84,30 @@ class SyncPusher:
                     result = resp.json()
                     total_pushed += result.get("inserted", 0) + result.get("updated", 0)
                     total_skipped += result.get("skipped", 0)
-            except Exception:  # justified: boundary, remote sync push failures are isolated per batch
-                logger.warning("sync_push_failed", batch_index=i // self._batch_size, count=len(batch), exc_info=True)
+            except Exception as exc:  # justified: boundary, remote sync push failures are isolated per batch
+                logger.warning(
+                    "sync_push_error",
+                    event_type="sync_push_error",
+                    client_id=self._client_id,
+                    batch_index=i // self._batch_size,
+                    count=len(batch),
+                    duration_ms=int((perf_counter() - started_at) * 1000),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc)[:200],
+                    outcome="error",
+                    exc_info=True,
+                )
                 total_failed += len(batch)
 
         logger.info(
-            "sync_push_completed",
+            "sync_push_complete",
+            event_type="sync_push_complete",
+            client_id=self._client_id,
             pushed=total_pushed,
             failed=total_failed,
             skipped=total_skipped,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            outcome="success" if total_failed == 0 else "partial_error",
         )
         return PushResult(pushed=total_pushed, failed=total_failed, skipped=total_skipped)
 
@@ -92,10 +118,18 @@ class SyncPusher:
         if not outcomes:
             return PushResult()
 
+        started_at = perf_counter()
         payload = {
             "outcomes": outcomes,
             "client_id": self._get_client_id(),
         }
+        logger.info(
+            "sync_push_outcomes_start",
+            event_type="sync_push_outcomes_start",
+            client_id=self._client_id,
+            count=len(outcomes),
+            outcome="start",
+        )
         try:
             with httpx.Client(timeout=self._timeout) as client:
                 resp = client.post(
@@ -105,9 +139,28 @@ class SyncPusher:
                 )
                 resp.raise_for_status()
                 result = resp.json()
-                return PushResult(pushed=result.get("inserted", 0))
-        except Exception:  # justified: boundary, outcome push failures must not block local completion
-            logger.warning("sync_push_outcomes_failed", count=len(outcomes), exc_info=True)
+                pushed = result.get("inserted", 0)
+                logger.info(
+                    "sync_push_outcomes_complete",
+                    event_type="sync_push_outcomes_complete",
+                    client_id=self._client_id,
+                    pushed=pushed,
+                    duration_ms=int((perf_counter() - started_at) * 1000),
+                    outcome="success",
+                )
+                return PushResult(pushed=pushed)
+        except Exception as exc:  # justified: boundary, outcome push failures must not block local completion
+            logger.warning(
+                "sync_push_outcomes_error",
+                event_type="sync_push_outcomes_error",
+                client_id=self._client_id,
+                count=len(outcomes),
+                duration_ms=int((perf_counter() - started_at) * 1000),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:200],
+                outcome="error",
+                exc_info=True,
+            )
             return PushResult(failed=len(outcomes))
 
     def _serialize_entry(self, entry: MemoryEntry) -> dict[str, object]:

@@ -63,6 +63,23 @@ def test_recall_context_returns_none_when_empty(tmp_path: Path) -> None:
     assert ctx is None
 
 
+def test_build_recall_context_returns_cache_only_context(tmp_path: Path) -> None:
+    """A populated intel cache keeps recall-context wiring alive without phase/domain hints."""
+    from trw_mcp.sync.cache import IntelligenceCache
+    from trw_mcp.tools._recall_impl import build_recall_context
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-boosted": 1.7}}, etag="etag-1")
+
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        ctx = build_recall_context(trw_dir, "src")
+
+    assert ctx is not None
+    assert ctx.intel_cache is not None
+
+
 def test_recall_context_git_failure_graceful(tmp_path: Path) -> None:
     """build_recall_context handles git failure gracefully."""
     from trw_mcp.tools._recall_impl import build_recall_context
@@ -124,6 +141,51 @@ def test_rank_fn_receives_context_in_execute_recall(tmp_path: Path) -> None:
     # rank_fn should have been called with the context
     assert len(calls) >= 1
     assert calls[0]["context"] is expected_ctx
+
+
+def test_execute_recall_threads_live_intel_cache_context(tmp_path: Path) -> None:
+    """execute_recall passes a real intel cache through the production context builder."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.sync.cache import IntelligenceCache
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-boosted": 1.8}}, etag="etag-1")
+    config = get_config()
+    calls: list[object | None] = []
+
+    def capturing_rank_fn(
+        matches: list[dict[str, object]],
+        query_tokens: list[str],
+        lambda_weight: float,
+        assertion_penalties: dict[str, float] | None = None,
+        *,
+        context: object | None = None,
+    ) -> list[dict[str, object]]:
+        calls.append(context)
+        return matches
+
+    with (
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
+        patch("subprocess.run") as mock_run,
+        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry("L-boosted")]),
+        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
+        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
+        patch("trw_mcp.tools._recall_impl._track_recall"),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=[_make_entry("L-boosted")]),
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        execute_recall(
+            query="src",
+            trw_dir=trw_dir,
+            config=config,
+            _rank_by_utility=capturing_rank_fn,
+        )
+
+    assert calls
+    assert getattr(calls[0], "intel_cache", None) is not None
 
 
 def test_recall_no_context_regression(tmp_path: Path) -> None:

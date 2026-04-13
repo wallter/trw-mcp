@@ -57,6 +57,7 @@ class BackendSyncClient:
             ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
         )
         self._next_sleep_seconds = float(config.sync_interval_seconds)
+        self._scheduled_interval_seconds = float(config.sync_interval_seconds)
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
 
@@ -91,7 +92,7 @@ class BackendSyncClient:
         if not self._config.backend_url:
             return
 
-        if not force and not self._coordinator.should_sync():
+        if not force and not self._coordinator.should_sync(sync_interval=self._scheduled_interval_seconds):
             logger.debug("sync_cycle_skipped", reason="too_recent", client_id=self._client_id)
             return
 
@@ -122,6 +123,11 @@ class BackendSyncClient:
                 client_id=self._client_id,
             )
             if pull_result is None:
+                self._reset_poll_schedule()
+                self._coordinator.record_sync_failure("pull failed")
+                return
+
+            if pull_result.not_modified:
                 self._reset_poll_schedule()
                 self._coordinator.record_sync_success(
                     pushed=push_result.pushed,
@@ -170,6 +176,7 @@ class BackendSyncClient:
         if sync_hints and sync_hints.get("significant_updates_available"):
             if self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS:
                 self._next_sleep_seconds = 0.0
+                self._scheduled_interval_seconds = 0.0
                 self._next_cycle_force = True
                 self._consecutive_immediate_repolls += 1
                 logger.info(
@@ -192,6 +199,7 @@ class BackendSyncClient:
             delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
 
         self._next_sleep_seconds = delay
+        self._scheduled_interval_seconds = delay
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
         logger.info(
@@ -204,6 +212,7 @@ class BackendSyncClient:
 
     def _reset_poll_schedule(self) -> None:
         self._next_sleep_seconds = float(self._config.sync_interval_seconds)
+        self._scheduled_interval_seconds = float(self._config.sync_interval_seconds)
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
 
