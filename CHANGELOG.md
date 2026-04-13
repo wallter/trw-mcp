@@ -4,6 +4,25 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.2] — 2026-04-13
+
+### Fixed
+
+- **`.mcp.json` user-customized `trw` entry is now preserved** during `update-project`. Companion bug to PRD-FIX-076 (target_platforms narrowing): the merge logic in `_merge_mcp_json` unconditionally overwrote the existing `trw` server entry, destroying the dev-repo pattern where `command` is pinned to an absolute venv binary path (e.g. `/repo/trw-mcp/.venv/bin/trw-mcp`).
+  - New `_is_user_customized_trw_entry()` heuristic: an entry is preserved when its `command` is an absolute path to an extant file, OR when it has fields beyond `{command, args}` (e.g. `env`, `cwd`).
+  - Default-shape entries (bare `trw-mcp` + just `args=["--debug"]`) are still safe to refresh.
+  - Conservative heuristic: when in doubt, prefer preservation over rewrite.
+- **`.mcp.json` preservation classification fix**: when preserving, the result is appended to `result["preserved"]` (not `result["updated"]` via the legacy `_result_action_key` fallback), so dispatcher counts are accurate.
+- **TestIDEDetection environment isolation**: 8 stale tests that broke after Wave 1's `shutil.which("cursor")` + `shutil.which("cursor-agent")` additions now run deterministically via a new autouse fixture that monkey-patches `shutil.which` to filter cursor binaries and deletes `CURSOR_*` env vars, isolating `tmp_path` tests from the developer's installed IDEs.
+- **TestIdempotency::test_second_run_skips_existing**: `expected_always_write` set extended with cursor-managed templates added in Sprint 91 (subagents, commands, skills mirror, rules MDC, hooks scripts) — these are intentionally re-rendered on every init for idempotency.
+
+### Added
+
+- **Structured logging** for the .mcp.json merge path:
+  - `mcp_config_preserved` (info) when a user-customized entry is preserved, with `existing_command` field for debugging
+  - `mcp_config_updated` (info) with `reason="default_entry_refreshed"` or `reason="entry_added"` distinguishing refresh vs first-add
+- **13 new tests** in `tests/test_mcp_json_preservation.py` covering: absolute-path-to-existing-file detection, absolute-path-to-missing-file rejection, bare-command detection, python-module-invocation detection, extra-keys detection, list-command form, defensive non-dict input, dev-repo abs path preservation, user env-field preservation, other-servers untouched, default-entry refreshable, missing-file creates default, structured log emission.
+
 ## [0.44.1] — 2026-04-13
 
 ### Fixed
