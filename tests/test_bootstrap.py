@@ -255,12 +255,12 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
+        "email-template",
         "trw-audit",
         "trw-ceremony-guide",
         "trw-commit",
         "trw-deliver",
         "trw-dry-check",
-        "trw-email-template",
         "trw-exec-plan",
         "trw-framework-check",
         "trw-learn",
