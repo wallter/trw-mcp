@@ -57,3 +57,16 @@ def test_config_backend_api_key_default_empty() -> None:
 
     config = TRWConfig()
     assert config.backend_api_key == ""
+
+
+def test_config_sync_fields_load_from_env(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """FR07: sync fields honor TRW_ environment overrides."""
+    from trw_mcp.models.config._main import TRWConfig
+
+    monkeypatch.setenv("TRW_BACKEND_URL", "https://backend.example.com")
+    monkeypatch.setenv("TRW_SYNC_INTERVAL_SECONDS", "120")
+
+    config = TRWConfig()
+
+    assert config.backend_url == "https://backend.example.com"
+    assert config.sync_interval_seconds == 120

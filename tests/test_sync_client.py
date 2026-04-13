@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -344,6 +345,44 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_one_cycle_pushes_pending_outcomes_after_learning_sync(tmp_path) -> None:
+    """Successful cycles upload newly appended recall outcomes after learnings."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "recall_tracking.jsonl").write_text(
+        json.dumps({"learning_id": "L-outcome", "outcome": "positive", "timestamp": 123.0}) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 3
+    client._coordinator.get_last_outcome_line.return_value = 0
+    client._pusher = MagicMock()
+    client._pusher.push_learnings.return_value = SimpleNamespace(pushed=1, failed=0, skipped=0)
+    client._pusher.push_outcomes.return_value = SimpleNamespace(pushed=1, failed=0, skipped=0)
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=5)])
+    client._mark_synced = MagicMock()
+
+    await client._run_one_cycle()
+
+    client._pusher.push_outcomes.assert_called_once()
+    pushed_outcome = client._pusher.push_outcomes.call_args.args[0][0]
+    assert pushed_outcome["learning_ids"] == ["L-outcome"]
+    assert pushed_outcome["build_passed"] is True
+    client._coordinator.record_outcome_push_success.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
 async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_path) -> None:
     """Partial ingest failures must not clear local dirty state."""
     from trw_mcp.sync.client import BackendSyncClient
@@ -372,6 +411,8 @@ async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_
 
     client._mark_synced.assert_not_called()
     client._coordinator.record_sync_failure.assert_called_once_with("push failed: 1 entries")
+    client._coordinator.record_pull_success.assert_called_once_with(pull_seq=3)
+    client._coordinator.record_sync_success.assert_not_called()
 
 
 @pytest.mark.asyncio
