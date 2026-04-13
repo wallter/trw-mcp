@@ -1805,9 +1805,11 @@ class TestIDEDetection:
         assert result == ["claude-code"]
 
     def test_fr08_detect_cursor(self, tmp_path: Path) -> None:
+        """detect_ide(.cursor/ dir) returns cursor-ide (renamed from cursor in Sprint 91)."""
+        # The .cursor dir presence alone triggers cursor-ide detection
         (tmp_path / ".cursor").mkdir()
         result = detect_ide(tmp_path)
-        assert result == ["cursor"]
+        assert "cursor-ide" in result
 
     def test_fr08_detect_opencode_dir(self, tmp_path: Path) -> None:
         (tmp_path / ".opencode").mkdir()
@@ -1849,7 +1851,7 @@ class TestIDEDetection:
         result = resolve_ide_targets(tmp_path, ide_override="all")
         assert "claude-code" in result
         assert "opencode" in result
-        assert "cursor" in result
+        assert "cursor-ide" in result
         assert "codex" in result
 
     def test_fr08_resolve_default_claude(self, tmp_path: Path) -> None:
@@ -3014,10 +3016,10 @@ class TestCursorBootstrap:
         assert (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").exists()
 
     def test_fr05_fr07_init_project_cursor_ide(self, tmp_path: Path) -> None:
-        """FR05+FR07: init_project(ide='cursor') creates .cursor/ artifacts."""
+        """FR05+FR07: init_project(ide='cursor-ide') creates .cursor/ artifacts."""
         (tmp_path / ".git").mkdir()
 
-        result = init_project(tmp_path, ide="cursor")
+        result = init_project(tmp_path, ide="cursor-ide")
 
         assert not result["errors"], result["errors"]
         assert (tmp_path / ".cursor" / "hooks.json").exists()

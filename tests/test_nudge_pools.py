@@ -117,9 +117,9 @@ def test_claude_code_profile_has_default_weights() -> None:
 
 
 @pytest.mark.unit
-def test_cursor_profile_has_custom_weights() -> None:
-    """Cursor profile uses custom NudgePoolWeights (50/30/10/10)."""
-    profile = resolve_client_profile("cursor")
+def test_cursor_ide_profile_has_custom_weights() -> None:
+    """cursor-ide profile uses custom NudgePoolWeights (50/30/10/10)."""
+    profile = resolve_client_profile("cursor-ide")
     w = profile.nudge_pool_weights
     assert w.workflow == 50
     assert w.learnings == 30

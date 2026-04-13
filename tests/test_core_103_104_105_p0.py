@@ -80,7 +80,7 @@ class TestSurfaceEventMetadataFields:
         from trw_mcp.state.surface_tracking import log_surface_event
 
         mock_cfg = MagicMock()
-        mock_cfg.client_profile.client_id = "cursor"
+        mock_cfg.client_profile.client_id = "cursor-ide"
         mock_cfg.framework_version = "v99.9_TRW"
 
         trw_dir = tmp_path / ".trw"
@@ -94,7 +94,7 @@ class TestSurfaceEventMetadataFields:
         event = json.loads(
             (trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip()
         )
-        assert event["client_profile"] == "cursor"
+        assert event["client_profile"] == "cursor-ide"
         assert event["trw_version"] == "v99.9_TRW"
 
     def test_explicit_overrides_auto_detect(self, tmp_path: Path) -> None:
@@ -102,7 +102,7 @@ class TestSurfaceEventMetadataFields:
         from trw_mcp.state.surface_tracking import log_surface_event
 
         mock_cfg = MagicMock()
-        mock_cfg.client_profile.client_id = "cursor"
+        mock_cfg.client_profile.client_id = "cursor-ide"
         mock_cfg.framework_version = "v99.9_TRW"
 
         trw_dir = tmp_path / ".trw"
