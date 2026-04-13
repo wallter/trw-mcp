@@ -462,7 +462,13 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
         result["project_doc_fallback_filenames"] = fallback_files
     else:
         result.pop("project_doc_fallback_filenames", None)
-    result["model_instructions_file"] = instruction_path
+    # Codex resolves model_instructions_file relative to .codex/, so strip
+    # the leading ".codex/" prefix from the repo-relative instruction_path.
+    _codex_prefix = ".codex/"
+    if instruction_path.startswith(_codex_prefix):
+        result["model_instructions_file"] = instruction_path[len(_codex_prefix) :]
+    else:
+        result["model_instructions_file"] = instruction_path
     result["skills"] = _merge_skill_config(result.get("skills"))
 
     return result
