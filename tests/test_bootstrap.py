@@ -2084,7 +2084,7 @@ class TestCodexBootstrap:
         assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_build_check" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_checkpoint" in config["mcp_servers"]["trw"]["enabled_tools"]
-        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
+        assert config["model_instructions_file"] == "INSTRUCTIONS.md"
         assert ".codex/INSTRUCTIONS.md" not in config.get("project_doc_fallback_filenames", [])
         assert all(not entry["path"].endswith("/SKILL.md") for entry in config["skills"]["config"])
         assert any(entry["path"] == ".agents/skills/trw-deliver" for entry in config["skills"]["config"])
@@ -2247,7 +2247,7 @@ config = [
         assert "trw_old_tool" in config["mcp_servers"]["trw"]["disabled_tools"]
         assert "README.md" in config["project_doc_fallback_filenames"]
         assert ".codex/INSTRUCTIONS.md" not in config["project_doc_fallback_filenames"]
-        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
+        assert config["model_instructions_file"] == "INSTRUCTIONS.md"
         skill_paths = [entry["path"] for entry in config["skills"]["config"]]
         assert ".agents/skills/trw-deliver" in skill_paths
         assert ".agents/skills/trw-deliver/SKILL.md" not in skill_paths
@@ -2262,7 +2262,7 @@ config = [
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
         fallback_files = config.get("project_doc_fallback_filenames", [])
         assert ".codex/INSTRUCTIONS.md" not in fallback_files
-        assert config["model_instructions_file"] == ".codex/INSTRUCTIONS.md"
+        assert config["model_instructions_file"] == "INSTRUCTIONS.md"
 
         trw_tools = config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_session_start" in trw_tools
