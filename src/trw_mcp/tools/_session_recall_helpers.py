@@ -16,6 +16,7 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.scoring import rank_by_utility
 from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state.propensity_log import log_ranked_selections
 from trw_mcp.state.receipts import log_recall_receipt
 
 logger = structlog.get_logger(__name__)
@@ -185,6 +186,21 @@ def perform_session_recalls(
             compact=True,
         )
 
+    try:
+        log_ranked_selections(
+            trw_dir,
+            learnings,
+            context_task_type="session_start",
+            context_session_progress="early",
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        logger.warning(
+            "session_start_propensity_log_failed",
+            op="session_recall",
+            outcome="fail_open",
+            exc_info=True,
+        )
+
     matched_ids = record_session_start_surfaces(
         trw_dir,
         [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
@@ -230,7 +246,7 @@ def _phase_contextual_recall(
 
     phase_tags: list[str] | None = None
     phase = ""
-    if run_dir is not None and run_status is not None:
+    if run_status is not None:
         task_name = str(run_status.get("task_name", ""))
         phase = str(run_status.get("phase", ""))
         if task_name:
@@ -277,6 +293,21 @@ def _phase_contextual_recall(
         context=context,
     )
     capped = ranked[: config.auto_recall_max_results]
+    try:
+        log_ranked_selections(
+            trw_dir,
+            capped,
+            context_phase=phase.upper() if phase else "",
+            context_task_type="phase_auto_recall",
+            context_session_progress=phase.lower() if phase else "",
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        logger.warning(
+            "phase_auto_recall_propensity_log_failed",
+            op="session_recall",
+            outcome="fail_open",
+            exc_info=True,
+        )
     return [
         {
             "id": str(entry.get("id", "")),
