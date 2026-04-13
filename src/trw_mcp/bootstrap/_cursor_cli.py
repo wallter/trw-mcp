@@ -14,25 +14,42 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Final
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
+
+from ._cursor import HookHandlerEntry
 
 logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# TypedDict for .cursor/cli.json
+# TypedDicts for .cursor/cli.json
 # ---------------------------------------------------------------------------
+
+
+class CursorCliPermissions(TypedDict):
+    """Shape of the ``permissions`` object within .cursor/cli.json."""
+
+    allow: list[str]
+    deny: list[str]
+
+
+class CursorCliConfig(TypedDict, total=False):
+    """Shape of a parsed .cursor/cli.json document."""
+
+    _note: str
+    permissions: CursorCliPermissions
 
 
 # ---------------------------------------------------------------------------
 # Permissions baseline (PRD-CORE-137-FR03)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_ALLOW = [
+_DEFAULT_ALLOW: Final[tuple[str, ...]] = (
     "Read(**/*)",
     "Shell(git)",
     "Shell(grep)",
@@ -44,9 +61,9 @@ _DEFAULT_ALLOW = [
     "Shell(npm)",
     "Shell(python)",
     "Shell(trw-mcp)",
-]
+)
 
-_DEFAULT_DENY = [
+_DEFAULT_DENY: Final[tuple[str, ...]] = (
     "Shell(rm -rf)",
     "Shell(curl)",
     "Shell(wget)",
@@ -57,7 +74,7 @@ _DEFAULT_DENY = [
     "Write(.git/**/*)",
     "Write(.trw/**/*)",
     "Write(node_modules/**/*)",
-]
+)
 
 # ---------------------------------------------------------------------------
 # CLI hook events (PRD-CORE-137-FR05)
@@ -67,7 +84,7 @@ _DEFAULT_DENY = [
 # permitting the operation.
 # ---------------------------------------------------------------------------
 
-_CLI_HOOK_EVENTS: dict[str, list[dict[str, Any]]] = {
+_CLI_HOOK_EVENTS: dict[str, list[HookHandlerEntry]] = {
     "beforeShellExecution": [
         {
             "command": ".cursor/hooks/trw-before-shell.sh",
@@ -113,14 +130,14 @@ _CLI_HOOK_EVENTS: dict[str, list[dict[str, Any]]] = {
 # Scripts the CLI surface installs. cli-adapter, trw-before-mcp, trw-stop are
 # shared with the IDE surface; CLI-specific ones are trw-before-shell,
 # trw-after-shell, trw-after-mcp.
-_CLI_HOOK_SCRIPTS = [
+_CLI_HOOK_SCRIPTS: Final[tuple[str, ...]] = (
     "cli-adapter.sh",
     "trw-before-shell.sh",
     "trw-after-shell.sh",
     "trw-before-mcp.sh",
     "trw-after-mcp.sh",
     "trw-stop.sh",
-]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +161,10 @@ def generate_cursor_cli_config(
 
     On malformed JSON: overwrites with defaults and records a warning.
 
+    Threat model note: ``Read(**/*)`` is appropriate for trusted-repo CI.
+    See the ``_note`` field in the generated file and docs/CLIENT-PROFILES.md
+    for the full security posture discussion (PRD-CORE-137-FR03).
+
     Args:
         target_dir: Root of the target repository.
         force: When True, overwrite unconditionally.
@@ -156,22 +177,28 @@ def generate_cursor_cli_config(
     cursor_dir.mkdir(parents=True, exist_ok=True)
     cli_file = cursor_dir / "cli.json"
 
-    default_config: dict[str, Any] = {
-        "_note": (
-            "TRW baseline permissions for cursor-agent CI. "
-            "Read(**/*) is appropriate for trusted-repo CI; tighten for untrusted content. "
-            "See docs/CLIENT-PROFILES.md for the security posture discussion."
-        ),
-        "permissions": {
-            "allow": list(_DEFAULT_ALLOW),
-            "deny": list(_DEFAULT_DENY),
-        },
+    _note = (
+        "TRW baseline permissions for cursor-agent CI. "
+        "Read(**/*) is appropriate for trusted-repo CI; tighten for untrusted content. "
+        "See docs/CLIENT-PROFILES.md for the security posture discussion."
+    )
+    default_permissions: CursorCliPermissions = {
+        "allow": list(_DEFAULT_ALLOW),
+        "deny": list(_DEFAULT_DENY),
+    }
+    default_config: CursorCliConfig = {
+        "_note": _note,
+        "permissions": default_permissions,
     }
 
     if cli_file.exists() and not force:
         try:
-            existing: dict[str, Any] = json.loads(cli_file.read_text(encoding="utf-8"))
-            perms: dict[str, Any] = existing.setdefault("permissions", {})
+            raw = json.loads(cli_file.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise TypeError("cli.json root must be a JSON object")
+            perms = raw.setdefault("permissions", {})
+            if not isinstance(perms, dict):
+                raise TypeError("permissions must be a JSON object")
             allow: list[str] = perms.setdefault("allow", [])
             deny: list[str] = perms.setdefault("deny", [])
             # Add TRW allow-tokens not already in allow or deny
@@ -182,9 +209,9 @@ def generate_cursor_cli_config(
             for token in _DEFAULT_DENY:
                 if token not in deny and token not in allow:
                     deny.append(token)
-            cli_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+            cli_file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
             result["updated"].append(".cursor/cli.json")
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             logger.warning(
                 "cursor_cli_config_malformed",
                 path=str(cli_file),
@@ -202,10 +229,11 @@ def generate_cursor_cli_config(
     # Emit TTY/tmux reminder (PRD-CORE-137-FR08a)
     _emit_cli_safety_reminder(result)
 
-    logger.debug(
+    logger.info(
         "generate_cursor_cli_config",
         created=result["created"],
         updated=result["updated"],
+        outcome="success",
     )
     return result
 
@@ -213,6 +241,23 @@ def generate_cursor_cli_config(
 # ---------------------------------------------------------------------------
 # Task 15: AGENTS.md generator with sentinel block (PRD-CORE-137-FR04)
 # ---------------------------------------------------------------------------
+
+
+def _merge_agents_md(existing: str, trw_block: str, begin: str, end: str) -> str:
+    """Return new AGENTS.md content with TRW block replaced/prepended.
+
+    Pure function: takes (existing_content, trw_block, begin_sentinel,
+    end_sentinel) and returns the merged document as a string.  No I/O.
+
+    If both sentinels are found, the content between them is replaced with the
+    new ``trw_block`` and everything outside is preserved.  If sentinels are
+    absent, the TRW block is prepended with a blank line before existing content.
+    """
+    if begin in existing and end in existing:
+        pre, _, rest = existing.partition(begin)
+        _, _, post = rest.partition(end)
+        return pre + trw_block + post
+    return trw_block + "\n\n" + existing
 
 
 def generate_cursor_cli_agents_md(
@@ -238,7 +283,7 @@ def generate_cursor_cli_agents_md(
     Returns:
         BootstrapFileResult with created/updated lists.
     """
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": [], "info": []}
     agents_file = target_dir / "AGENTS.md"
 
     begin = "<!-- TRW:BEGIN -->"
@@ -252,24 +297,18 @@ def generate_cursor_cli_agents_md(
 
     if agents_file.exists() and not force:
         existing = agents_file.read_text(encoding="utf-8")
-        if begin in existing and end in existing:
-            # Replace content between sentinels; preserve pre and post
-            pre, _, rest = existing.partition(begin)
-            _, _, post = rest.partition(end)
-            new_content = pre + trw_block + post
-        else:
-            # No sentinels — prepend block, preserve existing content
-            new_content = trw_block + "\n\n" + existing
+        new_content = _merge_agents_md(existing, trw_block, begin, end)
         agents_file.write_text(new_content, encoding="utf-8")
         result["updated"].append("AGENTS.md")
     else:
         agents_file.write_text(trw_block + "\n", encoding="utf-8")
         result["created"].append("AGENTS.md")
 
-    logger.debug(
+    logger.info(
         "generate_cursor_cli_agents_md",
         created=result["created"],
         updated=result["updated"],
+        outcome="success",
     )
     return result
 
@@ -307,10 +346,10 @@ def generate_cursor_cli_hooks(
         smart_merge_cursor_json,
     )
 
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": [], "info": []}
 
     # 1. Install bash adapters via shared helper (idempotent; missing scripts warned+skipped)
-    script_result = generate_cursor_hook_scripts(target_dir, _CLI_HOOK_SCRIPTS, force=force)
+    script_result = generate_cursor_hook_scripts(target_dir, list(_CLI_HOOK_SCRIPTS), force=force)
     result["created"].extend(script_result.get("created", []))
     result["updated"].extend(script_result.get("updated", []))
     result["preserved"].extend(script_result.get("preserved", []))
@@ -320,7 +359,9 @@ def generate_cursor_cli_hooks(
     #    preserves them and only appends/replaces entries keyed by
     #    identity_prefix=".cursor/hooks/trw-".
     hooks_file = target_dir / ".cursor" / "hooks.json"
-    trw_hooks_body = build_cursor_hook_config(_CLI_HOOK_EVENTS)
+    trw_hooks_body = build_cursor_hook_config(
+        {k: list(v) for k, v in _CLI_HOOK_EVENTS.items()}
+    )
     merge_result = smart_merge_cursor_json(
         hooks_file,
         trw_hooks_body,
@@ -330,10 +371,11 @@ def generate_cursor_cli_hooks(
     result["updated"].extend(merge_result.get("updated", []))
     result["preserved"].extend(merge_result.get("preserved", []))
 
-    logger.debug(
+    logger.info(
         "generate_cursor_cli_hooks",
         created=result.get("created", []),
         updated=result.get("updated", []),
+        outcome="success",
     )
     return result
 
@@ -342,7 +384,7 @@ def generate_cursor_cli_hooks(
 # Task 17b: TTY/tmux reminder helper (PRD-CORE-137-FR08a)
 # ---------------------------------------------------------------------------
 
-_TTY_REMINDER_LINES = [
+_TTY_REMINDER_LINES: Final[tuple[str, ...]] = (
     (
         "Cursor CLI requires a real TTY in automation. "
         "Wrap 'cursor-agent -p' invocations in tmux for raw subprocess environments."
@@ -350,7 +392,7 @@ _TTY_REMINDER_LINES = [
     (
         "GitHub Actions runners provide a TTY implicitly; no wrapping needed there."
     ),
-]
+)
 
 
 def _emit_cli_safety_reminder(result: BootstrapFileResult) -> None:
@@ -358,6 +400,8 @@ def _emit_cli_safety_reminder(result: BootstrapFileResult) -> None:
 
     Called from ``generate_cursor_cli_config`` so the reminder appears every
     time cursor-cli init runs (PRD-CORE-137-FR08a).
+
+    Idempotent: repeated calls do not duplicate lines in the info list.
     """
     info = result.setdefault("info", [])
     for line in _TTY_REMINDER_LINES:
