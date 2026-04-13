@@ -66,14 +66,14 @@ def is_high_utility(
             if text.endswith("```"):
                 text = text[:-3]
         text = text.strip()
-        
+
         parsed = json.loads(text)
         is_valid = bool(parsed.get("valid", True))
         reason = str(parsed.get("reason", ""))
-        
+
         if not is_valid:
             logger.info("learn_llm_validation_rejected", summary=summary[:50], reason=reason)
-            
+
         return is_valid, reason
 
     except Exception as exc:

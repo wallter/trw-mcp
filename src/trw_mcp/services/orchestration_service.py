@@ -18,7 +18,7 @@ from typing import TypedDict
 
 import structlog
 
-logger = structlog.get_logger(__name__)
+_logger = structlog.get_logger(__name__)
 
 
 class RunScaffoldResult(TypedDict):
@@ -97,7 +97,7 @@ def scaffold_run_directory(
     events_path = run_root / "meta" / "events.jsonl"
     _append_event(events_path, "run_init", {"task": task_name, "source": "local_cli"})
 
-    logger.info(
+    _logger.info(
         "local_run_init_ok",
         run_id=run_id,
         task=task_name,
@@ -168,7 +168,7 @@ def write_checkpoint(
         event_data["wave_id"] = wave_id
     _append_event(meta_path / "events.jsonl", "checkpoint", event_data)
 
-    logger.info(
+    _logger.info(
         "local_checkpoint_ok",
         message=message[:80],
         run_path=str(resolved),
@@ -228,6 +228,7 @@ def _append_event(
     record: dict[str, object] = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "event": event_type,
+        "event_type": event_type,
         "type": event_type,
         **data,
     }

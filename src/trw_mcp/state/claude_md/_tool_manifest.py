@@ -66,14 +66,15 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_claude_md_sync": "Synchronize CLAUDE.md with current TRW configuration",
 }
 
-# Compile-time assertion: every tool in the "all" preset has a description
+# Validate at import time: every tool in the "all" preset has a description
 _ALL_TOOLS = set(TOOL_PRESETS["all"])
 _DESCRIBED_TOOLS = set(TOOL_DESCRIPTIONS)
-assert _ALL_TOOLS == _DESCRIBED_TOOLS, (
-    f"TOOL_DESCRIPTIONS / TOOL_PRESETS mismatch: "
-    f"missing={_ALL_TOOLS - _DESCRIBED_TOOLS}, "
-    f"extra={_DESCRIBED_TOOLS - _ALL_TOOLS}"
-)
+if _ALL_TOOLS != _DESCRIBED_TOOLS:
+    _missing = _ALL_TOOLS - _DESCRIBED_TOOLS
+    _extra = _DESCRIBED_TOOLS - _ALL_TOOLS
+    raise RuntimeError(
+        f"TOOL_DESCRIPTIONS / TOOL_PRESETS mismatch: missing={_missing}, extra={_extra}"
+    )
 
 
 # ---------------------------------------------------------------------------
