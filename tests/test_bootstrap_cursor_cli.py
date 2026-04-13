@@ -231,6 +231,45 @@ class TestDualSurface:
         assert "beforeSubmitPrompt" in events
         assert "afterFileEdit" in events
 
+    def test_dispatcher_dual_surface_mcp_json_written_exactly_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P1-B audit fix: dispatcher-level dual-surface mcp.json-once test.
+
+        Calls ``_update_cursor_artifacts`` with BOTH cursor-ide and cursor-cli
+        in ide_targets and verifies ``.cursor/mcp.json`` appears exactly once
+        across ``result["created"]`` + ``result["updated"]``. Guards against
+        the shared-step running twice bug that was absent from the earlier
+        generator-level test.
+        """
+        from trw_mcp.bootstrap._ide_targets import _update_cursor_artifacts
+
+        # Force dual-surface detection by monkey-patching resolve_ide_targets
+        from trw_mcp.bootstrap import _ide_targets as _targets_mod
+
+        monkeypatch.setattr(
+            _targets_mod,
+            "resolve_ide_targets",
+            lambda td, ide_override=None: ["cursor-ide", "cursor-cli"],
+        )
+
+        _make_git_repo(tmp_path)
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+
+        _update_cursor_artifacts(tmp_path, result, ide_override=None)
+
+        all_paths = result["created"] + result["updated"]
+        mcp_json_refs = [p for p in all_paths if p.endswith("mcp.json") or "mcp.json" in p]
+        assert len(mcp_json_refs) == 1, (
+            f".cursor/mcp.json must appear exactly once in dispatcher result; "
+            f"found {len(mcp_json_refs)}: {mcp_json_refs}"
+        )
+
+        # Both surfaces must also have produced their own artifacts
+        assert (tmp_path / ".cursor" / "mcp.json").is_file()
+        assert (tmp_path / ".cursor" / "cli.json").is_file()
+        assert (tmp_path / "AGENTS.md").is_file()
+
     def test_dual_surface_mcp_json_written_once_on_fresh(self, tmp_path: Path) -> None:
         """On fresh init, mcp.json written once; subsequent call produces 'updated'."""
         from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
