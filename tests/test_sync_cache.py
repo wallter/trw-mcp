@@ -114,6 +114,16 @@ def test_cache_etag_property(tmp_path: Path) -> None:
     assert cache.etag == "my-etag-456"
 
 
+def test_cache_etag_none_when_expired(tmp_path: Path) -> None:
+    """Expired caches do not keep serving stale ETags into conditional pulls."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
+    cache.update({"bandit_params": {}}, etag="stale-etag")
+
+    assert cache.etag is None
+
+
 def test_cache_get_attribution_results(tmp_path: Path) -> None:
     """Write and read attribution_results."""
     from trw_mcp.sync.cache import IntelligenceCache

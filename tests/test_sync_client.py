@@ -93,6 +93,7 @@ async def test_run_one_cycle_applies_server_next_poll_hint(tmp_path) -> None:
         sync_hints={
             "next_poll_recommended_at": (datetime.now(tz=UTC) + timedelta(seconds=5)).isoformat(),
             "polling_cap_seconds": 120,
+            "interval_seconds": 120,
         },
         team_learnings=[],
         status_code=200,
@@ -125,7 +126,11 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
     client._puller.pull_intel_state.return_value = PullResult(
         state={"etag": "etag-1"},
         etag="etag-1",
-        sync_hints={"significant_updates_available": True, "polling_cap_seconds": 300},
+        sync_hints={
+            "significant_updates_available": True,
+            "polling_cap_seconds": 300,
+            "interval_seconds": 300,
+        },
         team_learnings=[],
         status_code=200,
     )
@@ -138,6 +143,37 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
     assert client._next_sleep_seconds == 0.0
     assert client._scheduled_interval_seconds == 0.0
     assert client._next_cycle_force is True
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_accepts_server_intervals_above_one_hour(tmp_path) -> None:
+    """Server-approved schedules honor the backend/PRD 7200-second ceiling."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(sync_interval_seconds=30), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 0
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(
+        state={"etag": "etag-1"},
+        etag="etag-1",
+        sync_hints={"polling_cap_seconds": 5400, "interval_seconds": 5400},
+        team_learnings=[],
+        status_code=200,
+    )
+    client._puller.merge_team_learnings.return_value = 0
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    assert client._next_sleep_seconds == 5400
+    assert client._scheduled_interval_seconds == 5400
 
 
 @pytest.mark.asyncio
