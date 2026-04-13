@@ -43,10 +43,15 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
     the caller so the user can abort the entire installer with Ctrl-C.
     """
     try:
-        return subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=timeout,
-        ).returncode == 0
+        return (
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            ).returncode
+            == 0
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
@@ -63,12 +68,18 @@ def _detect_installed_extras(python: str, timeout: int = 10) -> dict[str, bool]:
 
 
 def _run_with_progress_testable(
-    ui: MagicMock, fallback_msg: str, cmd: list[str], timeout: int = 180,
+    ui: MagicMock,
+    fallback_msg: str,
+    cmd: list[str],
+    timeout: int = 180,
 ) -> bool:
     """Simplified run_with_progress for testing (no ANSI/spinner deps)."""
     try:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
     except FileNotFoundError:
         return False
@@ -113,9 +124,33 @@ _TIPS = [
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",
-    "Set CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-4-6 for faster subagents",
+    "Choose full profiles for local IDEs and light profiles for CI-oriented CLIs",
     "TRW hooks run automatically \u2014 no setup needed after install",
 ]
+
+_SUPPORTED_IDES = [
+    "claude-code",
+    "cursor-ide",
+    "cursor-cli",
+    "opencode",
+    "codex",
+    "copilot",
+    "gemini",
+    "aider",
+]
+
+
+def _normalize_ide_targets(ides: list[str]) -> list[str]:
+    normalized = [ide.strip() for ide in ides if ide.strip()]
+    if not normalized:
+        return []
+    if "all" in normalized:
+        return _SUPPORTED_IDES.copy()
+    invalid = [ide for ide in normalized if ide not in _SUPPORTED_IDES]
+    if invalid:
+        supported = ", ".join(_SUPPORTED_IDES + ["all"])
+        raise ValueError(f"Unknown --ide value(s): {', '.join(invalid)}. Supported values: {supported}")
+    return list(dict.fromkeys(normalized))
 
 
 def _load_prior_config(target_dir: Path) -> dict[str, object]:
@@ -124,8 +159,17 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
         return {}
     prior: dict[str, object] = {}
     try:
-        for line in config_path.read_text(encoding="utf-8").splitlines():
+        raw_text = config_path.read_text(encoding="utf-8")
+        in_target_platforms = False
+        target_platforms: list[str] = []
+        for line in raw_text.splitlines():
             line = line.strip()
+            if in_target_platforms:
+                if line.startswith("- "):
+                    target_platforms.append(line[2:].strip().strip('"').strip("'"))
+                    continue
+                if line and not line.startswith("#"):
+                    in_target_platforms = False
             if line.startswith("#") or not line or ":" not in line:
                 continue
             key, _, value = line.partition(":")
@@ -141,6 +185,10 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
                 prior["embeddings"] = value.lower() == "true"
             elif key == "sqlite_vec_enabled":
                 prior["sqlite_vec"] = value.lower() == "true"
+            elif key == "target_platforms":
+                in_target_platforms = True
+        if target_platforms:
+            prior["target_platforms"] = _normalize_ide_targets(target_platforms)
     except (OSError, UnicodeDecodeError):
         pass
     return prior
@@ -199,6 +247,7 @@ def update_config(
     *,
     embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
+    target_platforms: list[str] | None = None,
 ) -> bool:
     if not config_path.is_file():
         return False
@@ -207,9 +256,14 @@ def update_config(
     updated: set[str] = set()
     out: list[str] = []
     replacing_platform_urls = False
+    replacing_target_platforms = False
     for line in lines:
         normalized_line = line if line.endswith("\n") else line + "\n"
         s = normalized_line.lstrip()
+        if replacing_target_platforms:
+            if s.startswith("- "):
+                continue
+            replacing_target_platforms = False
         if replacing_platform_urls:
             if s.startswith("- "):
                 continue
@@ -235,6 +289,12 @@ def update_config(
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
             continue
+        if s.startswith("target_platforms:") and target_platforms is not None:
+            out.append("target_platforms:\n")
+            out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+            updated.add("target_platforms")
+            replacing_target_platforms = True
+            continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
             if api_key or telemetry_enabled:
@@ -259,6 +319,9 @@ def update_config(
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
         out.append("sqlite_vec_enabled: true\n")
+    if target_platforms and "target_platforms" not in updated:
+        out.append("target_platforms:\n")
+        out.extend(f'  - "{ide}"\n' for ide in target_platforms)
     config_path.write_text("".join(out), encoding="utf-8")
     return True
 
@@ -369,6 +432,17 @@ class TestLoadPriorConfig:
         )
         result = _load_prior_config(tmp_path)
         assert result["project_name"] == "test"
+
+    def test_target_platforms_list_is_loaded(self, tmp_path: Path) -> None:
+        """target_platforms list is parsed for reinstall reuse."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text(
+            'target_platforms:\n  - "cursor-ide"\n  - "codex"\n',
+            encoding="utf-8",
+        )
+        result = _load_prior_config(tmp_path)
+        assert result["target_platforms"] == ["cursor-ide", "codex"]
 
 
 class TestCheckBackendHealth:
@@ -522,9 +596,7 @@ class TestUpdateConfig:
         """Existing platform_urls blocks are replaced in place, not duplicated."""
         config = tmp_path / "config.yaml"
         config.write_text(
-            'platform_api_key: ""\n'
-            "platform_urls:\n"
-            '  - "http://old.example.com"\n',
+            'platform_api_key: ""\nplatform_urls:\n  - "http://old.example.com"\n',
             encoding="utf-8",
         )
 
@@ -534,6 +606,33 @@ class TestUpdateConfig:
         assert content.count("platform_urls:") == 1
         assert '"https://api.trwframework.com"' in content
         assert '"http://old.example.com"' not in content
+
+    def test_persists_target_platforms(self, tmp_path: Path) -> None:
+        """Selected client targets are written to config.yaml."""
+        config = tmp_path / "config.yaml"
+        config.write_text("installation_id: test\n", encoding="utf-8")
+
+        update_config(config, "test", "", False, target_platforms=["cursor-ide", "codex", "gemini"])
+
+        content = config.read_text(encoding="utf-8")
+        assert 'target_platforms:\n  - "cursor-ide"\n  - "codex"\n  - "gemini"\n' in content
+
+    def test_rewrites_target_platforms_without_duplication(self, tmp_path: Path) -> None:
+        """Existing target_platforms blocks are replaced in place."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            'target_platforms:\n  - "claude-code"\n  - "opencode"\nplatform_api_key: ""\n',
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "", False, target_platforms=["cursor-cli", "codex"])
+
+        content = config.read_text(encoding="utf-8")
+        assert content.count("target_platforms:") == 1
+        assert '"claude-code"' not in content
+        assert '"opencode"' not in content
+        assert '"cursor-cli"' in content
+        assert '"codex"' in content
 
 
 class TestPhasePromptFeatures:
@@ -766,7 +865,9 @@ class TestRunWithProgress:
         ui.interactive = False
         ui.quiet = True
         result = _run_with_progress_testable(
-            ui, "Testing...", [sys.executable, "-c", "print('hello')"],
+            ui,
+            "Testing...",
+            [sys.executable, "-c", "print('hello')"],
         )
         assert result is True
 
@@ -776,7 +877,8 @@ class TestRunWithProgress:
         ui.interactive = False
         ui.quiet = True
         result = _run_with_progress_testable(
-            ui, "Testing...",
+            ui,
+            "Testing...",
             [sys.executable, "-c", "import time; time.sleep(300)"],
             timeout=2,
         )
@@ -792,6 +894,8 @@ class TestRunWithProgress:
         ui.interactive = False
         ui.quiet = True
         result = _run_with_progress_testable(
-            ui, "Testing...", ["/nonexistent/command"],
+            ui,
+            "Testing...",
+            ["/nonexistent/command"],
         )
         assert result is False
