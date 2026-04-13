@@ -4,6 +4,8 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-04-13
+
 ### Breaking Changes
 - **`cursor` client profile split into `cursor-ide` + `cursor-cli`** (PRD-CORE-136, PRD-CORE-137). The bare `cursor` identifier is no longer registered — users running `target_platforms: [cursor]` must migrate to `[cursor-ide]` (the GUI IDE) or `[cursor-cli]` (the `cursor-agent` headless tool), or both for dual-surface development. The unknown-ID fallback log names both replacement identifiers explicitly for CI log-scraping detection. No deprecation alias is retained.
 
