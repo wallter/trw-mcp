@@ -17,7 +17,7 @@ ruff check src/                                               # Lint
 ## Key Architecture
 
 - `server/` — FastMCP entry point, middleware chain (ceremony, observation masking, response optimizer)
-- `tools/` — 24 MCP tool implementations
+- `tools/` — 14 MCP tool implementations
 - `state/` — State management (persistence uses `YAML(typ="safe")` for all reads)
 - `middleware/` — Observation masking (`ContextBudgetMiddleware`), ceremony enforcement
 - `telemetry/` — Constants (inlined from trw-shared), pipeline, sender
