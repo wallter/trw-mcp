@@ -86,11 +86,17 @@ class SyncCoordinator:
         state["last_push_at"] = now
         state["last_push_seq"] = max(self._int_field(state, "last_push_seq"), push_seq or 0)
         state["push_count"] = self._int_field(state, "push_count") + 1
+        state["last_pull_at"] = state.get("last_pull_at")
+        state["last_pull_seq"] = self._int_field(state, "last_pull_seq")
+        state["pull_count"] = self._int_field(state, "pull_count")
         if pulled > 0 or pull_completed:
             state["last_pull_at"] = now
             state["last_pull_seq"] = max(self._int_field(state, "last_pull_seq"), pull_seq or 0)
             state["pull_count"] = self._int_field(state, "pull_count") + 1
         state["last_error"] = None
+        state["last_error_at"] = None
+        state["consecutive_failures"] = 0
+        state["last_outcome_line"] = self._int_field(state, "last_outcome_line")
         state["version"] = 1
         self._write_state(state)
 
@@ -103,6 +109,26 @@ class SyncCoordinator:
         state["version"] = 1
         self._write_state(state)
 
+    def record_pull_success(self, pull_seq: int | None = None) -> None:
+        """Record a successful pull without overwriting push failure state."""
+        state = self._read_state()
+        now = datetime.now(tz=timezone.utc).isoformat()
+        state["last_push_seq"] = self._int_field(state, "last_push_seq")
+        state["push_count"] = self._int_field(state, "push_count")
+        state["last_pull_at"] = now
+        state["last_pull_seq"] = max(self._int_field(state, "last_pull_seq"), pull_seq or 0)
+        state["pull_count"] = self._int_field(state, "pull_count") + 1
+        state["last_outcome_line"] = self._int_field(state, "last_outcome_line")
+        state["version"] = 1
+        self._write_state(state)
+
+    def record_outcome_push_success(self, last_outcome_line: int) -> None:
+        """Persist the append-only outcome high-water mark after a clean push."""
+        state = self._read_state()
+        state["last_outcome_line"] = max(self._int_field(state, "last_outcome_line"), last_outcome_line)
+        state["version"] = 1
+        self._write_state(state)
+
     def get_last_push_seq(self) -> int:
         """Read the last push sequence number from state."""
         state = self._read_state()
@@ -112,6 +138,11 @@ class SyncCoordinator:
         """Read the last pull sequence number from state."""
         state = self._read_state()
         return self._int_field(state, "last_pull_seq")
+
+    def get_last_outcome_line(self) -> int:
+        """Read the last successfully pushed local outcome line number."""
+        state = self._read_state()
+        return self._int_field(state, "last_outcome_line")
 
     @staticmethod
     def _int_field(state: dict[str, object], key: str) -> int:

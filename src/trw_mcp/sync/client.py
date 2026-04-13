@@ -12,6 +12,7 @@ import structlog
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
+from trw_mcp.sync.outcomes import load_pending_outcomes
 from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -104,6 +105,7 @@ class BackendSyncClient:
             dirty = self._get_dirty_entries()
             push_result = PushResult()
             push_seq = 0
+            push_failed = False
             if dirty:
                 logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
                 push_result = self._pusher.push_learnings(dirty)
@@ -111,9 +113,27 @@ class BackendSyncClient:
                     push_seq = max((entry.sync_seq for entry in dirty), default=0)
                     self._mark_synced(dirty[:push_result.pushed + push_result.skipped])
                 else:
+                    push_failed = True
                     self._coordinator.record_sync_failure(f"push failed: {push_result.failed} entries")
             else:
                 logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
+
+            if not push_failed:
+                pending_outcomes = load_pending_outcomes(
+                    self._trw_dir,
+                    since_line=self._coordinator.get_last_outcome_line(),
+                )
+                if pending_outcomes:
+                    outcome_result = self._pusher.push_outcomes([item.payload for item in pending_outcomes])
+                    if outcome_result.failed == 0:
+                        self._coordinator.record_outcome_push_success(
+                            max(item.line_no for item in pending_outcomes)
+                        )
+                    else:
+                        push_failed = True
+                        self._coordinator.record_sync_failure(
+                            f"outcome push failed: {outcome_result.failed} events"
+                        )
 
             pulled = 0
             merged = 0
@@ -132,13 +152,16 @@ class BackendSyncClient:
 
             if pull_result.not_modified:
                 self._restore_poll_schedule()
-                self._coordinator.record_sync_success(
-                    pushed=push_result.pushed,
-                    pulled=0,
-                    push_seq=push_seq,
-                    pull_seq=pull_seq,
-                    pull_completed=True,
-                )
+                if push_failed:
+                    self._coordinator.record_pull_success(pull_seq=pull_seq)
+                else:
+                    self._coordinator.record_sync_success(
+                        pushed=push_result.pushed,
+                        pulled=0,
+                        push_seq=push_seq,
+                        pull_seq=pull_seq,
+                        pull_completed=True,
+                    )
                 return
 
             if self._config.intel_cache_enabled and pull_result.state is not None:
@@ -167,13 +190,16 @@ class BackendSyncClient:
                 next_delay_seconds=self._next_sleep_seconds,
                 immediate_repoll=self._next_cycle_force,
             )
-            self._coordinator.record_sync_success(
-                pushed=push_result.pushed,
-                pulled=pulled,
-                push_seq=push_seq,
-                pull_seq=next_pull_seq,
-                pull_completed=True,
-            )
+            if push_failed:
+                self._coordinator.record_pull_success(pull_seq=next_pull_seq)
+            else:
+                self._coordinator.record_sync_success(
+                    pushed=push_result.pushed,
+                    pulled=pulled,
+                    push_seq=push_seq,
+                    pull_seq=next_pull_seq,
+                    pull_completed=True,
+                )
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:
         """Update the next poll schedule from backend hints."""

@@ -95,6 +95,9 @@ def test_record_sync_success_writes_state(trw_dir: Path) -> None:
     assert state["last_push_seq"] == 2
     assert state["push_count"] == 1
     assert state["last_error"] is None
+    assert state["consecutive_failures"] == 0
+    assert state["last_pull_seq"] == 0
+    assert state["pull_count"] == 0
 
 
 def test_record_sync_failure_writes_error(trw_dir: Path) -> None:
@@ -107,6 +110,34 @@ def test_record_sync_failure_writes_error(trw_dir: Path) -> None:
     state = json.loads((trw_dir / "sync-state.json").read_text())
     assert state["last_error"] == "connection refused"
     assert state["consecutive_failures"] == 1
+
+
+def test_record_pull_success_preserves_last_error(trw_dir: Path) -> None:
+    """Pull-only success updates pull state without clearing push failure context."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    coord.record_sync_failure("connection refused")
+    coord.record_pull_success(pull_seq=7)
+
+    state = json.loads((trw_dir / "sync-state.json").read_text())
+    assert state["last_error"] == "connection refused"
+    assert state["last_pull_seq"] == 7
+    assert state["pull_count"] == 1
+    assert "last_pull_at" in state
+
+
+def test_record_outcome_push_success_tracks_high_water_line(trw_dir: Path) -> None:
+    """Outcome sync persists the append-only line high-water mark."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    coord.record_outcome_push_success(4)
+    coord.record_outcome_push_success(2)
+
+    state = json.loads((trw_dir / "sync-state.json").read_text())
+    assert state["last_outcome_line"] == 4
+    assert coord.get_last_outcome_line() == 4
 
 
 def test_get_last_push_seq_default(trw_dir: Path) -> None:
