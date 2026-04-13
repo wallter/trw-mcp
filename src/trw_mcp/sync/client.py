@@ -103,10 +103,12 @@ class BackendSyncClient:
 
             dirty = self._get_dirty_entries()
             push_result = PushResult()
+            push_seq = 0
             if dirty:
                 logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
                 push_result = self._pusher.push_learnings(dirty)
                 if push_result.failed == 0:
+                    push_seq = max((entry.sync_seq for entry in dirty), default=0)
                     self._mark_synced(dirty[:push_result.pushed + push_result.skipped])
                 else:
                     self._coordinator.record_sync_failure(f"push failed: {push_result.failed} entries")
@@ -133,6 +135,7 @@ class BackendSyncClient:
                 self._coordinator.record_sync_success(
                     pushed=push_result.pushed,
                     pulled=0,
+                    push_seq=push_seq,
                     pull_seq=pull_seq,
                     pull_completed=True,
                 )
@@ -167,6 +170,7 @@ class BackendSyncClient:
             self._coordinator.record_sync_success(
                 pushed=push_result.pushed,
                 pulled=pulled,
+                push_seq=push_seq,
                 pull_seq=next_pull_seq,
                 pull_completed=True,
             )
@@ -260,8 +264,7 @@ class BackendSyncClient:
             from trw_mcp.state._memory_connection import get_backend as _get_backend
 
             backend = _get_backend()
-            last_seq = self._coordinator.get_last_push_seq()
-            return DeltaTracker.get_dirty_entries(backend, since_seq=last_seq)
+            return DeltaTracker.get_dirty_entries(backend, since_seq=0)
         except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
             logger.debug("sync_get_dirty_failed", client_id=self._client_id, exc_info=True)
             return []

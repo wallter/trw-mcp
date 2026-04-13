@@ -87,12 +87,12 @@ def test_record_sync_success_writes_state(trw_dir: Path) -> None:
     from trw_mcp.sync.coordinator import SyncCoordinator
 
     coord = SyncCoordinator(trw_dir=trw_dir)
-    coord.record_sync_success(pushed=5, pulled=0)
+    coord.record_sync_success(pushed=5, pulled=0, push_seq=2)
 
     state_path = trw_dir / "sync-state.json"
     assert state_path.exists()
     state = json.loads(state_path.read_text())
-    assert state["last_push_seq"] == 5
+    assert state["last_push_seq"] == 2
     assert state["push_count"] == 1
     assert state["last_error"] is None
 
@@ -122,5 +122,16 @@ def test_get_last_push_seq_after_success(trw_dir: Path) -> None:
     from trw_mcp.sync.coordinator import SyncCoordinator
 
     coord = SyncCoordinator(trw_dir=trw_dir)
-    coord.record_sync_success(pushed=42, pulled=0)
-    assert coord.get_last_push_seq() == 42
+    coord.record_sync_success(pushed=42, pulled=0, push_seq=3)
+    assert coord.get_last_push_seq() == 3
+
+
+def test_record_sync_success_keeps_highest_push_seq(trw_dir: Path) -> None:
+    """last_push_seq tracks the highest synced local sequence, not push count."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    coord.record_sync_success(pushed=10, pulled=0, push_seq=4)
+    coord.record_sync_success(pushed=2, pulled=0, push_seq=2)
+
+    assert coord.get_last_push_seq() == 4

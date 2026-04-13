@@ -29,6 +29,8 @@ def _make_mock_entry(
         "tags": ["test"],
         "type": "pattern",
         "status": "active",
+        "vector_clock": {"sync-test": sync_seq},
+        "metadata": {"source": "unit-test", "installation_id": "install-123"},
     }
     return entry
 
@@ -81,6 +83,28 @@ def test_serialize_entry_format() -> None:
     assert serialized["sync_hash"] == "hash123"
     assert "summary" in serialized
     assert "tags" in serialized
+    assert serialized["vector_clock"] == {"sync-test": 1}
+    assert serialized["metadata"]["source"] == "unit-test"
+    assert serialized["metadata"]["installation_id"] != "install-123"
+
+
+def test_serialize_entry_anonymizes_summary_and_detail() -> None:
+    """Entry serialization strips PII and local paths before upload."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher._project_root = "/tmp/project"
+    entry = _make_mock_entry("L-private", sync_hash="hash123")
+    entry.to_dict.return_value["summary"] = "Email me at support@example.com"
+    entry.to_dict.return_value["detail"] = "See /tmp/project/secret.txt for token sk_abcdefghijklmnopqrstuvwxyz1234"
+
+    serialized = pusher._serialize_entry(entry)
+
+    assert "support@example.com" not in serialized["summary"]
+    assert "<email>" in serialized["summary"]
+    assert "/tmp/project/secret.txt" not in serialized["detail"]
+    assert "<project>" in serialized["detail"]
+    assert "sk_abcdefghijklmnopqrstuvwxyz1234" not in serialized["detail"]
 
 
 def test_push_result_model() -> None:
@@ -157,6 +181,43 @@ def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
     assert kwargs["exc_info"] is True
 
 
+def test_push_outcomes_batches_requests() -> None:
+    """Outcome pushes respect configured batch size."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        batch_size=2,
+        client_id="sync-test",
+    )
+    outcomes = [
+        {"session_id": "s1", "learning_ids": ["L-1"]},
+        {"session_id": "s2", "learning_ids": ["L-2"]},
+        {"session_id": "s3", "learning_ids": ["L-3"]},
+    ]
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        response1 = MagicMock()
+        response1.json.return_value = {"inserted": 2}
+        response1.raise_for_status.return_value = None
+        response2 = MagicMock()
+        response2.json.return_value = {"inserted": 1}
+        response2.raise_for_status.return_value = None
+        mock_client.post.side_effect = [response1, response2]
+
+        result = pusher.push_outcomes(outcomes)
+
+    assert result.pushed == 3
+    assert result.failed == 0
+    assert mock_client.post.call_count == 2
+    first_payload = mock_client.post.call_args_list[0].kwargs["json"]
+    second_payload = mock_client.post.call_args_list[1].kwargs["json"]
+    assert len(first_payload["outcomes"]) == 2
+    assert len(second_payload["outcomes"]) == 1
+
+
 def test_push_uses_stable_configured_client_id() -> None:
     """Push payload uses the shared stable sync client id."""
     from trw_mcp.sync.push import SyncPusher
@@ -206,3 +267,20 @@ def test_push_logs_structured_start_and_complete_events() -> None:
     assert mock_info.call_args_list[-1].args == ("sync_push_complete",)
     assert mock_info.call_args_list[-1].kwargs["event_type"] == "sync_push_complete"
     assert mock_info.call_args_list[-1].kwargs["client_id"] == "sync-client-1"
+
+
+def test_resolve_sync_client_id_anonymizes_installation_id() -> None:
+    """Derived sync client ids do not expose the raw installation id."""
+    from trw_mcp.sync.identity import resolve_sync_client_id
+
+    fake_cfg = MagicMock()
+    fake_cfg.client_profile.client_id = "claude-code"
+
+    with (
+        patch("trw_mcp.sync.identity.get_config", return_value=fake_cfg),
+        patch("trw_mcp.sync.identity.resolve_installation_id", return_value="install-123"),
+    ):
+        client_id = resolve_sync_client_id()
+
+    assert client_id.startswith("sync-claude-code-")
+    assert "install-123" not in client_id
