@@ -53,7 +53,7 @@ def test_cursor_mcp_config_fresh_write(tmp_path: Path) -> None:
     assert mcp_file.is_file()
     data = json.loads(mcp_file.read_text(encoding="utf-8"))
     assert "trw" in data["mcpServers"]
-    assert ".cursor/mcp.json" in result["created"]
+    assert ".cursor/mcp.json" in result.get("created", [])
 
 
 @pytest.mark.integration
@@ -74,7 +74,7 @@ def test_cursor_mcp_config_smart_merge_preserves_user_servers(tmp_path: Path) ->
 
     assert "trw" in data["mcpServers"]
     assert "my-server" in data["mcpServers"]
-    assert ".cursor/mcp.json" in result["updated"]
+    assert ".cursor/mcp.json" in result.get("updated", [])
 
 
 @pytest.mark.integration
@@ -91,7 +91,7 @@ def test_cursor_mcp_config_malformed_json_overwrites(tmp_path: Path) -> None:
 
     assert "trw" in data["mcpServers"]
     # Malformed → updated (the file existed, was overwritten)
-    assert ".cursor/mcp.json" in result["updated"]
+    assert ".cursor/mcp.json" in result.get("updated", [])
 
 
 # ===========================================================================
@@ -111,7 +111,7 @@ def test_cursor_rules_mdc_fresh_write(tmp_path: Path) -> None:
     content = rules_file.read_text(encoding="utf-8")
     assert "alwaysApply: true" in content
     assert "TRW ceremony content" in content
-    assert ".cursor/rules/trw-ceremony.mdc" in result["created"]
+    assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
 
 
 @pytest.mark.integration
@@ -127,7 +127,7 @@ def test_cursor_rules_mdc_updates_existing(tmp_path: Path) -> None:
     content = (rules_dir / "trw-ceremony.mdc").read_text(encoding="utf-8")
 
     assert "new content" in content
-    assert ".cursor/rules/trw-ceremony.mdc" in result["updated"]
+    assert ".cursor/rules/trw-ceremony.mdc" in result.get("updated", [])
 
 
 @pytest.mark.integration
@@ -139,7 +139,7 @@ def test_cursor_rules_mdc_client_id_cursor_cli(tmp_path: Path) -> None:
     rules_file = tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc"
 
     assert rules_file.is_file()
-    assert ".cursor/rules/trw-ceremony.mdc" in result["created"]
+    assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
 
 
 # ===========================================================================
@@ -157,7 +157,7 @@ def test_cursor_rules_alias_delegates_to_mdc(tmp_path: Path) -> None:
 
     assert rules_file.is_file()
     assert "alias content" in rules_file.read_text(encoding="utf-8")
-    assert ".cursor/rules/trw-ceremony.mdc" in result["created"]
+    assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
 
 
 # ===========================================================================
@@ -179,7 +179,7 @@ def test_cursor_skills_mirror_fresh_write(tmp_path: Path) -> None:
     dest = tmp_path / ".cursor" / "skills" / "trw-deliver" / "SKILL.md"
 
     assert dest.is_file()
-    assert ".cursor/skills/trw-deliver" in result["created"]
+    assert ".cursor/skills/trw-deliver" in result.get("created", [])
 
 
 @pytest.mark.integration
@@ -215,7 +215,7 @@ def test_cursor_skills_mirror_missing_source_warns_and_skips(tmp_path: Path) -> 
     # no-op — source skill doesn't exist
     result = generate_cursor_skills_mirror(tmp_path, ["nonexistent-skill"], source_dir=source_dir)
 
-    assert result["created"] == []
+    assert result.get("created", []) == []
     assert not (tmp_path / ".cursor" / "skills" / "nonexistent-skill").exists()
 
 
@@ -242,7 +242,7 @@ def test_cursor_hook_scripts_fresh_write(tmp_path: Path) -> None:
     # Must be executable
     mode = stat.S_IMODE(os.stat(str(dest)).st_mode)
     assert mode & 0o111  # at least one execute bit set
-    assert ".cursor/hooks/trw-session-start.sh" in result["created"]
+    assert ".cursor/hooks/trw-session-start.sh" in result.get("created", [])
 
 
 @pytest.mark.integration
@@ -261,7 +261,7 @@ def test_cursor_hook_scripts_idempotent_without_force(tmp_path: Path) -> None:
     with patch("trw_mcp.bootstrap._cursor._CURSOR_HOOKS_DATA_DIR", fake_data):
         result = generate_cursor_hook_scripts(tmp_path, ["trw-stop.sh"])
 
-    assert ".cursor/hooks/trw-stop.sh" in result["preserved"]
+    assert ".cursor/hooks/trw-stop.sh" in result.get("preserved", [])
 
 
 @pytest.mark.integration
@@ -275,7 +275,7 @@ def test_cursor_hook_scripts_missing_bundled_script_warns(tmp_path: Path) -> Non
     with patch("trw_mcp.bootstrap._cursor._CURSOR_HOOKS_DATA_DIR", fake_data):
         result = generate_cursor_hook_scripts(tmp_path, ["nonexistent.sh"])
 
-    assert result["created"] == []
+    assert result.get("created", []) == []
     assert not (tmp_path / ".cursor" / "hooks" / "nonexistent.sh").exists()
 
 
@@ -337,7 +337,7 @@ def test_smart_merge_cursor_json_fresh_write(tmp_path: Path) -> None:
 
     assert data["version"] == 1
     assert "stop" in data["hooks"]
-    assert str(target) in result["created"]
+    assert str(target) in result.get("created", [])
 
 
 @pytest.mark.integration
@@ -397,7 +397,7 @@ def test_smart_merge_cursor_json_malformed_overwrites(tmp_path: Path) -> None:
 
     data = json.loads(target.read_text(encoding="utf-8"))
     assert "hooks" in data
-    assert str(target) in result["updated"]
+    assert str(target) in result.get("updated", [])
 
 
 @pytest.mark.integration
