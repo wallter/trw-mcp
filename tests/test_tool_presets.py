@@ -34,9 +34,9 @@ def test_preset_core_has_4_tools() -> None:
 
 
 @pytest.mark.unit
-def test_preset_minimal_has_7_tools() -> None:
-    """TOOL_PRESETS['minimal'] = core(4) + memory(3) = 7 tools."""
-    assert len(TOOL_PRESETS["minimal"]) == 7
+def test_preset_minimal_has_6_tools() -> None:
+    """TOOL_PRESETS['minimal'] = core(4) + memory(2) = 6 tools."""
+    assert len(TOOL_PRESETS["minimal"]) == 6
 
 
 @pytest.mark.unit
@@ -64,7 +64,7 @@ def test_preset_all_has_all_group_tools() -> None:
 
 @pytest.mark.unit
 def test_preset_all_tool_count() -> None:
-    """TOOL_PRESETS['all'] has 4+3+6+6+7 = 26 tools."""
+    """TOOL_PRESETS['all'] has 4+2+4+1+3 = 14 tools."""
     expected = (
         len(TOOL_GROUP_CORE)
         + len(TOOL_GROUP_MEMORY)

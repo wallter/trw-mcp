@@ -42,25 +42,14 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Memory
     "trw_recall": "Retrieve relevant learnings for a specific topic",
     "trw_learn_update": "Update an existing learning entry with new detail or status",
-    "trw_knowledge_sync": "Synchronize knowledge store with the latest session data",
     # Quality
-    "trw_preflight_log": "Log pre-implementation checklist completion for audit trail",
     "trw_build_check": "Run lint, type-check, and tests to verify your work",
     "trw_review": "Run code review analysis on changed files",
     "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",
     # Observability
     "trw_status": "Show current run status and session overview",
-    "trw_run_report": "Generate a detailed report for a completed run",
-    "trw_usage_report": "Report tool usage statistics across sessions",
-    "trw_analytics_report": "Generate analytics dashboard data",
-    "trw_quality_dashboard": "Show quality metrics and trend data",
-    "trw_ceremony_status": "Show ceremony compliance status for the current session",
     # Admin
-    "trw_ceremony_approve": "Approve a ceremony escalation proposal",
-    "trw_ceremony_revert": "Revert a ceremony configuration change",
-    "trw_trust_level": "View or update the project trust tier",
-    "trw_progressive_expand": "Progressively expand tool exposure for a project",
     "trw_pre_compact_checkpoint": "Save checkpoint before context compaction",
     "trw_init": "Initialize TRW in a project directory",
     "trw_claude_md_sync": "Synchronize CLAUDE.md with current TRW configuration",

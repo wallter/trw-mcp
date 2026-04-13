@@ -40,10 +40,8 @@ TOOL_GROUP_CORE: tuple[str, ...] = (
 TOOL_GROUP_MEMORY: tuple[str, ...] = (
     "trw_recall",
     "trw_learn_update",
-    "trw_knowledge_sync",
 )
 TOOL_GROUP_QUALITY: tuple[str, ...] = (
-    "trw_preflight_log",
     "trw_build_check",
     "trw_review",
     "trw_prd_create",
@@ -51,17 +49,8 @@ TOOL_GROUP_QUALITY: tuple[str, ...] = (
 )
 TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
     "trw_status",
-    "trw_run_report",
-    "trw_usage_report",
-    "trw_analytics_report",
-    "trw_quality_dashboard",
-    "trw_ceremony_status",
 )
 TOOL_GROUP_ADMIN: tuple[str, ...] = (
-    "trw_ceremony_approve",
-    "trw_ceremony_revert",
-    "trw_trust_level",
-    "trw_progressive_expand",
     "trw_pre_compact_checkpoint",
     "trw_init",
     "trw_claude_md_sync",

@@ -87,7 +87,7 @@ Include the following mandatory checklist in the execution plan output. Implemen
 5. **Open questions clear**: Confirmed no open questions (OQs) block implementation
 6. **Execution plan reviewed**: Reviewed this execution plan's wave plan and dependency graph
 
-Log checklist completion with `trw_preflight_log(prd_id="{PRD-ID}", checklist_complete=True)` so a `pre_implementation_checklist_complete` event lands in `events.jsonl`.
+Confirm checklist completion before proceeding to implementation.
 
 ### Step 7c: Per-FR Inline Verification Commands (PRD-QUAL-056-FR04)
 

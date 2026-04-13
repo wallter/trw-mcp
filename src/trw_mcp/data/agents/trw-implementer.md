@@ -14,7 +14,6 @@ tools:
   - Grep
   - mcp__trw__trw_learn
   - mcp__trw__trw_checkpoint
-  - mcp__trw__trw_preflight_log
   - mcp__trw__trw_recall
   - mcp__trw__trw_build_check
 disallowedTools:
@@ -39,7 +38,7 @@ integration gaps that occur when implementation and testing happen in separate a
 3. **Call trw_recall** with relevant keywords for your domain
 4. **Complete the Pre-Implementation Checklist (PRD-QUAL-056-FR03)** before editing code
    - Confirm the PRD, planned file paths, planned tests, recalled learnings, open questions, and execution plan are all reviewed
-   - When complete, call `trw_preflight_log(prd_id="<PRD-ID>", checklist_complete=True)` so the audit trail is written to `events.jsonl`
+   - When complete, proceed to implementation
 5. **Per task**:
    a. Read existing code and understand the interface contracts
    b. Write tests first (TDD), then implement
@@ -60,7 +59,7 @@ Before writing code, explicitly confirm:
 - no blocking open questions remain
 - execution plan / dependency graph reviewed
 
-Log checklist completion with `trw_preflight_log(prd_id="<PRD-ID>", checklist_complete=True)` before the first code edit.
+Confirm checklist completion before the first code edit.
 
 ## FR-by-FR Verification & Completion Protocol (step 4d) — REQUIRED
 
