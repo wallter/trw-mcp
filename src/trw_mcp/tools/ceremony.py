@@ -444,15 +444,15 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         # PRD-INFRA-068 (C3): Memory health dashboard — surfaces snapshot age,
         # integrity state, concurrent writers, and corrupt-backup presence so
         # degradation is visible at session start rather than after the next
-        # incident. Fail-open: empty dict on any error.
+        # incident. Fail-open but always emit the key.
         try:
             from trw_mcp.tools._health_dashboard import compute_memory_health
 
             health = compute_memory_health(resolve_trw_dir())
-            if health:
-                results["memory_health"] = cast("dict[str, object]", dict(health))
+            results["memory_health"] = cast("dict[str, object]", dict(health))
         except Exception:  # justified: fail-open — dashboard must not block session start
-            logger.debug("memory_health_dashboard_failed", exc_info=True)
+            logger.debug("health_dashboard_failed", exc_info=True)
+            results["memory_health"] = {}
 
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
         if config.effective_ceremony_mode == "light":

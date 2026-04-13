@@ -14,10 +14,11 @@ embedder/embed helpers call sibling functions defined in this module directly.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -98,8 +99,21 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
         from trw_mcp.models.config import get_config
 
         cfg = get_config()
+        # PRD-INFRA-063/064: thread B2/B3 knobs from MemoryConfig.
+        # Defaults preserve opt-in posture if config load fails.
+        backend_kwargs: dict[str, Any] = {"dim": cfg.retrieval_embedding_dim}
+        with contextlib.suppress(Exception):
+            from trw_memory.models.config import MemoryConfig
+
+            mem_cfg = MemoryConfig()
+            backend_kwargs["integrity_check_interval_minutes"] = (
+                mem_cfg.memory_integrity_check_interval_minutes
+            )
+            backend_kwargs["concurrent_writer_warn_threshold"] = (
+                mem_cfg.memory_concurrent_writer_warn_threshold
+            )
         try:
-            backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
+            backend = SQLiteBackend(db_path, **backend_kwargs)
         except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
             if not _is_corruption_error(exc):
                 logger.exception("backend_init_failed", db=str(db_path), action="raise")
@@ -110,7 +124,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             if db_path.exists():
                 conn = SQLiteBackend.recover_db(db_path)
                 conn.close()
-            backend = SQLiteBackend(db_path, dim=cfg.retrieval_embedding_dim)
+            backend = SQLiteBackend(db_path, **backend_kwargs)
 
         if backend.recovered:
             # Remove migration sentinel so ensure_migrated re-runs the

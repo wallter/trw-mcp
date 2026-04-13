@@ -55,38 +55,61 @@ class MemoryHealthDict(TypedDict, total=False):
 def compute_memory_health(trw_dir: Path) -> MemoryHealthDict:
     """Produce the memory-health dict for :func:`trw_session_start`.
 
+    Each field is computed in its own try/except so that one probe's
+    failure cannot drop the others. Every field has a safe default.
+
     Args:
         trw_dir: Resolved ``.trw`` directory.
 
     Returns:
         :class:`MemoryHealthDict` populated with whatever can be observed.
-        Returns ``{}`` on any unexpected error.
     """
-    try:
-        db_path = trw_dir / "memory" / "memory.db"
-        result: MemoryHealthDict = {
-            "db_path": str(db_path),
-            "integrity_ok": _probe_integrity(db_path),
-        }
+    db_path = trw_dir / "memory" / "memory.db"
+    result: MemoryHealthDict = {"db_path": str(db_path)}
 
-        # Corrupt backup presence (PRD-CORE-139 forensic evidence surface).
+    # Integrity probe (PRD-INFRA-068 FR01).
+    try:
+        result["integrity_ok"] = _probe_integrity(db_path)
+    except Exception:  # justified: fail-open per-field (FR02)
+        logger.debug("health_dashboard_failed", field="integrity_ok", exc_info=True)
+        result["integrity_ok"] = True  # safe default — assume healthy if probe crashes
+
+    # Corrupt backup presence (PRD-CORE-139 forensic evidence surface).
+    try:
         corrupt_count = _count_corrupt_backups(db_path.parent)
         result["corrupt_bak_count"] = corrupt_count
         result["corrupt_bak_present"] = corrupt_count > 0
+    except Exception:
+        logger.debug("health_dashboard_failed", field="corrupt_bak", exc_info=True)
+        result["corrupt_bak_count"] = 0
+        result["corrupt_bak_present"] = False
 
-        # Writer-registry peer count (PRD-INFRA-064 B3).
+    # Writer-registry peer count (PRD-INFRA-064 B3).
+    try:
         result["concurrent_writers"] = _count_live_writers(db_path)
+    except Exception:
+        logger.debug("health_dashboard_failed", field="concurrent_writers", exc_info=True)
+        result["concurrent_writers"] = 0
 
-        # Snapshot age (PRD-INFRA-065 B4). None when snapshots are disabled or absent.
+    # Snapshot age (PRD-INFRA-065 B4). None when snapshots are disabled or absent.
+    try:
         result["last_snapshot_age_hours"] = _most_recent_snapshot_age_hours(trw_dir)
+    except Exception:
+        logger.debug("health_dashboard_failed", field="last_snapshot_age_hours", exc_info=True)
+        result["last_snapshot_age_hours"] = None
 
-        # Integrity-scheduler age (PRD-INFRA-063 B2). None when disabled.
+    # Integrity-scheduler age (PRD-INFRA-063 B2). None when disabled.
+    try:
         result["last_integrity_check_age_minutes"] = _integrity_scheduler_age_minutes(trw_dir)
+    except Exception:
+        logger.debug(
+            "health_dashboard_failed",
+            field="last_integrity_check_age_minutes",
+            exc_info=True,
+        )
+        result["last_integrity_check_age_minutes"] = None
 
-        return result
-    except Exception:  # justified: fail-open — dashboard never blocks session start
-        logger.debug("memory_health_computation_failed", exc_info=True)
-        return {}
+    return result
 
 
 # ---------------------------------------------------------------------------
