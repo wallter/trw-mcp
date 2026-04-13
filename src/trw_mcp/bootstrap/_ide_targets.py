@@ -380,53 +380,157 @@ def _update_cursor_artifacts(
     result: dict[str, list[str]],
     ide_override: str | None = None,
 ) -> None:
-    """Update Cursor artifacts when Cursor is detected (FR05, FR06, FR07).
+    """Update Cursor artifacts for cursor-ide and/or cursor-cli surfaces.
 
-    Checks IDE targets and, when cursor is included, calls
-    ``generate_cursor_hooks()`` (FR05), ``generate_cursor_rules()`` (FR06),
-    and ``generate_cursor_mcp_config()`` (FR07) to smart-merge/update the
-    respective ``.cursor/`` files.
+    Shared steps (run once regardless of active surfaces):
+      - generate_cursor_mcp_config (FR07): .cursor/mcp.json
+
+    cursor-ide specific steps (PRD-CORE-136 FR03-FR06, FR08):
+      - generate_cursor_rules_mdc        (FR06): .cursor/rules/trw-ceremony.mdc
+      - generate_cursor_ide_subagents    (FR03): .cursor/agents/trw-*.md
+      - generate_cursor_ide_commands     (FR05): .cursor/commands/trw-*.md
+      - generate_cursor_ide_skills       (FR04): .cursor/skills/<name>/
+      - generate_cursor_ide_hooks        (FR08): .cursor/hooks/trw-*.sh + hooks.json
+
+    cursor-cli specific steps:
+      # cursor-cli dispatch will be wired by PRD-CORE-137 FR07.
 
     Fail-open: errors are captured in ``result["warnings"]`` so they never
     break the overall update flow.
     """
     from ._cursor import (
-        generate_cursor_hooks,
         generate_cursor_mcp_config,
-        generate_cursor_rules,
+        generate_cursor_rules_mdc,
     )
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
     if "cursor-ide" not in ide_targets and "cursor-cli" not in ide_targets:
         return
 
-    # FR05: Update .cursor/hooks.json (smart merge)
-    try:
-        hooks_result = generate_cursor_hooks(target_dir)
-        result["created"].extend(hooks_result.get("created", []))
-        result["updated"].extend(hooks_result.get("updated", []))
-        result["errors"].extend(hooks_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, cursor update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/hooks.json update skipped: {exc}")
-
-    # FR06: Update .cursor/rules/trw-ceremony.mdc
-    try:
-        trw_section = _extract_trw_section_content()
-        rules_result = generate_cursor_rules(target_dir, trw_section)
-        result["created"].extend(rules_result.get("created", []))
-        result["updated"].extend(rules_result.get("updated", []))
-        result["errors"].extend(rules_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, cursor rules update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/rules/trw-ceremony.mdc update skipped: {exc}")
-
-    # FR07: Update .cursor/mcp.json (smart merge)
+    # ------------------------------------------------------------------
+    # Shared step: .cursor/mcp.json (FR07)
+    # ------------------------------------------------------------------
     try:
         mcp_result = generate_cursor_mcp_config(target_dir)
         result["created"].extend(mcp_result.get("created", []))
         result["updated"].extend(mcp_result.get("updated", []))
-        result["errors"].extend(mcp_result.get("errors", []))
+        result.setdefault("errors", []).extend(mcp_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, cursor mcp update is best-effort
         result.setdefault("warnings", []).append(f".cursor/mcp.json update skipped: {exc}")
+
+    # ------------------------------------------------------------------
+    # cursor-ide specific steps
+    # ------------------------------------------------------------------
+    if "cursor-ide" in ide_targets:
+        from ._cursor_ide import (
+            generate_cursor_ide_commands,
+            generate_cursor_ide_hooks,
+            generate_cursor_ide_skills,
+            generate_cursor_ide_subagents,
+        )
+
+        # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
+        try:
+            trw_section = _extract_trw_section_content()
+            rules_result = generate_cursor_rules_mdc(
+                target_dir, trw_section, client_id="cursor-ide"
+            )
+            result["created"].extend(rules_result.get("created", []))
+            result["updated"].extend(rules_result.get("updated", []))
+            result.setdefault("errors", []).extend(rules_result.get("errors", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/rules/trw-ceremony.mdc update skipped: {exc}"
+            )
+
+        # FR03: .cursor/agents/trw-*.md
+        try:
+            sub_result = generate_cursor_ide_subagents(target_dir)
+            result["created"].extend(sub_result.get("created", []))
+            result["updated"].extend(sub_result.get("updated", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/agents/ update skipped: {exc}"
+            )
+
+        # FR05: .cursor/commands/trw-*.md
+        try:
+            cmd_result = generate_cursor_ide_commands(target_dir)
+            result["created"].extend(cmd_result.get("created", []))
+            result["updated"].extend(cmd_result.get("updated", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/commands/ update skipped: {exc}"
+            )
+
+        # FR04: .cursor/skills/<name>/
+        try:
+            skills_result = generate_cursor_ide_skills(target_dir)
+            result["created"].extend(skills_result.get("created", []))
+            result["updated"].extend(skills_result.get("updated", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/skills/ update skipped: {exc}"
+            )
+
+        # FR08: .cursor/hooks/ (8-event set) + hooks.json
+        try:
+            hooks_result = generate_cursor_ide_hooks(target_dir)
+            result["created"].extend(hooks_result.get("created", []))
+            result["updated"].extend(hooks_result.get("updated", []))
+        except Exception as exc:  # justified: fail-open
+            result.setdefault("warnings", []).append(
+                f".cursor/hooks/ update skipped: {exc}"
+            )
+
+    # ------------------------------------------------------------------
+    # cursor-cli specific steps — dispatched to existing helper
+    # ------------------------------------------------------------------
+    if "cursor-cli" in ide_targets:
+        _update_cursor_cli_artifacts(target_dir, result)
+
+
+def _update_cursor_cli_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+) -> None:
+    """Update cursor-cli-specific artifacts (PRD-CORE-137-FR07).
+
+    Called from ``_update_cursor_artifacts`` when cursor-cli is in targets.
+    Fail-open: each generator is wrapped in try/except.
+    """
+    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+    from ._cursor_cli import (
+        generate_cursor_cli_agents_md,
+        generate_cursor_cli_config,
+        generate_cursor_cli_hooks,
+    )
+
+    # FR03: .cursor/cli.json permissions (also emits TTY reminder via FR08a)
+    try:
+        cli_result = generate_cursor_cli_config(target_dir)
+        result["created"].extend(cli_result.get("created", []))
+        result["updated"].extend(cli_result.get("updated", []))
+    except Exception as exc:  # justified: fail-open, cli.json update is best-effort
+        result.setdefault("warnings", []).append(f".cursor/cli.json update skipped: {exc}")
+
+    # FR04: AGENTS.md with TRW sentinel block
+    try:
+        trw_section = render_agents_trw_section()
+        agents_result = generate_cursor_cli_agents_md(target_dir, trw_section)
+        result["created"].extend(agents_result.get("created", []))
+        result["updated"].extend(agents_result.get("updated", []))
+    except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
+        result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) update skipped: {exc}")
+
+    # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
+    try:
+        hooks_result = generate_cursor_cli_hooks(target_dir)
+        result["created"].extend(hooks_result.get("created", []))
+        result["updated"].extend(hooks_result.get("updated", []))
+    except Exception as exc:  # justified: fail-open, hooks.json update is best-effort
+        result.setdefault("warnings", []).append(f".cursor/hooks.json (cursor-cli) update skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
