@@ -33,7 +33,7 @@ class SyncCoordinator:
         self._state_path = trw_dir / _STATE_FILE
         self._lock_path = trw_dir / _LOCK_FILE
 
-    def should_sync(self) -> bool:
+    def should_sync(self, sync_interval: float | None = None) -> bool:
         """Check sync-state.json: is it time for a sync cycle?"""
         if not self._state_path.exists():
             return True
@@ -44,7 +44,8 @@ class SyncCoordinator:
                 return True
             last_dt = datetime.fromisoformat(last_push_at)
             elapsed = (datetime.now(tz=timezone.utc) - last_dt).total_seconds()
-            return elapsed >= self._sync_interval
+            required_interval = float(sync_interval) if sync_interval is not None else float(self._sync_interval)
+            return elapsed >= required_interval
         except (json.JSONDecodeError, ValueError, KeyError):
             return True
 

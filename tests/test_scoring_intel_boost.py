@@ -69,10 +69,7 @@ def test_intel_boost_applied_from_cache() -> None:
     mock_cache = MagicMock()
     mock_cache.get_bandit_params.return_value = {"L-boosted": 1.8}
 
-    # Create context with intel_cache attribute
-    ctx = RecallContext()
-    # Inject intel_cache (RecallContext is frozen, use object.__setattr__)
-    object.__setattr__(ctx, "intel_cache", mock_cache)
+    ctx = RecallContext(intel_cache=mock_cache)
 
     entries = [_make_entry("L-boosted"), _make_entry("L-normal")]
     result = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
@@ -91,8 +88,7 @@ def test_intel_boost_clamped_to_range() -> None:
     mock_cache = MagicMock()
     mock_cache.get_bandit_params.return_value = {"L-1": 5.0}
 
-    ctx = RecallContext()
-    object.__setattr__(ctx, "intel_cache", mock_cache)
+    ctx = RecallContext(intel_cache=mock_cache)
 
     entries = [_make_entry("L-1")]
     result = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
@@ -113,8 +109,7 @@ def test_intel_boost_none_bandit_params_is_neutral() -> None:
     mock_cache = MagicMock()
     mock_cache.get_bandit_params.return_value = None
 
-    ctx = RecallContext()
-    object.__setattr__(ctx, "intel_cache", mock_cache)
+    ctx = RecallContext(intel_cache=mock_cache)
 
     entries = [_make_entry("L-1")]
     result_with_cache = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
@@ -132,8 +127,7 @@ def test_intel_boost_entry_not_in_bandit_params() -> None:
     mock_cache = MagicMock()
     mock_cache.get_bandit_params.return_value = {"L-other": 1.5}
 
-    ctx = RecallContext()
-    object.__setattr__(ctx, "intel_cache", mock_cache)
+    ctx = RecallContext(intel_cache=mock_cache)
 
     entries = [_make_entry("L-1")]  # Not in bandit_params
     result_with_cache = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)

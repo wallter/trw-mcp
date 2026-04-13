@@ -253,7 +253,23 @@ def _phase_contextual_recall(
     if not ar_entries:
         return []
 
-    context = RecallContext(current_phase=phase.upper() if phase else None)
+    intel_cache = None
+    try:
+        from trw_mcp.sync.cache import IntelligenceCache
+
+        cache = IntelligenceCache(
+            trw_dir,
+            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
+        )
+        if cache.get_bandit_params() is not None:
+            intel_cache = cache
+    except Exception:  # noqa: S110 — justified: fail-open, auto-recall must work without cache access
+        intel_cache = None
+
+    context = RecallContext(
+        current_phase=phase.upper() if phase else None,
+        intel_cache=intel_cache,
+    )
     ranked = rank_by_utility(
         ar_entries,
         query_tokens,

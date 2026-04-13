@@ -26,6 +26,7 @@ class PullResult(BaseModel):
     sync_hints: dict[str, Any] | None = None
     team_learnings: list[dict[str, Any]] | None = None
     status_code: int = 0
+    not_modified: bool = False
 
 
 class SyncPuller:
@@ -104,7 +105,11 @@ class SyncPuller:
                     team_learnings_count=0,
                     outcome="not_modified",
                 )
-                return None
+                return PullResult(
+                    etag=etag,
+                    status_code=304,
+                    not_modified=True,
+                )
 
             resp.raise_for_status()
             data = resp.json()

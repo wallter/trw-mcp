@@ -148,6 +148,25 @@ def test_pull_boundary_failure_logs_structured_warning() -> None:
     assert kwargs["exc_info"] is True
 
 
+def test_pull_not_modified_returns_distinct_result() -> None:
+    """304 responses are distinguishable from transport failures."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        response = MagicMock()
+        response.status_code = 304
+        mock_client.get.return_value = response
+
+        result = puller.pull_intel_state(etag="etag-1", since_seq=7)
+
+    assert result is not None
+    assert result.not_modified is True
+    assert result.status_code == 304
+
+
 def test_merge_team_learnings_inserts_team_sync_entries(tmp_path) -> None:
     """Pulled team learnings are inserted locally with attribution metadata."""
     from trw_memory.storage.sqlite_backend import SQLiteBackend

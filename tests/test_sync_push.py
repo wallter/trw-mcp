@@ -124,12 +124,12 @@ def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None:
         result = pusher.push_learnings(entries)
 
     assert result.failed == 2
-    mock_warning.assert_called_once_with(
-        "sync_push_failed",
-        batch_index=0,
-        count=2,
-        exc_info=True,
-    )
+    args, kwargs = mock_warning.call_args
+    assert args == ("sync_push_error",)
+    assert kwargs["event_type"] == "sync_push_error"
+    assert kwargs["client_id"] == "sync-test"
+    assert kwargs["count"] == 2
+    assert kwargs["exc_info"] is True
 
 
 def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
@@ -149,11 +149,12 @@ def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
         result = pusher.push_outcomes(outcomes)
 
     assert result.failed == 1
-    mock_warning.assert_called_once_with(
-        "sync_push_outcomes_failed",
-        count=1,
-        exc_info=True,
-    )
+    args, kwargs = mock_warning.call_args
+    assert args == ("sync_push_outcomes_error",)
+    assert kwargs["event_type"] == "sync_push_outcomes_error"
+    assert kwargs["client_id"] == "sync-test"
+    assert kwargs["count"] == 1
+    assert kwargs["exc_info"] is True
 
 
 def test_push_uses_stable_configured_client_id() -> None:
@@ -178,3 +179,30 @@ def test_push_uses_stable_configured_client_id() -> None:
 
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["client_id"] == "sync-claude-code-inst-123"
+
+
+def test_push_logs_structured_start_and_complete_events() -> None:
+    """Successful pushes emit client-aware start/complete telemetry."""
+    from trw_mcp.sync.push import SyncPusher
+
+    entry = _make_mock_entry("L-1")
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    with (
+        patch("httpx.Client") as mock_client_cls,
+        patch("trw_mcp.sync.push.logger.info") as mock_info,
+    ):
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        response = MagicMock()
+        response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
+        response.raise_for_status.return_value = None
+        mock_client.post.return_value = response
+
+        result = pusher.push_learnings([entry])
+
+    assert result.pushed == 1
+    assert mock_info.call_args_list[0].args == ("sync_push_start",)
+    assert mock_info.call_args_list[0].kwargs["event_type"] == "sync_push_start"
+    assert mock_info.call_args_list[-1].args == ("sync_push_complete",)
+    assert mock_info.call_args_list[-1].kwargs["event_type"] == "sync_push_complete"
+    assert mock_info.call_args_list[-1].kwargs["client_id"] == "sync-client-1"
