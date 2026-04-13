@@ -1,4 +1,4 @@
-v24.5_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
+v24.6_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven | Agent-Teams
 Version date: 2026-04-08 | Model: Opus 4.6
 
@@ -7,7 +7,7 @@ Version date: 2026-04-08 | Model: Opus 4.6
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v24.5_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
+**v24.6_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN.
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.

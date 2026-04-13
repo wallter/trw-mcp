@@ -181,7 +181,7 @@ trw_dir: .trw
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `framework_version` | `str` | `"v24.5_TRW"` | Framework version identifier |
+| `framework_version` | `str` | `"v24.6_TRW"` | Framework version identifier |
 | `aaref_version` | `str` | `"v1.1.0"` | AARE-F requirements framework version |
 
 ### PRD Quality Gates
