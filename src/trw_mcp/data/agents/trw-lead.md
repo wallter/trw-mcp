@@ -39,8 +39,6 @@ allowedTools:
   - mcp__trw__trw_build_check
   - mcp__trw__trw_prd_create
   - mcp__trw__trw_prd_validate
-  - mcp__trw__trw_run_report
-  - mcp__trw__trw_analytics_report
 disallowedTools:
   - NotebookEdit
 ---

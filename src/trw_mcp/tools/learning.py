@@ -190,6 +190,7 @@ def register_learning_tools(server: FastMCP) -> None:
             team_origin, protection_tier.
 
         Most learnings need only summary and detail. Adding tags and impact improves recall precision. All other fields are auto-detected.
+        See Also: trw_recall, trw_learn_update
         """
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.
@@ -455,7 +456,7 @@ def register_learning_tools(server: FastMCP) -> None:
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
 
-        See Also: trw_learn, trw_knowledge_sync
+        See Also: trw_learn
         """
         from trw_mcp.tools._recall_impl import execute_recall
 

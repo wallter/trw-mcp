@@ -1,7 +1,6 @@
 """MCP tool registration for build verification.
 
-Registers ``trw_build_check`` and ``trw_quality_dashboard`` on the
-FastMCP server instance.
+Registers ``trw_build_check`` on the FastMCP server instance.
 
 PRD-CORE-098: ``trw_build_check`` is a **result reporter** — agents run
 tests via Bash and then call this tool to record the outcome for ceremony
@@ -164,32 +163,8 @@ def register_build_tools(server: FastMCP) -> None:
 
         return result
 
-    @server.tool(output_schema=None)
-    @log_tool_call
-    def trw_quality_dashboard(
-        window_days: int = 90,
-        compare_sprint: str = "",
-        format: str = "summary",
-    ) -> dict[str, object]:
-        """View quality trends — ceremony scores, coverage, review verdicts, and degradation alerts.
-
-        Aggregates session event data to show how your project's quality metrics
-        are trending over time. Use compare_sprint to see sprint-over-sprint deltas.
-
-        Args:
-            window_days: Number of days to include (1-365, default 90).
-            compare_sprint: Optional sprint ID to compare against previous sprint.
-            format: Output format — "summary" or "detailed".
-        """
-        from trw_mcp.state.dashboard import aggregate_dashboard
-
-        trw_dir = resolve_trw_dir()
-        clamped_days = max(1, min(365, window_days))
-        return aggregate_dashboard(trw_dir, clamped_days, compare_sprint)
-
 
 # --- Private helpers ---
-
 
 
 # ---------------------------------------------------------------------------

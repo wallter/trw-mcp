@@ -75,23 +75,7 @@ For each FR, verify:
 3. **Response body checked**: Test asserts on actual values (not just `assert result is not None`)
 4. **Spec-anchored**: Test docstring references the FR it validates
 
-### Step 6: Log Results
-
-Log the self-review results with `trw_preflight_log(prd_id="{PRD-ID}", self_review={...})` so a `pre_audit_self_review` event is written to `events.jsonl`:
-
-```python
-# self_review payload structure:
-{
-    "passed": N,     # assertions that passed
-    "failed": M,     # assertions that failed
-    "skipped": K,    # assertions not applicable
-    "wiring_issues": [],  # unwired files
-    "nfr_issues": [],     # NFR checklist failures
-    "test_issues": [],    # test quality findings
-}
-```
-
-### Step 7: Report
+### Step 6: Report
 
 Output a structured report:
 
@@ -126,5 +110,5 @@ Output a structured report:
 
 - This is a SELF-review — it runs the same checks the auditor will run
 - Do NOT skip assertions — the auditor WILL catch what you miss
-- Log results with `trw_preflight_log(...)` so the auditor can cross-reference them in `events.jsonl`
+- Log results so the auditor can cross-reference them
 - If >3 assertions fail, fix them before requesting audit
