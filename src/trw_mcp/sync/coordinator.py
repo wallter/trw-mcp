@@ -75,6 +75,7 @@ class SyncCoordinator:
         self,
         pushed: int,
         pulled: int,
+        push_seq: int | None = None,
         pull_seq: int | None = None,
         *,
         pull_completed: bool = False,
@@ -83,7 +84,7 @@ class SyncCoordinator:
         state = self._read_state()
         now = datetime.now(tz=timezone.utc).isoformat()
         state["last_push_at"] = now
-        state["last_push_seq"] = self._int_field(state, "last_push_seq") + pushed
+        state["last_push_seq"] = max(self._int_field(state, "last_push_seq"), push_seq or 0)
         state["push_count"] = self._int_field(state, "push_count") + 1
         if pulled > 0 or pull_completed:
             state["last_pull_at"] = now

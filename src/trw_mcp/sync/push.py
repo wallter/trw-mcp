@@ -6,6 +6,7 @@ never raises, returns PushResult on all paths.
 
 from __future__ import annotations
 
+import os
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ import structlog
 from pydantic import BaseModel
 
 from trw_mcp.sync.identity import resolve_sync_client_id
+from trw_memory.security.pii import anonymize_installation_id, redact_paths, strip_pii
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
@@ -43,6 +45,7 @@ class SyncPusher:
         self._batch_size = batch_size
         self._timeout = timeout
         self._client_id = (client_id or "").strip() or resolve_sync_client_id()
+        self._project_root = os.getenv("TRW_PROJECT_ROOT", os.getcwd())
 
     def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
         """Batch push learnings to POST /v1/sync/learnings. Never raises."""
@@ -119,10 +122,8 @@ class SyncPusher:
             return PushResult()
 
         started_at = perf_counter()
-        payload = {
-            "outcomes": outcomes,
-            "client_id": self._get_client_id(),
-        }
+        total_pushed = 0
+        total_failed = 0
         logger.info(
             "sync_push_outcomes_start",
             event_type="sync_push_outcomes_start",
@@ -130,38 +131,47 @@ class SyncPusher:
             count=len(outcomes),
             outcome="start",
         )
-        try:
-            with httpx.Client(timeout=self._timeout) as client:
-                resp = client.post(
-                    f"{self._backend_url}/v1/sync/outcomes",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                )
-                resp.raise_for_status()
-                result = resp.json()
-                pushed = result.get("inserted", 0)
-                logger.info(
-                    "sync_push_outcomes_complete",
-                    event_type="sync_push_outcomes_complete",
+        for i in range(0, len(outcomes), self._batch_size):
+            batch = outcomes[i:i + self._batch_size]
+            payload = {
+                "outcomes": batch,
+                "client_id": self._get_client_id(),
+            }
+            try:
+                with httpx.Client(timeout=self._timeout) as client:
+                    resp = client.post(
+                        f"{self._backend_url}/v1/sync/outcomes",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                    )
+                    resp.raise_for_status()
+                    result = resp.json()
+                    total_pushed += result.get("inserted", 0)
+            except Exception as exc:  # justified: boundary, outcome push failures must not block local completion
+                logger.warning(
+                    "sync_push_outcomes_error",
+                    event_type="sync_push_outcomes_error",
                     client_id=self._client_id,
-                    pushed=pushed,
+                    batch_index=i // self._batch_size,
+                    count=len(batch),
                     duration_ms=int((perf_counter() - started_at) * 1000),
-                    outcome="success",
+                    error_type=type(exc).__name__,
+                    error_message=str(exc)[:200],
+                    outcome="error",
+                    exc_info=True,
                 )
-                return PushResult(pushed=pushed)
-        except Exception as exc:  # justified: boundary, outcome push failures must not block local completion
-            logger.warning(
-                "sync_push_outcomes_error",
-                event_type="sync_push_outcomes_error",
-                client_id=self._client_id,
-                count=len(outcomes),
-                duration_ms=int((perf_counter() - started_at) * 1000),
-                error_type=type(exc).__name__,
-                error_message=str(exc)[:200],
-                outcome="error",
-                exc_info=True,
-            )
-            return PushResult(failed=len(outcomes))
+                total_failed += len(batch)
+
+        logger.info(
+            "sync_push_outcomes_complete",
+            event_type="sync_push_outcomes_complete",
+            client_id=self._client_id,
+            pushed=total_pushed,
+            failed=total_failed,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            outcome="success" if total_failed == 0 else "partial_error",
+        )
+        return PushResult(pushed=total_pushed, failed=total_failed)
 
     def _serialize_entry(self, entry: MemoryEntry) -> dict[str, object]:
         """Serialize a MemoryEntry for push, applying anonymization."""
@@ -170,16 +180,30 @@ class SyncPusher:
         impact = float(raw_impact) if isinstance(raw_impact, (int, float)) else 0.5
         raw_tags = d.get("tags", [])
         tags = list(raw_tags)[:20] if isinstance(raw_tags, list) else []
+        summary = strip_pii(str(d.get("summary", d.get("content", ""))))
+        summary = redact_paths(summary, self._project_root)[:1000]
+        raw_detail = d.get("detail")
+        detail: str | None = None
+        if raw_detail:
+            detail = redact_paths(strip_pii(str(raw_detail)), self._project_root)[:10000]
+        raw_vector_clock = d.get("vector_clock", {})
+        vector_clock = dict(raw_vector_clock) if isinstance(raw_vector_clock, dict) else {}
+        raw_metadata = d.get("metadata", {})
+        metadata: dict[str, object] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        installation_id = metadata.get("installation_id")
+        if isinstance(installation_id, str) and installation_id:
+            metadata["installation_id"] = anonymize_installation_id(installation_id)
         return {
             "source_learning_id": d.get("id", ""),
             "sync_hash": d.get("sync_hash", ""),
-            "summary": str(d.get("summary", d.get("content", "")))[:1000],
-            "detail": str(d.get("detail", ""))[:10000] if d.get("detail") else None,
+            "summary": summary,
+            "detail": detail,
             "impact": impact,
             "tags": tags,
             "type": str(d.get("type", "pattern")),
             "status": str(d.get("status", "active")),
-            "metadata": {},
+            "vector_clock": vector_clock,
+            "metadata": metadata,
         }
 
     def _get_client_id(self) -> str:
