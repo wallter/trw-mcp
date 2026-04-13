@@ -156,3 +156,17 @@ def test_intel_boost_backward_compatible() -> None:
     assert len(result) == 2
     # The auth entry should rank higher due to domain boost
     assert result[0]["id"] == "L-1"
+
+
+def test_intel_boost_reads_bandit_params_once_per_scoring_call() -> None:
+    """Cached bandit params are loaded once for the whole ranking call."""
+    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+
+    mock_cache = MagicMock()
+    mock_cache.get_bandit_params.return_value = {"L-1": 1.5}
+    ctx = RecallContext(intel_cache=mock_cache)
+
+    entries = [_make_entry("L-1"), _make_entry("L-2"), _make_entry("L-3")]
+    rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
+
+    mock_cache.get_bandit_params.assert_called_once_with()
