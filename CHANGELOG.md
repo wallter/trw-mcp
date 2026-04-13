@@ -4,6 +4,24 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-04-13
+
+### Breaking Changes
+- **Tool surface reduced from 25 to 14 tools** (PRD-FIX-075, PRD-FIX-076). Removed: `trw_prd_draft_frs`, `trw_run_report`, `trw_usage_report`, `trw_analytics_report`, `trw_quality_dashboard`, `trw_ceremony_status`, `trw_ceremony_approve`, `trw_ceremony_revert`, `trw_trust_level`, `trw_progressive_expand`, `trw_knowledge_sync`, `trw_preflight_log`. Underlying business logic modules retained as internal APIs.
+
+### Added
+- **ProtocolRenderer** — unified instruction generation for all platforms (PRD-CORE-131)
+- **Local ceremony fallback** — `trw-mcp local init/checkpoint` CLI subcommands work without MCP server (PRD-FIX-073)
+- **Analytics turn-scoped cache** — ContextVar-based cache with 5s TTL eliminates redundant YAML reads (PRD-FIX-072)
+- **Gemini absolute path resolution** — `shutil.which` for reliable `trw-mcp` command resolution (PRD-FIX-072)
+- **Shared service layer** — `trw_mcp.services.orchestration_service` for DRY run scaffolding (PRD-FIX-073)
+
+### Changed
+- Tool presets: `all`=14, `standard`=12, `minimal`=6, `core`=4
+- Framework version: v24.5_TRW → v24.6_TRW
+- `email-template` skill renamed from `trw-email-template` (local-only, not published)
+- PRD-CORE-133 deprecated (LLMs handle research-to-FR drafting natively)
+
 ## [0.42.0] — 2026-04-12
 
 ### Added
