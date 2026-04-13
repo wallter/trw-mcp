@@ -1,15 +1,11 @@
 ---
-name: trw-email-template
-description: >
-  Create branded, responsive HTML email templates for transactional emails.
-  Generates Jinja2 templates with table-based layout, dark mode support,
-  bulletproof buttons, and plain text fallback.
-  Use: /trw-email-template "verification code" or /trw-email-template "password reset"
-user-invocable: true
-argument-hint: "[email type or description]"
+name: email-template
+description: "Create branded, responsive HTML email templates for transactional emails. Generates Jinja2 templates with table-based layout, dark mode support, bulletproof buttons, and plain text fallback. Use: /email-template \"verification code\" or /email-template \"password reset\"\n"
 ---
 
-# trw-email-template
+> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+
+# email-template
 
 Generate production-ready, branded HTML email templates for the TRW platform. Templates use Jinja2 with table-based layout for maximum email client compatibility.
 
