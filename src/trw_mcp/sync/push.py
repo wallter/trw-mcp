@@ -85,8 +85,13 @@ class SyncPusher:
                     )
                     resp.raise_for_status()
                     result = resp.json()
-                    total_pushed += result.get("inserted", 0) + result.get("updated", 0)
-                    total_skipped += result.get("skipped", 0)
+                    batch_errors = int(result.get("errors", 0))
+                    if batch_errors > 0:
+                        # Backend reports only aggregate errors, so keep the whole batch dirty for safe retry.
+                        total_failed += len(batch)
+                    else:
+                        total_pushed += int(result.get("inserted", 0)) + int(result.get("updated", 0))
+                        total_skipped += int(result.get("skipped", 0))
             except Exception as exc:  # justified: boundary, remote sync push failures are isolated per batch
                 logger.warning(
                     "sync_push_error",

@@ -242,6 +242,27 @@ def test_push_uses_stable_configured_client_id() -> None:
     assert kwargs["json"]["client_id"] == "sync-claude-code-inst-123"
 
 
+def test_push_treats_backend_reported_errors_as_batch_failure() -> None:
+    """Server-reported ingest errors keep the whole batch dirty for retry."""
+    from trw_mcp.sync.push import SyncPusher
+
+    entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        response = MagicMock()
+        response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "errors": 1}
+        response.raise_for_status.return_value = None
+        mock_client.post.return_value = response
+
+        result = pusher.push_learnings(entries)
+
+    assert result.pushed == 0
+    assert result.skipped == 0
+    assert result.failed == 2
+
+
 def test_push_logs_structured_start_and_complete_events() -> None:
     """Successful pushes emit client-aware start/complete telemetry."""
     from trw_mcp.sync.push import SyncPusher
