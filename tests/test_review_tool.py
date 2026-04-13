@@ -275,146 +275,25 @@ class TestReviewLogsEvent:
         assert event["review_id"] == result["review_id"]
 
 
-class TestPreflightLogging:
-    """trw_preflight_log records explicit checklist and self-review events."""
+class TestPreflightLoggingRemoved:
+    """trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
 
-    def test_preflight_log_persists_checklist_and_self_review_events(
+    The underlying review.py logic (pre_implementation_checklist_complete and
+    pre_audit_self_review event writing) remains as an internal API, but the
+    public MCP tool registration was intentionally removed.
+    """
+
+    def test_trw_preflight_log_not_registered(
         self,
         tmp_path: Path,
-        run_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """trw_preflight_log must NOT appear in the registered MCP tool set."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
-
-        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
-            result = tools["trw_preflight_log"].fn(
-                prd_id="PRD-QUAL-056",
-                checklist_complete=True,
-                self_review={
-                    "passed": 6,
-                    "failed": 1,
-                    "skipped": 0,
-                    "wiring_issues": ["src/new_module.py"],
-                    "nfr_issues": ["missing structured logging"],
-                    "test_issues": ["FR05 traceability mismatch"],
-                },
-            )
-
-        assert result["status"] == "logged"
-        assert result["logged_events"] == [
-            "pre_implementation_checklist_complete",
-            "pre_audit_self_review",
-        ]
-
-        events_path = run_dir / "meta" / "events.jsonl"
-        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line]
-        assert events[-2]["event"] == "pre_implementation_checklist_complete"
-        assert events[-2]["prd_id"] == "PRD-QUAL-056"
-        assert events[-1]["event"] == "pre_audit_self_review"
-        assert events[-1]["passed"] == 6
-        assert events[-1]["wiring_issues"] == ["src/new_module.py"]
-
-    def test_preflight_log_fail_open_on_malformed_self_review(
-        self,
-        tmp_path: Path,
-        run_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Malformed self-review payloads normalize instead of crashing."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
-
-        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
-            result = tools["trw_preflight_log"].fn(
-                prd_id="PRD-QUAL-056",
-                self_review={
-                    "passed": "not-a-number",
-                    "failed": None,
-                    "skipped": "2.5",
-                    "wiring_issues": "src/runtime.py",
-                    "nfr_issues": ("missing structured logging",),
-                    "test_issues": 42,
-                },
-            )
-
-        assert result["status"] == "logged"
-        events = [
-            json.loads(line)
-            for line in (run_dir / "meta" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        assert events[-1]["event"] == "pre_audit_self_review"
-        assert events[-1]["passed"] == 0
-        assert events[-1]["failed"] == 0
-        assert events[-1]["skipped"] == 0
-        assert events[-1]["wiring_issues"] == ["src/runtime.py"]
-        assert events[-1]["nfr_issues"] == ["missing structured logging"]
-        assert events[-1]["test_issues"] == []
-
-    def test_preflight_log_fail_open_on_non_mapping_self_review(
-        self,
-        tmp_path: Path,
-        run_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Non-dict self-review payloads degrade to an empty event instead of crashing."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
-
-        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
-            result = tools["trw_preflight_log"].fn(
-                prd_id="PRD-QUAL-056",
-                self_review=["oops"],
-            )
-
-        assert result["status"] == "logged"
-        events = [
-            json.loads(line)
-            for line in (run_dir / "meta" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        assert events[-1]["event"] == "pre_audit_self_review"
-        assert events[-1]["passed"] == 0
-        assert events[-1]["failed"] == 0
-        assert events[-1]["skipped"] == 0
-        assert events[-1]["wiring_issues"] == []
-        assert events[-1]["nfr_issues"] == []
-        assert events[-1]["test_issues"] == []
-
-    def test_review_artifact_includes_latest_preflight_checks(
-        self,
-        tmp_path: Path,
-        run_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
-
-        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
-            tools["trw_preflight_log"].fn(
-                prd_id="PRD-QUAL-056",
-                checklist_complete=True,
-                self_review={
-                    "passed": 4,
-                    "failed": 0,
-                    "skipped": 1,
-                    "wiring_issues": [],
-                    "nfr_issues": [],
-                    "test_issues": [],
-                },
-            )
-            tools["trw_review"].fn(
-                findings=[
-                    {"category": "testing", "severity": "info", "description": "Ready for audit"},
-                ],
-                prd_ids=["PRD-QUAL-056"],
-            )
-
-        review_path = run_dir / "meta" / "review.yaml"
-        from trw_mcp.state.persistence import FileStateReader
-
-        review_data = FileStateReader().read_yaml(review_path)
-        preflight = review_data["preflight_checks"]["PRD-QUAL-056"]
-        assert preflight["pre_implementation_checklist_complete"]["completed"] is True
-        assert preflight["pre_audit_self_review"]["passed"] == 4
-        assert preflight["pre_audit_self_review"]["skipped"] == 1
+        assert "trw_preflight_log" not in tools, (
+            "trw_preflight_log was removed from the MCP surface; "
+            "do not re-register it without an explicit PRD approval."
+        )
 
 
 class TestReviewAutoDetectRun:
