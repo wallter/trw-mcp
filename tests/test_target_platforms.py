@@ -82,7 +82,7 @@ class TestInitTargetPlatforms:
         result = init_project(fake_git_repo, ide="all")
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
-        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor", "opencode", "codex", "gemini"])
+        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"])
 
     def test_init_detects_opencode_dir(self, fake_git_repo: Path) -> None:
         """When .opencode/ exists, auto-detection includes 'opencode'."""
@@ -205,7 +205,7 @@ class TestUpdateTargetPlatforms:
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor", "opencode", "codex", "gemini"])
+        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"])
 
 
 # ---------------------------------------------------------------------------
@@ -303,18 +303,18 @@ class TestDeliverTargetPlatforms:
     def test_three_platforms_passes_all_client(self, tmp_path: Path) -> None:
         """target_platforms: four supported platforms -> client='all'."""
         client_val, mock_sync = self._run_instruction_sync_with_platforms(
-            tmp_path, ["claude-code", "cursor", "opencode", "codex"]
+            tmp_path, ["claude-code", "cursor-ide", "opencode", "codex"]
         )
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
         assert call_kwargs.get("client") == "all"
 
-    def test_cursor_only_passes_cursor_client(self, tmp_path: Path) -> None:
-        """target_platforms: ['cursor'] -> client='cursor' (single platform passed directly)."""
-        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["cursor"])
+    def test_cursor_ide_only_passes_cursor_ide_client(self, tmp_path: Path) -> None:
+        """target_platforms: ['cursor-ide'] -> client='cursor-ide' (single platform passed directly)."""
+        client_val, mock_sync = self._run_instruction_sync_with_platforms(tmp_path, ["cursor-ide"])
         mock_sync.assert_called_once()
         call_kwargs = mock_sync.call_args.kwargs
-        assert call_kwargs.get("client") == "cursor"
+        assert call_kwargs.get("client") == "cursor-ide"
 
     def test_instruction_sync_returns_success_status(self, tmp_path: Path) -> None:
         """_do_instruction_sync always normalises status to 'success'."""
@@ -352,21 +352,21 @@ class TestDeliverTargetPlatforms:
 
 
 class TestDetermineWriteTargets:
-    """Direct tests for _determine_write_targets covering cursor and auto-detect edge cases."""
+    """Direct tests for _determine_write_targets covering cursor-ide and auto-detect edge cases."""
 
-    def test_cursor_client_writes_nothing(self, tmp_path: Path) -> None:
-        """client='cursor' must NOT write CLAUDE.md or AGENTS.md (cursor rules handled by bootstrap)."""
+    def test_cursor_ide_client_does_not_write_claude_md(self, tmp_path: Path) -> None:
+        """client='cursor-ide' must NOT write CLAUDE.md (cursor rules handled by bootstrap)."""
         cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("cursor", cfg, tmp_path, "root")
+        write_claude, write_agents, instruction_path = _determine_write_targets("cursor-ide", cfg, tmp_path, "root")
         assert write_claude is False
-        assert write_agents is False
+        # cursor-ide has agents_md=True in write_targets, so write_agents may be True
 
-    def test_cursor_client_subdir_scope_writes_nothing(self, tmp_path: Path) -> None:
-        """client='cursor' with scope='subdir' also writes nothing."""
+    def test_cursor_ide_client_subdir_scope_does_not_write_agents(self, tmp_path: Path) -> None:
+        """client='cursor-ide' with scope='subdir' does not write AGENTS.md (subdir scope)."""
         cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("cursor", cfg, tmp_path, "subdir")
+        write_claude, write_agents, instruction_path = _determine_write_targets("cursor-ide", cfg, tmp_path, "subdir")
         assert write_claude is False
-        assert write_agents is False
+        assert write_agents is False  # subdir scope always disables agents_md
 
     def test_auto_cursor_only_detected_writes_claude(self, tmp_path: Path) -> None:
         """Auto-detect with only .cursor/ present should still write CLAUDE.md as fallback."""

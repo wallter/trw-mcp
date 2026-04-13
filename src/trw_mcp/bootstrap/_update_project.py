@@ -330,7 +330,7 @@ def update_project(
         dry_run: If True, report what would change without modifying files.
         data_dir: Optional override for the bundled data directory. When provided,
             artifact lookups use this path instead of the module-level ``_DATA_DIR``.
-        ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
+        ide: Target IDE override ("claude-code", "cursor-ide", "cursor-cli", "opencode", "all").
             When None, auto-detect from existing IDE config directories.
         on_progress: Optional callback called as ``on_progress(action, path)``
             for each file processed. Enables real-time progress reporting.

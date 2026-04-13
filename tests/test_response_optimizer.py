@@ -439,6 +439,7 @@ def test_client_profile_response_format_defaults() -> None:
 
     assert resolve_client_profile("claude-code").response_format == "yaml"
     assert resolve_client_profile("opencode").response_format == "yaml"
-    assert resolve_client_profile("cursor").response_format == "json"
+    assert resolve_client_profile("cursor-ide").response_format == "json"
+    assert resolve_client_profile("cursor-cli").response_format == "json"
     assert resolve_client_profile("codex").response_format == "yaml"
     assert resolve_client_profile("aider").response_format == "yaml"

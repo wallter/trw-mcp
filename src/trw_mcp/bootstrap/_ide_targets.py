@@ -397,7 +397,7 @@ def _update_cursor_artifacts(
     )
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
-    if "cursor" not in ide_targets:
+    if "cursor-ide" not in ide_targets and "cursor-cli" not in ide_targets:
         return
 
     # FR05: Update .cursor/hooks.json (smart merge)

@@ -22,7 +22,7 @@ detect_ide_caller() {
     if [[ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]] || [[ -n "${CLAUDE_CODE:-}" ]]; then
         printf "claude-code"
     elif [[ -n "${CURSOR_SESSION:-}" ]] || [[ -n "${CURSOR_IDE:-}" ]]; then
-        printf "cursor"
+        printf "cursor-ide"
     else
         # Fallback: unknown IDE
         printf "unknown"

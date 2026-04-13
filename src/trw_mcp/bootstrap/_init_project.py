@@ -432,7 +432,7 @@ def init_project(
         force: If ``True``, overwrite existing files.
         source_package: Pre-populate ``source_package_name`` in config.
         test_path: Pre-populate ``tests_relative_path`` in config.
-        ide: Target IDE override ("claude-code", "cursor", "opencode", "all").
+        ide: Target IDE override ("claude-code", "cursor-ide", "cursor-cli", "opencode", "all").
             When None, auto-detect from existing IDE config directories.
         on_progress: Optional callback called as ``on_progress(action, path)``
             for each file processed. Enables real-time progress reporting.
@@ -494,8 +494,8 @@ def init_project(
     if "opencode" in ide_targets:
         _install_opencode_artifacts(target_dir, force=force, result=result)
 
-    # 7c. Cursor artifacts (FR05, FR06, FR07: Cursor IDE support)
-    if "cursor" in ide_targets:
+    # 7c. Cursor artifacts (FR05, FR06, FR07: cursor-ide and cursor-cli support)
+    if "cursor-ide" in ide_targets or "cursor-cli" in ide_targets:
         _install_cursor_artifacts(target_dir, force=force, result=result)
 
     # 7d. Codex artifacts
