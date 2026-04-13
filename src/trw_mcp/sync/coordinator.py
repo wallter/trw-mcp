@@ -71,14 +71,21 @@ class SyncCoordinator:
                     _lock_un(fd)
                 os.close(fd)
 
-    def record_sync_success(self, pushed: int, pulled: int, pull_seq: int | None = None) -> None:
+    def record_sync_success(
+        self,
+        pushed: int,
+        pulled: int,
+        pull_seq: int | None = None,
+        *,
+        pull_completed: bool = False,
+    ) -> None:
         """Update sync-state.json with success info."""
         state = self._read_state()
         now = datetime.now(tz=timezone.utc).isoformat()
         state["last_push_at"] = now
         state["last_push_seq"] = self._int_field(state, "last_push_seq") + pushed
         state["push_count"] = self._int_field(state, "push_count") + 1
-        if pulled > 0:
+        if pulled > 0 or pull_completed:
             state["last_pull_at"] = now
             state["last_pull_seq"] = max(self._int_field(state, "last_pull_seq"), pull_seq or 0)
             state["pull_count"] = self._int_field(state, "pull_count") + 1

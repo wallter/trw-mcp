@@ -69,6 +69,7 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
         pushed=0,
         pulled=1,
         pull_seq=7,
+        pull_completed=True,
     )
 
 
@@ -183,8 +184,40 @@ async def test_run_one_cycle_records_not_modified_pull_as_success(tmp_path) -> N
 
     await client._run_one_cycle()
 
-    client._coordinator.record_sync_success.assert_called_once_with(pushed=0, pulled=0, pull_seq=5)
+    client._coordinator.record_sync_success.assert_called_once_with(
+        pushed=0,
+        pulled=0,
+        pull_seq=5,
+        pull_completed=True,
+    )
     client._coordinator.record_sync_failure.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_preserves_last_server_schedule_after_not_modified(tmp_path) -> None:
+    """A 304 keeps the last applied server schedule instead of dropping to local defaults."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(sync_interval_seconds=30), tmp_path)
+    client._last_applied_schedule_seconds = 120.0
+    client._next_sleep_seconds = 0.0
+    client._scheduled_interval_seconds = 0.0
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 5
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    assert client._next_sleep_seconds == 120.0
+    assert client._scheduled_interval_seconds == 120.0
 
 
 @pytest.mark.asyncio

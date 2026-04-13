@@ -58,6 +58,7 @@ class BackendSyncClient:
         )
         self._next_sleep_seconds = float(config.sync_interval_seconds)
         self._scheduled_interval_seconds = float(config.sync_interval_seconds)
+        self._last_applied_schedule_seconds = float(config.sync_interval_seconds)
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
 
@@ -128,11 +129,12 @@ class BackendSyncClient:
                 return
 
             if pull_result.not_modified:
-                self._reset_poll_schedule()
+                self._restore_poll_schedule()
                 self._coordinator.record_sync_success(
                     pushed=push_result.pushed,
                     pulled=0,
                     pull_seq=pull_seq,
+                    pull_completed=True,
                 )
                 return
 
@@ -166,6 +168,7 @@ class BackendSyncClient:
                 pushed=push_result.pushed,
                 pulled=pulled,
                 pull_seq=next_pull_seq,
+                pull_completed=True,
             )
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:
@@ -173,8 +176,20 @@ class BackendSyncClient:
         polling_cap_seconds = self._coerce_positive_number(
             (sync_hints or {}).get("polling_cap_seconds"),
         )
+        delay = float(self._config.sync_interval_seconds)
+        recommended_at = (sync_hints or {}).get("next_poll_recommended_at")
+        parsed_recommended_at = self._parse_sync_hint_timestamp(recommended_at)
+        if parsed_recommended_at is not None:
+            delay = max(0.0, (parsed_recommended_at - datetime.now(tz=timezone.utc)).total_seconds())
+
+        if polling_cap_seconds is not None and delay > 0:
+            delay = max(delay, polling_cap_seconds)
+        if delay > 0:
+            delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
+
         if sync_hints and sync_hints.get("significant_updates_available"):
             if self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS:
+                self._last_applied_schedule_seconds = delay
                 self._next_sleep_seconds = 0.0
                 self._scheduled_interval_seconds = 0.0
                 self._next_cycle_force = True
@@ -187,17 +202,7 @@ class BackendSyncClient:
                 )
                 return
 
-        delay = float(self._config.sync_interval_seconds)
-        recommended_at = (sync_hints or {}).get("next_poll_recommended_at")
-        parsed_recommended_at = self._parse_sync_hint_timestamp(recommended_at)
-        if parsed_recommended_at is not None:
-            delay = max(0.0, (parsed_recommended_at - datetime.now(tz=timezone.utc)).total_seconds())
-
-        if polling_cap_seconds is not None and delay > 0:
-            delay = max(delay, polling_cap_seconds)
-        if delay > 0:
-            delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
-
+        self._last_applied_schedule_seconds = delay
         self._next_sleep_seconds = delay
         self._scheduled_interval_seconds = delay
         self._next_cycle_force = False
@@ -213,6 +218,13 @@ class BackendSyncClient:
     def _reset_poll_schedule(self) -> None:
         self._next_sleep_seconds = float(self._config.sync_interval_seconds)
         self._scheduled_interval_seconds = float(self._config.sync_interval_seconds)
+        self._last_applied_schedule_seconds = float(self._config.sync_interval_seconds)
+        self._next_cycle_force = False
+        self._consecutive_immediate_repolls = 0
+
+    def _restore_poll_schedule(self) -> None:
+        self._next_sleep_seconds = self._last_applied_schedule_seconds
+        self._scheduled_interval_seconds = self._last_applied_schedule_seconds
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
 

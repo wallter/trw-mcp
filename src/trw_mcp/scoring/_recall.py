@@ -306,6 +306,10 @@ def rank_by_utility(
 
     today = datetime.now(tz=timezone.utc).date()
     scored: list[tuple[float, dict[str, object]]] = []
+    bandit_params: dict[str, float] | None = None
+
+    if context is not None and context.intel_cache is not None:
+        bandit_params = context.intel_cache.get_bandit_params()
 
     for entry in matches:
         # Text relevance score (token overlap with field weighting)
@@ -378,15 +382,10 @@ def rank_by_utility(
                     prd_boost = 1.5
 
             # 7. Intel boost from backend bandit params (PRD-INFRA-053)
-            intel_cache = context.intel_cache
-            if intel_cache is not None:
-                get_fn = getattr(intel_cache, "get_bandit_params", None)
-                if callable(get_fn):
-                    bandit_params = get_fn()
-                    if bandit_params:
-                        entry_id = str(entry.get("id", ""))
-                        if entry_id in bandit_params:
-                            intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
+            if bandit_params:
+                entry_id = str(entry.get("id", ""))
+                if entry_id in bandit_params:
+                    intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
 
             # Log when any factor differs from 1.0
             if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)):
