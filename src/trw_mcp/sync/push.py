@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel
 
+from trw_mcp.sync.identity import resolve_sync_client_id
+
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
@@ -33,11 +35,13 @@ class SyncPusher:
         api_key: str,
         batch_size: int = 100,
         timeout: float = 10.0,
+        client_id: str | None = None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._api_key = api_key
         self._batch_size = batch_size
         self._timeout = timeout
+        self._client_id = (client_id or "").strip() or resolve_sync_client_id()
 
     def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
         """Batch push learnings to POST /v1/sync/learnings. Never raises."""
@@ -127,7 +131,4 @@ class SyncPusher:
 
     def _get_client_id(self) -> str:
         """Generate a stable client identifier."""
-        import hashlib
-        import socket
-        raw = f"{socket.gethostname()}-{id(self)}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+        return self._client_id

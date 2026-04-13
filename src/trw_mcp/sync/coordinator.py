@@ -70,7 +70,7 @@ class SyncCoordinator:
                     _lock_un(fd)
                 os.close(fd)
 
-    def record_sync_success(self, pushed: int, pulled: int) -> None:
+    def record_sync_success(self, pushed: int, pulled: int, pull_seq: int | None = None) -> None:
         """Update sync-state.json with success info."""
         state = self._read_state()
         now = datetime.now(tz=timezone.utc).isoformat()
@@ -79,7 +79,7 @@ class SyncCoordinator:
         state["push_count"] = self._int_field(state, "push_count") + 1
         if pulled > 0:
             state["last_pull_at"] = now
-            state["last_pull_seq"] = self._int_field(state, "last_pull_seq") + pulled
+            state["last_pull_seq"] = max(self._int_field(state, "last_pull_seq"), pull_seq or 0)
             state["pull_count"] = self._int_field(state, "pull_count") + 1
         state["last_error"] = None
         state["version"] = 1
@@ -98,6 +98,11 @@ class SyncCoordinator:
         """Read the last push sequence number from state."""
         state = self._read_state()
         return self._int_field(state, "last_push_seq")
+
+    def get_last_pull_seq(self) -> int:
+        """Read the last pull sequence number from state."""
+        state = self._read_state()
+        return self._int_field(state, "last_pull_seq")
 
     @staticmethod
     def _int_field(state: dict[str, object], key: str) -> int:

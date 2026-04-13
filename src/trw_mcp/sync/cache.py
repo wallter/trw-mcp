@@ -83,14 +83,30 @@ class IntelligenceCache:
                     json.dump(state, f, sort_keys=True, indent=2, default=str)
                 os.chmod(tmp_path, 0o600)
                 os.rename(tmp_path, str(self._cache_path))
-                logger.debug("intel_cache_write_success", etag=etag)
+                logger.debug(
+                    "intel_cache_write_success",
+                    event_type="intel_cache_write_success",
+                    etag=etag,
+                    outcome="success",
+                )
             except Exception:  # justified: cleanup, temp cache file cleanup must not mask the write failure
-                logger.debug("intel_cache_write_failed", path=str(self._cache_path), exc_info=True)
+                logger.debug(
+                    "intel_cache_write_failed",
+                    event_type="intel_cache_write_failed",
+                    path=str(self._cache_path),
+                    outcome="error",
+                    exc_info=True,
+                )
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                 raise
         except Exception:  # justified: fail-open, cache persistence is best-effort for sync metadata
-            logger.warning("intel_cache_write_error", exc_info=True)
+            logger.warning(
+                "intel_cache_write_error",
+                event_type="intel_cache_write_error",
+                outcome="error",
+                exc_info=True,
+            )
 
     @property
     def is_fresh(self) -> bool:
