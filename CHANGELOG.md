@@ -4,6 +4,18 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.5] — 2026-04-13
+
+### Fixed
+
+- **`trw_status` / `trw_session_start` disagreement on current run** (PRD-FIX-077, reported from cursor-ide usage). `resolve_run_path` ignored the per-session pin set by `trw_init` / `trw_session_start`, instead picking the run with the latest `run.yaml` mtime — which could be a completed or abandoned run whose `summary.yaml` had just been written by another process. Users saw `trw_session_start` return run A and `trw_status` return a different run B in the same MCP session. Fix: `resolve_run_path` now delegates auto-detection to `find_active_run()` first (which honors the session pin + status-aware filter), and falls back to `_find_latest_run_dir` only when no pinned or active run exists. Affects all callers of `resolve_run_path(None)` — `trw_status`, `trw_checkpoint`, `trw_run_report`, the shared `orchestration_service`, and `TRWConfig` run-path resolution. New `resolve_run_path_mtime_fallback` structlog event surfaces when the fallback path is taken.
+- **Doc inconsistency: `trw-release` listed as a Cursor IDE mirrored skill** but `_IDE_CURATED_SKILLS` omits it (no bundled `data/skills/trw-release/` directory yet). Removed from `docs/CLIENT-PROFILES.md` Cursor IDE skills list; added a one-line note pointing to the `/trw-release` slash command path with a follow-up PRD reference.
+- **Doc nuance: "18-event hook system"** (two occurrences in CLIENT-PROFILES.md) now reads "hook system (Cursor exposes 18 agent events + 2 tab events; TRW wires a curated 8-event subset)" — prevents readers from expecting 18 TRW-provided handlers.
+
+### Added
+
+- **7 new tests** in `tests/test_resolve_run_path_alignment.py` covering the pin-wins-over-mtime contract, active-run filter precedence, explicit-path precedence, mtime fallback preservation, end-to-end `trw_status == trw_session_start` alignment, and structured log emission.
+
 ## [0.44.4] — 2026-04-13
 
 ### Added
