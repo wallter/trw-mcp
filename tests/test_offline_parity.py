@@ -157,11 +157,12 @@ class TestOfflineParity:
         assert payload["errors"] == []
 
     def test_no_meta_tune_in_tool_registry(self) -> None:
-        """The full tool registry loads offline and excludes trw_meta_tune."""
+        """The active tool registry loads offline and excludes trw_meta_tune."""
         # Import must succeed
         import trw_mcp  # noqa: F401
 
         # Check that meta_tune is not in the registered tools
+        from trw_mcp.models.config import get_config
         from trw_mcp.models.config._defaults import TOOL_PRESETS
         from trw_mcp.server._tools import mcp
 
@@ -183,6 +184,12 @@ class TestOfflineParity:
         else:
             tool_names = asyncio.run(_list())
 
-        assert len(tool_names) == 25
-        assert set(tool_names) == set(TOOL_PRESETS["all"])
+        config = get_config()
+        expected_tools = (
+            set(config.tool_exposure_list)
+            if config.effective_tool_exposure_mode == "custom"
+            else set(TOOL_PRESETS[config.effective_tool_exposure_mode])
+        )
+
+        assert set(tool_names) == expected_tools
         assert "trw_meta_tune" not in tool_names
