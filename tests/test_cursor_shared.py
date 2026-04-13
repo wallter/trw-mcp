@@ -132,14 +132,89 @@ def test_cursor_rules_mdc_updates_existing(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 def test_cursor_rules_mdc_client_id_cursor_cli(tmp_path: Path) -> None:
-    """generate_cursor_rules_mdc accepts cursor-cli as client_id."""
+    """generate_cursor_rules_mdc accepts cursor-cli as client_id.
+
+    cursor-cli callers do NOT get the IDE-specific appendix (trigger phrases,
+    verification-pass, drift-recovery, Plan Mode) — the rule file should
+    contain only the shared trw_section for that path.
+    """
     from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc
 
     result = generate_cursor_rules_mdc(tmp_path, "CLI content", client_id="cursor-cli")
     rules_file = tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc"
 
     assert rules_file.is_file()
+    content = rules_file.read_text(encoding="utf-8")
+    assert "CLI content" in content
+    # IDE-specific appendix must NOT leak into cursor-cli rule content
+    assert "TRW Trigger Phrases" not in content
+    assert "Verification Pass" not in content
+    assert "If the Agent Drifts" not in content
     assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
+
+
+@pytest.mark.integration
+def test_cursor_rules_mdc_cursor_ide_includes_appendix(tmp_path: Path) -> None:
+    """cursor-ide appendix adds trigger phrases, verification-pass, drift recovery, Plan Mode.
+
+    Per the C3/C7/C8/C10 customizations documented in
+    docs/research/providers/cursor/cursor-ide/eval-and-customizations-2026-04-13.md,
+    the cursor-ide-rendered rule must contain these sections; cursor-cli must not.
+    """
+    from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc
+
+    generate_cursor_rules_mdc(tmp_path, "SHARED SECTION", client_id="cursor-ide")
+    content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text(encoding="utf-8")
+
+    # Shared content is present (under the MDC frontmatter)
+    assert "SHARED SECTION" in content
+
+    # C3: Trigger-phrase cheat sheet
+    assert "TRW Trigger Phrases" in content
+    assert "trw_session_start" in content
+    assert "trw_checkpoint" in content
+    assert "trw_deliver" in content
+    assert "trw_build_check" in content
+    assert "trw_review" in content
+
+    # C8: Verification Pass amplification
+    assert "Verification Pass" in content
+    assert "trw_build_check(scope=\"full\")" in content
+
+    # C7: Drift-recovery guidance
+    assert "If the Agent Drifts" in content
+    assert "Follow the TRW ceremony protocol" in content
+
+    # C10: Plan Mode integration
+    assert "Planning" in content
+    assert "Plan Mode" in content
+
+    # C4: Pre-compaction checkpoint nudge
+    assert "trw_pre_compact_checkpoint" in content
+
+
+@pytest.mark.integration
+def test_cursor_rules_mdc_force_overwriting_existing_still_reports_updated(
+    tmp_path: Path,
+) -> None:
+    """Forced overwrite of an existing file reports 'updated', not 'created'.
+
+    Regression test for the previously-inverted ``if existed and not force``
+    classification logic. When ``force=True`` and the file existed, the earlier
+    branch reported "created" (wrong — the file was actually updated).
+    """
+    from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc
+
+    rules_dir = tmp_path / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "trw-ceremony.mdc").write_text("original", encoding="utf-8")
+
+    result = generate_cursor_rules_mdc(
+        tmp_path, "replacement", client_id="cursor-ide", force=True
+    )
+    # File existed → update classification regardless of force
+    assert ".cursor/rules/trw-ceremony.mdc" in result.get("updated", [])
+    assert ".cursor/rules/trw-ceremony.mdc" not in result.get("created", [])
 
 
 # ===========================================================================

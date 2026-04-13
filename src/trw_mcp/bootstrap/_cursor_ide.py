@@ -17,6 +17,7 @@ JSON-merge logic, file-copy logic, or template-rendering logic.
 
 from __future__ import annotations
 
+import json
 from importlib.resources import files as _pkg_files
 from pathlib import Path
 
@@ -32,27 +33,44 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 # (name, description) — description goes into YAML frontmatter.
+#
+# Descriptions are phrased as routing rules per Cursor's delegation heuristic
+# (cursor.com/docs/subagents): the main agent reads the description to decide
+# delegation, so specificity about *when to invoke* matters more than a label.
+# "Use proactively" framing signals Cursor to reach for the subagent without
+# being asked. See docs/research/providers/cursor/cursor-ide/
+# eval-and-customizations-2026-04-13.md §C1-C2.
 _TRW_SUBAGENTS: list[tuple[str, str]] = [
     (
         "trw-explorer",
-        "Codebase exploration specialist. Use when the user asks to find files, "
-        "locate functions, or understand architecture. Read-only.",
+        "Use when the user asks to 'find', 'locate', 'search for', 'where is', "
+        "'look up', or wants to map architecture, dependencies, or module "
+        "boundaries. Use proactively before making changes to unfamiliar code. "
+        "Read-only; does not modify files.",
     ),
     (
         "trw-implementer",
-        "TDD implementation specialist. Use when production code needs to be "
-        "written with tests. Write-enabled.",
+        "Use when the user asks to 'implement', 'build', 'add', 'fix', or "
+        "'write tests for' any feature, bug, or component. Follows TDD: writes "
+        "a failing test first, then production code that passes it. "
+        "Write-enabled; respects TRW ceremony gates (build_check before "
+        "declaring complete).",
     ),
     (
         "trw-reviewer",
-        "Code review specialist. Use when reviewing PRs, recent changes, or "
-        "post-implementation quality. Read-only.",
+        "Use proactively after any non-trivial code edit to check for quality "
+        "gaps, security issues, missing tests, or spec drift before the user "
+        "reviews. Also invoked when the user asks to 'review', 'audit', "
+        "'check the diff', or 'look over changes'. Read-only; scores code "
+        "against TRW's 7 review dimensions.",
     ),
     (
         "trw-researcher",
-        "Web and documentation research specialist. Use when investigating "
-        "external libraries, comparing approaches, or gathering evidence. "
-        "Read-only, background-capable.",
+        "Use when the user asks to 'research', 'investigate', 'compare', "
+        "'survey', or 'evaluate' external libraries, APIs, papers, or tools. "
+        "Also use proactively when the main agent needs up-to-date docs that "
+        "may have changed since the model's training cutoff. Read-only, "
+        "background-capable (runs async via is_background: true).",
     ),
 ]
 
@@ -237,7 +255,10 @@ def generate_cursor_ide_subagents(
         frontmatter = (
             "---\n"
             f"name: {name}\n"
-            f"description: {description}\n"
+            # JSON-encode description so embedded colons / apostrophes don't
+            # break the YAML scanner. JSON string literals are valid YAML
+            # flow scalars.
+            f"description: {json.dumps(description)}\n"
             "model: inherit\n"
             f"readonly: {str(readonly).lower()}\n"
             f"is_background: {str(is_background).lower()}\n"

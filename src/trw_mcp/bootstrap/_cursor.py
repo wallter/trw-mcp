@@ -20,7 +20,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import structlog
 from typing_extensions import TypedDict
@@ -293,6 +293,62 @@ def generate_cursor_mcp_config(
 # ---------------------------------------------------------------------------
 
 
+_CURSOR_IDE_APPENDIX: Final[str] = """\
+
+## TRW Trigger Phrases
+
+When the user says any of these, use the corresponding TRW tool:
+
+| User says | Call |
+|-----------|------|
+| "start", "begin", "load context", "what do we know about X" | `trw_session_start(query="X")` |
+| "checkpoint", "save progress", "mark milestone" | `trw_checkpoint(message="...")` |
+| "I learned that X", "gotcha: X", "remember X" | `trw_learn(summary="X", detail="...")` |
+| "deliver", "finish up", "wrap up" | `trw_deliver()` |
+| "check", "verify", "did tests pass" | `trw_build_check(scope="full")` |
+| "review", "audit", "look over the changes" | `trw_review()` |
+| "plan", "break down", "organize this task" | `trw_init(task_name="...")` |
+
+## Verification Pass
+
+After completing a non-trivial task, run the verification pass:
+
+1. `trw_build_check(scope="full")` — confirm tests + types pass.
+2. `trw_review()` — score the diff against quality dimensions.
+3. If PRD-scoped, run `/trw-audit` for spec compliance.
+
+Treat the verification pass as a hard gate, not a suggestion. Cursor's
+native harness auto-verifies against requirements; amplify that behavior
+with the TRW tools, do not skip it.
+
+## If the Agent Drifts
+
+If you notice output diverging from the ceremony protocol mid-conversation,
+say one of:
+
+- "Follow the TRW ceremony protocol."
+- "Call `trw_session_start` before other TRW tools."
+- "Verify with `git diff` before claiming complete."
+
+Cursor's Agent prioritizes recent messages over the always-apply rule
+(recency bias), so a mid-conversation reinforcement restores context.
+
+## Planning
+
+- If Cursor's Plan Mode (Shift+Tab) is active, let the plan file drive
+  execution.
+- Otherwise, `trw_init(task_name="...")` produces the run plan.
+- Pick one per task; do not duplicate planning artifacts.
+
+## Pre-Compaction
+
+When Cursor signals an upcoming context compaction (preCompact hook fires,
+or the conversation nears the context window limit), call
+`trw_pre_compact_checkpoint()` BEFORE responding further — it preserves
+the resumption point across the compression boundary.
+"""
+
+
 def generate_cursor_rules_mdc(
     target_dir: Path,
     trw_section: str,
@@ -303,24 +359,34 @@ def generate_cursor_rules_mdc(
     """Generate .cursor/rules/trw-ceremony.mdc (canonical name for PRD-CORE-136-FR02).
 
     Identical to ``generate_cursor_rules`` but accepts a ``client_id`` parameter
-    so the generator can be called from both cursor-ide and cursor-cli surfaces
-    with appropriate context.  The on-disk content is the same regardless of
-    ``client_id`` — the parameter is reserved for future surface-specific tuning.
+    so the generator can be called from both cursor-ide and cursor-cli surfaces.
+    When ``client_id == "cursor-ide"``, a cursor-IDE-specific appendix is
+    concatenated after the platform-generic ``trw_section`` — trigger-phrase
+    table, verification-pass guidance, drift-recovery hints, Plan Mode note,
+    and pre-compaction checkpoint reminder. See docs/research/providers/cursor/
+    cursor-ide/eval-and-customizations-2026-04-13.md §C3/C7/C8/C10.
 
     Args:
         target_dir: Root of the target git repository.
-        trw_section: Content to embed between the MDC frontmatter and end of file.
-        client_id: Caller surface identifier (e.g. "cursor-ide", "cursor-cli").
-        force: When True, overwrite unconditionally.
+        trw_section: Platform-generic ceremony content (from
+            ``render_agents_trw_section()``).
+        client_id: Caller surface identifier. ``"cursor-ide"`` receives the
+            appendix; other values get only the shared ``trw_section``.
+        force: When True, overwrite unconditionally. Since this generator
+            always rewrites the file, ``force`` affects only logging.
 
     Returns:
-        Dict with 'created'/'updated'/'preserved' lists.
+        Dict with 'created'/'updated'/'preserved' lists. A file that existed
+        before this call is reported as ``updated``; otherwise ``created``.
+        The ``force`` flag does not change this classification — a forced
+        rewrite of an existing file is still an update.
     """
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     rules_dir = target_dir / ".cursor" / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     rules_file = rules_dir / "trw-ceremony.mdc"
 
+    appendix = _CURSOR_IDE_APPENDIX if client_id == "cursor-ide" else ""
     content = (
         "---\n"
         'description: "TRW ceremony enforcement — ensures learnings persist across sessions"\n'
@@ -328,21 +394,28 @@ def generate_cursor_rules_mdc(
         "alwaysApply: true\n"
         "---\n\n"
         f"{trw_section}\n"
+        f"{appendix}"
     )
 
+    # Existence check determines create-vs-update classification.
+    # ``force`` is reserved for future smart-merge variants; here the file is
+    # always rewritten so classification is driven by prior existence only.
     existed = rules_file.exists()
     rules_file.write_text(content, encoding="utf-8")
 
-    if existed and not force:
+    if existed:
         result["updated"].append(".cursor/rules/trw-ceremony.mdc")
     else:
         result["created"].append(".cursor/rules/trw-ceremony.mdc")
 
-    logger.debug(
+    logger.info(
         "generate_cursor_rules_mdc",
+        outcome="success",
         client_id=client_id,
-        created=result["created"],
-        updated=result["updated"],
+        force=force,
+        appendix_applied=bool(appendix),
+        created=len(result["created"]),
+        updated=len(result["updated"]),
     )
     return result
 
