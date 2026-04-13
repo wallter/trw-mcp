@@ -33,9 +33,13 @@ class BootstrapFileResult(TypedDict, total=False):
     this shape.  ``errors`` is only populated by the opencode functions;
     cursor functions never set it, so the key is absent when not applicable.
     ``total=False`` because cursor functions omit ``errors`` entirely.
+
+    ``info`` is used by cursor-cli to surface TTY/tmux reminders and other
+    advisory messages that are not errors or warnings (PRD-CORE-137-FR08a).
     """
 
     created: list[str]
     updated: list[str]
     preserved: list[str]
     errors: list[str]
+    info: list[str]
