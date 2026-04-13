@@ -68,9 +68,55 @@ _TIPS = [
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",
-    "Set CLAUDE_CODE_SUBAGENT_MODEL=sonnet for faster subagents",
+    "Choose full profiles for local IDEs and light profiles for CI-oriented CLIs",
     "TRW hooks run automatically \u2014 no setup needed after install",
 ]
+
+_SUPPORTED_IDES = [
+    "claude-code",
+    "cursor-ide",
+    "cursor-cli",
+    "opencode",
+    "codex",
+    "copilot",
+    "gemini",
+    "aider",
+]
+
+_IDE_META: dict[str, dict[str, str]] = {
+    "claude-code": {
+        "label": "Claude Code",
+        "summary": "Full hooks, skills, agents, and MCP surface.",
+    },
+    "cursor-ide": {
+        "label": "Cursor IDE",
+        "summary": "Full IDE rules, hooks, skills, and MCP config.",
+    },
+    "cursor-cli": {
+        "label": "Cursor CLI",
+        "summary": "Headless-safe Cursor agent profile for terminals and CI.",
+    },
+    "opencode": {
+        "label": "OpenCode",
+        "summary": "Light instruction-first profile with commands and agents.",
+    },
+    "codex": {
+        "label": "Codex",
+        "summary": "Light Codex config with scoped instructions and agents.",
+    },
+    "copilot": {
+        "label": "GitHub Copilot",
+        "summary": "GitHub-native instructions, hooks, and agent surfaces.",
+    },
+    "gemini": {
+        "label": "Gemini CLI",
+        "summary": "Gemini-native instructions, MCP config, and subagents.",
+    },
+    "aider": {
+        "label": "Aider",
+        "summary": "Minimal instruction-first profile for terminal workflows.",
+    },
+}
 
 
 def _visible_len(text: str) -> int:
@@ -298,6 +344,141 @@ def prompt_choice(label: str, options: list[str], default: int = 0) -> int:
     return default
 
 
+def _unique(values: list[str]) -> list[str]:
+    """Return *values* with duplicates removed while preserving order."""
+    return list(dict.fromkeys(values))
+
+
+def _ide_label(ide: str) -> str:
+    """Return a user-facing label for an installer IDE identifier."""
+    return _IDE_META.get(ide, {}).get("label", ide)
+
+
+def _format_ide_list(ides: list[str]) -> str:
+    """Format IDE labels into a readable list."""
+    labels = [_ide_label(ide) for ide in ides]
+    if len(labels) <= 1:
+        return labels[0] if labels else ""
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _normalize_ide_targets(ides: list[str]) -> list[str]:
+    """Validate installer IDE identifiers and expand ``all``."""
+    normalized = [ide.strip() for ide in ides if ide.strip()]
+    if not normalized:
+        return []
+    if "all" in normalized:
+        return _SUPPORTED_IDES.copy()
+    invalid = [ide for ide in normalized if ide not in _SUPPORTED_IDES]
+    if invalid:
+        supported = ", ".join(_SUPPORTED_IDES + ["all"])
+        raise ValueError(f"Unknown --ide value(s): {', '.join(invalid)}. Supported values: {supported}")
+    return _unique(normalized)
+
+
+def _parse_ide_argument(raw: str | None) -> list[str] | None:
+    """Parse ``--ide`` into a normalized list of targets."""
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.split(",")]
+    normalized = _normalize_ide_targets(parts)
+    if not normalized:
+        raise ValueError("--ide requires at least one client identifier")
+    return normalized
+
+
+def _read_single_key(tty):  # noqa: ANN202 — platform-specific key reader
+    """Read a single keypress from *tty* for checkbox navigation."""
+    if os.name == "nt":
+        try:
+            import msvcrt
+
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):
+                arrow = msvcrt.getwch()
+                if arrow == "H":
+                    return "UP"
+                if arrow == "P":
+                    return "DOWN"
+                return arrow
+            if ch in ("\r", "\n"):
+                return "ENTER"
+            if ch == " ":
+                return "SPACE"
+            return ch
+        except (ImportError, OSError):
+            return None
+
+    try:
+        import termios
+        import tty as tty_mod
+    except ImportError:
+        return None
+
+    fd = tty.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty_mod.setraw(fd)
+        ch = tty.read(1)
+        if ch == "\x1b":
+            nxt = tty.read(1)
+            if nxt == "[":
+                arrow = tty.read(1)
+                if arrow == "A":
+                    return "UP"
+                if arrow == "B":
+                    return "DOWN"
+                return arrow
+            return ch
+        if ch in ("\r", "\n"):
+            return "ENTER"
+        if ch == " ":
+            return "SPACE"
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _prompt_ide_selection_fallback(default_targets: list[str]) -> list[str] | None:
+    """Fallback multi-select prompt for terminals without raw-key support."""
+    default_display = ",".join(str(_SUPPORTED_IDES.index(ide) + 1) for ide in default_targets)
+    print()
+    print("Configure TRW for one or more clients:")
+    for idx, ide in enumerate(_SUPPORTED_IDES, start=1):
+        meta = _IDE_META[ide]
+        marker = "[x]" if ide in default_targets else "[ ]"
+        print(f"  {idx}. {marker} {meta['label']} — {meta['summary']}")
+    print("  s. Skip project client setup for now")
+
+    tty = _open_tty()
+    if tty is None:
+        return default_targets
+    try:
+        sys.stdout.write(f"\nSelection [default: {default_display}]: ")
+        sys.stdout.flush()
+        raw = tty.readline().strip().lower()
+    finally:
+        tty.close()
+
+    if not raw:
+        return default_targets
+    if raw in {"s", "skip"}:
+        return None
+
+    choices: list[str] = []
+    try:
+        for part in raw.split(","):
+            number = int(part.strip())
+            if not (1 <= number <= len(_SUPPORTED_IDES)):
+                raise ValueError
+            choices.append(_SUPPORTED_IDES[number - 1])
+    except ValueError:
+        return default_targets
+    return _normalize_ide_targets(choices)
+
+
 # ── Prior installation detection ─────────────────────────────────────
 
 
@@ -344,7 +525,8 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
 
     prior: dict[str, object] = {}
     try:
-        flat = _parse_simple_yaml(config_path.read_text(encoding="utf-8"))
+        raw_text = config_path.read_text(encoding="utf-8")
+        flat = _parse_simple_yaml(raw_text)
         if "installation_id" in flat:
             prior["project_name"] = flat["installation_id"]
         if "platform_api_key" in flat:
@@ -355,6 +537,21 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
             prior["embeddings"] = flat["embeddings_enabled"].lower() == "true"
         if "sqlite_vec_enabled" in flat:
             prior["sqlite_vec"] = flat["sqlite_vec_enabled"].lower() == "true"
+        target_platforms: list[str] = []
+        in_target_platforms = False
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("target_platforms:"):
+                in_target_platforms = True
+                continue
+            if in_target_platforms:
+                if stripped.startswith("- "):
+                    target_platforms.append(stripped[2:].strip().strip('"').strip("'"))
+                    continue
+                if stripped and not stripped.startswith("#"):
+                    in_target_platforms = False
+        if target_platforms:
+            prior["target_platforms"] = _normalize_ide_targets(target_platforms)
     except (OSError, UnicodeDecodeError):
         pass
     return prior
@@ -449,10 +646,7 @@ def _verify_checksum(data: bytes, expected_sha256: str, label: str) -> None:
 
     actual = hashlib.sha256(data).hexdigest()
     if actual != expected_sha256:
-        raise RuntimeError(
-            f"Checksum mismatch for {label}: "
-            f"expected {expected_sha256[:16]}..., got {actual[:16]}..."
-        )
+        raise RuntimeError(f"Checksum mismatch for {label}: expected {expected_sha256[:16]}..., got {actual[:16]}...")
 
 
 def extract_wheels(tmpdir: Path) -> tuple[Path, Path]:
@@ -671,6 +865,7 @@ def update_config(
     *,
     embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
+    target_platforms: list[str] | None = None,
 ) -> bool:
     """Update .trw/config.yaml with installation settings.
 
@@ -686,10 +881,16 @@ def update_config(
     updated: set[str] = set()
     out: list[str] = []
     replacing_platform_urls = False
+    replacing_target_platforms = False
 
     for line in lines:
         normalized_line = line if line.endswith("\n") else line + "\n"
         s = normalized_line.lstrip()
+
+        if replacing_target_platforms:
+            if s.startswith("- "):
+                continue
+            replacing_target_platforms = False
 
         if replacing_platform_urls:
             if s.startswith("- "):
@@ -716,6 +917,12 @@ def update_config(
         if s.startswith("sqlite_vec_enabled:") and sqlite_vec_enabled is not None:
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
+            continue
+        if s.startswith("target_platforms:") and target_platforms is not None:
+            out.append("target_platforms:\n")
+            out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+            updated.add("target_platforms")
+            replacing_target_platforms = True
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
@@ -755,6 +962,9 @@ def update_config(
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
         out.append("sqlite_vec_enabled: true\n")
+    if target_platforms and "target_platforms" not in updated:
+        out.append("target_platforms:\n")
+        out.extend(f'  - "{ide}"\n' for ide in target_platforms)
 
     config_path.write_text("".join(out), encoding="utf-8")
     return True
@@ -983,6 +1193,7 @@ def show_success_banner(
     features: list[str],
     is_reinstall: bool = False,
     backend_results: list[dict[str, object]] | None = None,
+    selected_targets: list[str] | None = None,
 ) -> None:
     """Display the post-install success banner with summary.
 
@@ -1023,6 +1234,8 @@ def show_success_banner(
         else:
             print(f"  {DIM}\u2022 Offline mode (re-run installer to connect){NC}")
 
+        if selected_targets:
+            print(f"  {DIM}Configured for: {_format_ide_list(selected_targets)}{NC}")
         if features:
             feat_str = ", ".join(features)
             print(f"  {DIM}Extras: {feat_str}{NC}")
@@ -1032,11 +1245,14 @@ def show_success_banner(
         if is_reinstall:
             print(f"  {BOLD}After updating:{NC}")
             print(f"    {CYAN}\u2022{NC} Active MCP servers have been signaled to restart")
-            print(f"    {CYAN}\u2022{NC} Run {BOLD}/mcp{NC} in Claude Code if tools aren't loading")
+            print(f"    {CYAN}\u2022{NC} Restart or reconnect your configured client if tools aren't loading")
             print(f"    {CYAN}\u2022{NC} Your prior learnings carry forward automatically")
         else:
             print(f"  {BOLD}Get started:{NC}")
-            print(f"    {CYAN}1.{NC} Open your project in Claude Code:  {BOLD}claude{NC}")
+            if selected_targets:
+                print(f"    {CYAN}1.{NC} Open your project in {_format_ide_list(selected_targets)}")
+            else:
+                print(f"    {CYAN}1.{NC} Open your project in your selected client")
             print(f"    {CYAN}2.{NC} TRW tools load automatically \u2014 just start working")
             print(f"    {CYAN}3.{NC} Call {BOLD}trw_session_start(){NC} for context from prior sessions")
 
@@ -1059,7 +1275,12 @@ def show_success_banner(
         if is_reinstall:
             ui.info("Updated. MCP servers signaled to restart.")
         else:
-            ui.info("Next: open your project in Claude Code \u2014 TRW tools load automatically.")
+            next_step = (
+                f"Next: open your project in {_format_ide_list(selected_targets)} — TRW tools load automatically."
+                if selected_targets
+                else "Next: open your project in your selected client — TRW tools load automatically."
+            )
+            ui.info(next_step)
         ui.info(f"Docs: {DOCS_BASE}/integration")
 
 
@@ -1071,11 +1292,21 @@ def _detect_installed_clis() -> list[str]:
     detected = []
     if shutil.which("claude"):
         detected.append("claude-code")
+    if shutil.which("cursor-agent"):
+        detected.append("cursor-cli")
+    if shutil.which("cursor"):
+        detected.append("cursor-ide")
     if shutil.which("opencode"):
         detected.append("opencode")
     if shutil.which("codex"):
         detected.append("codex")
-    return detected
+    if shutil.which("github-copilot") or shutil.which("copilot"):
+        detected.append("copilot")
+    if shutil.which("gemini"):
+        detected.append("gemini")
+    if shutil.which("aider"):
+        detected.append("aider")
+    return _unique(detected)
 
 
 def _detect_project_ides(project_dir: str) -> list[str]:
@@ -1085,6 +1316,11 @@ def _detect_project_ides(project_dir: str) -> list[str]:
     detected = []
     if _os.path.isdir(_os.path.join(project_dir, ".claude")):
         detected.append("claude-code")
+    cursor_dir = _os.path.join(project_dir, ".cursor")
+    if _os.path.isfile(_os.path.join(cursor_dir, "cli.json")):
+        detected.append("cursor-cli")
+    if _os.path.isdir(cursor_dir):
+        detected.append("cursor-ide")
     if _os.path.isdir(_os.path.join(project_dir, ".opencode")) or _os.path.isfile(
         _os.path.join(project_dir, "opencode.json")
     ):
@@ -1093,60 +1329,101 @@ def _detect_project_ides(project_dir: str) -> list[str]:
         _os.path.join(project_dir, ".codex", "config.toml")
     ):
         detected.append("codex")
-    return detected
+    github_agents_dir = _os.path.join(project_dir, ".github", "agents")
+    has_copilot_agents = _os.path.isdir(github_agents_dir) and any(
+        name.endswith(".agent.md") for name in _os.listdir(github_agents_dir)
+    )
+    if _os.path.isfile(_os.path.join(project_dir, ".github", "copilot-instructions.md")) or has_copilot_agents:
+        detected.append("copilot")
+    if _os.path.isdir(_os.path.join(project_dir, ".gemini")) or _os.path.isfile(
+        _os.path.join(project_dir, "GEMINI.md")
+    ):
+        detected.append("gemini")
+    if _os.path.isfile(_os.path.join(project_dir, ".aider.conf.yml")):
+        detected.append("aider")
+    return _unique(detected)
 
 
-def _prompt_ide_selection(detected_clis: list[str], detected_ides: list[str]) -> str | None:
-    """Prompt user to select which IDE(s) to configure.
-
-    Returns: "claude-code", "opencode", "codex", "all", or None (skip).
-    """
-    # Show what was detected
+def _prompt_ide_selection(
+    detected_clis: list[str],
+    detected_ides: list[str],
+    prior_targets: list[str] | None = None,
+) -> list[str] | None:
+    """Prompt user to multi-select which client surfaces TRW should configure."""
     if detected_clis:
-        print(f"{GREEN}[TRW]{NC} Detected CLI(s): {', '.join(detected_clis)}")
+        print(f"{GREEN}[TRW]{NC} Detected CLI(s): {_format_ide_list(detected_clis)}")
     if detected_ides:
-        print(f"{GREEN}[TRW]{NC} Existing IDE config: {', '.join(detected_ides)}")
+        print(f"{GREEN}[TRW]{NC} Existing client config: {_format_ide_list(detected_ides)}")
 
-    # Build options list: key, label, value
-    options: list[tuple[str, str, str | None]] = []
-    has_claude = "claude-code" in detected_clis or "claude-code" in detected_ides
-    has_opencode = "opencode" in detected_clis or "opencode" in detected_ides
-    has_codex = "codex" in detected_clis or "codex" in detected_ides
+    default_targets = _normalize_ide_targets(prior_targets or _unique(detected_ides + detected_clis))
+    if not default_targets:
+        default_targets = ["claude-code"]
 
-    if has_claude:
-        options.append(("1", "Claude Code only", "claude-code"))
-    if has_opencode:
-        key = "2" if has_claude else "1"
-        options.append((key, "OpenCode only", "opencode"))
-    if has_codex:
-        key = str(len(options) + 1)
-        options.append((key, "Codex only", "codex"))
-
-    # Always offer "all detected/current" and "skip"
-    both_key = str(len(options) + 1)
-    options.append((both_key, "All supported IDEs", "all"))
-    skip_key = "s"
-    options.append((skip_key, "Skip (configure later)", None))
-
-    print("\nConfigure TRW for:")
-    for key, label, _ in options:
-        print(f"  [{key}] {label}")
-
-    default_key = options[0][0]
     tty = _open_tty()
-    if tty is None:
-        return options[0][2]
-    try:
-        sys.stdout.write(f"\nSelection [default: {default_key}]: ")
-        sys.stdout.flush()
-        choice = tty.readline().strip().lower() or default_key
-    finally:
-        tty.close()
+    if tty is None or not sys.stdout.isatty():
+        return _prompt_ide_selection_fallback(default_targets)
 
-    for key, _, value in options:
-        if choice == key:
-            return value
-    return options[0][2]  # default to first option
+    cursor = 0
+    selected = set(default_targets)
+    rendered_lines = 0
+
+    try:
+        sys.stdout.write("\033[?25l")
+        while True:
+            lines = [
+                "",
+                "Configure TRW for one or more clients:",
+                f"{DIM}Use ↑/↓ (or j/k) to move, space to toggle, a = all, n = none, enter = continue, s = skip.{NC}",
+            ]
+            for idx, ide in enumerate(_SUPPORTED_IDES):
+                meta = _IDE_META[ide]
+                pointer = f"{BOLD}>{NC}" if idx == cursor else " "
+                checked = f"{GREEN}[x]{NC}" if ide in selected else "[ ]"
+                lines.append(f"  {pointer} {checked} {meta['label']}")
+                lines.append(f"      {DIM}{meta['summary']}{NC}")
+
+            if rendered_lines:
+                sys.stdout.write(f"\033[{rendered_lines}F")
+            for line in lines:
+                sys.stdout.write(f"\r\033[K{line}\n")
+            sys.stdout.flush()
+            rendered_lines = len(lines)
+
+            key = _read_single_key(tty)
+            if key is None:
+                return _prompt_ide_selection_fallback(default_targets)
+            if key in ("\x03",):
+                raise KeyboardInterrupt
+            if key in ("UP", "k", "K"):
+                cursor = (cursor - 1) % len(_SUPPORTED_IDES)
+                continue
+            if key in ("DOWN", "j", "J"):
+                cursor = (cursor + 1) % len(_SUPPORTED_IDES)
+                continue
+            if key in ("SPACE", "x", "X"):
+                current = _SUPPORTED_IDES[cursor]
+                if current in selected:
+                    selected.remove(current)
+                else:
+                    selected.add(current)
+                continue
+            if key in ("a", "A"):
+                selected = set(_SUPPORTED_IDES)
+                continue
+            if key in ("n", "N"):
+                selected.clear()
+                continue
+            if key in ("s", "S"):
+                print()
+                return None
+            if key == "ENTER":
+                chosen = [ide for ide in _SUPPORTED_IDES if ide in selected]
+                return chosen or default_targets
+    finally:
+        print()
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+        tty.close()
 
 
 # ── Find trw-mcp command ─────────────────────────────────────────────
@@ -1367,66 +1644,78 @@ def phase_project_setup(
     target_dir: Path,
     upgrade_only: bool,
     interactive: bool = False,
-    ide: str | None = None,
+    ide: list[str] | None = None,
     pip_target: str = "",
-) -> None:
+) -> list[str]:
     """Set up or update the project scaffolding."""
     ui.step_header(step, total, "Setting up project")
 
     if upgrade_only:
         ui.step_ok("Upgrade complete — skipping project setup")
-        return
+        return []
 
     if not (target_dir / ".git").is_dir():
         ui.step_warn("Not a git repository — skipping project setup")
         ui.step_warn("After git init, run: trw-mcp init-project .")
-        return
+        return []
 
     # IDE detection and selection
     detected_clis = _detect_installed_clis()
     detected_ides = _detect_project_ides(str(target_dir))
+    prior_config = _load_prior_config(target_dir)
+    prior_targets = prior_config.get("target_platforms", [])
+    if not isinstance(prior_targets, list):
+        prior_targets = []
 
-    resolved_ide: str | None = ide
+    resolved_targets: list[str] | None = ide
     is_update = (target_dir / ".trw").is_dir()
-    if resolved_ide is None:
-        if is_update and interactive and detected_ides:
-            # Re-run: use previously configured IDEs without prompting
-            resolved_ide = "all" if len(detected_ides) >= 2 else detected_ides[0]
-            ui.step_ok(f"IDE config: {', '.join(detected_ides)} (from prior install)")
+    if resolved_targets is None:
+        if is_update and interactive and prior_targets:
+            resolved_targets = _normalize_ide_targets(prior_targets)
+            ui.step_ok(f"Client surfaces: {_format_ide_list(resolved_targets)} (from prior install)")
+        elif is_update and interactive and detected_ides:
+            resolved_targets = _normalize_ide_targets(detected_ides)
+            ui.step_ok(f"Client surfaces: {_format_ide_list(resolved_targets)} (from existing repo config)")
         elif interactive:
-            resolved_ide = _prompt_ide_selection(detected_clis, detected_ides)
+            resolved_targets = _prompt_ide_selection(detected_clis, detected_ides, prior_targets=prior_targets)
         else:
-            # Headless: auto-configure all detected CLIs; default to claude-code if none
-            all_detected = list(dict.fromkeys(detected_clis + detected_ides))
-            if len(all_detected) >= 2:
-                resolved_ide = "all"
-            elif len(all_detected) == 1:
-                resolved_ide = all_detected[0]
-            else:
-                resolved_ide = "claude-code"
+            # Headless: reuse prior targets, else auto-configure detected clients.
+            resolved_targets = _normalize_ide_targets(prior_targets or _unique(detected_ides + detected_clis))
+            if not resolved_targets:
+                resolved_targets = ["claude-code"]
+
+    if not resolved_targets:
+        ui.step_warn("Skipping client surface setup — re-run install-trw.py or trw-mcp update-project later")
+        return []
 
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
-    action = "update-project" if is_update else "init-project"
-    label = "Updating" if is_update else "Initializing"
+    first_action = "update-project" if is_update else "init-project"
 
-    cmd = trw_cmd + [action, str(target_dir)]
-    if resolved_ide is not None:
-        cmd += ["--ide", resolved_ide]
-
-    ok = run_with_progress(ui, f"{label} project...", cmd)
-    ui.stop_spinner(ok, f"Project {'updated' if is_update else 'initialized'}", f"Project {action} failed")
-
-    # Generate per-client instruction files after project setup
-    # (FR01, FR02, FR03: Split AGENTS.md into per-client instruction files)
-    if resolved_ide in ("all", "opencode", "codex"):
-        _generate_per_client_instructions(
-            ui,
-            target_dir,
-            resolved_ide,
-            is_update,
-            python,
-            pip_target=pip_target,
+    for idx, selected_ide in enumerate(resolved_targets):
+        action = first_action if idx == 0 else "update-project"
+        label = "Updating" if action == "update-project" else "Initializing"
+        cmd = trw_cmd + [action, str(target_dir), "--ide", selected_ide]
+        ok = run_with_progress(ui, f"{label} project for {_ide_label(selected_ide)}...", cmd)
+        success_message = (
+            f"{_ide_label(selected_ide)} configured"
+            if len(resolved_targets) > 1
+            else f"Project {'updated' if is_update else 'initialized'}"
         )
+        ui.stop_spinner(ok, success_message, f"Project {action} failed for {_ide_label(selected_ide)}")
+
+    config_path = target_dir / ".trw" / "config.yaml"
+    refreshed_config = _load_prior_config(target_dir)
+    project_name = str(refreshed_config.get("project_name", sanitize_project_name(target_dir.name)))
+    api_key = str(refreshed_config.get("api_key", ""))
+    telemetry_enabled = bool(refreshed_config.get("telemetry", False))
+    update_config(
+        config_path,
+        project_name,
+        api_key,
+        telemetry_enabled,
+        target_platforms=resolved_targets,
+    )
+    return resolved_targets
 
 
 def phase_configure(
@@ -1443,6 +1732,7 @@ def phase_configure(
     install_ai: bool = False,
     install_vec: bool = False,
     skip_auth: bool = False,
+    target_platforms: list[str] | None = None,
 ) -> str:
     """Configure project identity, API key, and telemetry. Returns platform_status."""
     ui.step_header(step, total, "Configure your project")
@@ -1525,6 +1815,7 @@ def phase_configure(
         telemetry_enabled,
         embeddings_enabled=install_ai or None,
         sqlite_vec_enabled=install_vec or None,
+        target_platforms=target_platforms,
     ):
         ui.step_ok("Configuration saved to .trw/config.yaml")
     else:
@@ -1759,6 +2050,7 @@ def main() -> None:
             "Examples:\n"
             "  python3 install-trw.py                       # Interactive\n"
             "  python3 install-trw.py --ai --telemetry      # With extras\n"
+            "  python3 install-trw.py --ide cursor-ide,codex,gemini\n"
             "  python3 install-trw.py --script --no-ai      # Headless\n"
             "  python3 install-trw.py --upgrade             # Upgrade only\n"
         ),
@@ -1786,12 +2078,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--ide",
-        choices=["claude-code", "opencode", "codex", "all"],
         default=None,
-        help="Target IDE to configure (prompted if not specified in interactive mode)",
+        help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,gemini (prompted in interactive mode)",
     )
 
     args = parser.parse_args()
+    try:
+        ide_targets = _parse_ide_argument(args.ide)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Mode detection
     interactive = (not args.script) and sys.stdin.isatty()
@@ -1893,7 +2188,7 @@ def main() -> None:
 
         # Step N: Project setup
         step += 1
-        phase_project_setup(
+        selected_targets = phase_project_setup(
             ui,
             step,
             total,
@@ -1901,7 +2196,7 @@ def main() -> None:
             target_dir,
             args.upgrade,
             interactive=interactive,
-            ide=args.ide,
+            ide=ide_targets,
             pip_target=args.pip_target,
         )
 
@@ -1922,6 +2217,7 @@ def main() -> None:
                 install_ai=install_ai,
                 install_vec=install_vec,
                 skip_auth=getattr(args, "skip_auth", False),
+                target_platforms=selected_targets,
             )
 
         # Post-install: restart MCP servers and health-check backends
@@ -1946,6 +2242,7 @@ def main() -> None:
             features,
             is_reinstall=is_reinstall,
             backend_results=backend_results,
+            selected_targets=selected_targets,
         )
 
     finally:

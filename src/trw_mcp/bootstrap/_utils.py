@@ -348,11 +348,7 @@ def detect_ide(target_dir: Path) -> list[str]:
     has_cursor_agent = bool(shutil.which("cursor-agent"))
     has_cursor_trace = bool(os.environ.get("CURSOR_TRACE_ID"))
     has_cursor_api_key = bool(os.environ.get("CURSOR_API_KEY"))
-    cursor_cli_detected = (
-        has_cli_json
-        or (has_cursor_agent and not has_cursor_trace)
-        or has_cursor_api_key
-    )
+    cursor_cli_detected = has_cli_json or (has_cursor_agent and not has_cursor_trace) or has_cursor_api_key
     if cursor_cli_detected:
         detected.append("cursor-cli")
 
@@ -369,9 +365,7 @@ def detect_ide(target_dir: Path) -> list[str]:
     if (target_dir / ".codex").is_dir() or (target_dir / ".codex" / "config.toml").is_file():
         detected.append("codex")
     agents_dir = target_dir / ".github" / "agents"
-    has_copilot_agents = agents_dir.is_dir() and any(
-        f.name.endswith(".agent.md") for f in agents_dir.iterdir()
-    )
+    has_copilot_agents = agents_dir.is_dir() and any(f.name.endswith(".agent.md") for f in agents_dir.iterdir())
     if (target_dir / ".github" / "copilot-instructions.md").is_file() or has_copilot_agents:
         detected.append("copilot")
     if (target_dir / ".gemini").is_dir() or (target_dir / "GEMINI.md").is_file():
@@ -401,6 +395,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("copilot")
     if shutil.which("gemini"):
         detected.append("gemini")
+    if shutil.which("aider"):
+        detected.append("aider")
     return detected
 
 

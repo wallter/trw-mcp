@@ -142,7 +142,18 @@ def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch)
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     assert module.pip_install(sys.executable, "trw-mcp[ai]", "trw-mcp", ui, target_dir="/tmp/trw-pip") is True
     assert [call["cmd"] for call in calls] == [
-        [sys.executable, "-B", "-m", "pip", "install", "--upgrade", "--quiet", "--target", "/tmp/trw-pip", "trw-mcp[ai]"]
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--quiet",
+            "--target",
+            "/tmp/trw-pip",
+            "trw-mcp[ai]",
+        ]
     ]
     assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in calls)
     assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in calls)
@@ -163,10 +174,14 @@ def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_alread
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: calls.append(cmd) or SimpleNamespace(returncode=0),
+        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: (
+            calls.append(cmd) or SimpleNamespace(returncode=0)
+        ),
     )
 
-    assert module.pip_install(sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip")
+    assert module.pip_install(
+        sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip"
+    )
     assert calls == [
         [
             sys.executable,
@@ -196,10 +211,14 @@ def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtim
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: calls.append(cmd) or SimpleNamespace(returncode=0),
+        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: (
+            calls.append(cmd) or SimpleNamespace(returncode=0)
+        ),
     )
 
-    assert module.pip_install(sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip")
+    assert module.pip_install(
+        sys.executable, "/tmp/trw_mcp-0.41.1-py3-none-any.whl", "trw-mcp", ui, target_dir="/tmp/trw-pip"
+    )
     assert calls == [
         [
             sys.executable,
@@ -217,7 +236,9 @@ def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtim
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_wheel_runtime_dependencies_satisfied_parses_requires_dist(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
+def test_wheel_runtime_dependencies_satisfied_parses_requires_dist(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
     module = _load_installer_module(installer_path)
     wheel_path = tmp_path / "demo-0.1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel_path, "w") as wheel:
@@ -247,12 +268,7 @@ def test_wheel_runtime_dependencies_satisfied_returns_false_when_a_dependency_is
     with zipfile.ZipFile(wheel_path, "w") as wheel:
         wheel.writestr(
             "demo-0.1.0.dist-info/METADATA",
-            (
-                "Metadata-Version: 2.1\n"
-                "Name: demo\n"
-                "Version: 0.1.0\n"
-                "Requires-Dist: missing-dep>=1.0.0\n"
-            ),
+            ("Metadata-Version: 2.1\nName: demo\nVersion: 0.1.0\nRequires-Dist: missing-dep>=1.0.0\n"),
         )
 
     def fake_version(name: str) -> str:
@@ -272,12 +288,7 @@ def test_wheel_runtime_dependencies_satisfied_returns_false_when_packaging_is_un
     with zipfile.ZipFile(wheel_path, "w") as wheel:
         wheel.writestr(
             "demo-0.1.0.dist-info/METADATA",
-            (
-                "Metadata-Version: 2.1\n"
-                "Name: demo\n"
-                "Version: 0.1.0\n"
-                "Requires-Dist: fastmcp>=3.0.0\n"
-            ),
+            ("Metadata-Version: 2.1\nName: demo\nVersion: 0.1.0\nRequires-Dist: fastmcp>=3.0.0\n"),
         )
 
     real_import = __import__
@@ -298,9 +309,7 @@ def test_wheel_runtime_dependencies_satisfied_returns_false_when_packaging_is_un
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_phase_install_extras_passes_pip_target_to_all_optional_installs(
-    installer_path: Path, monkeypatch
-) -> None:
+def test_phase_install_extras_passes_pip_target_to_all_optional_installs(installer_path: Path, monkeypatch) -> None:
     module = _load_installer_module(installer_path)
     ui = MagicMock()
     pip_calls: list[tuple[str, str]] = []
@@ -362,7 +371,9 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
     monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
     monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
-    monkeypatch.setattr(module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl"))
+    monkeypatch.setattr(
+        module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")
+    )
     monkeypatch.setattr(module, "phase_install_packages", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "phase_project_setup", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_restart_mcp_servers", lambda target_dir, ui: None)
@@ -423,7 +434,24 @@ def test_find_trw_cmd_prefers_pip_target_wrapper(installer_path: Path, tmp_path:
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_phase_project_setup_prefers_pip_target_wrapper_and_threads_it_to_instruction_generation(
+def test_parse_ide_argument_supports_comma_separated_multi_select(installer_path: Path) -> None:
+    module = _load_installer_module(installer_path)
+
+    assert module._parse_ide_argument("cursor-ide,codex,gemini") == ["cursor-ide", "codex", "gemini"]
+    assert module._parse_ide_argument("all") == [
+        "claude-code",
+        "cursor-ide",
+        "cursor-cli",
+        "opencode",
+        "codex",
+        "copilot",
+        "gemini",
+        "aider",
+    ]
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_phase_project_setup_prefers_pip_target_wrapper_for_multi_client_setup(
     installer_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
     module = _load_installer_module(installer_path)
@@ -437,25 +465,12 @@ def test_phase_project_setup_prefers_pip_target_wrapper_and_threads_it_to_instru
     wrapper.chmod(0o755)
 
     run_calls: list[list[str]] = []
-    instruction_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(module, "_detect_installed_clis", lambda: [])
-    monkeypatch.setattr(module, "_detect_project_ides", lambda _path: ["codex"])
+    monkeypatch.setattr(module, "_detect_project_ides", lambda _path: ["cursor-ide", "codex"])
     monkeypatch.setattr(module, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
-    monkeypatch.setattr(
-        module,
-        "_generate_per_client_instructions",
-        lambda _ui, _target_dir, ide_selection, is_update, python, pip_target="": instruction_calls.append(
-            {
-                "ide_selection": ide_selection,
-                "is_update": is_update,
-                "python": python,
-                "pip_target": pip_target,
-            }
-        ),
-    )
 
-    module.phase_project_setup(
+    selected = module.phase_project_setup(
         ui,
         3,
         4,
@@ -463,18 +478,14 @@ def test_phase_project_setup_prefers_pip_target_wrapper_and_threads_it_to_instru
         target_dir,
         False,
         interactive=False,
-        ide="codex",
+        ide=["cursor-ide", "codex"],
         pip_target=str(tmp_path / "trw-pip"),
     )
 
-    assert run_calls == [[str(wrapper), "init-project", str(target_dir), "--ide", "codex"]]
-    assert instruction_calls == [
-        {
-            "ide_selection": "codex",
-            "is_update": False,
-            "python": sys.executable,
-            "pip_target": str(tmp_path / "trw-pip"),
-        }
+    assert selected == ["cursor-ide", "codex"]
+    assert run_calls == [
+        [str(wrapper), "init-project", str(target_dir), "--ide", "cursor-ide"],
+        [str(wrapper), "update-project", str(target_dir), "--ide", "codex"],
     ]
 
 
@@ -491,7 +502,9 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
     monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
     monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
-    monkeypatch.setattr(module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl"))
+    monkeypatch.setattr(
+        module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")
+    )
     monkeypatch.setattr(module, "phase_install_packages", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "phase_install_extras", lambda *args, **kwargs: [])
     monkeypatch.setattr(module, "_restart_mcp_servers", lambda target_dir, ui: None)
@@ -500,17 +513,19 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
     monkeypatch.setattr(
         module,
         "phase_project_setup",
-        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": observed.update(
-            {
-                "step": step,
-                "total": total,
-                "python": python,
-                "target_dir": target_dir,
-                "upgrade_only": upgrade_only,
-                "interactive": interactive,
-                "ide": ide,
-                "pip_target": pip_target,
-            }
+        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": (
+            observed.update(
+                {
+                    "step": step,
+                    "total": total,
+                    "python": python,
+                    "target_dir": target_dir,
+                    "upgrade_only": upgrade_only,
+                    "interactive": interactive,
+                    "ide": ide,
+                    "pip_target": pip_target,
+                }
+            )
         ),
     )
 
@@ -538,3 +553,63 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
         "ide": None,
         "pip_target": "/tmp/trw-pip",
     }
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_main_parses_multi_client_ide_argument_for_project_setup(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_installer_module(installer_path)
+    project_dir = tmp_path / "project"
+    scratch_dir = tmp_path / "scratch"
+    project_dir.mkdir()
+    scratch_dir.mkdir()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(module, "show_banner", lambda ui: None)
+    monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
+    monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
+    monkeypatch.setattr(
+        module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")
+    )
+    monkeypatch.setattr(module, "phase_install_packages", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "phase_install_extras", lambda *args, **kwargs: [])
+    monkeypatch.setattr(module, "_restart_mcp_servers", lambda target_dir, ui: None)
+    monkeypatch.setattr(module.tempfile, "mkdtemp", lambda prefix="": str(scratch_dir))
+    monkeypatch.setattr(module.shutil, "rmtree", lambda path: None)
+    monkeypatch.setattr(
+        module,
+        "phase_project_setup",
+        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": (
+            observed.update(
+                {
+                    "step": step,
+                    "total": total,
+                    "python": python,
+                    "target_dir": target_dir,
+                    "upgrade_only": upgrade_only,
+                    "interactive": interactive,
+                    "ide": ide,
+                    "pip_target": pip_target,
+                }
+            )
+            or ["cursor-ide", "codex", "gemini"]
+        ),
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "install-trw.py",
+            "--script",
+            "--ide",
+            "cursor-ide,codex,gemini",
+            str(project_dir),
+        ],
+    )
+
+    module.main()
+
+    assert observed["ide"] == ["cursor-ide", "codex", "gemini"]
