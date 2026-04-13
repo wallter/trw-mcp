@@ -437,23 +437,23 @@ def test_bare_cursor_id_falls_back_with_actionable_message() -> None:
     FR01 acceptance criterion: the warning message must name both replacement
     identifiers so CI users parsing the log get an actionable message.
     """
-    from structlog.testing import capture_logs
+    from unittest.mock import MagicMock
 
     from trw_mcp.models.config._profiles import resolve_client_profile as _resolve
 
-    with capture_logs() as logs:
+    mock_logger = MagicMock()
+    with patch("trw_mcp.models.config._profiles.logger", mock_logger):
         profile = _resolve("cursor")
 
     assert profile.client_id == "claude-code", (
         "bare 'cursor' should fall back to claude-code"
     )
-    warning_logs = [l for l in logs if l.get("log_level") == "warning"]
-    assert len(warning_logs) == 1, f"Expected 1 warning, got: {warning_logs}"
-    w = warning_logs[0]
-    assert w.get("event") == "unknown_client_id_fallback"
-    assert w.get("client_id") == "cursor"
-    # Both replacement identifiers must appear in the message
-    msg = w.get("message", "")
+    mock_logger.warning.assert_called_once()
+    call_kwargs = mock_logger.warning.call_args
+    # First positional arg is the event name
+    assert call_kwargs.args[0] == "unknown_client_id_fallback"
+    # The 'message' kwarg should contain both replacement identifiers
+    msg = call_kwargs.kwargs.get("message", "")
     assert "cursor-ide" in msg, f"'cursor-ide' not in warning message: {msg!r}"
     assert "cursor-cli" in msg, f"'cursor-cli' not in warning message: {msg!r}"
 
