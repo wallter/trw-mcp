@@ -5,6 +5,16 @@ Covers Tasks 14-17b:
   Task 15: generate_cursor_cli_agents_md — AGENTS.md sentinel block
   Task 16: generate_cursor_cli_hooks — 5-event CLI subset
   Task 17b: _emit_cli_safety_reminder — TTY/tmux advisory
+
+Additional hardening (Sprint 91):
+  - TypedDict / Final type assertions
+  - Parameterized smart-merge cases (PRD spec §FR03 acceptance: 5 cases)
+  - Empty-file malformed JSON fallback
+  - Non-object root fallback (JSON array instead of object)
+  - _merge_agents_md pure-function unit tests
+  - structlog capture for cursor_cli_tty_reminder event
+  - Hook token presence in correct allow/deny list (not just key existence)
+  - Bash stdin/stdout hook functional tests
 """
 
 from __future__ import annotations
@@ -14,6 +24,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import structlog.testing
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +217,176 @@ class TestCliConfigMalformed:
             assert token in merged["permissions"]["allow"]
         for token in _DEFAULT_DENY:
             assert token in merged["permissions"]["deny"]
+
+    def test_empty_file_overwrites(self, tmp_path: Path) -> None:
+        """Empty file (valid empty string, invalid JSON) triggers overwrite."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "cli.json").write_text("")
+
+        result = generate_cursor_cli_config(tmp_path)
+        assert ".cursor/cli.json" in result["updated"]
+        merged = _read_cli_json(tmp_path)
+        assert "permissions" in merged
+
+    def test_non_object_root_overwrites(self, tmp_path: Path) -> None:
+        """A JSON array (not object) at root triggers overwrite with defaults."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "cli.json").write_text("[1, 2, 3]")
+
+        result = generate_cursor_cli_config(tmp_path)
+        assert ".cursor/cli.json" in result["updated"]
+        merged = _read_cli_json(tmp_path)
+        assert "permissions" in merged
+
+    def test_malformed_emits_warning_in_info(self, tmp_path: Path) -> None:
+        """Malformed JSON overwrite appends a warning to result['info']."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "cli.json").write_text("not_json")
+
+        result = generate_cursor_cli_config(tmp_path)
+        info = result.get("info", [])
+        all_info = " ".join(info)
+        assert "malformed" in all_info.lower() or "WARNING" in all_info
+
+    def test_permissions_not_a_dict_overwrites(self, tmp_path: Path) -> None:
+        """permissions key exists but is a non-dict (e.g. a string) → overwrite."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        (cursor_dir / "cli.json").write_text(json.dumps({"permissions": "should-be-dict"}))
+
+        result = generate_cursor_cli_config(tmp_path)
+        assert ".cursor/cli.json" in result["updated"]
+        merged = _read_cli_json(tmp_path)
+        assert isinstance(merged["permissions"], dict)
+
+
+class TestCliConfigSmartMergeParameterized:
+    """PRD-CORE-137-FR03 acceptance: 5 parameterized smart-merge cases.
+
+    Case 1: Fresh-write (covered by TestCliConfigFresh)
+    Case 2: User allow + user deny tokens preserved alongside TRW defaults
+    Case 3: User Shell(rm) allow with TRW Shell(rm -rf) deny — both kept on own path
+    Case 4: Extra top-level JSON keys preserved (covered by TestCliConfigSmartMerge)
+    Case 5: Malformed JSON → overwrite (covered by TestCliConfigMalformed)
+    """
+
+    def test_case2_user_tokens_preserved_alongside_trw_defaults(self, tmp_path: Path) -> None:
+        """Case 2: User Shell(my-custom-tool) allow + Write(secret.key) deny survive."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        user_config = {
+            "permissions": {
+                "allow": ["Shell(my-custom-tool)"],
+                "deny": ["Write(secret.key)"],
+            }
+        }
+        (cursor_dir / "cli.json").write_text(json.dumps(user_config))
+
+        generate_cursor_cli_config(tmp_path)
+        merged = _read_cli_json(tmp_path)
+
+        # User tokens
+        assert "Shell(my-custom-tool)" in merged["permissions"]["allow"]
+        assert "Write(secret.key)" in merged["permissions"]["deny"]
+        # TRW defaults also present
+        assert "Shell(git)" in merged["permissions"]["allow"]
+        assert "Read(.env*)" in merged["permissions"]["deny"]
+
+    def test_case3_user_shell_rm_allow_coexists_with_trw_shell_rm_rf_deny(
+        self, tmp_path: Path
+    ) -> None:
+        """Case 3: User's Shell(rm) allow + TRW's Shell(rm -rf) deny both kept.
+
+        These are semantically different tokens; user allow wins at runtime per
+        Cursor token grammar (exact match, not prefix). TRW deny is preserved on
+        its own path (Shell(rm -rf)), so both coexist without collision.
+        """
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        cursor_dir = tmp_path / ".cursor"
+        cursor_dir.mkdir()
+        # User explicitly allows 'Shell(rm)' — shorter path than TRW's 'Shell(rm -rf)' deny
+        user_config = {
+            "permissions": {
+                "allow": ["Shell(rm)"],
+                "deny": [],
+            }
+        }
+        (cursor_dir / "cli.json").write_text(json.dumps(user_config))
+
+        generate_cursor_cli_config(tmp_path)
+        merged = _read_cli_json(tmp_path)
+
+        # User's Shell(rm) stays in allow
+        assert "Shell(rm)" in merged["permissions"]["allow"]
+        # TRW's Shell(rm -rf) should appear in deny (different token — not a duplicate)
+        assert "Shell(rm -rf)" in merged["permissions"]["deny"]
+
+
+class TestCliConfigTokenPlacement:
+    """Verify tokens appear in the correct allow/deny list (not just key existence)."""
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "Read(**/*)",
+            "Shell(git)",
+            "Shell(grep)",
+            "Shell(find)",
+            "Shell(rg)",
+            "Shell(ls)",
+            "Shell(cat)",
+            "Shell(pytest)",
+            "Shell(npm)",
+            "Shell(python)",
+            "Shell(trw-mcp)",
+        ],
+    )
+    def test_each_allow_token_in_allow_list(self, tmp_path: Path, token: str) -> None:
+        """Each _DEFAULT_ALLOW token appears in permissions.allow, not permissions.deny."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        generate_cursor_cli_config(tmp_path)
+        config = _read_cli_json(tmp_path)
+        assert token in config["permissions"]["allow"], f"Missing in allow: {token}"
+        assert token not in config["permissions"]["deny"], f"Incorrectly in deny: {token}"
+
+    @pytest.mark.parametrize(
+        "token",
+        [
+            "Shell(rm -rf)",
+            "Shell(curl)",
+            "Shell(wget)",
+            "Read(.env*)",
+            "Read(**/.env.local)",
+            "Read(**/secrets.yaml)",
+            "Write(.env*)",
+            "Write(.git/**/*)",
+            "Write(.trw/**/*)",
+            "Write(node_modules/**/*)",
+        ],
+    )
+    def test_each_deny_token_in_deny_list(self, tmp_path: Path, token: str) -> None:
+        """Each _DEFAULT_DENY token appears in permissions.deny, not permissions.allow."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        generate_cursor_cli_config(tmp_path)
+        config = _read_cli_json(tmp_path)
+        assert token in config["permissions"]["deny"], f"Missing in deny: {token}"
+        assert token not in config["permissions"]["allow"], f"Incorrectly in allow: {token}"
 
 
 # ===========================================================================
@@ -555,4 +736,253 @@ class TestHookScriptSyntax:
         )
         assert result.returncode == 0, (
             f"bash -n failed on {script_name}:\n{result.stderr}"
+        )
+
+
+# ===========================================================================
+# Bash functional tests for hook scripts (stdin → stdout JSON contract)
+# ===========================================================================
+
+
+_HOOKS_DATA_DIR = (
+    Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor"
+)
+
+
+def _run_hook(script_name: str, stdin_payload: str) -> subprocess.CompletedProcess[str]:
+    """Run a cursor hook script with a JSON stdin payload and return result."""
+    script = _HOOKS_DATA_DIR / script_name
+    return subprocess.run(
+        ["bash", str(script)],
+        input=stdin_payload,
+        capture_output=True,
+        text=True,
+    )
+
+
+class TestHookScriptFunctional:
+    """Functional tests: hook scripts emit valid JSON on stdout for representative inputs."""
+
+    def test_after_mcp_emits_valid_json(self) -> None:
+        """trw-after-mcp.sh emits valid JSON on stdout for a normal MCP payload."""
+        payload = json.dumps({"tool_name": "trw_session_start", "result": "ok"})
+        result = _run_hook("trw-after-mcp.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        # stdout must be valid JSON
+        output = json.loads(result.stdout.strip())
+        assert isinstance(output, dict)
+
+    def test_after_shell_emits_valid_json(self) -> None:
+        """trw-after-shell.sh emits valid JSON on stdout for a normal shell payload."""
+        payload = json.dumps({"command": "git status", "exit_code": 0, "duration_ms": 42})
+        result = _run_hook("trw-after-shell.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        output = json.loads(result.stdout.strip())
+        assert isinstance(output, dict)
+
+    def test_before_shell_allows_safe_command(self) -> None:
+        """trw-before-shell.sh emits permission=allow for a safe command."""
+        payload = json.dumps({"command": "git status"})
+        result = _run_hook("trw-before-shell.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        output = json.loads(result.stdout.strip())
+        assert output.get("permission") == "allow"
+
+    def test_before_shell_denies_secret_leak(self) -> None:
+        """trw-before-shell.sh emits permission=deny when a secret token is found."""
+        payload = json.dumps({"command": "echo API_KEY=sk-secret123"})
+        result = _run_hook("trw-before-shell.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        output = json.loads(result.stdout.strip())
+        assert output.get("permission") == "deny"
+        assert "user_message" in output
+
+    def test_before_shell_allows_env_var_reference(self) -> None:
+        """trw-before-shell.sh does NOT deny $API_KEY variable references (not a leak)."""
+        payload = json.dumps({"command": "curl -H $API_KEY https://example.com"})
+        result = _run_hook("trw-before-shell.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        output = json.loads(result.stdout.strip())
+        # $API_KEY is a reference, not an assignment — should be allowed
+        assert output.get("permission") == "allow", (
+            "Variable reference $API_KEY should not trigger deny (no value after =)"
+        )
+
+    def test_before_shell_allows_empty_command(self) -> None:
+        """trw-before-shell.sh allows empty/missing command field without crashing."""
+        payload = json.dumps({})
+        result = _run_hook("trw-before-shell.sh", payload)
+        assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
+        output = json.loads(result.stdout.strip())
+        assert output.get("permission") == "allow"
+
+
+# ===========================================================================
+# _merge_agents_md pure function unit tests
+# ===========================================================================
+
+
+class TestMergeAgentsMdPureFunction:
+    """Unit tests for the _merge_agents_md pure helper."""
+
+    def test_replaces_content_between_sentinels(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+
+        existing = "Before\n<!-- TRW:BEGIN -->\nOld content\n<!-- TRW:END -->\nAfter\n"
+        trw_block = "<!-- TRW:BEGIN -->\nNew content\n<!-- TRW:END -->"
+        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
+        assert "New content" in result
+        assert "Old content" not in result
+        assert "Before\n" in result
+        assert "After\n" in result
+
+    def test_prepends_when_no_sentinels(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+
+        existing = "# Existing rules\nDo something.\n"
+        trw_block = "<!-- TRW:BEGIN -->\nTRW stuff\n<!-- TRW:END -->"
+        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
+        begin_idx = result.index("<!-- TRW:BEGIN -->")
+        existing_idx = result.index("# Existing rules")
+        assert begin_idx < existing_idx
+        assert "Do something." in result
+
+    def test_preserves_content_outside_sentinels(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+
+        pre = "# My rules\n"
+        post = "\n## Custom\nDo not break.\n"
+        existing = pre + "<!-- TRW:BEGIN -->\nOld\n<!-- TRW:END -->" + post
+        trw_block = "<!-- TRW:BEGIN -->\nNew\n<!-- TRW:END -->"
+        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
+        assert "# My rules" in result
+        assert "Do not break." in result
+        assert "New" in result
+        assert "Old" not in result
+
+    def test_empty_existing_prepends(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+
+        trw_block = "<!-- TRW:BEGIN -->\nContent\n<!-- TRW:END -->"
+        result = _merge_agents_md("", trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
+        assert "<!-- TRW:BEGIN -->" in result
+        assert "Content" in result
+
+
+# ===========================================================================
+# Structlog capture test for cursor_cli_tty_reminder event (FR08a)
+# ===========================================================================
+
+
+class TestTtyReminderStructlog:
+    """Verify _emit_cli_safety_reminder emits cursor_cli_tty_reminder via structlog."""
+
+    def test_structlog_event_emitted(self, tmp_path: Path) -> None:
+        """cursor_cli_tty_reminder event captured by structlog.testing.capture_logs."""
+        from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
+        from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
+
+        result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+        with structlog.testing.capture_logs() as cap:
+            _emit_cli_safety_reminder(result)
+
+        events = [e["event"] for e in cap]
+        assert "cursor_cli_tty_reminder" in events, (
+            f"Expected cursor_cli_tty_reminder in structlog output; got: {events}"
+        )
+
+    def test_structlog_event_has_tty_required(self, tmp_path: Path) -> None:
+        """cursor_cli_tty_reminder log entry includes tty_required=True."""
+        from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
+        from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
+
+        result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+        with structlog.testing.capture_logs() as cap:
+            _emit_cli_safety_reminder(result)
+
+        reminder_events = [e for e in cap if e.get("event") == "cursor_cli_tty_reminder"]
+        assert len(reminder_events) >= 1
+        assert reminder_events[0].get("tty_required") is True
+
+    def test_generate_cli_config_emits_tty_reminder_via_structlog(
+        self, tmp_path: Path
+    ) -> None:
+        """generate_cursor_cli_config call emits cursor_cli_tty_reminder via structlog."""
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
+
+        with structlog.testing.capture_logs() as cap:
+            generate_cursor_cli_config(tmp_path)
+
+        events = [e["event"] for e in cap]
+        assert "cursor_cli_tty_reminder" in events
+
+
+# ===========================================================================
+# TypedDict and Final type surface checks (static)
+# ===========================================================================
+
+
+class TestTypeAnnotations:
+    """Verify that typed constants and TypedDicts are importable and correctly shaped."""
+
+    def test_default_allow_is_tuple(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _DEFAULT_ALLOW
+
+        assert isinstance(_DEFAULT_ALLOW, tuple)
+
+    def test_default_deny_is_tuple(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _DEFAULT_DENY
+
+        assert isinstance(_DEFAULT_DENY, tuple)
+
+    def test_cli_hook_scripts_is_tuple(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _CLI_HOOK_SCRIPTS
+
+        assert isinstance(_CLI_HOOK_SCRIPTS, tuple)
+
+    def test_tty_reminder_lines_is_tuple(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _TTY_REMINDER_LINES
+
+        assert isinstance(_TTY_REMINDER_LINES, tuple)
+
+    def test_cli_hook_events_has_five_keys(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import _CLI_HOOK_EVENTS
+
+        assert len(_CLI_HOOK_EVENTS) == 5
+
+    def test_cursor_cli_permissions_typeddict_importable(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import CursorCliPermissions  # noqa: F401
+
+    def test_cursor_cli_config_typeddict_importable(self) -> None:
+        from trw_mcp.bootstrap._cursor_cli import CursorCliConfig  # noqa: F401
+
+
+# ===========================================================================
+# CLI detection: cursor-cli does NOT false-positive on .cursor/rules/ only
+# ===========================================================================
+
+
+class TestCursorCliDetectionNegative:
+    """cursor-cli detection must not trigger from IDE-only signals."""
+
+    def test_cursor_rules_dir_alone_not_cursor_cli(self, tmp_path: Path) -> None:
+        """Presence of .cursor/rules/ (IDE artifact) must NOT trigger cursor-cli."""
+        from unittest.mock import patch
+
+        from trw_mcp.bootstrap._utils import detect_ide
+
+        cursor_dir = tmp_path / ".cursor"
+        rules_dir = cursor_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        (rules_dir / "trw-ceremony.mdc").write_text("# rules")
+
+        # No cli.json, no cursor-agent binary, no CURSOR_API_KEY env
+        with patch("shutil.which", return_value=None), patch.dict(
+            "os.environ", {}, clear=True
+        ):
+            result = detect_ide(tmp_path)
+
+        # cursor-ide may be detected (has .cursor dir), cursor-cli must NOT be
+        assert "cursor-cli" not in result, (
+            ".cursor/rules/ alone should not trigger cursor-cli detection"
         )
