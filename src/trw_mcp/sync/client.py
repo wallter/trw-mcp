@@ -220,20 +220,19 @@ class BackendSyncClient:
         if delay > 0:
             delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
 
-        if sync_hints and sync_hints.get("significant_updates_available"):
-            if self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS:
-                self._last_applied_schedule_seconds = delay
-                self._next_sleep_seconds = 0.0
-                self._scheduled_interval_seconds = 0.0
-                self._next_cycle_force = True
-                self._consecutive_immediate_repolls += 1
-                logger.info(
-                    "sync_hint_applied",
-                    client_id=self._client_id,
-                    mode="immediate_repoll",
-                    polling_cap_seconds=polling_cap_seconds,
-                )
-                return
+        if sync_hints and sync_hints.get("significant_updates_available") and self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS:
+            self._last_applied_schedule_seconds = delay
+            self._next_sleep_seconds = 0.0
+            self._scheduled_interval_seconds = 0.0
+            self._next_cycle_force = True
+            self._consecutive_immediate_repolls += 1
+            logger.info(
+                "sync_hint_applied",
+                client_id=self._client_id,
+                mode="immediate_repoll",
+                polling_cap_seconds=polling_cap_seconds,
+            )
+            return
 
         self._last_applied_schedule_seconds = delay
         self._next_sleep_seconds = delay

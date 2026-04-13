@@ -79,7 +79,7 @@ def compute_memory_health(trw_dir: Path) -> MemoryHealthDict:
         corrupt_count = _count_corrupt_backups(db_path.parent)
         result["corrupt_bak_count"] = corrupt_count
         result["corrupt_bak_present"] = corrupt_count > 0
-    except Exception:
+    except Exception:  # justified: fail-open, health surfaces should degrade to defaults on probe failure
         logger.debug("health_dashboard_failed", field="corrupt_bak", exc_info=True)
         result["corrupt_bak_count"] = 0
         result["corrupt_bak_present"] = False
@@ -87,21 +87,21 @@ def compute_memory_health(trw_dir: Path) -> MemoryHealthDict:
     # Writer-registry peer count (PRD-INFRA-064 B3).
     try:
         result["concurrent_writers"] = _count_live_writers(db_path)
-    except Exception:
+    except Exception:  # justified: fail-open, health surfaces should degrade to defaults on probe failure
         logger.debug("health_dashboard_failed", field="concurrent_writers", exc_info=True)
         result["concurrent_writers"] = 0
 
     # Snapshot age (PRD-INFRA-065 B4). None when snapshots are disabled or absent.
     try:
         result["last_snapshot_age_hours"] = _most_recent_snapshot_age_hours(trw_dir)
-    except Exception:
+    except Exception:  # justified: fail-open, health surfaces should degrade to defaults on probe failure
         logger.debug("health_dashboard_failed", field="last_snapshot_age_hours", exc_info=True)
         result["last_snapshot_age_hours"] = None
 
     # Integrity-scheduler age (PRD-INFRA-063 B2). None when disabled.
     try:
         result["last_integrity_check_age_minutes"] = _integrity_scheduler_age_minutes(trw_dir)
-    except Exception:
+    except Exception:  # justified: fail-open, health surfaces should degrade to defaults on probe failure
         logger.debug(
             "health_dashboard_failed",
             field="last_integrity_check_age_minutes",

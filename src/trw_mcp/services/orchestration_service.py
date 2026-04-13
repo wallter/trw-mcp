@@ -202,9 +202,7 @@ def _resolve_run_path(run_path: Path | None) -> Path:
         )
 
     # Walk runs/ looking for meta/run.yaml
-    candidates: list[tuple[float, Path]] = []
-    for run_yaml in runs_root.glob("**/meta/run.yaml"):
-        candidates.append((run_yaml.stat().st_mtime, run_yaml.parent.parent))
+    candidates = [(run_yaml.stat().st_mtime, run_yaml.parent.parent) for run_yaml in runs_root.glob("**/meta/run.yaml")]
 
     if not candidates:
         raise FileNotFoundError("No active runs found in .trw/runs/")

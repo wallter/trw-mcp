@@ -10,7 +10,9 @@ import os
 import threading
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -21,8 +23,36 @@ from trw_mcp.state.persistence import FileStateReader
 logger = structlog.get_logger(__name__)
 
 
-def __getattr__(name: str) -> object:
-    """Backward-compat shim for removed module-level singletons (FIX-044)."""
+# Explicit public surface — keeps static analyzers (Pyright) from inferring
+# imported symbols as ``object`` via the module-level ``__getattr__`` shim
+# below.  Must list every name callers ``from trw_mcp.state._paths import …``.
+__all__ = [
+    "TRWCallContext",
+    "detect_current_phase",
+    "find_active_run",
+    "get_pinned_run",
+    "get_session_id",
+    "iter_run_dirs",
+    "pin_active_run",
+    "resolve_installation_id",
+    "resolve_memory_store_path",
+    "resolve_pin_key",
+    "resolve_project_root",
+    "resolve_run_path",
+    "resolve_trw_dir",
+    "touch_heartbeat",
+    "unpin_active_run",
+]
+
+
+def __getattr__(name: str) -> Any:  # noqa: ANN401 — shim intentionally returns Any so Pyright honors __all__ for statically-defined exports; runtime type is unchanged.
+    """Backward-compat shim for removed module-level singletons (FIX-044).
+
+    Return type is ``Any`` (not ``object``) so Pyright does not widen every
+    imported symbol to ``object`` via fallback resolution through this
+    hook.  mypy --strict remains clean because ``Any`` is compatible with
+    every return site.
+    """
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
@@ -44,6 +74,223 @@ def _reset_session_id(new_id: str | None = None) -> None:
     global _session_id
     with _session_lock:
         _session_id = new_id if new_id is not None else uuid.uuid4().hex
+
+
+# --- Per-connection pin isolation (PRD-CORE-141 FR01/FR02) ---
+# TRWCallContext carries the resolved per-call identity plus diagnostics.
+# resolve_pin_key implements a four-layer precedence ordering:
+#   1. explicit arg   2. TRW_SESSION_ID env    3. FastMCP ctx    4. process UUID
+# Wave 1 wires the plumbing only; tool handlers still use pin_active_run's
+# legacy session_id path until Wave 3 migrates the helper signatures.
+
+
+@dataclass(frozen=True)
+class TRWCallContext:
+    """Frozen value object carrying resolved per-call session identity.
+
+    Fields
+    ------
+    session_id:
+        Resolved pin-key (the string returned by :func:`resolve_pin_key`).
+        This is what pin / find / resolve helpers key off.
+    client_hint:
+        Optional client identity hint (``"cursor-ide"`` | ``"cursor-cli"`` |
+        ``"claude-code"`` | ``None``).  Used by analytics and nudge sizing;
+        never authoritative for identity.
+    explicit:
+        ``True`` when the caller supplied the pin-key directly (tests,
+        advanced integrations), ``False`` when auto-resolved from env/ctx/
+        process.  Surfaced in structured logs for diagnostics.
+    fastmcp_session:
+        Raw pre-resolution value harvested from FastMCP context (if any),
+        preserved for debugging FastMCP API drift.  ``None`` when ctx was
+        absent or every probe returned None.
+    """
+
+    session_id: str
+    client_hint: str | None
+    explicit: bool
+    fastmcp_session: str | None
+
+
+# Ctx attribute paths probed by _extract_fastmcp_session_id, in precedence
+# order.  Each path is a tuple of attribute names walked via getattr.
+_FASTMCP_CTX_PROBES: tuple[tuple[str, ...], ...] = (
+    ("session_id",),
+    ("request_context", "meta", "session_id"),
+    ("request_id",),
+)
+
+
+class _ProbeOutcome:
+    """Internal sentinel for attribute-walk results.
+
+    ``VALUE`` — probe yielded a value (may be None if the attr existed but was None).
+    ``MISSING`` — an AttributeError/TypeError was raised along the walk (broken probe).
+    """
+
+    __slots__ = ("broken", "value")
+
+    def __init__(self, value: object | None, broken: bool) -> None:
+        self.value = value
+        self.broken = broken
+
+
+def _walk_ctx_attrs(ctx: object, path: tuple[str, ...]) -> _ProbeOutcome:
+    """Walk *path* on *ctx* via getattr.
+
+    Returns a :class:`_ProbeOutcome` where ``broken=True`` signals that an
+    :class:`AttributeError` / :class:`TypeError` was swallowed during the
+    walk (i.e. the ctx object's shape does not match this probe path).
+    """
+    current: object = ctx
+    try:
+        for name in path:
+            current = getattr(current, name)
+    except (AttributeError, TypeError):
+        return _ProbeOutcome(value=None, broken=True)
+    return _ProbeOutcome(value=current, broken=False)
+
+
+def _extract_fastmcp_session_id(ctx: object) -> str | None:
+    """Probe FastMCP Context *ctx* for a session identifier string.
+
+    Probes (in order): ``ctx.session_id``, ``ctx.request_context.meta.session_id``,
+    ``ctx.request_id``.  Each probe is logged at DEBUG with the attribute path
+    attempted.  The first non-None string value wins.
+
+    When EVERY probe is broken (every walk raised AttributeError/TypeError),
+    emit a single ``fastmcp_context_probe_error`` WARN with the broken paths
+    so analytics can detect FastMCP API drift on shared servers.
+
+    Returns the resolved session id string, or ``None`` when no probe
+    yielded a string.
+    """
+    broken_paths: list[str] = []
+    for path in _FASTMCP_CTX_PROBES:
+        path_str = ".".join(path)
+        outcome = _walk_ctx_attrs(ctx, path)
+        if outcome.broken:
+            broken_paths.append(path_str)
+            logger.debug(
+                "fastmcp_context_probe_skipped",
+                ctx_attr_path=path_str,
+            )
+            continue
+        value = outcome.value
+        if isinstance(value, str) and value:
+            logger.debug(
+                "fastmcp_context_probe_hit",
+                ctx_attr_path=path_str,
+                has_value=True,
+            )
+            return value
+        logger.debug(
+            "fastmcp_context_probe_miss",
+            ctx_attr_path=path_str,
+            has_value=False,
+        )
+
+    if broken_paths and len(broken_paths) == len(_FASTMCP_CTX_PROBES):
+        # Every probe raised — ctx object shape is incompatible.  Warn so
+        # analytics can spot FastMCP API drift on shared servers.
+        logger.warning(
+            "fastmcp_context_probe_error",
+            broken_paths=broken_paths,
+            ctx_type=type(ctx).__name__,
+        )
+    return None
+
+
+def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
+    """Resolve the pin-key for the current call via four-layer fallback.
+
+    Precedence (strict):
+      1. *explicit* arg — caller-supplied, wins unconditionally.
+      2. ``TRW_SESSION_ID`` env var — operator-forced identity / subprocess
+         inheritance.
+      3. FastMCP :class:`~fastmcp.Context` probing via
+         :func:`_extract_fastmcp_session_id`.
+      4. Process-level :data:`_session_id` UUID — legacy fallback for
+         stdio-per-instance clients.
+
+    When ``config.ctx_isolation_enabled`` is ``False`` the resolver
+    short-circuits to the process UUID regardless of *ctx* — matches the
+    pre-PRD-CORE-141 behavior (Wave 3 rollback kill-switch).
+
+    Every layer emits a ``pin_resolved`` structured log with a ``source``
+    field (``explicit`` | ``env`` | ``ctx`` | ``process``).  When
+    ``source=ctx``, a ``ctx_attr_path`` field names the probe that matched.
+
+    Parameters
+    ----------
+    ctx:
+        FastMCP Context object (or ``None``).  Typed as ``object`` to avoid
+        a hard runtime dependency on FastMCP; attribute access is defensive.
+    explicit:
+        Caller-supplied pin-key override.  When non-empty, beats every
+        lower layer unconditionally.
+
+    Returns
+    -------
+    str
+        The resolved pin-key.  Callers construct the :class:`TRWCallContext`
+        value object separately from this string plus their own diagnostics.
+    """
+    # Kill switch — skip ctx isolation entirely when operators disable it.
+    try:
+        kill_switch_enabled = not bool(get_config().ctx_isolation_enabled)
+    except Exception:  # justified: config unavailable must not break pin resolution
+        kill_switch_enabled = False
+        logger.debug("ctx_isolation_config_unavailable", exc_info=True)
+
+    if kill_switch_enabled:
+        process_key = get_session_id()
+        logger.debug(
+            "pin_resolved",
+            source="process",
+            kill_switch=True,
+            pin_key=process_key,
+        )
+        return process_key
+
+    # Layer 1 — explicit arg
+    if explicit:
+        logger.debug("pin_resolved", source="explicit", pin_key=explicit)
+        return explicit
+
+    # Layer 2 — TRW_SESSION_ID env var
+    env_id = os.environ.get("TRW_SESSION_ID")
+    if env_id:
+        logger.debug("pin_resolved", source="env", pin_key=env_id)
+        return env_id
+
+    # Layer 3 — FastMCP Context probing
+    if ctx is not None:
+        ctx_id = _extract_fastmcp_session_id(ctx)
+        if ctx_id is not None:
+            # Recover which probe matched by re-walking (cheap; attribute
+            # probes are O(1) and this is off the hot path).
+            matched_path = "unknown"
+            for path in _FASTMCP_CTX_PROBES:
+                outcome = _walk_ctx_attrs(ctx, path)
+                if outcome.broken:
+                    continue
+                if isinstance(outcome.value, str) and outcome.value == ctx_id:
+                    matched_path = ".".join(path)
+                    break
+            logger.debug(
+                "pin_resolved",
+                source="ctx",
+                ctx_attr_path=matched_path,
+                pin_key=ctx_id,
+            )
+            return ctx_id
+
+    # Layer 4 — process-level UUID fallback
+    process_key = get_session_id()
+    logger.debug("pin_resolved", source="process", pin_key=process_key)
+    return process_key
 
 
 # --- Per-session run pinning (PRD-FIX-042 FR06) ---

@@ -145,6 +145,21 @@ _CLI_HOOK_SCRIPTS: Final[tuple[str, ...]] = (
 # ---------------------------------------------------------------------------
 
 
+def _extract_cli_permissions(raw: object) -> tuple[list[str], list[str]]:
+    """Validate and extract allow/deny lists from a parsed cli.json dict.
+
+    Raises TypeError for invalid structure (caught by the callers try/except).
+    """
+    if not isinstance(raw, dict):
+        raise TypeError('cli.json root must be a JSON object')
+    perms = raw.setdefault('permissions', {})
+    if not isinstance(perms, dict):
+        raise TypeError('permissions must be a JSON object')
+    allow: list[str] = perms.setdefault('allow', [])
+    deny: list[str] = perms.setdefault('deny', [])
+    return allow, deny
+
+
 def generate_cursor_cli_config(
     target_dir: Path,
     *,
@@ -194,13 +209,7 @@ def generate_cursor_cli_config(
     if cli_file.exists() and not force:
         try:
             raw = json.loads(cli_file.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                raise TypeError("cli.json root must be a JSON object")
-            perms = raw.setdefault("permissions", {})
-            if not isinstance(perms, dict):
-                raise TypeError("permissions must be a JSON object")
-            allow: list[str] = perms.setdefault("allow", [])
-            deny: list[str] = perms.setdefault("deny", [])
+            allow, deny = _extract_cli_permissions(raw)
             # Add TRW allow-tokens not already in allow or deny
             for token in _DEFAULT_ALLOW:
                 if token not in allow and token not in deny:

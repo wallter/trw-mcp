@@ -48,14 +48,11 @@ def _is_user_customized_trw_entry(existing: object) -> bool:
     if isinstance(cmd, str) and cmd.startswith("/") and Path(cmd).is_file():
         return True
     # Lists (e.g. [python, -m, trw_mcp.server]) with absolute-path interpreter
-    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str):
-        if cmd[0].startswith("/") and Path(cmd[0]).is_file():
-            return True
+    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str) and cmd[0].startswith("/") and Path(cmd[0]).is_file():
+        return True
     # Extra keys beyond the canonical {command, args} → user added something
     extra_keys = set(existing.keys()) - {"command", "args"}
-    if extra_keys:
-        return True
-    return False
+    return bool(extra_keys)
 
 
 def _merge_mcp_json(

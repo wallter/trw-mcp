@@ -56,6 +56,9 @@ from ._cursor import (
 from ._cursor import (
     generate_cursor_rules as generate_cursor_rules,
 )
+from ._gemini import generate_gemini_agents as generate_gemini_agents
+from ._gemini import generate_gemini_instructions as generate_gemini_instructions
+from ._gemini import generate_gemini_mcp_config as generate_gemini_mcp_config
 from ._init_project import (
     _copy_bundled_data_files as _copy_bundled_data_files,
 )
@@ -107,9 +110,6 @@ from ._opencode import (
 from ._opencode import (
     merge_opencode_json as merge_opencode_json,
 )
-from ._gemini import generate_gemini_agents as generate_gemini_agents
-from ._gemini import generate_gemini_instructions as generate_gemini_instructions
-from ._gemini import generate_gemini_mcp_config as generate_gemini_mcp_config
 from ._update_project import (
     _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST,
 )
@@ -180,10 +180,10 @@ from ._update_project import (
     _update_cursor_artifacts as _update_cursor_artifacts,
 )
 from ._update_project import (
-    _update_gemini_artifacts as _update_gemini_artifacts,
+    _update_framework_files as _update_framework_files,
 )
 from ._update_project import (
-    _update_framework_files as _update_framework_files,
+    _update_gemini_artifacts as _update_gemini_artifacts,
 )
 from ._update_project import (
     _update_hooks as _update_hooks,
@@ -322,9 +322,6 @@ __all__ = [
     "_ensure_dir",
     "_extract_trw_section_content",
     "_files_identical",
-    "generate_gemini_agents",
-    "generate_gemini_instructions",
-    "generate_gemini_mcp_config",
     "_generate_mcp_json",
     "_generate_root_files",
     "_get_bundled_names",
@@ -352,8 +349,8 @@ __all__ = [
     "_update_codex_artifacts",
     "_update_copilot_artifacts",
     "_update_cursor_artifacts",
-    "_update_gemini_artifacts",
     "_update_framework_files",
+    "_update_gemini_artifacts",
     "_update_hooks",
     "_update_mcp_config",
     "_update_opencode_artifacts",
@@ -380,6 +377,9 @@ __all__ = [
     "generate_cursor_hooks",
     "generate_cursor_mcp_config",
     "generate_cursor_rules",
+    "generate_gemini_agents",
+    "generate_gemini_instructions",
+    "generate_gemini_mcp_config",
     "generate_opencode_config",
     "init_project",
     "install_codex_skills",

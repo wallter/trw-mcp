@@ -279,7 +279,7 @@ def _phase_contextual_recall(
         )
         if cache.get_bandit_params() is not None:
             intel_cache = cache
-    except Exception:  # noqa: S110 — justified: fail-open, auto-recall must work without cache access
+    except Exception:  # justified: fail-open, auto-recall must work without cache access
         intel_cache = None
 
     context = RecallContext(

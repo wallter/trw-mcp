@@ -195,7 +195,7 @@ def execute_learn(  # noqa: C901
                     "reason": "llm_utility_filter",
                     "message": f"Rejected by utility filter: {reject_reason}",
                 }
-    except Exception as exc:
+    except Exception as exc:  # justified: fail-open, LLM utility filter is advisory only
         logger.warning("llm_utility_filter_failed", error=str(exc))
 
     reader = FileStateReader()

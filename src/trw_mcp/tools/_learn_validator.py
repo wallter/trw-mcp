@@ -62,9 +62,7 @@ def is_high_utility(
         # Extract JSON from response (handling potential markdown fences)
         text = response.strip()
         if text.startswith("```json"):
-            text = text[7:]
-            if text.endswith("```"):
-                text = text[:-3]
+            text = text[7:].removesuffix("```")
         text = text.strip()
 
         parsed = json.loads(text)
@@ -76,6 +74,6 @@ def is_high_utility(
 
         return is_valid, reason
 
-    except Exception as exc:
+    except Exception as exc:  # justified: fail-open, LLM validation should not block storing learnings
         logger.warning("learn_llm_validation_failed", error=str(exc))
         return True, ""  # Fail open on error

@@ -7,8 +7,8 @@ from typing import Protocol
 
 import structlog
 
-from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state._ceremony_progress_state import NudgeContext
+from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 
 logger = structlog.get_logger(__name__)
@@ -319,7 +319,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
             model_family = cfg.model_family or "generic"
         except Exception:  # justified: config may not be available, use defaults
-            pass
+            logger.debug("ceremony_status_config_defaults", exc_info=True)
 
         # ── Recall candidates ────────────────────────────────────────────────
         candidates = recall_learnings(
@@ -423,11 +423,11 @@ def append_ceremony_status(
             record_pool_nudge,
         )
         from trw_mcp.state.ceremony_nudge import (
-            _select_nudge_pool,
-            _select_nudge_message,
-            _context_reactive_message,
             _compute_urgency,
+            _context_reactive_message,
             _highest_priority_pending_step,
+            _select_nudge_message,
+            _select_nudge_pool,
         )
 
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
@@ -438,8 +438,8 @@ def append_ceremony_status(
         try:
             increment_tool_call_counter(effective_dir)
             state.tool_call_counter += 1
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
+            logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
 
         cfg = TRWConfig.model_validate({"trw_dir": str(effective_dir)})
         if not cfg.effective_nudge_enabled:

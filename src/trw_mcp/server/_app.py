@@ -9,9 +9,9 @@ PRD-CORE-001: Base MCP tool suite.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import AsyncIterator
 
 import structlog
 from fastmcp import FastMCP

@@ -120,10 +120,10 @@ from ._template_updater import (
     _update_copilot_artifacts as _update_copilot_artifacts,
 )
 from ._template_updater import _update_cursor_artifacts as _update_cursor_artifacts
+from ._template_updater import _update_framework_files as _update_framework_files
 from ._template_updater import (
     _update_gemini_artifacts as _update_gemini_artifacts,
 )
-from ._template_updater import _update_framework_files as _update_framework_files
 from ._template_updater import _update_hooks as _update_hooks
 from ._template_updater import _update_mcp_config as _update_mcp_config
 from ._template_updater import (
