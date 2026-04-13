@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.3] — 2026-04-13
+
+### Fixed
+
+- **PyPI release workflow broken by committed `dist/install-trw.py`**. The self-contained installer script had been accidentally committed to `trw-mcp/dist/install-trw.py` (the path is gitignored at the repo root, but the file was added before the ignore rule landed). When `python -m build` ran in CI, it added the wheel + sdist alongside the already-present `install-trw.py`, causing `twine` to reject the upload with `InvalidDistribution: Unknown distribution format: 'install-trw.py'`. Release v0.44.2 to PyPI failed for this reason. Untracked the file via `git rm --cached` — the gitignore rule continues to prevent it from being re-added. Local installer builds still produce it (as intended) — the script is generated fresh per release by `scripts/build_installer.py`.
+
 ## [0.44.2] — 2026-04-13
 
 ### Fixed
