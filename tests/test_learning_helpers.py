@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import (
@@ -897,7 +898,10 @@ class TestNoiseFilter:
         reader = FileStateReader()
         candidates: list[tuple[Path, str]] = []
         for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
+            try:
+                data = reader.read_yaml(entry_file)
+            except StateError:
+                continue
             impact = float(str(data.get("impact", 0.5)))
             if impact < 0.5:
                 continue
