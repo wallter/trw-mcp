@@ -28,13 +28,14 @@ logger = structlog.get_logger(__name__)
 # Signal strength rationale:
 #   - claude-code: CLAUDE_CODE_* is auto-injected by Claude Code — high confidence
 #   - codex: CODEX_CLI_VERSION is set by Codex CLI — high confidence
-#   - cursor: CURSOR_TRACE_ID is set by Cursor IDE — medium confidence
+#   - cursor-ide: CURSOR_TRACE_ID is auto-injected by Cursor IDE — medium confidence
+#     (cursor-cli uses CURSOR_API_KEY which is user-set, not included here)
 #   - aider: AIDER_MODEL is user-set (not auto-injected) — medium confidence
 #   - opencode: OPENCODE_* is user-set (not auto-injected) — lowest confidence
 _CLIENT_SIGNALS: list[tuple[str, list[str]]] = [
     ("claude-code", ["CLAUDE_CODE_VERSION", "CLAUDE_CODE_ENTRYPOINT"]),
     ("codex", ["CODEX_CLI_VERSION", "CODEX_SANDBOX_TYPE"]),
-    ("cursor", ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]),
+    ("cursor-ide", ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]),
     ("aider", ["AIDER_MODEL", "AIDER_CHAT_HISTORY_FILE"]),
     ("opencode", ["OPENCODE_MODEL", "OPENCODE_CONFIG"]),
 ]
@@ -44,8 +45,11 @@ def detect_client_profile(*, cwd: str | Path | None = None) -> str:
     """Detect the IDE/client profile from environment signals.
 
     Checks env vars first (fast), then falls back to filesystem markers.
-    Returns one of: ``"claude-code"``, ``"opencode"``, ``"cursor"``,
+    Returns one of: ``"claude-code"``, ``"opencode"``, ``"cursor-ide"``,
     ``"codex"``, ``"aider"``, or ``""`` (unknown).
+
+    Note: ``cursor-ide`` is returned when Cursor IDE env vars are detected.
+    ``cursor-cli`` detection requires filesystem checks (see ``detect_ide``).
     """
     # Phase 1: env var check
     for client_id, env_keys in _CLIENT_SIGNALS:

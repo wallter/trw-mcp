@@ -320,21 +320,50 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 # ---------------------------------------------------------------------------
 
 # Supported IDEs - DRY constant for all IDE target operations
-SUPPORTED_IDES = ["claude-code", "cursor", "opencode", "codex", "copilot", "gemini"]
+# cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface
+SUPPORTED_IDES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider"]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
     """Detect which AI coding CLIs have configuration in the target directory.
 
-    Returns a list of IDE identifiers: "claude-code", "cursor", "opencode",
-    "codex", "copilot", "gemini".  Detection is based on directory/file
-    existence, not process detection.
+    Returns a list of IDE identifiers from SUPPORTED_IDES.  Both cursor-ide
+    and cursor-cli can be detected simultaneously on developer machines with
+    both surfaces configured.
+
+    Detection strategy (PRD-CORE-136-FR07, PRD-CORE-137-FR06):
+    - cursor-cli if: .cursor/cli.json exists, OR cursor-agent on PATH AND
+      CURSOR_TRACE_ID not set, OR CURSOR_API_KEY env set.
+    - cursor-ide if: .cursor/ dir exists, OR CURSOR_TRACE_ID env set, OR
+      cursor (IDE launcher) on PATH.
+    - Both can return simultaneously on dual-surface machines.
     """
     detected: list[str] = []
     if (target_dir / ".claude").is_dir():
         detected.append("claude-code")
-    if (target_dir / ".cursor").is_dir():
-        detected.append("cursor")
+
+    # cursor-cli: detected by cli.json file, cursor-agent binary (without IDE trace),
+    # or CURSOR_API_KEY env var (headless auth)
+    has_cli_json = (target_dir / ".cursor" / "cli.json").is_file()
+    has_cursor_agent = bool(shutil.which("cursor-agent"))
+    has_cursor_trace = bool(os.environ.get("CURSOR_TRACE_ID"))
+    has_cursor_api_key = bool(os.environ.get("CURSOR_API_KEY"))
+    cursor_cli_detected = (
+        has_cli_json
+        or (has_cursor_agent and not has_cursor_trace)
+        or has_cursor_api_key
+    )
+    if cursor_cli_detected:
+        detected.append("cursor-cli")
+
+    # cursor-ide: detected by .cursor/ dir, CURSOR_TRACE_ID env var (IDE auto-injects),
+    # or cursor IDE launcher on PATH
+    has_cursor_dir = (target_dir / ".cursor").is_dir()
+    has_cursor_bin = bool(shutil.which("cursor"))
+    cursor_ide_detected = has_cursor_dir or has_cursor_trace or has_cursor_bin
+    if cursor_ide_detected:
+        detected.append("cursor-ide")
+
     if (target_dir / ".opencode").is_dir() or (target_dir / "opencode.json").is_file():
         detected.append("opencode")
     if (target_dir / ".codex").is_dir() or (target_dir / ".codex" / "config.toml").is_file():
@@ -347,6 +376,8 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("copilot")
     if (target_dir / ".gemini").is_dir() or (target_dir / "GEMINI.md").is_file():
         detected.append("gemini")
+    if (target_dir / ".aider.conf.yml").is_file():
+        detected.append("aider")
     return detected
 
 
@@ -358,8 +389,10 @@ def detect_installed_clis() -> list[str]:
     detected: list[str] = []
     if shutil.which("claude"):
         detected.append("claude-code")
+    if shutil.which("cursor-agent"):
+        detected.append("cursor-cli")
     if shutil.which("cursor"):
-        detected.append("cursor")
+        detected.append("cursor-ide")
     if shutil.which("opencode"):
         detected.append("opencode")
     if shutil.which("codex"):

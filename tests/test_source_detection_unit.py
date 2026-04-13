@@ -40,12 +40,12 @@ class TestDetectClientProfileEnv:
 
     def test_cursor_trace_id(self) -> None:
         with patch.dict("os.environ", {"CURSOR_TRACE_ID": "abc123"}, clear=True):
-            assert detect_client_profile() == "cursor"
+            assert detect_client_profile() == "cursor-ide"
 
     def test_cursor_session_id(self) -> None:
-        """Secondary cursor signal also triggers detection."""
+        """Secondary cursor-ide signal also triggers detection."""
         with patch.dict("os.environ", {"CURSOR_SESSION_ID": "sess-1"}, clear=True):
-            assert detect_client_profile() == "cursor"
+            assert detect_client_profile() == "cursor-ide"
 
     def test_aider_model(self) -> None:
         with patch.dict("os.environ", {"AIDER_MODEL": "claude-sonnet-4-6"}, clear=True):

@@ -160,7 +160,7 @@ def _determine_write_target_decision(
         detected_ides = detect_ide(project_root)
         instruction_targets = _instruction_targets_for_detected_ides(detected_ides) if root_scope else ()
         return WriteTargetDecision(
-            write_claude="claude-code" in detected_ides or not detected_ides or (detected_ides == ["cursor"]),
+            write_claude="claude-code" in detected_ides or not detected_ides or (detected_ides == ["cursor-ide"]),
             write_agents=config.agents_md_enabled and root_scope and bool(instruction_targets),
             instruction_targets=instruction_targets,
         )
