@@ -259,26 +259,26 @@ class TestFailOpen:
         assert "target_platforms config update skipped" in warnings[0]
 
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
+
+
 @pytest.mark.integration
 class TestObservability:
     """Structured logging emits the right events for monitoring."""
 
     def test_augmentation_emits_info_log_with_added_field(
-        self, tmp_path: Path
+        self, tmp_path: Path, captured_structlog: list[dict]
     ) -> None:
         """When new IDEs are added, structlog emits config_target_platforms_augmented."""
-        from structlog.testing import capture_logs
-
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
         _seed_config(tmp_path, target_platforms=["claude-code"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        with capture_logs() as logs:
-            _update_config_target_platforms(tmp_path, ["cursor-cli", "gemini"], result)
+        _update_config_target_platforms(tmp_path, ["cursor-cli", "gemini"], result)
 
         info_logs = [
-            log_entry for log_entry in logs
+            log_entry for log_entry in captured_structlog
             if log_entry.get("event") == "config_target_platforms_augmented"
         ]
         assert len(info_logs) == 1
@@ -289,20 +289,19 @@ class TestObservability:
         assert log["added"] == ["cursor-cli", "gemini"]
         assert log["requested"] == ["cursor-cli", "gemini"]
 
-    def test_no_change_emits_debug_unchanged_log(self, tmp_path: Path) -> None:
+    def test_no_change_emits_debug_unchanged_log(
+        self, tmp_path: Path, captured_structlog: list[dict]
+    ) -> None:
         """When merge is a no-op, structlog emits config_target_platforms_unchanged."""
-        from structlog.testing import capture_logs
-
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
         _seed_config(tmp_path, target_platforms=["claude-code", "cursor-ide"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        with capture_logs() as logs:
-            _update_config_target_platforms(tmp_path, ["cursor-ide"], result)
+        _update_config_target_platforms(tmp_path, ["cursor-ide"], result)
 
         unchanged_logs = [
-            log_entry for log_entry in logs
+            log_entry for log_entry in captured_structlog
             if log_entry.get("event") == "config_target_platforms_unchanged"
         ]
         assert len(unchanged_logs) == 1

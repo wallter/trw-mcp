@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 import structlog.testing
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -877,43 +879,46 @@ class TestMergeAgentsMdPureFunction:
 class TestTtyReminderStructlog:
     """Verify _emit_cli_safety_reminder emits cursor_cli_tty_reminder via structlog."""
 
-    def test_structlog_event_emitted(self, tmp_path: Path) -> None:
+    def test_structlog_event_emitted(
+        self, tmp_path: Path, captured_structlog: list[dict]
+    ) -> None:
         """cursor_cli_tty_reminder event captured by structlog.testing.capture_logs."""
         from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
         from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
         result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-        with structlog.testing.capture_logs() as cap:
-            _emit_cli_safety_reminder(result)
+        _emit_cli_safety_reminder(result)
 
-        events = [e["event"] for e in cap]
+        events = [e["event"] for e in captured_structlog]
         assert "cursor_cli_tty_reminder" in events, (
             f"Expected cursor_cli_tty_reminder in structlog output; got: {events}"
         )
 
-    def test_structlog_event_has_tty_required(self, tmp_path: Path) -> None:
+    def test_structlog_event_has_tty_required(
+        self, tmp_path: Path, captured_structlog: list[dict]
+    ) -> None:
         """cursor_cli_tty_reminder log entry includes tty_required=True."""
         from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
         from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
         result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-        with structlog.testing.capture_logs() as cap:
-            _emit_cli_safety_reminder(result)
+        _emit_cli_safety_reminder(result)
 
-        reminder_events = [e for e in cap if e.get("event") == "cursor_cli_tty_reminder"]
+        reminder_events = [
+            e for e in captured_structlog if e.get("event") == "cursor_cli_tty_reminder"
+        ]
         assert len(reminder_events) >= 1
         assert reminder_events[0].get("tty_required") is True
 
     def test_generate_cli_config_emits_tty_reminder_via_structlog(
-        self, tmp_path: Path
+        self, tmp_path: Path, captured_structlog: list[dict]
     ) -> None:
         """generate_cursor_cli_config call emits cursor_cli_tty_reminder via structlog."""
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
 
-        with structlog.testing.capture_logs() as cap:
-            generate_cursor_cli_config(tmp_path)
+        generate_cursor_cli_config(tmp_path)
 
-        events = [e["event"] for e in cap]
+        events = [e["event"] for e in captured_structlog]
         assert "cursor_cli_tty_reminder" in events
 
 
