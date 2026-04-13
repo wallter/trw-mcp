@@ -4,6 +4,20 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Breaking Changes
+- **`cursor` client profile split into `cursor-ide` + `cursor-cli`** (PRD-CORE-136, PRD-CORE-137). The bare `cursor` identifier is no longer registered — users running `target_platforms: [cursor]` must migrate to `[cursor-ide]` (the GUI IDE) or `[cursor-cli]` (the `cursor-agent` headless tool), or both for dual-surface development. The unknown-ID fallback log names both replacement identifiers explicitly for CI log-scraping detection. No deprecation alias is retained.
+
+### Added
+- **Cursor IDE full-ceremony profile** (PRD-CORE-136, `cursor-ide`) — Claude-Code-equivalent calibration (25/25/15/10/10/15) with native Cursor 2.4+ surface coverage: subagents (`.cursor/agents/trw-*.md`), Agent Skills (`.cursor/skills/`, agentskills.io-compliant), slash commands (`.cursor/commands/trw-*.md`), 8-event hook expansion with bash adapter scripts emitting JSON stdout.
+- **Cursor CLI light-ceremony profile** (PRD-CORE-137, `cursor-cli`) — headless/CI calibration (30/30/10/20/10/0) with `AGENTS.md` as primary write target, `.cursor/cli.json` permissions baseline, 5-event CLI-safe hook subset (`beforeShellExecution` + `beforeMCPExecution` with `failClosed: true`), bootstrap summary reminder about TTY requirement + tmux workaround.
+- **Shared Cursor bootstrap core** (`bootstrap/_cursor.py`) — seven named exports composed by both surface-specific modules: `_get_trw_mcp_entry_cursor`, `generate_cursor_mcp_config`, `generate_cursor_rules_mdc` (with `client_id` param), `generate_cursor_skills_mirror`, `generate_cursor_hook_scripts`, `build_cursor_hook_config`, `smart_merge_cursor_json`. DRY-enforced via `trw-dry-check` + code-review gate.
+- **WriteTargets field additions**: `agents_md_primary` (CLI profiles that treat AGENTS.md as primary) and `cli_config` (CLI profiles with a managed `.cursor/cli.json`).
+- **Detection update**: `_utils.py::detect_ide` distinguishes cursor-ide (`.cursor/` dir, `CURSOR_TRACE_ID`, `cursor` binary) from cursor-cli (`.cursor/cli.json`, `cursor-agent` binary without `CURSOR_TRACE_ID`, `CURSOR_API_KEY`). Both can be detected simultaneously; `source_detection.py::_PROVIDER_ENV_MAP` updated to emit `cursor-ide`.
+
+### Changed
+- Eight profiles: `claude-code`, `opencode`, `cursor-ide`, `cursor-cli`, `codex`, `copilot`, `gemini`, `aider`. `SUPPORTED_IDES` list updated accordingly.
+- `docs/CLIENT-PROFILES.md` adds dedicated "Cursor IDE Support Surface" and "Cursor CLI Support Surface" sections documenting profile config, managed artifacts, hook event coverage, permissions schema, detection rules, TTY gotcha + tmux workaround, and current Cursor references.
+
 ## [0.43.0] — 2026-04-13
 
 ### Breaking Changes
