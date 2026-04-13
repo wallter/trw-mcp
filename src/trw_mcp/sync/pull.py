@@ -29,6 +29,26 @@ class PullResult(BaseModel):
     not_modified: bool = False
 
 
+def _validate_pull_payload(raw_data: object) -> tuple[dict[str, Any], str, dict[str, Any], list[dict[str, Any]]]:
+    """Validate the 200 pull payload before treating it as a successful sync."""
+    if not isinstance(raw_data, dict):
+        raise TypeError("pull response body must be a JSON object")
+
+    etag = raw_data.get("etag")
+    if not isinstance(etag, str) or not etag.strip():
+        raise ValueError("pull response missing valid etag")
+
+    sync_hints = raw_data.get("sync_hints")
+    if not isinstance(sync_hints, dict):
+        raise ValueError("pull response missing valid sync_hints")
+
+    team_learnings = raw_data.get("team_learnings")
+    if not isinstance(team_learnings, list) or any(not isinstance(item, dict) for item in team_learnings):
+        raise ValueError("pull response missing valid team_learnings")
+
+    return raw_data, etag, sync_hints, team_learnings
+
+
 class SyncPuller:
     """Pull intelligence state from backend and merge team learnings. Never raises."""
 
@@ -112,8 +132,7 @@ class SyncPuller:
                 )
 
             resp.raise_for_status()
-            data = resp.json()
-            team_learnings = data.get("team_learnings")
+            data, response_etag, sync_hints, team_learnings = _validate_pull_payload(resp.json())
             logger.info(
                 "sync_pull_complete",
                 event_type="sync_pull_complete",
@@ -126,8 +145,8 @@ class SyncPuller:
             )
             return PullResult(
                 state=data,
-                etag=data.get("etag"),
-                sync_hints=data.get("sync_hints"),
+                etag=response_etag,
+                sync_hints=sync_hints,
                 team_learnings=team_learnings,
                 status_code=resp.status_code,
             )
