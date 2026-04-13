@@ -229,10 +229,23 @@ def resolve_run_path(run_path: str | None = None) -> Path:
     Unified implementation (PRD-FIX-007) replacing the duplicated private
     ``_resolve_run_path`` helpers in orchestration.py and findings.py.
 
-    Resolution order:
+    Resolution order (v0.44.5+, PRD-FIX-077):
     1. If *run_path* is provided, resolve to absolute and verify existence.
-    2. Otherwise, scan ``{task_root}/*/runs/*/meta/run.yaml`` and select the
-       directory whose ``run.yaml`` has the most recent ``st_mtime``.
+    2. Otherwise, call ``find_active_run()`` — which checks the per-session
+       pin first, then scans for status=active runs. This matches the path
+       ``trw_session_start`` / ``trw_init`` use when pinning the active run,
+       so ``trw_status``, ``trw_checkpoint``, and reporting tools all
+       converge on the SAME run the session anchored.
+    3. Fall back to ``_find_latest_run_dir()`` (latest ``st_mtime``) only
+       when no pinned / active run exists — preserves discovery for clients
+       that never call ``trw_session_start`` (legacy + one-shot tools).
+
+    Prior behavior (pre-0.44.5) went straight to mtime-scan, which
+    disagreed with ``trw_session_start`` whenever an abandoned run had a
+    more recent ``run.yaml`` mtime than the actual active run — e.g. when
+    another session wrote summary.yaml to a stale run. Users reported
+    ``trw_status`` returning a different run than the one ``trw_session_start``
+    had just pinned.
 
     Args:
         run_path: Explicit run directory path, or ``None`` for auto-detect.
@@ -269,12 +282,23 @@ def resolve_run_path(run_path: str | None = None) -> Path:
             project_root=str(project_root),
         )
 
+    # Primary: prefer pinned/active run so trw_status aligns with trw_session_start
+    active = find_active_run()
+    if active is not None:
+        return active
+
+    # Fallback: latest mtime for clients that never pinned a run.
     latest_run = _find_latest_run_dir(runs_dir)
     if latest_run is None:
         raise StateError(
             f"No active runs found in {config.runs_root}/",
             project_root=str(project_root),
         )
+    logger.info(
+        "resolve_run_path_mtime_fallback",
+        selected=str(latest_run),
+        reason="no_pinned_or_active_run",
+    )
 
     return latest_run
 
