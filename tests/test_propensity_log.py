@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from trw_mcp.state.propensity_log import (
     PropensityEntry,
+    log_ranked_selections,
     log_selection,
     read_propensity_entries,
 )
@@ -157,6 +158,34 @@ class TestLogSelection:
         log_selection(trw_dir, selected="L-a")
         assert (trw_dir / "logs").exists()
         assert (trw_dir / "logs" / "propensity.jsonl").exists()
+
+    def test_ranked_selections_logs_remaining_candidate_pool(self, tmp_path: Path) -> None:
+        """Deterministic ranked logging shrinks the candidate pool per surfaced learning."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+
+        log_ranked_selections(
+            trw_dir,
+            [{"id": "L-a"}, {"id": "L-b"}, {"id": "L-c"}],
+            context_phase="IMPLEMENT",
+            context_task_type="recall",
+        )
+
+        lines = (trw_dir / "logs" / "propensity.jsonl").read_text().strip().split("\n")
+        assert len(lines) == 3
+
+        first = json.loads(lines[0])
+        second = json.loads(lines[1])
+        third = json.loads(lines[2])
+
+        assert first["selected"] == "L-a"
+        assert first["candidate_set"] == ["L-a", "L-b", "L-c"]
+        assert second["selected"] == "L-b"
+        assert second["candidate_set"] == ["L-b", "L-c"]
+        assert third["selected"] == "L-c"
+        assert third["candidate_set"] == ["L-c"]
+        assert first["context_phase"] == "IMPLEMENT"
+        assert first["context_task_type"] == "recall"
 
     def test_rotation(self, tmp_path: Path) -> None:
         """Propensity log rotates when file exceeds size threshold."""

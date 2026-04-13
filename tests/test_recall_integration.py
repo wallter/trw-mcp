@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -230,6 +231,40 @@ def test_recall_no_context_regression(tmp_path: Path) -> None:
     assert "learnings" in result
     # Context should be None when build_recall_context returns None
     assert rank_calls[0]["context"] is None
+
+
+def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
+    """execute_recall writes deterministic propensity entries for surfaced results."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    config = get_config()
+    ranked_entries = [_make_entry("L-001"), _make_entry("L-002")]
+
+    with (
+        patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
+        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=ranked_entries),
+        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
+        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
+        patch("trw_mcp.tools._recall_impl._track_recall"),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=ranked_entries),
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
+    ):
+        execute_recall(
+            query="auth",
+            trw_dir=trw_dir,
+            config=config,
+            _rank_by_utility=lambda matches, *_args, **_kwargs: matches,
+        )
+
+    log_path = trw_dir / "logs" / "propensity.jsonl"
+    lines = [json.loads(line) for line in log_path.read_text().strip().split("\n") if line.strip()]
+    assert [line["selected"] for line in lines] == ["L-001", "L-002"]
+    assert lines[0]["candidate_set"] == ["L-001", "L-002"]
+    assert lines[0]["context_task_type"] == "recall"
 
 
 def test_assertion_reranking_preserves_context(tmp_path: Path) -> None:

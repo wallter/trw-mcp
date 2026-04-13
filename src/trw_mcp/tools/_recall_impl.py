@@ -18,6 +18,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallContextDict, RecallResultDict
 from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state.propensity_log import log_ranked_selections
 from trw_mcp.state.surface_tracking import log_surface_event
 
 logger = structlog.get_logger(__name__)
@@ -295,6 +296,18 @@ def execute_recall(
     # Log each surfaced learning for telemetry/fatigue detection.
     # Skip compact/wildcard queries (bulk operations, not intentional surfacings).
     if not use_compact:
+        try:
+            log_ranked_selections(
+                trw_dir,
+                ranked_learnings,
+                context_phase=(recall_context.current_phase or "") if recall_context else "",
+                context_domain=sorted(recall_context.inferred_domains) if recall_context else [],
+                context_agent_type=recall_context.client_profile if recall_context else "",
+                context_task_type="recall",
+                context_files_modified=len(recall_context.modified_files) if recall_context else 0,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            logger.debug("propensity_logging_failed", exc_info=True)
         try:
             phase = _detect_surface_phase()
             for entry in ranked_learnings:

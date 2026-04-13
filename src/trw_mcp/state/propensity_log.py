@@ -9,7 +9,7 @@ PRD-CORE-103-FR03: Propensity Logging Schema
 
 from __future__ import annotations
 
-__all__ = ["PropensityEntry", "log_selection", "read_propensity_entries"]
+__all__ = ["PropensityEntry", "log_ranked_selections", "log_selection", "read_propensity_entries"]
 
 import json
 from datetime import datetime, timezone
@@ -123,18 +123,21 @@ def log_selection(
 
         _rotate_jsonl(log_path)
 
+        detected_client_profile = ""
+
         # PRD-CORE-103: Auto-detect metadata fields from config when empty
-        if not client_profile or not model_family or not trw_version:
+        if not client_profile or not model_family or not trw_version or not context_agent_type:
             try:
                 from trw_mcp.models.config import get_config
 
                 cfg = get_config()
+                detected_client_profile = (
+                    cfg.client_profile.client_id
+                    if hasattr(cfg.client_profile, "client_id")
+                    else str(cfg.client_profile)
+                )
                 if not client_profile:
-                    client_profile = (
-                        cfg.client_profile.client_id
-                        if hasattr(cfg.client_profile, "client_id")
-                        else str(cfg.client_profile)
-                    )
+                    client_profile = detected_client_profile
                 if not model_family:
                     # cfg.model_family always resolves to non-empty via validator (P1-A)
                     model_family = getattr(cfg, "model_family", "") or "generic"
@@ -146,6 +149,8 @@ def log_selection(
         # Ensure model_family is never an empty string in propensity logs (P1-A)
         if not model_family:
             model_family = "generic"
+        if not context_agent_type and detected_client_profile:
+            context_agent_type = detected_client_profile
 
         # Resolve candidate set and auto-populate runner_up
         candidates = candidate_set or []
@@ -188,6 +193,48 @@ def log_selection(
 
     except Exception:  # justified: fail-open, logging must never block the calling tool
         logger.debug("propensity_log_failed", exc_info=True)
+
+
+def log_ranked_selections(
+    trw_dir: Path,
+    ranked_entries: list[dict[str, object]] | list[str],
+    *,
+    context_phase: str = "",
+    context_domain: list[str] | None = None,
+    context_agent_type: str = "",
+    context_task_type: str = "",
+    context_files_modified: int = 0,
+    context_session_progress: str = "",
+    session_id: str = "",
+) -> None:
+    """Log deterministic propensity entries for a ranked selection sequence.
+
+    Each surfaced learning is treated as the next deterministic selection from the
+    remaining ranked candidate pool, so entry N records candidate_set=[N..end].
+    """
+    ranked_ids: list[str] = []
+    seen: set[str] = set()
+    for entry in ranked_entries:
+        raw_id = entry if isinstance(entry, str) else entry.get("id", "")
+        learning_id = str(raw_id).strip()
+        if not learning_id or learning_id in seen:
+            continue
+        seen.add(learning_id)
+        ranked_ids.append(learning_id)
+
+    for index, learning_id in enumerate(ranked_ids):
+        log_selection(
+            trw_dir,
+            selected=learning_id,
+            candidate_set=ranked_ids[index:],
+            context_phase=context_phase,
+            context_domain=context_domain,
+            context_agent_type=context_agent_type,
+            context_task_type=context_task_type,
+            context_files_modified=context_files_modified,
+            context_session_progress=context_session_progress,
+            session_id=session_id,
+        )
 
 
 def read_propensity_entries(
