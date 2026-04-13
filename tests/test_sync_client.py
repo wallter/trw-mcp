@@ -344,6 +344,37 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_path) -> None:
+    """Partial ingest failures must not clear local dirty state."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 3
+    client._pusher = MagicMock()
+    client._pusher.push_learnings.return_value = SimpleNamespace(pushed=1, failed=1, skipped=0)
+    client._puller = MagicMock()
+    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(
+        return_value=[
+            SimpleNamespace(id="L-1", sync_seq=2),
+            SimpleNamespace(id="L-2", sync_seq=5),
+        ]
+    )
+    client._mark_synced = MagicMock()
+
+    await client._run_one_cycle()
+
+    client._mark_synced.assert_not_called()
+    client._coordinator.record_sync_failure.assert_called_once_with("push failed: 1 entries")
+
+
+@pytest.mark.asyncio
 async def test_run_sync_loop_uses_updated_sleep_schedule(tmp_path, monkeypatch) -> None:
     """run_sync_loop sleeps using the dynamically updated next delay."""
     from trw_mcp.sync.client import BackendSyncClient
