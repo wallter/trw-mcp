@@ -93,9 +93,12 @@ def _format_ceremony_weights(weights: CeremonyWeights) -> str:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("client_id", ["claude-code", "opencode", "cursor", "codex", "aider"])
+@pytest.mark.parametrize(
+    "client_id",
+    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "aider"],
+)
 def test_all_profiles_construct(client_id: str) -> None:
-    """resolve_client_profile(id) returns a ClientProfile for all 5 built-ins."""
+    """resolve_client_profile(id) returns a ClientProfile for all built-ins."""
     profile = resolve_client_profile(client_id)
     assert profile.client_id == client_id
 
@@ -335,12 +338,12 @@ def test_opencode_profile_writes_agents_md() -> None:
 
 
 @pytest.mark.unit
-def test_cursor_profile_writes_cursor_rules() -> None:
-    """cursor profile has write_targets.cursor_rules=True."""
-    profile = resolve_client_profile("cursor")
+def test_cursor_ide_profile_writes_cursor_rules() -> None:
+    """cursor-ide profile has write_targets.cursor_rules=True and agents_md=True."""
+    profile = resolve_client_profile("cursor-ide")
     assert profile.write_targets.cursor_rules is True
+    assert profile.write_targets.agents_md is True
     assert profile.write_targets.claude_md is False
-    assert profile.write_targets.agents_md is False
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +408,10 @@ def test_ceremony_weights_as_dict_returns_correct_keys() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("client_id", ["claude-code", "opencode", "cursor", "codex", "aider"])
+@pytest.mark.parametrize(
+    "client_id",
+    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "aider"],
+)
 def test_all_profiles_have_valid_weights(client_id: str) -> None:
     """Every built-in profile has ceremony weights summing to 100 and scoring weights summing to ~1.0."""
     profile = resolve_client_profile(client_id)

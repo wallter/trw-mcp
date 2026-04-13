@@ -1,8 +1,12 @@
 """Built-in client profile registry and resolution.
 
-Seven profiles (claude-code, opencode, cursor, codex, copilot, gemini, aider)
+Eight profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot, gemini, aider)
 with eval-data-calibrated ceremony and scoring weights. Unknown client IDs
 fall back to claude-code with a structured warning.
+
+Migration note: the bare ``cursor`` profile ID was removed in Sprint 91.
+Use ``cursor-ide`` for interactive Cursor IDE or ``cursor-cli`` for headless
+``cursor-agent`` CI runs.
 """
 
 from __future__ import annotations
@@ -96,18 +100,73 @@ _PROFILES: dict[str, ClientProfile] = {
         skills_enabled=True,
     ),
     "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
-    "cursor": ClientProfile(
-        client_id="cursor",
-        display_name="Cursor",
-        write_targets=WriteTargets(cursor_rules=True, instruction_path=".cursor/rules/trw-ceremony.mdc"),
+    "cursor-ide": ClientProfile(
+        client_id="cursor-ide",
+        display_name="Cursor IDE",
+        write_targets=WriteTargets(
+            cursor_rules=True,
+            agents_md=True,
+            instruction_path=".cursor/rules/trw-ceremony.mdc",
+        ),
         instruction_max_lines=400,
         context_window_tokens=128_000,
+        ceremony_mode="full",
         ceremony_weights=CeremonyWeights(),
         nudge_pool_weights=NudgePoolWeights(workflow=50, learnings=30, ceremony=10, context=10),
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
-        hooks_enabled=False,
+        hooks_enabled=True,
+        agents_md_enabled=True,
+        include_framework_ref=True,
         include_agent_teams=False,
+        include_delegation=True,
+        nudge_enabled=True,
+        tool_exposure_mode="all",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
+    ),
+    "cursor-cli": ClientProfile(
+        client_id="cursor-cli",
+        display_name="Cursor CLI",
+        write_targets=WriteTargets(
+            agents_md=True,
+            agents_md_primary=True,
+            cli_config=True,
+            instruction_path="AGENTS.md",
+        ),
+        instruction_max_lines=250,
+        context_window_tokens=128_000,
+        ceremony_mode="light",
+        ceremony_weights=CeremonyWeights(
+            session_start=30,
+            deliver=30,
+            checkpoint=10,
+            learn=20,
+            build_check=10,
+            review=0,
+        ),
+        nudge_pool_weights=NudgePoolWeights(workflow=60, learnings=30, ceremony=0, context=10),
+        mandatory_phases=["implement", "deliver"],
+        scoring_weights=ScoringDimensionWeights(
+            outcome=0.55,
+            plan_quality=0.05,
+            implementation=0.20,
+            ceremony=0.05,
+            knowledge=0.15,
+        ),
+        default_model_tier="cloud-sonnet",
+        response_format="json",
+        hooks_enabled=True,
+        agents_md_enabled=True,
+        include_framework_ref=False,
+        include_agent_teams=False,
+        include_delegation=False,
+        nudge_enabled=True,
+        tool_exposure_mode="standard",
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
     ),
     "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md"),
     "copilot": ClientProfile(
@@ -176,11 +235,24 @@ def resolve_client_profile(
     """
     profile = _PROFILES.get(client_id)
     if profile is None:
-        logger.warning(
-            "unknown_client_id_fallback",
-            client_id=client_id,
-            fallback="claude-code",
-        )
+        if client_id == "cursor":
+            logger.warning(
+                "unknown_client_id_fallback",
+                client_id=client_id,
+                fallback="claude-code",
+                message=(
+                    "The bare 'cursor' profile ID was removed in Sprint 91. "
+                    "Use 'cursor-ide' for interactive Cursor IDE sessions or "
+                    "'cursor-cli' for headless cursor-agent CI runs. "
+                    "Update your target_platforms configuration accordingly."
+                ),
+            )
+        else:
+            logger.warning(
+                "unknown_client_id_fallback",
+                client_id=client_id,
+                fallback="claude-code",
+            )
         profile = _PROFILES["claude-code"]
 
     if model_tier is not None and model_tier in _TIER_OVERRIDES:
