@@ -54,6 +54,7 @@ def _load_analytics_counts() -> tuple[int, int]:
     Uses a ContextVar-backed cache with a short TTL to avoid re-parsing
     the YAML file on every instruction render within a single tool turn.
     """
+    logger = structlog.get_logger(__name__)
     config = get_config()
     analytics_path = resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
     analytics_key = str(analytics_path)
@@ -89,11 +90,11 @@ def _load_analytics_counts() -> tuple[int, int]:
         _analytics_cache.set(entry)
         return sessions, learnings
     except FileNotFoundError:
-        _logger.debug("analytics_file_not_found", path=str(analytics_path))
+        logger.debug("analytics_file_not_found", path=str(analytics_path))
     except _yaml.YAMLError:
-        _logger.warning("analytics_parse_error", path=str(analytics_path), exc_info=True)
+        logger.warning("analytics_parse_error", path=str(analytics_path), exc_info=True)
     except OSError:
-        _logger.warning("analytics_read_error", path=str(analytics_path), exc_info=True)
+        logger.warning("analytics_read_error", path=str(analytics_path), exc_info=True)
 
     entry = _AnalyticsCacheEntry(
         path=analytics_key,
