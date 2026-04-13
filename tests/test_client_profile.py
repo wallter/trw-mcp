@@ -426,6 +426,63 @@ def test_all_profiles_have_valid_weights(client_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PRD-CORE-136-FR01: cursor → cursor-ide/cursor-cli split
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_bare_cursor_id_falls_back_with_actionable_message() -> None:
+    """resolve_client_profile('cursor') logs unknown_client_id_fallback with cursor-ide and cursor-cli in message.
+
+    FR01 acceptance criterion: the warning message must name both replacement
+    identifiers so CI users parsing the log get an actionable message.
+    """
+    from structlog.testing import capture_logs
+
+    from trw_mcp.models.config._profiles import resolve_client_profile as _resolve
+
+    with capture_logs() as logs:
+        profile = _resolve("cursor")
+
+    assert profile.client_id == "claude-code", (
+        "bare 'cursor' should fall back to claude-code"
+    )
+    warning_logs = [l for l in logs if l.get("log_level") == "warning"]
+    assert len(warning_logs) == 1, f"Expected 1 warning, got: {warning_logs}"
+    w = warning_logs[0]
+    assert w.get("event") == "unknown_client_id_fallback"
+    assert w.get("client_id") == "cursor"
+    # Both replacement identifiers must appear in the message
+    msg = w.get("message", "")
+    assert "cursor-ide" in msg, f"'cursor-ide' not in warning message: {msg!r}"
+    assert "cursor-cli" in msg, f"'cursor-cli' not in warning message: {msg!r}"
+
+
+@pytest.mark.unit
+def test_cursor_ide_profile_ceremony_mode_full() -> None:
+    """cursor-ide profile has ceremony_mode='full' — equivalent to claude-code ceremony enforcement.
+
+    FR01 acceptance criterion.
+    """
+    profile = resolve_client_profile("cursor-ide")
+    assert profile.ceremony_mode == "full"
+    assert profile.tool_exposure_mode == "all"
+    assert profile.nudge_enabled is True
+    assert profile.learning_recall_enabled is True
+    assert profile.mcp_instructions_enabled is True
+    assert profile.skills_enabled is True
+
+
+@pytest.mark.unit
+def test_cursor_ide_write_targets_set_correctly() -> None:
+    """cursor-ide write_targets has cursor_rules=True and agents_md=True; instruction_path correct."""
+    profile = resolve_client_profile("cursor-ide")
+    assert profile.write_targets.cursor_rules is True
+    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.instruction_path == ".cursor/rules/trw-ceremony.mdc"
+
+
+# ---------------------------------------------------------------------------
 # Post-fix regression tests — Sprint 77 adversarial audit gaps
 # ---------------------------------------------------------------------------
 
