@@ -31,37 +31,28 @@ class IntelligenceCache:
 
     def get_bandit_params(self) -> dict[str, float] | None:
         """Read cached bandit arm parameters. Returns None if expired/missing."""
-        data = self._read_cache()
-        if data is None:
-            return None
-        raw = data.get("bandit_params")
-        if raw is None:
-            return None
+        raw = self._read_cached_field("bandit_params")
         if not isinstance(raw, dict):
+            if raw is not None:
+                self._log_validation_error(field_name="bandit_params", reason="invalid_type")
             return None
         return raw
 
     def get_attribution_results(self) -> dict[str, dict[str, Any]] | None:
         """Read cached attribution results."""
-        data = self._read_cache()
-        if data is None:
-            return None
-        raw = data.get("attribution_results")
-        if raw is None:
-            return None
+        raw = self._read_cached_field("attribution_results")
         if not isinstance(raw, dict):
+            if raw is not None:
+                self._log_validation_error(field_name="attribution_results", reason="invalid_type")
             return None
         return raw
 
     def get_synthesis_overlay(self) -> dict[str, Any] | None:
         """Read cached synthesis overlay."""
-        data = self._read_cache()
-        if data is None:
-            return None
-        raw = data.get("synthesis_overlay")
-        if raw is None:
-            return None
+        raw = self._read_cached_field("synthesis_overlay")
         if not isinstance(raw, dict):
+            if raw is not None:
+                self._log_validation_error(field_name="synthesis_overlay", reason="invalid_type")
             return None
         return raw
 
@@ -78,14 +69,17 @@ class IntelligenceCache:
                 dir=str(self._cache_path.parent),
                 suffix=".tmp",
             )
+            payload_text = json.dumps(state, sort_keys=True, indent=2, default=str)
+            payload_size_bytes = len(payload_text.encode("utf-8"))
             try:
                 with os.fdopen(fd, "w") as f:
-                    json.dump(state, f, sort_keys=True, indent=2, default=str)
+                    f.write(payload_text)
                 os.chmod(tmp_path, 0o600)
                 os.rename(tmp_path, str(self._cache_path))
                 logger.debug(
                     "intel_cache_write_success",
                     event_type="intel_cache_write_success",
+                    payload_size_bytes=payload_size_bytes,
                     etag=etag,
                     outcome="success",
                 )
@@ -100,10 +94,11 @@ class IntelligenceCache:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                 raise
-        except Exception:  # justified: fail-open, cache persistence is best-effort for sync metadata
+        except Exception as exc:  # justified: fail-open, cache persistence is best-effort for sync metadata
             logger.warning(
                 "intel_cache_write_error",
                 event_type="intel_cache_write_error",
+                error_type=type(exc).__name__,
                 outcome="error",
                 exc_info=True,
             )
@@ -139,15 +134,34 @@ class IntelligenceCache:
                 return None
             raw = json.loads(self._cache_path.read_text())
             if not isinstance(raw, dict):
+                self._log_validation_error(field_name="_root", reason="not_a_dict")
                 return None
             meta = raw.get("_meta", {})
             if not isinstance(meta, dict):
+                self._log_validation_error(field_name="_meta", reason="missing_or_invalid")
                 return None
             updated_at = meta.get("updated_at")
-            if not updated_at:
+            if not isinstance(updated_at, str) or not updated_at:
+                self._log_validation_error(field_name="_meta.updated_at", reason="missing_or_invalid")
                 return None
-            dt = datetime.fromisoformat(str(updated_at))
+            if not isinstance(meta.get("etag"), str):
+                self._log_validation_error(field_name="_meta.etag", reason="missing_or_invalid")
+                return None
+            if not isinstance(meta.get("ttl_seconds"), int):
+                self._log_validation_error(field_name="_meta.ttl_seconds", reason="missing_or_invalid")
+                return None
+            try:
+                dt = datetime.fromisoformat(updated_at)
+            except ValueError:
+                self._log_validation_error(field_name="_meta.updated_at", reason="invalid_iso8601")
+                return None
             age = (datetime.now(tz=timezone.utc) - dt).total_seconds()
+            logger.debug(
+                "intel_cache_read",
+                event_type="intel_cache_read",
+                is_fresh=age <= self._ttl_seconds,
+                age_seconds=age,
+            )
             if age > self._ttl_seconds:
                 logger.debug(
                     "intel_cache_expired",
@@ -156,6 +170,32 @@ class IntelligenceCache:
                 )
                 return None
             return raw
-        except Exception:  # justified: fail-open, corrupt cache data should trigger refresh rather than crash
-            logger.warning("intel_cache_corrupt", exc_info=True)
+        except Exception as exc:  # justified: fail-open, corrupt cache data should trigger refresh rather than crash
+            file_size = self._cache_path.stat().st_size if self._cache_path.exists() else 0
+            logger.warning(
+                "intel_cache_corrupt",
+                event_type="intel_cache_corrupt",
+                file_size_bytes=file_size,
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return None
+
+    def _read_cached_field(self, field_name: str) -> object | None:
+        """Read the full cache, then validate and return the requested field."""
+        data = self._read_cache()
+        if data is None:
+            return None
+        if field_name not in data:
+            self._log_validation_error(field_name=field_name, reason="missing")
+            return None
+        return data.get(field_name)
+
+    def _log_validation_error(self, *, field_name: str, reason: str) -> None:
+        """Emit the standardized cache validation error event."""
+        logger.warning(
+            "intel_cache_validation_error",
+            event_type="intel_cache_validation_error",
+            field_name=field_name,
+            reason=reason,
+        )

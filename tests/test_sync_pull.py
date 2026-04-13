@@ -179,6 +179,51 @@ def test_pull_not_modified_returns_distinct_result() -> None:
     assert result.status_code == 304
 
 
+def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
+    """The convenience wrapper returns only the team-learning payload from a 200 pull."""
+    from trw_mcp.sync.pull import PullResult, SyncPuller
+
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    with patch.object(
+        puller,
+        "pull_intel_state",
+        return_value=PullResult(
+            team_learnings=[{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}],
+            status_code=200,
+        ),
+    ) as mock_pull:
+        result = puller.pull_team_learnings(
+            since_seq=7,
+            etag="etag-1",
+            model_family="opus",
+            trw_version="v1",
+            client_id="sync-client-2",
+        )
+
+    assert result == [{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}]
+    mock_pull.assert_called_once_with(
+        etag="etag-1",
+        since_seq=7,
+        model_family="opus",
+        trw_version="v1",
+        client_id="sync-client-2",
+    )
+
+
+def test_pull_team_learnings_returns_empty_list_for_not_modified_or_failure() -> None:
+    """304 and transport failures both collapse to an empty delta for callers."""
+    from trw_mcp.sync.pull import PullResult, SyncPuller
+
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    with patch.object(puller, "pull_intel_state", return_value=PullResult(not_modified=True, status_code=304)):
+        assert puller.pull_team_learnings(since_seq=7) == []
+
+    with patch.object(puller, "pull_intel_state", return_value=None):
+        assert puller.pull_team_learnings(since_seq=7) == []
+
+
 def test_sync_modules_follow_structlog_conventions() -> None:
     """Sync modules keep the established structlog naming/keyword conventions."""
     import trw_mcp.sync.cache as cache_module
