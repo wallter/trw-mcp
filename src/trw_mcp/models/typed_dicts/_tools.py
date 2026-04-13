@@ -146,8 +146,10 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     embeddings_backfill: dict[str, int]
-    # PRD-INFRA-068 (C3): Memory health dashboard
-    memory_health: dict[str, object]
+    # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
+    # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
+    # ``run_path`` (resume). Populated only on the no-pin path.
+    hint: str
 
 
 class RunReportResultDict(TypedDict, total=False):

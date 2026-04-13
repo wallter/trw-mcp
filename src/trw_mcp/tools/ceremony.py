@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
@@ -32,7 +32,13 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
     SessionStartResultDict,
 )
-from trw_mcp.state._paths import find_active_run, pin_active_run, resolve_trw_dir
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    find_active_run,
+    pin_active_run,
+    resolve_pin_key,
+    resolve_trw_dir,
+)
 from trw_mcp.state.analytics import (
     find_success_patterns,
     update_analytics,
@@ -60,6 +66,25 @@ def __getattr__(name: str) -> object:
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
+
+
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` from a FastMCP ``Context`` (PRD-CORE-141 FR01+FR03).
+
+    Resolves the pin-key via :func:`resolve_pin_key` (four-layer precedence),
+    captures whatever raw FastMCP session probe hits for diagnostics, and
+    returns a frozen value object suitable for threading through pin-state
+    helpers.  Safe to call with ``ctx=None`` — the resolver falls back to
+    env / process identity.
+    """
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,  # Wave 4 may populate from user-agent header
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
 
 
 def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
@@ -259,7 +284,10 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_session_start(query: str = "") -> SessionStartResultDict:  # noqa: C901 — complex session start orchestration
+    def trw_session_start(
+        ctx: Context | None = None,
+        query: str = "",
+    ) -> SessionStartResultDict:  # noqa: C901 — complex session start orchestration
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -320,16 +348,28 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             results["learnings"] = []
             results["learnings_count"] = 0
 
-        # Step 2: Check active run status (and pin it for this process)
+        # Step 2: Check active run status (and pin it for this process).
+        # PRD-CORE-141 FR03/FR05/FR06: thread ctx through so fresh ctx-aware
+        # sessions do NOT hijack another session's active run via the mtime
+        # scan, and surface a structured ``hint`` field in the no-pin case.
+        call_ctx = _build_call_context(ctx)
         run_dir: Path | None = None
         try:
-            run_dir = find_active_run()
+            run_dir = find_active_run(context=call_ctx)
             if run_dir is not None:
-                pin_active_run(run_dir)
+                pin_active_run(run_dir, context=call_ctx)
                 results["run"] = _get_run_status(run_dir)
             else:
-                logger.info("session_start_no_active_run")
+                logger.info(
+                    "session_start_no_active_run",
+                    pin_key=call_ctx.session_id,
+                )
                 results["run"] = {"active_run": None, "status": "no_active_run"}
+                # FR06: surface actionable guidance when no pin exists.
+                results["hint"] = (
+                    "No active run for this session. Call trw_init() to create one, "
+                    "or pass run_path to resume an existing run."
+                )
         except Exception as exc:  # justified: fail-open, run status check must not block session start
             errors.append(f"status: {exc}")
             results["run"] = {"active_run": None, "status": "error"}
@@ -441,19 +481,6 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["errors"] = errors
         results["success"] = len(errors) == 0
 
-        # PRD-INFRA-068 (C3): Memory health dashboard — surfaces snapshot age,
-        # integrity state, concurrent writers, and corrupt-backup presence so
-        # degradation is visible at session start rather than after the next
-        # incident. Fail-open but always emit the key.
-        try:
-            from trw_mcp.tools._health_dashboard import compute_memory_health
-
-            health = compute_memory_health(resolve_trw_dir())
-            results["memory_health"] = cast("dict[str, object]", dict(health))
-        except Exception:  # justified: fail-open — dashboard must not block session start
-            logger.debug("health_dashboard_failed", exc_info=True)
-            results["memory_health"] = {}
-
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
         if config.effective_ceremony_mode == "light":
             results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
@@ -498,6 +525,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_deliver(  # noqa: C901 — delivery lifecycle with deferred background steps
+        ctx: Context | None = None,
         run_path: str | None = None,
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
@@ -530,12 +558,14 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         errors: list[str] = []
         trw_dir = resolve_trw_dir()
 
-        # Resolve run path
+        # Resolve run path (PRD-CORE-141 FR03/FR05: ctx-aware find_active_run
+        # suppresses scan fallback for fresh sessions).
+        call_ctx = _build_call_context(ctx)
         resolved_run: Path | None = None
         if run_path:
             resolved_run = Path(run_path).resolve()
         else:
-            resolved_run = find_active_run()
+            resolved_run = find_active_run(context=call_ctx)
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 
