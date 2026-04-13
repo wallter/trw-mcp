@@ -136,6 +136,31 @@ def test_pull_sends_client_id_and_logs_structured_events() -> None:
     assert mock_info.call_args_list[1].kwargs["team_learnings_count"] == 1
 
 
+def test_pull_malformed_200_payload_returns_none() -> None:
+    """Malformed 200 pull payloads fail open instead of looking successful."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+
+    malformed_payloads = [
+        {},
+        {"etag": None, "sync_hints": {}, "team_learnings": []},
+        {"etag": "etag-1", "sync_hints": [], "team_learnings": []},
+        {"etag": "etag-1", "sync_hints": {}, "team_learnings": [1]},
+    ]
+
+    for payload in malformed_payloads:
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__enter__.return_value
+            response = MagicMock()
+            response.status_code = 200
+            response.raise_for_status.return_value = None
+            response.json.return_value = payload
+            mock_client.get.return_value = response
+
+            assert puller.pull_intel_state(since_seq=7) is None
+
+
 def test_pull_boundary_failure_logs_structured_warning() -> None:
     """Boundary failures log structured warning + traceback and still fail open."""
     from trw_mcp.sync.pull import SyncPuller
