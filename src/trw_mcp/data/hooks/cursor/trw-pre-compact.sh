@@ -17,4 +17,4 @@ _log() {
 _INPUT="$(cat)"
 _log "preCompact — context window compaction imminent"
 
-printf '{"user_message":"TRW: Context compaction imminent. Consider calling trw_checkpoint() now to save your resumption point before compaction discards context."}\n'
+printf '{"user_message":"TRW: Context compaction imminent. Call trw_pre_compact_checkpoint() now — it preserves your resumption point across the compression boundary (Cursor'"'"'s native compaction can drop in-flight state otherwise)."}\n'
