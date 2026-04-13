@@ -4,6 +4,25 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.4] — 2026-04-13
+
+### Added
+
+- **Anti-fatigue nudge gate for Cursor hooks** — new `_nudge_gate.py` bundled helper applies three levers before any user-visible hook response (`followup_message` / `additional_context` / `user_message`):
+  1. **Cooldown dedup** via `.trw/logs/cursor-nudge-state.jsonl` — per `(event, conversation_id|generation_id)`, re-fires within the cooldown window return `{}`. Defaults: stop=1h, sessionStart=24h, preCompact=5min (keyed on generation_id for finer granularity).
+  2. **Adaptive skip** — scans `cursor-hooks.jsonl` for the ceremony tool the nudge would prompt for. If invoked in the last 30 min, suppresses the nudge (the agent is already doing what we'd remind them to do).
+  3. **Message rotation** — stable per-conversation selection from a curated 3-message set via `sha256(conversation_id) % len(messages)`. Different conversations rotate through the full population; same conversation always sees the same message.
+
+- **25 new tests** in `tests/test_cursor_hook_nudge_gate.py` covering cooldown dedup (4), adaptive skip (4), message rotation (2), response-key parametrization (4), generation-id dedup for preCompact (2), fail-open paths (3), end-to-end bash hook pipeline (6).
+
+### Fixed
+
+- **Cursor IDE nudge spam** — prior behavior: `trw-stop.sh`, `trw-session-start.sh`, and `trw-pre-compact.sh` emitted their user-visible message on every hook fire. Reported in a real session: the deliver reminder displayed 4+ times because the stop hook fires per-turn in long sessions, not just at session end (cursor-hooks.jsonl showed 15 stop events in one session, each popping a sticky notification). All three scripts now compose the new gate and default to `{}` when the gate suppresses. Observability remains: every fire is logged to `cursor-hooks.jsonl` unconditionally.
+
+### Changed
+
+- `trw-stop.sh`, `trw-session-start.sh`, `trw-pre-compact.sh` refactored to wrap the gate. Each script: (a) tees stdin via mktemp (avoids argv-size limits on long conversations), (b) logs the fire to `cursor-hooks.jsonl`, (c) invokes `_nudge_gate.py` with per-hook cooldown / adaptive-skip-tool / curated messages array. Backward compatible at the Cursor-hook contract level.
+
 ## [0.44.3] — 2026-04-13
 
 ### Fixed
