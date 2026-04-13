@@ -224,16 +224,17 @@ class TestMergePreservesUserCustomization:
         assert "trw" in on_disk["mcpServers"]
 
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
+
+
 @pytest.mark.integration
 class TestObservability:
     """Structured logs surface preservation vs refresh decisions."""
 
     def test_preservation_emits_mcp_config_preserved_log(
-        self, tmp_path: Path
+        self, tmp_path: Path, captured_structlog: list[dict]
     ) -> None:
         """When preserving a user-customized entry, log mcp_config_preserved."""
-        from structlog.testing import capture_logs
-
         from trw_mcp.bootstrap._mcp_json import _merge_mcp_json
 
         venv_bin = tmp_path / "trw-mcp"
@@ -250,11 +251,10 @@ class TestObservability:
         result: dict[str, list[str]] = {
             "created": [], "updated": [], "preserved": [], "errors": []
         }
-        with capture_logs() as logs:
-            _merge_mcp_json(tmp_path, result)
+        _merge_mcp_json(tmp_path, result)
 
         preserved_logs = [
-            log_entry for log_entry in logs
+            log_entry for log_entry in captured_structlog
             if log_entry.get("event") == "mcp_config_preserved"
         ]
         assert len(preserved_logs) == 1

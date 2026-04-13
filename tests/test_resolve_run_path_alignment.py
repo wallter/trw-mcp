@@ -221,16 +221,17 @@ class TestResolveRunPathAlignment:
         )
 
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
+
+
 @pytest.mark.integration
 class TestObservability:
     """mtime fallback emits a structured log so stale-run resolution is visible."""
 
     def test_mtime_fallback_logs_warning(
-        self, project_with_runs: Path, caplog: pytest.LogCaptureFixture
+        self, project_with_runs: Path, captured_structlog: list[dict]
     ) -> None:
         """When mtime fallback is used, a structlog event is emitted."""
-        from structlog.testing import capture_logs
-
         from trw_mcp.state._paths import resolve_run_path
 
         runs_root = project_with_runs / ".trw" / "runs"
@@ -239,12 +240,11 @@ class TestObservability:
             status="complete",
         )
 
-        with capture_logs() as logs:
-            resolved = resolve_run_path()
+        resolved = resolve_run_path()
 
         assert resolved == run_complete  # mtime fallback fired
         fallback_logs = [
-            le for le in logs
+            le for le in captured_structlog
             if le.get("event") == "resolve_run_path_mtime_fallback"
         ]
         assert len(fallback_logs) == 1

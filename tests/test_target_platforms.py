@@ -25,6 +25,35 @@ from trw_mcp.tools.ceremony import _do_instruction_sync
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make detect_ide deterministic regardless of the developer's installed IDEs.
+
+    Wave 1 of Sprint 91 (PRD-CORE-136) added `shutil.which("cursor")` and
+    `shutil.which("cursor-agent")` to `detect_ide`, which means this test
+    suite's `tmp_path` projects inherited the developer's globally-installed
+    Cursor binary. Combined with the augmentation fix (PRD-FIX-076), that
+    leaked `cursor-ide` into every auto-detected target_platforms result.
+
+    This fixture filters cursor binaries from shutil.which lookup and clears
+    the CURSOR_* env vars so tests see only the IDEs the fixture seeds.
+    """
+    import shutil as _shutil
+    from trw_mcp.bootstrap import _utils
+
+    original_which = _shutil.which
+
+    def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
+        if cmd in {"cursor", "cursor-agent"}:
+            return None
+        return original_which(cmd, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
+    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
+    monkeypatch.delenv("CURSOR_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+
+
 @pytest.fixture()
 def fake_git_repo(tmp_path: Path) -> Path:
     """Create a minimal fake git repo directory."""
@@ -165,20 +194,33 @@ class TestUpdateTargetPlatforms:
         assert "claude-code" in platforms
 
     def test_update_respects_ide_override(self, initialized_repo: Path) -> None:
-        """update_project(dir, ide='opencode') updates target_platforms to ['opencode']."""
+        """update_project(dir, ide='opencode') augments target_platforms without narrowing.
+
+        Post-PRD-FIX-076 contract: ``--ide X`` appends X to the existing list;
+        it does NOT narrow to just ``[X]``. The user's existing platforms
+        (e.g. claude-code from init) are preserved so multi-platform dev
+        configurations survive focused update runs.
+        """
         result = update_project(initialized_repo, ide="opencode")
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert platforms == ["opencode"]
+        # Original claude-code preserved + new opencode appended
+        assert "claude-code" in platforms
+        assert "opencode" in platforms
 
     def test_update_respects_codex_override(self, initialized_repo: Path) -> None:
-        """update_project(dir, ide='codex') updates target_platforms to ['codex']."""
+        """update_project(dir, ide='codex') augments target_platforms without narrowing.
+
+        Post-PRD-FIX-076 contract: see test_update_respects_ide_override.
+        """
         result = update_project(initialized_repo, ide="codex")
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert platforms == ["codex"]
+        # Original claude-code preserved + new codex appended
+        assert "claude-code" in platforms
+        assert "codex" in platforms
 
     def test_update_fail_open_on_corrupt_config(self, initialized_repo: Path) -> None:
         """Corrupt config.yaml doesn't crash update; error goes to result['warnings']."""
