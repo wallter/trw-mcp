@@ -8,7 +8,10 @@ PRD-CORE-001: Base MCP tool suite.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import AsyncIterator
 
 import structlog
 from fastmcp import FastMCP
@@ -130,6 +133,26 @@ def _build_middleware() -> list[object]:
     return middleware
 
 
+@asynccontextmanager
+async def _build_sync_lifespan(_: FastMCP) -> AsyncIterator[None]:
+    """Start the background sync client when backend sync is configured."""
+    sync_task: asyncio.Task[None] | None = None
+    config = _try_load_config()
+    try:
+        if config is not None and config.backend_url and config.backend_api_key:
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.sync.client import BackendSyncClient
+
+            sync_client = BackendSyncClient(config=config, trw_dir=resolve_trw_dir())
+            sync_task = asyncio.create_task(sync_client.run_sync_loop())
+        yield
+    finally:
+        if sync_task is not None:
+            sync_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sync_task
+
+
 def create_app(
     *,
     instructions: str | None = None,
@@ -148,6 +171,7 @@ def create_app(
         "trw",
         instructions=instructions or _load_server_instructions(),
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
+        lifespan=_build_sync_lifespan,
     )
 
 

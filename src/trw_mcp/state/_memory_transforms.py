@@ -30,7 +30,7 @@ _NAMESPACE = DEFAULT_NAMESPACE
 # Re-export from canonical source for backward compatibility
 from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES  # noqa: E402
 
-_SourceType = Literal["human", "agent", "tool", "consolidated"]
+_SourceType = Literal["human", "agent", "tool", "consolidated", "team_sync"]
 logger = structlog.get_logger(__name__)
 
 
