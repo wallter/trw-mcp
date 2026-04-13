@@ -1,16 +1,26 @@
-"""Cursor IDE-specific bootstrap configuration.
+"""Shared Cursor bootstrap helpers — used by both cursor-ide and cursor-cli surfaces.
 
-FR05: Cursor Hook Adapter (PRD-CORE-074)
-FR06: Cursor Rules Generation (PRD-CORE-074)
-FR07: Cursor MCP Configuration (PRD-CORE-074)
+Named exports (PRD-CORE-136-FR02):
+  generate_cursor_mcp_config      FR07: .cursor/mcp.json smart-merge
+  generate_cursor_rules_mdc       FR06: .cursor/rules/trw-ceremony.mdc (new name)
+  generate_cursor_rules           FR06: backward-compat alias → generate_cursor_rules_mdc
+  generate_cursor_skills_mirror   NEW:  shutil.copytree per named skill, preserves others
+  generate_cursor_hook_scripts    NEW:  copy bundled data/hooks/cursor/<name> → .cursor/hooks/
+  build_cursor_hook_config        NEW:  returns {"version":1,"hooks":events_map}
+  smart_merge_cursor_json         NEW:  idempotent JSON merge keyed on command prefix
+
+Legacy exports (kept for backward compat):
+  generate_cursor_hooks           FR05: old hook-list style; still wired in _ide_targets.py
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import structlog
 from typing_extensions import TypedDict
@@ -18,6 +28,13 @@ from typing_extensions import TypedDict
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Data directory for bundled cursor hook scripts
+# ---------------------------------------------------------------------------
+
+_DATA_DIR = Path(__file__).parent.parent / "data"
+_CURSOR_HOOKS_DATA_DIR = _DATA_DIR / "hooks" / "cursor"
 
 
 # ---------------------------------------------------------------------------
@@ -164,54 +181,21 @@ def generate_cursor_rules(
     *,
     force: bool = False,
 ) -> BootstrapFileResult:
-    """Generate .cursor/rules/trw-ceremony.mdc with TRW ceremony instructions (FR06).
+    """Backward-compat alias for generate_cursor_rules_mdc (FR06).
 
-    Creates an alwaysApply rule file so TRW ceremony instructions are always
-    loaded in Cursor sessions.  The file uses the ``.mdc`` format expected by
-    Cursor's rule system.
-
-    The generated file is always written (no smart-merge needed for rules files).
-    When ``force`` is False and the file already exists, the result still
-    reports "updated" since rule content is refreshed on every call.
+    Thin wrapper — delegates to the canonical ``generate_cursor_rules_mdc``
+    with ``client_id="cursor-ide"``.  Kept for one release to avoid breaking
+    callers that import this name directly (e.g. _ide_targets.py).
 
     Args:
         target_dir: Root of the target git repository.
-        trw_section: Content to embed between the frontmatter and end of file.
-            Typically extracted from the TRW CLAUDE.md block.
-        force: When True, overwrite unconditionally (same as default behaviour
-            for rules files).
+        trw_section: Content to embed between the MDC frontmatter and end of file.
+        force: When True, overwrite unconditionally.
 
     Returns:
         Dict with 'created'/'updated'/'preserved' lists.
     """
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    rules_dir = target_dir / ".cursor" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-    rules_file = rules_dir / "trw-ceremony.mdc"
-
-    content = (
-        "---\n"
-        'description: "TRW ceremony enforcement — ensures learnings persist across sessions"\n'
-        "globs: []\n"
-        "alwaysApply: true\n"
-        "---\n\n"
-        f"{trw_section}\n"
-    )
-
-    existed = rules_file.exists()
-    rules_file.write_text(content, encoding="utf-8")
-
-    if existed and not force:
-        result["updated"].append(".cursor/rules/trw-ceremony.mdc")
-    else:
-        result["created"].append(".cursor/rules/trw-ceremony.mdc")
-
-    logger.debug(
-        "generate_cursor_rules",
-        created=result["created"],
-        updated=result["updated"],
-    )
-    return result
+    return generate_cursor_rules_mdc(target_dir, trw_section, client_id="cursor-ide", force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +245,308 @@ def generate_cursor_mcp_config(
 
     logger.debug(
         "generate_cursor_mcp_config",
+        created=result["created"],
+        updated=result["updated"],
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-136-FR02: generate_cursor_rules_mdc (new canonical name)
+# generate_cursor_rules kept as backward-compat alias below
+# ---------------------------------------------------------------------------
+
+
+def generate_cursor_rules_mdc(
+    target_dir: Path,
+    trw_section: str,
+    *,
+    client_id: str = "cursor-ide",
+    force: bool = False,
+) -> BootstrapFileResult:
+    """Generate .cursor/rules/trw-ceremony.mdc (canonical name for PRD-CORE-136-FR02).
+
+    Identical to ``generate_cursor_rules`` but accepts a ``client_id`` parameter
+    so the generator can be called from both cursor-ide and cursor-cli surfaces
+    with appropriate context.  The on-disk content is the same regardless of
+    ``client_id`` — the parameter is reserved for future surface-specific tuning.
+
+    Args:
+        target_dir: Root of the target git repository.
+        trw_section: Content to embed between the MDC frontmatter and end of file.
+        client_id: Caller surface identifier (e.g. "cursor-ide", "cursor-cli").
+        force: When True, overwrite unconditionally.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    rules_dir = target_dir / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    rules_file = rules_dir / "trw-ceremony.mdc"
+
+    content = (
+        "---\n"
+        'description: "TRW ceremony enforcement — ensures learnings persist across sessions"\n'
+        "globs: []\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+        f"{trw_section}\n"
+    )
+
+    existed = rules_file.exists()
+    rules_file.write_text(content, encoding="utf-8")
+
+    if existed and not force:
+        result["updated"].append(".cursor/rules/trw-ceremony.mdc")
+    else:
+        result["created"].append(".cursor/rules/trw-ceremony.mdc")
+
+    logger.debug(
+        "generate_cursor_rules_mdc",
+        client_id=client_id,
+        created=result["created"],
+        updated=result["updated"],
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-136-FR02: generate_cursor_skills_mirror
+# ---------------------------------------------------------------------------
+
+
+def generate_cursor_skills_mirror(
+    target_dir: Path,
+    skill_names: list[str],
+    source_dir: Path | None = None,
+    *,
+    force: bool = False,
+) -> BootstrapFileResult:
+    """Mirror named TRW skills into .cursor/skills/ (PRD-CORE-136-FR02).
+
+    For each name in ``skill_names``, copies the skill directory tree from
+    ``source_dir`` (or the bundled ``data/skills/`` directory) to
+    ``.cursor/skills/<name>/``.  User-authored skills NOT in ``skill_names``
+    are preserved untouched.
+
+    Args:
+        target_dir: Root of the target git repository.
+        skill_names: Skill directory names to mirror (e.g. ["trw-deliver"]).
+        source_dir: Override for bundled skills directory. Defaults to
+            ``data/skills/`` within the installed package.
+        force: When True, remove existing skill dirs before copy.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    skills_src = source_dir or (_DATA_DIR / "skills")
+    dest_root = target_dir / ".cursor" / "skills"
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    for name in skill_names:
+        src = skills_src / name
+        dst = dest_root / name
+        if not src.is_dir():
+            logger.warning("cursor_skill_source_missing", skill=name, src=str(src))
+            continue
+
+        existed = dst.exists()
+        if existed and force:
+            shutil.rmtree(dst)
+            existed = False
+
+        shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
+
+        rel = f".cursor/skills/{name}"
+        if existed:
+            result["updated"].append(rel)
+        else:
+            result["created"].append(rel)
+
+    logger.debug(
+        "generate_cursor_skills_mirror",
+        skills=skill_names,
+        created=result["created"],
+        updated=result["updated"],
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-136-FR02: generate_cursor_hook_scripts
+# ---------------------------------------------------------------------------
+
+
+def generate_cursor_hook_scripts(
+    target_dir: Path,
+    scripts: list[str],
+    *,
+    force: bool = False,
+) -> BootstrapFileResult:
+    """Copy bundled hook scripts to .cursor/hooks/ with mode 0755 (PRD-CORE-136-FR02).
+
+    Reads scripts from ``data/hooks/cursor/<name>`` and writes them to
+    ``.cursor/hooks/<name>``.  Idempotent on repeat calls.
+
+    Args:
+        target_dir: Root of the target git repository.
+        scripts: List of script file names (e.g. ["trw-session-start.sh"]).
+        force: When True, overwrite existing scripts unconditionally.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    hooks_dest = target_dir / ".cursor" / "hooks"
+    hooks_dest.mkdir(parents=True, exist_ok=True)
+
+    for name in scripts:
+        src = _CURSOR_HOOKS_DATA_DIR / name
+        dst = hooks_dest / name
+        if not src.is_file():
+            logger.warning("cursor_hook_script_missing", script=name, src=str(src))
+            continue
+
+        existed = dst.exists()
+        if not existed or force:
+            shutil.copy2(str(src), str(dst))
+            os.chmod(str(dst), 0o755)
+            rel = f".cursor/hooks/{name}"
+            if existed:
+                result["updated"].append(rel)
+            else:
+                result["created"].append(rel)
+        else:
+            result["preserved"].append(f".cursor/hooks/{name}")
+
+    logger.debug(
+        "generate_cursor_hook_scripts",
+        scripts=scripts,
+        created=result["created"],
+        updated=result["updated"],
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-136-FR02: build_cursor_hook_config
+# ---------------------------------------------------------------------------
+
+
+def build_cursor_hook_config(events_map: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Build a Cursor hooks.json document from an events map (PRD-CORE-136-FR02).
+
+    Args:
+        events_map: Mapping of event name → list of handler dicts. Each handler
+            dict MUST contain a ``command`` key.
+
+    Returns:
+        ``{"version": 1, "hooks": events_map}``
+
+    Raises:
+        ValueError: If any handler entry is missing the ``command`` key.
+    """
+    for event, handlers in events_map.items():
+        for idx, handler in enumerate(handlers):
+            if "command" not in handler:
+                msg = (
+                    f"Handler entry at events_map[{event!r}][{idx}] is missing "
+                    f"required key 'command'. Got keys: {list(handler.keys())}"
+                )
+                raise ValueError(msg)
+    return {"version": 1, "hooks": events_map}
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-136-FR02: smart_merge_cursor_json
+# ---------------------------------------------------------------------------
+
+
+def smart_merge_cursor_json(
+    target_path: Path,
+    trw_entries: dict[str, Any],
+    identity_prefix: str,
+) -> BootstrapFileResult:
+    """Idempotent JSON merge for Cursor config files (PRD-CORE-136-FR02).
+
+    Reads the existing JSON document at ``target_path``, removes prior TRW
+    entries identified by ``command.startswith(identity_prefix)`` (for hook
+    handler lists keyed under ``"hooks"``), then inserts the new TRW entries.
+    Everything else is preserved.
+
+    Handles two JSON shapes:
+    - **hooks.json** shape: ``{"version": 1, "hooks": {event: [handlers]}}``
+      where each handler has a ``"command"`` key.
+    - **flat shape** (e.g. used by cli.json): any top-level structure; the
+      caller is responsible for passing ``trw_entries`` as the top-level
+      object to merge.  For flat shape, pass ``identity_prefix=""`` to skip
+      the TRW-entry removal step (or use a dedicated merge helper).
+
+    On malformed JSON, overwrites with ``trw_entries`` and emits a warning.
+
+    Args:
+        target_path: Path to the JSON file to merge (created if absent).
+        trw_entries: New TRW content to upsert.  For hooks.json shape, pass
+            the full ``{"version":1,"hooks":{...}}`` dict.  For flat shape,
+            pass the keys to update at the top level.
+        identity_prefix: ``command`` prefix that identifies TRW hook entries.
+            Prior entries with ``command.startswith(identity_prefix)`` are
+            removed before insertion.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    rel = str(target_path)
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if target_path.exists():
+        try:
+            existing: dict[str, Any] = json.loads(target_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            logger.warning(
+                "smart_merge_cursor_json_malformed",
+                path=rel,
+                action="overwrite",
+            )
+            target_path.write_text(json.dumps(trw_entries, indent=2) + "\n", encoding="utf-8")
+            result["updated"].append(rel)
+            return result
+
+        # Handle hooks.json shape: remove prior TRW entries by command prefix
+        if "hooks" in existing and isinstance(existing["hooks"], dict) and identity_prefix:
+            for event, handlers in existing["hooks"].items():
+                if isinstance(handlers, list):
+                    existing["hooks"][event] = [
+                        h for h in handlers
+                        if not (isinstance(h, dict) and isinstance(h.get("command"), str)
+                                and h["command"].startswith(identity_prefix))
+                    ]
+
+        # Merge trw_entries into existing document
+        for key, value in trw_entries.items():
+            if key == "hooks" and isinstance(value, dict) and isinstance(existing.get("hooks"), dict):
+                # Deep merge: extend per-event handler lists
+                for event, handlers in value.items():
+                    if event in existing["hooks"]:
+                        existing["hooks"][event] = existing["hooks"][event] + handlers
+                    else:
+                        existing["hooks"][event] = handlers
+            else:
+                existing[key] = value
+
+        target_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        result["updated"].append(rel)
+    else:
+        target_path.write_text(json.dumps(trw_entries, indent=2) + "\n", encoding="utf-8")
+        result["created"].append(rel)
+
+    logger.debug(
+        "smart_merge_cursor_json",
+        path=rel,
         created=result["created"],
         updated=result["updated"],
     )
