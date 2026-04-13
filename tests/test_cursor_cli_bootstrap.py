@@ -302,6 +302,55 @@ class TestAgentsMdNoSentinels:
         assert "Be careful." in content
 
 
+class TestAgentsMdCursorCliContentGating:
+    """P1-A audit fix: cursor-cli AGENTS.md must not contain claude-code-only
+    surfaces (Agent Teams, subagent delegation content, FRAMEWORK.md framework-ref
+    sections). The cursor-cli profile has include_framework_ref=False and
+    include_agent_teams=False; the rendered AGENTS.md must respect those gates.
+    """
+
+    def test_cursor_cli_agents_md_omits_agent_teams_content(self, tmp_path: Path) -> None:
+        """cursor-cli dispatcher output must not contain Agent Teams language."""
+        from trw_mcp.bootstrap._ide_targets import _update_cursor_cli_artifacts
+
+        (tmp_path / ".cursor").mkdir()
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+        _update_cursor_cli_artifacts(tmp_path, result)
+
+        agents_md = (tmp_path / "AGENTS.md").read_text()
+
+        # Explicit negative assertions — these are Claude-Code-specific surfaces
+        # the cursor-cli profile deliberately excludes.
+        assert "TeamCreate" not in agents_md, (
+            "AGENTS.md must not mention TeamCreate — cursor-cli disables Agent Teams"
+        )
+        assert "Agent Teams" not in agents_md, (
+            "AGENTS.md must not describe Agent Teams — cursor-cli has include_agent_teams=False"
+        )
+        assert "SendMessage" not in agents_md, (
+            "AGENTS.md must not reference SendMessage (Agent Teams dispatch)"
+        )
+        assert "FRAMEWORK.md" not in agents_md, (
+            "AGENTS.md must not reference FRAMEWORK.md — cursor-cli has include_framework_ref=False"
+        )
+
+    def test_cursor_cli_agents_md_contains_expected_surface(self, tmp_path: Path) -> None:
+        """cursor-cli AGENTS.md DOES contain TRW MCP tool guidance + ceremony workflow."""
+        from trw_mcp.bootstrap._ide_targets import _update_cursor_cli_artifacts
+
+        (tmp_path / ".cursor").mkdir()
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+        _update_cursor_cli_artifacts(tmp_path, result)
+
+        agents_md = (tmp_path / "AGENTS.md").read_text()
+
+        # Positive assertions — these are the platform-generic surfaces cursor-cli needs.
+        assert "trw_session_start" in agents_md
+        assert "trw_deliver" in agents_md
+        assert "<!-- TRW:BEGIN -->" in agents_md
+        assert "<!-- TRW:END -->" in agents_md
+
+
 # ===========================================================================
 # Task 16: generate_cursor_cli_hooks
 # ===========================================================================

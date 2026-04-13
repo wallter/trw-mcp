@@ -739,23 +739,38 @@ def test_write_targets_cli_config_can_be_set_true() -> None:
 
 @pytest.mark.unit
 def test_cursor_ide_profile_resolves() -> None:
-    """resolve_client_profile('cursor-ide') returns full-ceremony cursor-ide profile."""
+    """resolve_client_profile('cursor-ide') returns full-ceremony cursor-ide profile.
+
+    Covers PRD-CORE-136-FR01 acceptance: `tool_exposure_mode == "all"`,
+    `ceremony_mode == "full"`, `client_id == "cursor-ide"`.
+    """
     profile = resolve_client_profile("cursor-ide")
     assert profile.client_id == "cursor-ide"
     assert profile.ceremony_mode == "full"
+    assert profile.tool_exposure_mode == "all"  # FR01 acceptance: tool_exposure_mode == "all"
     assert profile.write_targets.cursor_rules is True
     assert profile.write_targets.agents_md is True
+    assert profile.write_targets.agents_md_primary is False  # IDE: rules primary, AGENTS.md secondary
+    assert profile.write_targets.cli_config is False
+    assert profile.write_targets.instruction_path == ".cursor/rules/trw-ceremony.mdc"
 
 
 @pytest.mark.unit
 def test_cursor_cli_profile_resolves() -> None:
-    """resolve_client_profile('cursor-cli') returns light-ceremony cursor-cli profile."""
+    """resolve_client_profile('cursor-cli') returns light-ceremony cursor-cli profile.
+
+    Covers PRD-CORE-137-FR01 acceptance: `tool_exposure_mode == "standard"`,
+    `ceremony_mode == "light"`, `agents_md_primary is True`, `cli_config is True`.
+    """
     profile = resolve_client_profile("cursor-cli")
     assert profile.client_id == "cursor-cli"
     assert profile.ceremony_mode == "light"
+    assert profile.tool_exposure_mode == "standard"
     assert profile.write_targets.agents_md_primary is True
     assert profile.write_targets.cli_config is True
     assert profile.write_targets.instruction_path == "AGENTS.md"
+    assert profile.include_framework_ref is False  # 137-FR04 content gating
+    assert profile.include_agent_teams is False    # 137-FR04 content gating
 
 
 @pytest.mark.unit

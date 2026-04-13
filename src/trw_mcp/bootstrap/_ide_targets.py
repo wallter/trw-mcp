@@ -392,8 +392,11 @@ def _update_cursor_artifacts(
       - generate_cursor_ide_skills       (FR04): .cursor/skills/<name>/
       - generate_cursor_ide_hooks        (FR08): .cursor/hooks/trw-*.sh + hooks.json
 
-    cursor-cli specific steps:
-      # cursor-cli dispatch will be wired by PRD-CORE-137 FR07.
+    cursor-cli specific steps (wired via ``_update_cursor_cli_artifacts``):
+      - generate_cursor_cli_config       (137-FR03): .cursor/cli.json permissions
+      - generate_cursor_cli_agents_md    (137-FR04): AGENTS.md with sentinel block
+      - generate_cursor_cli_hooks        (137-FR05): CLI-safe 5-event hook subset
+      - TTY/tmux bootstrap reminder      (137-FR08a): appended to result["info"]
 
     Fail-open: errors are captured in ``result["warnings"]`` so they never
     break the overall update flow.
