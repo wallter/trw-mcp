@@ -270,7 +270,7 @@ def compute_grounding_penalty(content: str, project_root: Path | None) -> tuple[
             # Strip markdown/prose exemptions
             clean_ref = ref.strip("` ").split()[0]  # Take first token if spaces exist
             clean_ref = _normalize_reference_token(clean_ref)
-            
+
             # Exempt 'new:' or '(new)'
             # We match raw 'ref' for text exemptions but clean_ref for existence.
             if "(new)" in ref.lower() or "new:" in ref.lower() or "new " in ref.lower():
@@ -1186,7 +1186,7 @@ def score_implementation_readiness(
         )
 
     score = composite * max_score
-    
+
     # PRD-QUAL-063: Filesystem Grounding Penalty
     if project_root is not None:
         penalty_mult, hallucinated = compute_grounding_penalty(content, project_root)
@@ -1194,11 +1194,11 @@ def score_implementation_readiness(
             score *= penalty_mult
             details["grounding_penalty_mult"] = round(penalty_mult, 4)
             details["hallucinated_paths"] = len(hallucinated)
-            
+
             suggestions: list[str] = details.get("suggestions", []) # type: ignore
             suggestions.append(f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding.")
             details["suggestions"] = suggestions
-            
+
     return DimensionScore(
         name="implementation_readiness",
         score=round(min(score, max_score), 2),
