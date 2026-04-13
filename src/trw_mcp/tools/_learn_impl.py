@@ -243,19 +243,32 @@ def execute_learn(  # noqa: C901
 
     # PRD-QUAL-056-FR06: audit-originated learnings must carry typed metadata
     # even when the caller only supplied the audit-finding tags.
-    from trw_mcp.state.analytics.core import normalize_audit_learning_metadata
+    #
+    # Resolve via getattr() rather than ``from ... import`` so a long-running
+    # MCP server that cached an older analytics.core module (pre-FR06) does
+    # not crash trw_learn with ImportError — it falls back to pass-through
+    # values and logs a clear restart hint instead.
+    from trw_mcp.state.analytics import core as _analytics_core
 
-    audit_metadata = normalize_audit_learning_metadata(
-        safe_tags,
-        type=type,
-        confidence=confidence,
-        domain=domain,
-        phase_affinity=phase_affinity,
-    )
-    type = str(audit_metadata["type"])
-    confidence = str(audit_metadata["confidence"])
-    domain = cast("list[str]", audit_metadata["domain"])
-    phase_affinity = cast("list[str]", audit_metadata["phase_affinity"])
+    _normalize = getattr(_analytics_core, "normalize_audit_learning_metadata", None)
+    if _normalize is not None:
+        audit_metadata = _normalize(
+            safe_tags,
+            type=type,
+            confidence=confidence,
+            domain=domain,
+            phase_affinity=phase_affinity,
+        )
+        type = str(audit_metadata["type"])
+        confidence = str(audit_metadata["confidence"])
+        domain = cast("list[str]", audit_metadata["domain"])
+        phase_affinity = cast("list[str]", audit_metadata["phase_affinity"])
+    else:
+        logger.warning(
+            "audit_metadata_normalizer_unavailable",
+            hint="restart MCP server to pick up PRD-QUAL-056-FR06 normalization",
+            module_path=getattr(_analytics_core, "__file__", "<unknown>"),
+        )
 
     # Bayesian calibration of impact score (PRD-CORE-034)
     calibrated_impact = calibrate_impact(impact, config)
