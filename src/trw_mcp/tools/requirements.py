@@ -104,7 +104,6 @@ def register_requirements_tools(server: FastMCP) -> None:
     """Register AARE-F requirements tools on the MCP server."""
     _register_prd_create_tool(server)
     _register_prd_validate_tool(server)
-    _register_prd_draft_frs_tool(server)
 
 
 def _register_prd_create_tool(server: FastMCP) -> None:
@@ -427,53 +426,6 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             logger.debug("prd_validate_ceremony_status_skipped", exc_info=True)
 
         return validate_result
-
-
-def _register_prd_draft_frs_tool(server: FastMCP) -> None:
-    """Register the research-to-FR drafting tool (PRD-CORE-133)."""
-
-    @server.tool(output_schema=None)
-    @log_tool_call
-    def trw_prd_draft_frs(
-        research_report: str,
-        extra_context: str = "",
-    ) -> dict[str, object]:
-        """Draft AARE-F Functional Requirements from a research report --- bridges the gap between investigation and PRD authoring.
-
-        When to call: after running codebase_investigator or completing manual
-        research, to convert findings into structured FRs before creating a PRD.
-        Eliminates the manual "grooming bridge" that causes requirements drift.
-
-        Accepts a research report (Markdown or JSON) and optional extra context,
-        then extracts key symbols and file paths, and produces AARE-F compliant
-        FR blocks with Priority, Status, Description, and Acceptance fields.
-
-        Args:
-            research_report: Research report content (Markdown or JSON). Can be
-                output from codebase_investigator or manually written findings.
-            extra_context: Additional context to incorporate (constraints, user
-                requirements, technical boundaries).
-
-        Returns:
-            Dictionary with ``functional_requirements`` list, ``key_symbols``,
-            ``relevant_locations``, and ``fr_count``.
-
-        See Also: trw_prd_create, trw_prd_validate
-        """
-        from trw_mcp.tools._prd_draft_frs import draft_frs_from_research
-
-        result = draft_frs_from_research(research_report, extra_context)
-
-        symbols = result.get("key_symbols", [])
-        locs = result.get("relevant_locations", [])
-        logger.info(
-            "trw_prd_draft_frs_complete",
-            fr_count=result["fr_count"],
-            symbol_count=len(symbols) if isinstance(symbols, list) else 0,
-            location_count=len(locs) if isinstance(locs, list) else 0,
-        )
-
-        return result
 
 
 def _auto_sync_index() -> bool:

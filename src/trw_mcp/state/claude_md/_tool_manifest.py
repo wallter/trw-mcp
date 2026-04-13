@@ -49,7 +49,6 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_review": "Run code review analysis on changed files",
     "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",
-    "trw_prd_draft_frs": "Draft AARE-F Functional Requirements from a research report",
     # Observability
     "trw_status": "Show current run status and session overview",
     "trw_run_report": "Generate a detailed report for a completed run",

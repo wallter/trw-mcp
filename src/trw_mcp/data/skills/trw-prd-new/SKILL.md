@@ -30,16 +30,6 @@ Create a new PRD from a feature description, then automatically run it through t
 
 - Default category is CORE. If the feature is clearly a bug fix, use FIX; if infrastructure, use INFRA; if quality, use QUAL.
 
-## Phase 1.5: Draft FRs from Research (optional)
-
-If the feature description references a research report or `codebase_investigator` output:
-
-1. **Draft FRs**: Call `trw_prd_draft_frs(research_report="<research content>", extra_context="$ARGUMENTS")` to automatically extract key symbols, file paths, and generate AARE-F compliant FR blocks from the research.
-2. **Review draft FRs**: The tool returns structured FR blocks with Priority, Status, Description, and Acceptance fields — review them for accuracy.
-3. **Incorporate into PRD**: Use the drafted FRs to enrich the PRD's Functional Requirements section during the grooming phase.
-
-This step eliminates the manual "grooming bridge" between research and requirements, ensuring technical findings from codebase investigation are preserved as backtick-wrapped technical grounding in FR acceptance criteria.
-
 ## Phase 2: Continue with /trw-prd-ready pipeline
 
 After creation, **automatically proceed** with the full pipeline by following the `/trw-prd-ready` skill workflow for the newly created PRD ID. Do NOT stop after creation — the whole point is that the user gets a sprint-ready PRD with an execution plan from a single command.
