@@ -412,7 +412,7 @@ def resolve_ide_targets(
 
     Args:
         target_dir: Project directory to check for existing IDE configs.
-        ide_override: Explicit IDE selection ("claude-code", "cursor", "opencode", "codex", "all").
+        ide_override: Explicit IDE selection ("claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "all").
             If provided, overrides auto-detection.
 
     Returns:
