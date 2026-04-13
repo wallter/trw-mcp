@@ -1,12 +1,7 @@
-"""I/O boundary layer for the scoring package.
+"""I/O boundary layer for scoring/state interactions.
 
-This module bridges scoring functions to state-layer I/O (file system,
-SQLite, YAML).  All ``from trw_mcp.state.*`` imports are concentrated here
-so that the pure scoring modules (_correlation.py, _decay.py) remain free
-of state-layer dependencies.
-
-PRD-FIX-061 FR05/FR06: Extracted from ``_correlation.py`` and ``_decay.py``
-to eliminate layer violations (scoring -> state).
+Keeps file-system, SQLite, and YAML access out of the pure scoring modules.
+Extracted for PRD-FIX-061 FR05/FR06 to remove scoring -> state layer violations.
 """
 
 from __future__ import annotations
@@ -28,12 +23,8 @@ logger = structlog.get_logger(__name__)
 _PendingUpdate = tuple[str, Path | None, dict[str, object], float, int, list[object]]
 
 
-# ---------------------------------------------------------------------------
-# In-memory YAML path index — maps learning_id -> yaml_path.
-# Built once on first access, refreshed after TTL expiry.
-# Replaces O(N) full-directory scans with O(1) dict lookups while
-# preserving the dual-read/dual-write contract (YAML is authoritative).
-# ---------------------------------------------------------------------------
+# In-memory YAML path index: learning_id -> yaml_path.
+# Rebuilt on TTL expiry to replace repeated O(N) scans with O(1) lookups.
 
 _yaml_path_index: dict[str, Path] = {}
 _yaml_path_index_ts: float = 0.0
@@ -458,23 +449,10 @@ __all__ = [
 
 
 def _find_session_start_ts(trw_dir: Path) -> datetime | None:
-    """Find the timestamp of the most recent session-start event.
+    """Return the newest ``run_init`` or ``session_start`` timestamp under ``runs_root``.
 
-    Scans all events.jsonl files under runs_root/**/ for the most recent
-    ``run_init`` or ``session_start`` event. Uses glob to handle all
-    directory layouts (PROPER, FLAT, OLD_NESTED).
-
-    PRD-FIX-061-FR05: Reimplemented without state.persistence import.
-    PRD-FIX-070-FR01: glob-based discovery replaces iter_run_dirs.
-
-    Restored during PRD-CORE-105 remediation wave: this function was lost
-    in the 7002b33c merge but is still imported by _correlation.py.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Timestamp of the most recent session-start event, or None.
+    Uses glob-based discovery for mixed run directory layouts and preserves the
+    PRD-FIX-061/070 boundary contract used by ``_correlation.py``.
     """
     cfg = _resolve_scoring_config()
 
