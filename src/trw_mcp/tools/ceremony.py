@@ -441,6 +441,19 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         results["errors"] = errors
         results["success"] = len(errors) == 0
 
+        # PRD-INFRA-068 (C3): Memory health dashboard — surfaces snapshot age,
+        # integrity state, concurrent writers, and corrupt-backup presence so
+        # degradation is visible at session start rather than after the next
+        # incident. Fail-open: empty dict on any error.
+        try:
+            from trw_mcp.tools._health_dashboard import compute_memory_health
+
+            health = compute_memory_health(resolve_trw_dir())
+            if health:
+                results["memory_health"] = cast("dict[str, object]", dict(health))
+        except Exception:  # justified: fail-open — dashboard must not block session start
+            logger.debug("memory_health_dashboard_failed", exc_info=True)
+
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
         if config.effective_ceremony_mode == "light":
             results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
@@ -614,6 +627,17 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         critical_elapsed = round(time.monotonic() - t0, 2)
         results["critical_elapsed_seconds"] = critical_elapsed
+
+        # Step 3b: DB integrity check on delivery (PRD-INFRA-067 / C2)
+        # Observability only — a failed probe is logged at WARNING but does
+        # not block deliver or trigger recovery.
+        try:
+            from trw_mcp.tools._deliver_integrity import check_memory_integrity_on_deliver
+
+            integrity_result = check_memory_integrity_on_deliver(trw_dir, resolved_run)
+            results["db_integrity"] = cast("dict[str, object]", dict(integrity_result))
+        except Exception:  # justified: fail-open — integrity probe must not block deliver
+            logger.debug("deliver_integrity_check_failed", exc_info=True)
 
         # -- DEFERRED PATH (background thread) --
         # Housekeeping, analytics, publishing, and telemetry — these don't
