@@ -20,9 +20,9 @@ trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframewor
 
 trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant accumulates project-specific expertise instead of starting from scratch every time.
 
-The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, and CLAUDE.md auto-generation from high-impact learnings.
+The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, CLAUDE.md auto-generation from high-impact learnings, and instruction-tool manifest validation that ensures agents only see tools they can actually call.
 
-**[Knowledge compounding](https://trwframework.com/docs) in practice**: 225 PRDs, 64+ sprints, 8,000+ tests, 91% coverage (trw-memory). The dogfooding is the proof — this codebase was built by AI agents using TRW.
+**[Knowledge compounding](https://trwframework.com/docs) in practice**: 336 PRDs, 90 sprints, 9,200+ tests, 90% coverage. The dogfooding is the proof — this codebase was built by AI agents using TRW.
 
 ## Quick Start
 
@@ -117,18 +117,17 @@ Specialized sub-agents for Agent Teams — parallel execution with coordinated h
 
 TRW implements a structured execution lifecycle: **RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER** with phase gates, build checks, adversarial audits, and delivery ceremony. See [FRAMEWORK.md](FRAMEWORK.md) for the full specification, or read the [framework overview at trwframework.com/docs/framework](https://trwframework.com/docs/framework).
 
-## Configuration
+## CLI Commands
 
-Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`. Full configuration reference at [trwframework.com/docs/configuration](https://trwframework.com/docs/configuration).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TRW_DEBUG` | `false` | Enable debug logging to `.trw/logs/` |
-| `TRW_TELEMETRY_ENABLED` | `true` | Tool invocation events (kill switch) |
-| `TRW_SOURCE_PACKAGE_NAME` | auto | Python package name for `--cov=` |
-| `TRW_LLM_ENABLED` | `true` | Allow LLM calls via anthropic SDK |
-| `TRW_LEARNING_PROMOTION_IMPACT` | `0.7` | Min impact for CLAUDE.md promotion |
-| `TRW_OBSERVATION_MASKING` | `true` | Reduce verbosity in long sessions |
+```bash
+trw-mcp init-project .                # Deploy TRW to a project
+trw-mcp update-project .              # Update existing installation
+trw-mcp check-instructions .          # Validate instruction-tool parity (exit 1 on mismatch)
+trw-mcp audit .                       # Audit TRW configuration
+trw-mcp config-reference              # Print all TRW_ environment variables
+trw-mcp export --format json          # Export learnings
+trw-mcp uninstall .                   # Remove TRW from a project
+```
 
 ## Development
 
