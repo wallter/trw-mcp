@@ -19,10 +19,10 @@ from __future__ import annotations
 
 from importlib.resources import files as _pkg_files
 from pathlib import Path
-from typing import Any
 
 import structlog
 
+from trw_mcp.bootstrap._cursor import HookHandlerEntry
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
@@ -113,7 +113,7 @@ _TRW_COMMANDS: list[tuple[str, str]] = [
 # Hook events and scripts (full 8-event IDE set)
 # ---------------------------------------------------------------------------
 
-_IDE_HOOK_EVENTS: dict[str, list[dict[str, Any]]] = {
+_IDE_HOOK_EVENTS: dict[str, list[HookHandlerEntry]] = {
     "sessionStart": [
         {
             "command": ".cursor/hooks/trw-session-start.sh",
@@ -252,10 +252,10 @@ def generate_cursor_ide_subagents(
         rel = f".cursor/agents/{name}.md"
         (result["updated"] if existed else result["created"]).append(rel)
 
-    logger.debug(
+    logger.info(
         "generate_cursor_ide_subagents",
-        created=result["created"],
-        updated=result["updated"],
+        created=len(result["created"]),
+        updated=len(result["updated"]),
     )
     return result
 
@@ -311,10 +311,10 @@ def generate_cursor_ide_commands(
         rel = f".cursor/commands/{cmd_name}.md"
         (result["updated"] if existed else result["created"]).append(rel)
 
-    logger.debug(
+    logger.info(
         "generate_cursor_ide_commands",
-        created=result["created"],
-        updated=result["updated"],
+        created=len(result["created"]),
+        updated=len(result["updated"]),
     )
     return result
 
@@ -402,9 +402,9 @@ def generate_cursor_ide_hooks(
     result["updated"].extend(merge_result.get("updated") or [])
     result["preserved"].extend(merge_result.get("preserved") or [])
 
-    logger.debug(
+    logger.info(
         "generate_cursor_ide_hooks",
-        created=result["created"],
-        updated=result["updated"],
+        created=len(result["created"]),
+        updated=len(result["updated"]),
     )
     return result

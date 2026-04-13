@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Mapping
 
 import structlog
 
 from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict
+from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._utils import (
     _minimal_claude_md,
@@ -39,14 +41,22 @@ _SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
 
 def _absorb_sub_result(
     parent: dict[str, list[str]],
-    child: dict[str, list[str]],
+    child: Mapping[str, object],
 ) -> None:
-    """Merge a sub-result payload into *parent* for all standard keys."""
-    raw = dict(child)
+    """Merge a sub-result payload into *parent* for all standard keys.
+
+    Accepts both ``dict[str, list[str]]`` (from copilot/gemini generators)
+    and ``BootstrapFileResult`` TypedDicts (from cursor-ide/opencode generators).
+    The ``Mapping[str, object]`` signature satisfies mypy for both caller types
+    via contravariance; the ``isinstance`` guard ensures runtime correctness.
+
+    Only keys in ``_SUB_RESULT_KEYS`` are merged; unknown keys are ignored.
+    """
     for key in _SUB_RESULT_KEYS:
-        items = raw.get(key)
-        if items:
-            parent.setdefault(key, []).extend(items)
+        items = child.get(key)
+        if not isinstance(items, list):
+            continue
+        parent.setdefault(key, []).extend(items)
 
 
 # ---------------------------------------------------------------------------
@@ -415,11 +425,11 @@ def _update_cursor_artifacts(
     # ------------------------------------------------------------------
     try:
         mcp_result = generate_cursor_mcp_config(target_dir)
-        result["created"].extend(mcp_result.get("created", []))
-        result["updated"].extend(mcp_result.get("updated", []))
-        result.setdefault("errors", []).extend(mcp_result.get("errors", []))
+        _absorb_sub_result(result, mcp_result)
     except Exception as exc:  # justified: fail-open, cursor mcp update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/mcp.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(
+            f".cursor/mcp.json update skipped: {type(exc).__name__}: {exc}"
+        )
 
     # ------------------------------------------------------------------
     # cursor-ide specific steps
@@ -438,52 +448,46 @@ def _update_cursor_artifacts(
             rules_result = generate_cursor_rules_mdc(
                 target_dir, trw_section, client_id="cursor-ide"
             )
-            result["created"].extend(rules_result.get("created", []))
-            result["updated"].extend(rules_result.get("updated", []))
-            result.setdefault("errors", []).extend(rules_result.get("errors", []))
+            _absorb_sub_result(result, rules_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
-                f".cursor/rules/trw-ceremony.mdc update skipped: {exc}"
+                f".cursor/rules/trw-ceremony.mdc update skipped: {type(exc).__name__}: {exc}"
             )
 
         # FR03: .cursor/agents/trw-*.md
         try:
             sub_result = generate_cursor_ide_subagents(target_dir)
-            result["created"].extend(sub_result.get("created", []))
-            result["updated"].extend(sub_result.get("updated", []))
+            _absorb_sub_result(result, sub_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
-                f".cursor/agents/ update skipped: {exc}"
+                f".cursor/agents/ update skipped: {type(exc).__name__}: {exc}"
             )
 
         # FR05: .cursor/commands/trw-*.md
         try:
             cmd_result = generate_cursor_ide_commands(target_dir)
-            result["created"].extend(cmd_result.get("created", []))
-            result["updated"].extend(cmd_result.get("updated", []))
+            _absorb_sub_result(result, cmd_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
-                f".cursor/commands/ update skipped: {exc}"
+                f".cursor/commands/ update skipped: {type(exc).__name__}: {exc}"
             )
 
         # FR04: .cursor/skills/<name>/
         try:
             skills_result = generate_cursor_ide_skills(target_dir)
-            result["created"].extend(skills_result.get("created", []))
-            result["updated"].extend(skills_result.get("updated", []))
+            _absorb_sub_result(result, skills_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
-                f".cursor/skills/ update skipped: {exc}"
+                f".cursor/skills/ update skipped: {type(exc).__name__}: {exc}"
             )
 
         # FR08: .cursor/hooks/ (8-event set) + hooks.json
         try:
             hooks_result = generate_cursor_ide_hooks(target_dir)
-            result["created"].extend(hooks_result.get("created", []))
-            result["updated"].extend(hooks_result.get("updated", []))
+            _absorb_sub_result(result, hooks_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
-                f".cursor/hooks/ update skipped: {exc}"
+                f".cursor/hooks/ update skipped: {type(exc).__name__}: {exc}"
             )
 
     # ------------------------------------------------------------------
@@ -513,27 +517,30 @@ def _update_cursor_cli_artifacts(
     # FR03: .cursor/cli.json permissions (also emits TTY reminder via FR08a)
     try:
         cli_result = generate_cursor_cli_config(target_dir)
-        result["created"].extend(cli_result.get("created", []))
-        result["updated"].extend(cli_result.get("updated", []))
+        _absorb_sub_result(result, cli_result)
     except Exception as exc:  # justified: fail-open, cli.json update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/cli.json update skipped: {exc}")
+        result.setdefault("warnings", []).append(
+            f".cursor/cli.json update skipped: {type(exc).__name__}: {exc}"
+        )
 
     # FR04: AGENTS.md with TRW sentinel block
     try:
         trw_section = render_agents_trw_section()
         agents_result = generate_cursor_cli_agents_md(target_dir, trw_section)
-        result["created"].extend(agents_result.get("created", []))
-        result["updated"].extend(agents_result.get("updated", []))
+        _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
-        result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) update skipped: {exc}")
+        result.setdefault("warnings", []).append(
+            f"AGENTS.md (cursor-cli) update skipped: {type(exc).__name__}: {exc}"
+        )
 
     # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
     try:
         hooks_result = generate_cursor_cli_hooks(target_dir)
-        result["created"].extend(hooks_result.get("created", []))
-        result["updated"].extend(hooks_result.get("updated", []))
+        _absorb_sub_result(result, hooks_result)
     except Exception as exc:  # justified: fail-open, hooks.json update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/hooks.json (cursor-cli) update skipped: {exc}")
+        result.setdefault("warnings", []).append(
+            f".cursor/hooks.json (cursor-cli) update skipped: {type(exc).__name__}: {exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
