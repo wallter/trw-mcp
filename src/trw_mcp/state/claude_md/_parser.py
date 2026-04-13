@@ -70,6 +70,10 @@ def load_claude_md_template(trw_dir: Path) -> str:
 def render_template(template: str, context: dict[str, str]) -> str:
     """Replace ``{{placeholder}}`` tokens and collapse empty sections.
 
+    Every ``{{word}}`` token present in *template* is replaced. Keys absent
+    from *context* default to ``""`` so newer templates stay compatible with
+    older ``trw-mcp`` installs (and vice versa) without failing sync.
+
     Args:
         template: Template string with ``{{key}}`` placeholders.
         context: Mapping of placeholder names to rendered content.
@@ -78,10 +82,13 @@ def render_template(template: str, context: dict[str, str]) -> str:
         Rendered markdown string with empty sections collapsed.
 
     Raises:
-        StateError: If any ``{{placeholder}}`` tokens remain after replacement.
+        StateError: If any ``{{placeholder}}`` tokens remain after replacement
+            (e.g. a substituted value introduced a new ``{{...}}`` token).
     """
+    keys_in_template = set(re.findall(r"\{\{(\w+)\}\}", template))
+    merged: dict[str, str] = {key: context.get(key, "") for key in keys_in_template}
     result = template
-    for key, value in context.items():
+    for key, value in merged.items():
         result = result.replace("{{" + key + "}}", value)
     # Collapse runs of 3+ consecutive blank lines to 2
     while "\n\n\n" in result:
