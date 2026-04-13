@@ -27,6 +27,37 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _is_user_customized_trw_entry(existing: object) -> bool:
+    """Decide whether to preserve a pre-existing ``trw`` MCP server entry.
+
+    Returns True when the entry shows signs of intentional user customization:
+      - ``command`` is an absolute path AND that path exists on disk
+        (typical dev-repo pattern: pin to a specific venv's binary)
+      - the entry has fields beyond ``command`` and ``args`` (e.g. ``env``,
+        ``cwd`` — user has added them)
+
+    Returns False for default-shaped entries (``command="trw-mcp"`` with
+    just ``args=["--debug"]``) — those are TRW-managed and safe to refresh.
+
+    Conservative heuristic: when in doubt, prefer preservation over rewrite
+    so we never silently break a working dev configuration.
+    """
+    if not isinstance(existing, dict):
+        return False
+    cmd = existing.get("command")
+    if isinstance(cmd, str) and cmd.startswith("/") and Path(cmd).is_file():
+        return True
+    # Lists (e.g. [python, -m, trw_mcp.server]) with absolute-path interpreter
+    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str):
+        if cmd[0].startswith("/") and Path(cmd[0]).is_file():
+            return True
+    # Extra keys beyond the canonical {command, args} → user added something
+    extra_keys = set(existing.keys()) - {"command", "args"}
+    if extra_keys:
+        return True
+    return False
+
+
 def _merge_mcp_json(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -37,6 +68,14 @@ def _merge_mcp_json(
     Reads existing .mcp.json, merges the ``trw`` key into ``mcpServers``
     while preserving all other user-configured servers, and writes back.
     Creates the file from scratch if it doesn't exist.
+
+    User-customized ``trw`` entries are preserved (PRD-FIX-076 follow-up):
+    if the existing ``command`` is an absolute path to an extant file, or
+    the entry has fields beyond ``command`` and ``args``, the entry is left
+    alone. This matches the dev-repo pattern where the user pins
+    ``command`` to a specific venv binary (e.g.
+    ``/path/to/repo/trw-mcp/.venv/bin/trw-mcp``) so the right interpreter is
+    always used regardless of PATH ordering.
 
     Always generates stdio format entries (PRD-CORE-070-FR04). HTTP
     transport is handled internally by the server's auto-start + proxy.
@@ -56,6 +95,25 @@ def _merge_mcp_json(
         if not isinstance(servers, dict):
             servers = {}
         existed = "trw" in servers
+        existing_entry = servers.get("trw")
+        if existed and _is_user_customized_trw_entry(existing_entry):
+            # Preserve the user's pinned/customized entry — log and return.
+            # Always use the explicit "preserved" key (not _result_action_key)
+            # so the dispatcher classifies the action as preservation, not
+            # an update. Falls back to "updated" only if "preserved" is
+            # absent from the result dict (legacy callers).
+            preservation_key = "preserved" if "preserved" in result else _result_action_key(result)
+            result[preservation_key].append(f"{mcp_path} (preserved user-customized trw entry)")
+            if on_progress:
+                on_progress("Preserved", str(mcp_path))
+            logger.info(
+                "mcp_config_preserved",
+                reason="user_customized_command",
+                tool="trw",
+                config_path=str(mcp_path),
+                existing_command=existing_entry.get("command") if isinstance(existing_entry, dict) else None,
+            )
+            return
         servers["trw"] = trw_entry
         data["mcpServers"] = servers
         try:
@@ -69,8 +127,8 @@ def _merge_mcp_json(
                 if on_progress:
                     on_progress("Updated", str(mcp_path))
                 logger.info(
-                    "mcp_config_skipped",
-                    reason="already_configured",
+                    "mcp_config_updated",
+                    reason="default_entry_refreshed",
                     tool="trw",
                     config_path=str(mcp_path),
                 )
@@ -80,6 +138,7 @@ def _merge_mcp_json(
                     on_progress("Created", str(mcp_path))
                 logger.info(
                     "mcp_config_updated",
+                    reason="entry_added",
                     tool="trw",
                     config_path=str(mcp_path),
                 )

@@ -102,9 +102,29 @@ class TestIdempotency:
         # All files should be skipped, no new creates (dirs already exist too)
         assert len(result2["skipped"]) > 0
         # Dirs don't report as created when they already exist.
-        # .mcp.json (merge) and installer-meta.yaml (always-write) are expected.
+        # Always-write files: framework-owned templates that are refreshed on
+        # every init. Includes cursor-managed templates added in Sprint 91
+        # (PRD-CORE-136 / PRD-CORE-137) — subagents, commands, skills mirror,
+        # rules MDC, and hooks-related artifacts are re-rendered from bundled
+        # templates on each init for idempotency. _extend_result(include_updated
+        # =True) merges updated→created in the init flow, so re-renders show up
+        # here.
         file_creates = [c for c in result2["created"] if not c.endswith("/")]
-        expected_always_write = {".mcp.json", "installer-meta.yaml", "managed-artifacts.yaml", "VERSION.yaml"}
+        expected_always_write = {
+            ".mcp.json",
+            "installer-meta.yaml",
+            "managed-artifacts.yaml",
+            "VERSION.yaml",
+            # Cursor-managed templates (Sprint 91 — PRD-CORE-136 / 137)
+            ".cursor/rules/",
+            ".cursor/agents/",
+            ".cursor/commands/",
+            ".cursor/skills/",
+            ".cursor/hooks/",
+            ".cursor/hooks.json",
+            ".cursor/cli.json",
+            "AGENTS.md",
+        }
         unexpected = [c for c in file_creates if not any(e in c for e in expected_always_write)]
         assert len(unexpected) == 0, f"Unexpected creates: {unexpected}"
 
@@ -1798,6 +1818,31 @@ class TestPrefixMigration:
 @pytest.mark.unit
 class TestIDEDetection:
     """Tests for detect_ide, detect_installed_clis, and resolve_ide_targets."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_path_binaries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Clear cursor/cursor-agent from PATH lookup so detect_ide tests are
+        deterministic regardless of the developer's installed IDEs.
+
+        Sprint 91 added shutil.which("cursor") + shutil.which("cursor-agent")
+        to detect_ide so a globally-installed Cursor IDE/CLI doesn't leak
+        into these unit tests' tmp_path fixtures. Also blocks CURSOR_API_KEY
+        / CURSOR_TRACE_ID env-var leakage.
+        """
+        import shutil as _shutil
+        from trw_mcp.bootstrap import _utils
+
+        original_which = _shutil.which
+
+        def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
+            if cmd in {"cursor", "cursor-agent"}:
+                return None
+            return original_which(cmd, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
+        monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
+        monkeypatch.delenv("CURSOR_SESSION_ID", raising=False)
+        monkeypatch.delenv("CURSOR_API_KEY", raising=False)
 
     def test_fr08_detect_claude_code(self, tmp_path: Path) -> None:
         (tmp_path / ".claude").mkdir()
