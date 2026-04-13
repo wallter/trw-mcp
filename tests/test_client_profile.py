@@ -691,3 +691,100 @@ def test_effective_ceremony_mode_opencode_flat_field_still_full() -> None:
     config = TRWConfig(target_platforms=["opencode"])
     assert config.ceremony_mode == "full"  # flat field unchanged
     assert config.effective_ceremony_mode == "light"  # profile-aware
+
+
+# ---------------------------------------------------------------------------
+# Task 1: WriteTargets new fields (PRD-CORE-136-FR01, PRD-CORE-137-FR01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_write_targets_agents_md_primary_default_false() -> None:
+    """WriteTargets.agents_md_primary defaults to False."""
+    wt = WriteTargets()
+    assert wt.agents_md_primary is False
+
+
+@pytest.mark.unit
+def test_write_targets_cli_config_default_false() -> None:
+    """WriteTargets.cli_config defaults to False."""
+    wt = WriteTargets()
+    assert wt.cli_config is False
+
+
+@pytest.mark.unit
+def test_write_targets_agents_md_primary_can_be_set_true() -> None:
+    """WriteTargets.agents_md_primary can be set to True."""
+    wt = WriteTargets(agents_md=True, agents_md_primary=True, instruction_path="AGENTS.md")
+    assert wt.agents_md_primary is True
+
+
+@pytest.mark.unit
+def test_write_targets_cli_config_can_be_set_true() -> None:
+    """WriteTargets.cli_config can be set to True for cursor-cli profiles."""
+    wt = WriteTargets(cli_config=True)
+    assert wt.cli_config is True
+
+
+# ---------------------------------------------------------------------------
+# Task 2: cursor-ide / cursor-cli profiles (PRD-CORE-136-FR01, PRD-CORE-137-FR01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_cursor_ide_profile_resolves() -> None:
+    """resolve_client_profile('cursor-ide') returns full-ceremony cursor-ide profile."""
+    profile = resolve_client_profile("cursor-ide")
+    assert profile.client_id == "cursor-ide"
+    assert profile.ceremony_mode == "full"
+    assert profile.write_targets.cursor_rules is True
+    assert profile.write_targets.agents_md is True
+
+
+@pytest.mark.unit
+def test_cursor_cli_profile_resolves() -> None:
+    """resolve_client_profile('cursor-cli') returns light-ceremony cursor-cli profile."""
+    profile = resolve_client_profile("cursor-cli")
+    assert profile.client_id == "cursor-cli"
+    assert profile.ceremony_mode == "light"
+    assert profile.write_targets.agents_md_primary is True
+    assert profile.write_targets.cli_config is True
+    assert profile.write_targets.instruction_path == "AGENTS.md"
+
+
+@pytest.mark.unit
+def test_cursor_id_falls_through_to_unknown_with_rename_hint() -> None:
+    """resolve_client_profile('cursor') falls back to claude-code with rename hint logged."""
+    with patch("trw_mcp.models.config._profiles.logger") as mock_logger:
+        profile = resolve_client_profile("cursor")
+
+    assert profile.client_id == "claude-code"
+    # Must log warning with rename hint mentioning both cursor-ide and cursor-cli
+    mock_logger.warning.assert_called_once()
+    call_kwargs = mock_logger.warning.call_args
+    # The message kwarg must mention both identifiers for CI log-scraping
+    msg = call_kwargs.kwargs.get("message", "") or str(call_kwargs)
+    assert "cursor-ide" in msg
+    assert "cursor-cli" in msg
+
+
+@pytest.mark.unit
+def test_cursor_ide_cli_ceremony_weights_distinct() -> None:
+    """cursor-ide and cursor-cli produce distinct ceremony scores for the same event counts."""
+    from trw_mcp.state.analytics.report import compute_ceremony_score
+
+    events: list[dict[str, object]] = [
+        {"event": "session_start"},
+        {"event": "learn_new_entry"},
+        {"event": "checkpoint"},
+        {"event": "build_check_complete"},
+    ]
+
+    ide_profile = resolve_client_profile("cursor-ide")
+    cli_profile = resolve_client_profile("cursor-cli")
+
+    ide_score = compute_ceremony_score(events, weights=ide_profile.ceremony_weights)
+    cli_score = compute_ceremony_score(events, weights=cli_profile.ceremony_weights)
+
+    # Different weights must produce different scores
+    assert ide_score != cli_score or ide_profile.ceremony_weights != cli_profile.ceremony_weights

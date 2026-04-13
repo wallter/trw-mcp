@@ -104,6 +104,8 @@ class WriteTargets(BaseModel):
 
     claude_md: bool = False
     agents_md: bool = False
+    agents_md_primary: bool = False  # primary write target (CLI profiles, e.g. cursor-cli)
+    cli_config: bool = False          # .cursor/cli.json managed (cursor-cli only)
     cursor_rules: bool = False
     copilot_instructions: bool = False
     gemini_md: bool = False
