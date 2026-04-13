@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 from unittest.mock import MagicMock, patch
 
 
@@ -76,6 +78,16 @@ def test_puller_default_timeout() -> None:
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-test")
     assert puller._timeout == 5.0
+
+
+def test_puller_warns_on_insecure_non_local_http_url() -> None:
+    """Non-local plain HTTP backends emit an advisory security warning once."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    with patch("trw_mcp.sync.pull.logger.warning") as mock_warning:
+        SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-test")
+
+    mock_warning.assert_called_once_with("sync_pull_insecure_url", url="http://example.com")
 
 
 def test_pull_sends_client_id_and_logs_structured_events() -> None:
@@ -165,6 +177,32 @@ def test_pull_not_modified_returns_distinct_result() -> None:
     assert result is not None
     assert result.not_modified is True
     assert result.status_code == 304
+
+
+def test_sync_modules_follow_structlog_conventions() -> None:
+    """Sync modules keep the established structlog naming/keyword conventions."""
+    import trw_mcp.sync.cache as cache_module
+    import trw_mcp.sync.client as client_module
+    import trw_mcp.sync.pull as pull_module
+
+    for module in (cache_module, client_module, pull_module):
+        source = inspect.getsource(module)
+        assert "structlog.get_logger(__name__)" in source
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Attribute):
+                continue
+            if not isinstance(node.func.value, ast.Name) or node.func.value.id != "logger":
+                continue
+            if node.func.attr not in {"debug", "info", "warning", "exception"}:
+                continue
+            assert all(keyword.arg != "event" for keyword in node.keywords)
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                event_name = node.args[0].value
+                assert event_name == event_name.lower()
+                assert "-" not in event_name
 
 
 def test_merge_team_learnings_inserts_team_sync_entries(tmp_path) -> None:
