@@ -146,6 +146,8 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     embeddings_backfill: dict[str, int]
+    # PRD-INFRA-068 (C3): Memory health dashboard
+    memory_health: dict[str, object]
 
 
 class RunReportResultDict(TypedDict, total=False):
@@ -263,6 +265,12 @@ class DeliverResultDict(TypedDict, total=False):
     deferred_steps: int
     # PRD-CORE-125 FR05: Self-reflection message about learnings
     learning_reflection: str
+    # PRD-INFRA-067 (C2): Integrity-on-delivery probe result
+    # Shape: {"ok": bool, "detail": str, "db_path": str, "checked_at": str}
+    db_integrity: dict[str, object]
+    # PRD-INFRA-068 (C3): Memory health dashboard — surfaced here so clients
+    # can report health when deliver is a session's last action.
+    memory_health: dict[str, object]
 
 
 class ToolEventDataDict(TypedDict, total=False):
