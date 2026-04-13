@@ -13,7 +13,7 @@ from typing import TypeVar
 
 import structlog
 
-from trw_mcp.server._app import _middleware_list, mcp
+from trw_mcp.server._app import mcp
 
 logger = structlog.get_logger(__name__)
 _AsyncResultT = TypeVar("_AsyncResultT")
@@ -114,13 +114,6 @@ def _register_tools() -> None:
     register_template_resources(mcp)
 
     register_aaref_prompts(mcp)
-
-    from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
-
-    for mw in _middleware_list:
-        if isinstance(mw, ProgressiveDisclosureMiddleware):
-            set_progressive_middleware(mw)
-            break
 
     # PRD-CORE-125-FR02: Apply tool exposure filter after all tools are registered.
     _apply_tool_exposure_filter()
