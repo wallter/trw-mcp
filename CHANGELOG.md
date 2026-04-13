@@ -4,6 +4,26 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-04-12
+
+### Added
+
+- **Instruction-tool manifest sync (PRD-CORE-135)** — ensures instruction files only describe tools actually exposed in the current `ClientProfile`, preventing agents from entering infinite retry loops calling ghost tools
+  - `TOOL_DESCRIPTIONS` canonical mapping of all 25 `trw_*` tools with compile-time assertion against `TOOL_PRESETS`
+  - `render_tool_list()` conditionally renders tool descriptions filtered by `exposed_tools` set
+  - `validate_instruction_manifest()` finds `trw_*` tool mentions not in the exposed set (ignores non-tool `trw_` identifiers like `trw_dir`)
+  - `check_instruction_tool_parity()` delivery gate R-08 — soft warning when AGENTS.md mentions unexposed tools
+  - `trw-mcp check-instructions` CLI command — scans AGENTS.md/CLAUDE.md, exits 1 on mismatches
+  - `ToolEntry` NamedTuple for structured tool iteration
+  - `resolve_exposed_tools()` returns `frozenset[str]` for immutability
+  - `_check_instructions_core()` extracted for testability without `sys.exit()`
+  - 47 tests covering all 3 FRs with parametrized edge cases
+
+### Fixed
+
+- **AGENTS.md always rendered all tools regardless of exposure mode** — `render_agents_trw_section()` and `render_codex_trw_section()` accepted an `exposed_tools` parameter but it was never passed from the AGENTS.md sync call chain. Now wired through `_sync_agents_md_if_needed()`.
+- **`UnicodeDecodeError` handling** — instruction file reading now catches encoding errors alongside `OSError` (fail-open)
+
 ## [0.41.2] — 2026-04-12
 
 ### Fixed
