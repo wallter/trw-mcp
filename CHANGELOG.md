@@ -4,6 +4,27 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.44.1] — 2026-04-13
+
+### Fixed
+
+- **`update-project --ide <name>` no longer narrows `target_platforms`** in `.trw/config.yaml`. Prior behavior unconditionally replaced the user's full multi-platform list with a single-element list containing only the override IDE — destroying multi-platform dev configurations the moment a user ran a focused install. The new contract is **augmentation, never narrowing**:
+  - Existing entries are preserved.
+  - New `--ide <name>` targets are appended in original order.
+  - Duplicates are deduplicated (first occurrence wins).
+  - When the merge is a no-op, the file is preserved (not rewritten).
+  - All other config fields (`mcp_*`, `installation_id`, `embeddings_*`, `platform_*`, etc.) are preserved.
+- **Legacy `cursor` profile identifier silently migrated to `cursor-ide`** during config refresh. Sprint 91 (PRD-CORE-136 / PRD-CORE-137) split `cursor` into `cursor-ide` + `cursor-cli` and removed the bare identifier; users upgrading from pre-0.44 versions had `target_platforms: [..., cursor, ...]` in their config that would fall through to the unknown-ID warning + claude-code fallback. The new `_LEGACY_PROFILE_RENAMES` table in `bootstrap/_ide_targets.py` migrates the entry on the next `update-project` call.
+- **Error handling narrowed** in `_update_config_target_platforms`: catches `(OSError, yaml.YAMLError)` explicitly instead of broad `Exception`. Warning string includes exception class name for debugging.
+
+### Added
+
+- **Structured logging** for the augmentation path:
+  - `config_target_platforms_augmented` (info) on successful merge with `previous` / `current` / `added` / `requested` fields
+  - `config_target_platforms_unchanged` (debug) when the merge is a no-op
+  - `config_target_platforms_update_failed` (warning) on YAML / I/O error with `error_class` + `error` fields
+- **13 new tests** in `tests/test_target_platforms_augmentation.py` covering: single-IDE override does not narrow, original ordering preserved, new IDE appended, multiple new IDEs in order, legacy `cursor` migration, dedupe when both old + new exist, other config fields preserved, existing duplicates collapsed, no-op detection, missing-config silent return, malformed YAML warning, augmentation log emission, unchanged log emission.
+
 ## [0.44.0] — 2026-04-13
 
 ### Breaking Changes
