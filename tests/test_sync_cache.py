@@ -6,6 +6,7 @@ import math
 import json
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -47,6 +48,21 @@ def test_cache_expired_returns_none(tmp_path: Path) -> None:
 
     # TTL=0 means cache is always expired
     assert cache.get_bandit_params() is None
+
+
+def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
+    """Expired reads emit the structured expiration event with age and TTL fields."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
+    cache.update({"bandit_params": {"L-1": 1.0}}, etag="old")
+
+    with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
+        assert cache.get_bandit_params() is None
+
+    expired_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_expired",))
+    assert expired_call.kwargs["age_seconds"] >= 0
+    assert expired_call.kwargs["ttl_seconds"] == 0
 
 
 def test_cache_missing_returns_none(tmp_path: Path) -> None:
@@ -139,6 +155,62 @@ def test_cache_etag_none_when_expired(tmp_path: Path) -> None:
     assert cache.etag is None
 
 
+def test_cache_update_logs_payload_size_and_etag(tmp_path: Path) -> None:
+    """Successful writes emit the structured observability fields required by the PRD."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+
+    with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
+        cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+
+    mock_debug.assert_called_once()
+    args, kwargs = mock_debug.call_args
+    assert args == ("intel_cache_write_success",)
+    assert kwargs["event_type"] == "intel_cache_write_success"
+    assert kwargs["etag"] == "etag-v1"
+    assert kwargs["payload_size_bytes"] > 0
+    assert kwargs["outcome"] == "success"
+
+
+def test_cache_write_error_logs_error_type(tmp_path: Path) -> None:
+    """Write failures include a typed error for troubleshooting."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+
+    with (
+        patch("trw_mcp.sync.cache.tempfile.mkstemp", side_effect=PermissionError("denied")),
+        patch("trw_mcp.sync.cache.logger.warning") as mock_warning,
+    ):
+        cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+
+    mock_warning.assert_called_once()
+    args, kwargs = mock_warning.call_args
+    assert args == ("intel_cache_write_error",)
+    assert kwargs["event_type"] == "intel_cache_write_error"
+    assert kwargs["error_type"] == "PermissionError"
+    assert kwargs["outcome"] == "error"
+    assert kwargs["exc_info"] is True
+
+
+def test_cache_read_logs_freshness_metadata(tmp_path: Path) -> None:
+    """Fresh reads emit age/freshness metadata for observability."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+
+    with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
+        params = cache.get_bandit_params()
+
+    assert params == {"L-1": 1.0}
+    read_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_read",))
+    assert read_call.kwargs["event_type"] == "intel_cache_read"
+    assert read_call.kwargs["is_fresh"] is True
+    assert read_call.kwargs["age_seconds"] >= 0
+
+
 def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
     """Large cache writes stay within the PRD latency budget."""
     from trw_mcp.sync.cache import IntelligenceCache
@@ -213,6 +285,25 @@ def test_cache_corrupt_file_returns_none(tmp_path: Path) -> None:
     assert cache.etag is None
 
 
+def test_cache_corrupt_file_logs_file_size_and_error_type(tmp_path: Path) -> None:
+    """Corrupt cache reads expose file-size and exception type in the warning event."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache_file = tmp_path / "intel-cache.json"
+    cache_file.write_text("NOT VALID JSON {{{{")
+
+    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
+        assert cache.get_bandit_params() is None
+
+    args, kwargs = mock_warning.call_args
+    assert args == ("intel_cache_corrupt",)
+    assert kwargs["event_type"] == "intel_cache_corrupt"
+    assert kwargs["error_type"] == "JSONDecodeError"
+    assert kwargs["file_size_bytes"] == cache_file.stat().st_size
+    assert kwargs["exc_info"] is True
+
+
 def test_cache_file_permissions(tmp_path: Path) -> None:
     """Cache file is written with restricted permissions (0o600)."""
     from trw_mcp.sync.cache import IntelligenceCache
@@ -234,3 +325,62 @@ def test_cache_etag_none_when_empty_string(tmp_path: Path) -> None:
     cache.update({"bandit_params": {}})  # No etag provided
 
     assert cache.etag is None
+
+
+def test_cache_validation_error_logged_for_missing_requested_field(tmp_path: Path) -> None:
+    """Missing requested sections emit a structured validation error instead of crashing."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache.update({"synthesis_overlay": {"cluster_count": 1}}, etag="etag-v1")
+
+    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
+        assert cache.get_bandit_params() is None
+
+    args, kwargs = mock_warning.call_args
+    assert args == ("intel_cache_validation_error",)
+    assert kwargs["event_type"] == "intel_cache_validation_error"
+    assert kwargs["field_name"] == "bandit_params"
+    assert kwargs["reason"] == "missing"
+
+
+def test_cache_validation_error_logged_for_invalid_meta(tmp_path: Path) -> None:
+    """Invalid metadata structures are rejected with a precise field-level validation event."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache_file = tmp_path / "intel-cache.json"
+    cache_file.write_text(
+        json.dumps(
+            {
+                "bandit_params": {"L-1": 1.0},
+                "_meta": {"etag": "e", "ttl_seconds": 3600, "updated_at": "not-an-iso8601-timestamp"},
+            }
+        )
+    )
+
+    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
+        assert cache.get_bandit_params() is None
+
+    args, kwargs = mock_warning.call_args
+    assert args == ("intel_cache_validation_error",)
+    assert kwargs["event_type"] == "intel_cache_validation_error"
+    assert kwargs["field_name"] == "_meta.updated_at"
+    assert kwargs["reason"] == "invalid_iso8601"
+
+
+def test_cache_validation_error_logged_for_invalid_requested_field_type(tmp_path: Path) -> None:
+    """Requested sections with the wrong type emit validation errors instead of silent None."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache.update({"bandit_params": ["invalid"]}, etag="etag-v1")
+
+    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
+        assert cache.get_bandit_params() is None
+
+    args, kwargs = mock_warning.call_args
+    assert args == ("intel_cache_validation_error",)
+    assert kwargs["event_type"] == "intel_cache_validation_error"
+    assert kwargs["field_name"] == "bandit_params"
+    assert kwargs["reason"] == "invalid_type"
