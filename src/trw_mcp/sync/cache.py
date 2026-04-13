@@ -118,9 +118,9 @@ class IntelligenceCache:
     def etag(self) -> str | None:
         """Return stored ETag, or None if cache invalid."""
         try:
-            if not self._cache_path.exists():
+            raw = self._read_cache()
+            if raw is None:
                 return None
-            raw = json.loads(self._cache_path.read_text())
             meta = raw.get("_meta", {})
             if not isinstance(meta, dict):
                 return None

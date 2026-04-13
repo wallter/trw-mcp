@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _MIN_HINT_DELAY_SECONDS = 60
-_MAX_HINT_DELAY_SECONDS = 3600
+_MAX_HINT_DELAY_SECONDS = 7200
 _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
 
 
@@ -176,10 +176,13 @@ class BackendSyncClient:
         polling_cap_seconds = self._coerce_positive_number(
             (sync_hints or {}).get("polling_cap_seconds"),
         )
-        delay = float(self._config.sync_interval_seconds)
+        interval_seconds = self._coerce_positive_number((sync_hints or {}).get("interval_seconds"))
+        delay = interval_seconds
+        if delay is None:
+            delay = float(self._config.sync_interval_seconds)
         recommended_at = (sync_hints or {}).get("next_poll_recommended_at")
         parsed_recommended_at = self._parse_sync_hint_timestamp(recommended_at)
-        if parsed_recommended_at is not None:
+        if interval_seconds is None and parsed_recommended_at is not None:
             delay = max(0.0, (parsed_recommended_at - datetime.now(tz=timezone.utc)).total_seconds())
 
         if polling_cap_seconds is not None and delay > 0:
