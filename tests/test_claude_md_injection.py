@@ -46,26 +46,36 @@ class TestRenderTemplateResolvesAllMarkers:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: render_template raises on unreplaced markers
+# Test 2: render_template defaults missing keys (template / binary skew)
 # ---------------------------------------------------------------------------
 
 
-class TestRenderTemplateRaisesOnUnreplacedMarkers:
-    """Given a template with ``{{unknown_key}}`` and a context missing that key,
-    assert StateError is raised with the marker name in the message."""
+class TestRenderTemplateDefaultsMissingKeys:
+    """Placeholders in the template that are absent from *context* become empty."""
 
-    def test_raises_state_error_with_marker_name(self) -> None:
+    def test_missing_key_renders_empty(self) -> None:
         template = "Hello {{name}}, your role is {{unknown_key}}."
         context = {"name": "Bob"}
-        with pytest.raises(StateError, match="unknown_key"):
-            render_template(template, context)
+        result = render_template(template, context)
+        assert result == "Hello Bob, your role is ."
+        assert "{{" not in result
 
-    def test_lists_all_missing_markers(self) -> None:
+    def test_all_missing_becomes_empty_tokens(self) -> None:
         template = "{{alpha}} and {{beta}} are missing"
         context: dict[str, str] = {}
-        with pytest.raises(StateError, match="alpha") as exc_info:
+        result = render_template(template, context)
+        # Both placeholders empty leaves the literal `` and `` between them.
+        assert result == " and  are missing"
+
+
+class TestRenderTemplateRaisesOnInjectedMarkers:
+    """Substitution values must not introduce new ``{{word}}`` tokens."""
+
+    def test_raises_when_value_contains_placeholder(self) -> None:
+        template = "x {{name}} y"
+        context = {"name": "{{evil}}"}
+        with pytest.raises(StateError, match="evil"):
             render_template(template, context)
-        assert "beta" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
