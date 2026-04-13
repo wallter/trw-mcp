@@ -54,7 +54,7 @@ def _load_recall_intel_cache(trw_dir: Path) -> _IntelCacheProtocol | None:
             ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
         )
         return cast("_IntelCacheProtocol", cache) if cache.get_bandit_params() is not None else None
-    except Exception:  # noqa: S110 — justified: fail-open, intel cache wiring is optional
+    except Exception:  # justified: fail-open, intel cache wiring is optional
         return None
 
 
@@ -84,7 +84,7 @@ def build_recall_context(
         )
         if git_result.returncode == 0:
             modified_files = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
-    except Exception:  # noqa: S110  # fail-open for git
+    except Exception:  # noqa: S110  # justified: fail-open, git probing is best-effort
         pass
 
     inferred_domains = infer_domains(file_paths=modified_files, query=query)
@@ -99,7 +99,7 @@ def build_recall_context(
         profile = config.client_profile
         client_profile = profile.client_id if profile else ""
         model_family = getattr(config, "model_family", "") or ""
-    except Exception:  # noqa: S110 — justified: fail-open, config auto-detection is best-effort
+    except Exception:  # noqa: S110  # justified: fail-open, config auto-detection is best-effort
         pass
 
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
@@ -116,7 +116,7 @@ def build_recall_context(
                 raw_ids = kr_data.get("learning_ids", [])
                 if isinstance(raw_ids, list):
                     prd_knowledge_ids = {str(lid) for lid in raw_ids}
-    except Exception:  # noqa: S110 — justified: fail-open, PRD knowledge ID loading is best-effort
+    except Exception:  # noqa: S110  # justified: fail-open, PRD knowledge ID loading is best-effort
         pass
 
     intel_cache = _load_recall_intel_cache(trw_dir)
@@ -220,7 +220,7 @@ def execute_recall(
     recall_context: RecallContext | None = None
     try:
         recall_context = build_recall_context(trw_dir, query)
-    except Exception:
+    except Exception:  # justified: fail-open, recall context enrichment must not block recall
         logger.debug("recall_context_build_failed", exc_info=True)
 
     # Search entries via SQLite adapter
@@ -278,15 +278,12 @@ def execute_recall(
 
     from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
 
-    tokens_used = 0
-    tokens_truncated = False
-    if token_budget is not None and ranked_learnings:
-        ranked_learnings, tokens_used, tokens_truncated = apply_token_budget(
-            ranked_learnings,
-            token_budget,
-        )
-    else:
-        tokens_used = sum(estimate_entry_tokens(entry) for entry in ranked_learnings)
+    ranked_learnings, tokens_used, tokens_truncated = _apply_recall_token_budget(
+        ranked_learnings,
+        token_budget,
+        apply_token_budget=apply_token_budget,
+        estimate_entry_tokens=estimate_entry_tokens,
+    )
 
     # Apply result cap
     if max_results > 0:
@@ -296,32 +293,7 @@ def execute_recall(
     # Log each surfaced learning for telemetry/fatigue detection.
     # Skip compact/wildcard queries (bulk operations, not intentional surfacings).
     if not use_compact:
-        try:
-            log_ranked_selections(
-                trw_dir,
-                ranked_learnings,
-                context_phase=(recall_context.current_phase or "") if recall_context else "",
-                context_domain=sorted(recall_context.inferred_domains) if recall_context else [],
-                context_agent_type=recall_context.client_profile if recall_context else "",
-                context_task_type="recall",
-                context_files_modified=len(recall_context.modified_files) if recall_context else 0,
-            )
-        except (OSError, RuntimeError, ValueError, TypeError):
-            logger.debug("propensity_logging_failed", exc_info=True)
-        try:
-            phase = _detect_surface_phase()
-            for entry in ranked_learnings:
-                lid = str(entry.get("id", ""))
-                if lid:
-                    log_surface_event(
-                        trw_dir,
-                        learning_id=lid,
-                        surface_type="recall",
-                        phase=phase,
-                        files_context=[],  # No file context in base recall; session_start path adds its own
-                    )
-        except Exception:  # justified: fail-open, surface logging must not block recall
-            logger.debug("surface_logging_failed", exc_info=True)
+        _log_recall_surface_events(trw_dir, ranked_learnings, recall_context)
 
     # --- Assertion verification (PRD-CORE-086 FR06) ---
     if not use_compact:
@@ -351,17 +323,7 @@ def execute_recall(
     )
 
     if ultra_compact:
-        return {
-            "learnings": [
-                {
-                    "id": str(entry.get("id", "")),
-                    "summary": _truncate_ultra_compact_summary(str(entry.get("summary", ""))),
-                }
-                for entry in ranked_learnings
-            ],
-            "count": len(ranked_learnings),
-            "ceremony_hint": "Call trw_session_start() first to load prior learnings and active run state.",
-        }
+        return _build_ultra_compact_recall_result(ranked_learnings)
 
     recall_result: RecallResultDict = {
         "query": query,
@@ -379,6 +341,69 @@ def execute_recall(
     }
 
     return recall_result
+
+
+def _apply_recall_token_budget(
+    ranked_learnings: list[dict[str, object]],
+    token_budget: int | None,
+    *,
+    apply_token_budget: Callable[[list[dict[str, object]], int], tuple[list[dict[str, object]], int, bool]],
+    estimate_entry_tokens: Callable[[dict[str, object]], int],
+) -> tuple[list[dict[str, object]], int, bool]:
+    """Apply token-budget trimming when requested."""
+    if token_budget is not None and ranked_learnings:
+        return apply_token_budget(ranked_learnings, token_budget)
+    return ranked_learnings, sum(estimate_entry_tokens(entry) for entry in ranked_learnings), False
+
+
+def _log_recall_surface_events(
+    trw_dir: Path,
+    ranked_learnings: list[dict[str, object]],
+    recall_context: RecallContext | None,
+) -> None:
+    """Emit propensity and surface telemetry for surfaced recall results."""
+    try:
+        log_ranked_selections(
+            trw_dir,
+            ranked_learnings,
+            context_phase=(recall_context.current_phase or "") if recall_context else "",
+            context_domain=sorted(recall_context.inferred_domains) if recall_context else [],
+            context_agent_type=recall_context.client_profile if recall_context else "",
+            context_task_type="recall",
+            context_files_modified=len(recall_context.modified_files) if recall_context else 0,
+        )
+    except (OSError, RuntimeError, ValueError, TypeError):
+        logger.debug("propensity_logging_failed", exc_info=True)
+
+    try:
+        phase = _detect_surface_phase()
+        for entry in ranked_learnings:
+            lid = str(entry.get("id", ""))
+            if lid:
+                log_surface_event(
+                    trw_dir,
+                    learning_id=lid,
+                    surface_type="recall",
+                    phase=phase,
+                    files_context=[],  # No file context in base recall; session_start path adds its own
+                )
+    except Exception:  # justified: fail-open, surface logging must not block recall
+        logger.debug("surface_logging_failed", exc_info=True)
+
+
+def _build_ultra_compact_recall_result(ranked_learnings: list[dict[str, object]]) -> RecallResultDict:
+    """Build the ultra-compact recall response payload."""
+    return {
+        "learnings": [
+            {
+                "id": str(entry.get("id", "")),
+                "summary": _truncate_ultra_compact_summary(str(entry.get("summary", ""))),
+            }
+            for entry in ranked_learnings
+        ],
+        "count": len(ranked_learnings),
+        "ceremony_hint": "Call trw_session_start() first to load prior learnings and active run state.",
+    }
 
 
 def _apply_topic_filter(

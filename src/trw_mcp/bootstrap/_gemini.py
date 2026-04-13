@@ -30,8 +30,8 @@ def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
     Returns:
         Tuple of (command, args) for the MCP server entry.
     """
-    import shutil  # noqa: PLC0415
-    import sys  # noqa: PLC0415
+    import shutil
+    import sys
 
     resolved = shutil.which("trw-mcp")
     if resolved is not None:

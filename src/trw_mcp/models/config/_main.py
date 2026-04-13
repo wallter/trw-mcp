@@ -181,8 +181,8 @@ class TRWConfig(_TRWConfigFields):
                 reader = FileStateReader()
                 state_data = reader.read_yaml(run_path / "meta" / "run.yaml")
                 return str(state_data.get("complexity_class", ""))
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, active run metadata is optional for profile selection
+            structlog.get_logger(__name__).debug("active_run_complexity_unavailable", exc_info=True)
         return None
 
     @property

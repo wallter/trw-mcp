@@ -521,7 +521,7 @@ def generate_cursor_hook_scripts(
         existed = dst.exists()
         if not existed or force:
             shutil.copy2(str(src), str(dst))
-            os.chmod(str(dst), 0o755)
+            os.chmod(str(dst), 0o755)  # noqa: S103 -- hook scripts must be executable
             rel = f".cursor/hooks/{name}"
             if existed:
                 result["updated"].append(rel)

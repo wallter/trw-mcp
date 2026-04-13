@@ -17,7 +17,7 @@ import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import structlog
 
@@ -46,6 +46,12 @@ class _YamlReader(Protocol):
     """Minimal protocol for YAML readers used during index construction."""
 
     def read_yaml(self, path: Path) -> dict[str, object]: ...
+
+
+class _ScoringConfig(Protocol):
+    """Minimal config surface needed by scoring I/O helpers."""
+
+    runs_root: str
 
 
 def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
@@ -127,6 +133,40 @@ def _safe_mtime(path: Path) -> float | None:
         return path.stat().st_mtime
     except OSError:
         return None
+
+
+def _resolve_scoring_config() -> _ScoringConfig:
+    """Resolve scoring config, honoring patched correlation-module hooks in tests."""
+    from trw_mcp.scoring._utils import get_config
+
+    correlation_mod = sys.modules.get("trw_mcp.scoring._correlation")
+    if correlation_mod is not None:
+        patched_get_config = getattr(correlation_mod, "get_config", None)
+        if callable(patched_get_config):
+            return cast("_ScoringConfig", patched_get_config())
+    return cast("_ScoringConfig", get_config())
+
+
+def _read_recent_session_records(events_path: Path) -> list[dict[str, object]]:
+    """Read parseable event records from an events.jsonl file."""
+    import json
+
+    records: list[dict[str, object]] = []
+    try:
+        with events_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+    except OSError:
+        return []
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -436,19 +476,7 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     Returns:
         Timestamp of the most recent session-start event, or None.
     """
-    import json
-
-    from trw_mcp.scoring._utils import TRWConfig, get_config
-
-    correlation_mod = sys.modules.get("trw_mcp.scoring._correlation")
-    if correlation_mod is not None:
-        patched_get_config = getattr(correlation_mod, "get_config", None)
-        if callable(patched_get_config):
-            cfg: TRWConfig = patched_get_config()
-        else:
-            cfg = get_config()
-    else:
-        cfg = get_config()
+    cfg = _resolve_scoring_config()
 
     project_root = trw_dir.parent
     runs_root = project_root / cfg.runs_root
@@ -465,23 +493,7 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     events_files.sort(reverse=True)
 
     for _mtime, events_path in events_files[:5]:
-        records: list[dict[str, object]] = []
-        try:
-            with events_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        record = json.loads(stripped)
-                        if isinstance(record, dict):
-                            records.append(record)
-                    except json.JSONDecodeError:
-                        continue
-        except OSError:
-            continue
-
-        for record in reversed(records):
+        for record in reversed(_read_recent_session_records(events_path)):
             if str(record.get("event", "")) in ("run_init", "session_start"):
                 ts_str = str(record.get("ts", ""))
                 if ts_str:

@@ -281,7 +281,7 @@ def compute_grounding_penalty(content: str, project_root: Path | None) -> tuple[
 
         penalty = 0.9 ** len(hallucinated)
         return penalty, sorted(hallucinated)
-    except Exception:
+    except Exception:  # justified: fail-open, missing filesystem context should not zero traceability scoring
         # Fail open if filesystem access fails
         return 1.0, []
 
@@ -473,6 +473,93 @@ def _extract_traceability_matrix_rows(content: str) -> dict[str, str]:
         rows_by_fr.setdefault(fr_id, []).append(stripped)
 
     return {fr_id: "\n".join(rows) for fr_id, rows in rows_by_fr.items()}
+
+
+def _count_populated_trace_fields(trace_data: object) -> int:
+    """Count populated traceability frontmatter fields."""
+    if not isinstance(trace_data, dict):
+        return 0
+
+    populated_fields = 0
+    for field in ("implements", "depends_on", "enables"):
+        value = trace_data.get(field, [])
+        if isinstance(value, list) and value:
+            populated_fields += 1
+    return populated_fields
+
+
+def _score_traceability_matrix(content: str) -> tuple[float, float]:
+    """Return matrix-score and proof-score for the traceability matrix."""
+    if "Traceability Matrix" not in content:
+        return 0.0, 0.0
+
+    traceability_rows = _extract_traceability_matrix_rows(content)
+    fr_refs = sorted(traceability_rows)
+    if not fr_refs:
+        return 0.0, 0.0
+
+    rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
+    rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
+    rows_with_both = sum(1 for row in traceability_rows.values() if _has_impl_reference(row) and _has_test_reference(row))
+    matrix_score = min((rows_with_impl + rows_with_test) / (2 * len(fr_refs)), 1.0)
+    proof_score = min(rows_with_both / len(fr_refs), 1.0)
+    return matrix_score, proof_score
+
+
+def _score_ai_operational_evidence(content: str) -> tuple[float, float, float]:
+    """Return evaluation, release, and monitoring evidence scores."""
+    ai_evaluation_score = 0.0
+    ai_release_score = 0.0
+    ai_monitoring_score = 0.0
+
+    if "Evaluation Plan" in content:
+        eval_section = content.split("Evaluation Plan")[-1].lower()
+        eval_keywords = [
+            "baseline",
+            "criteria",
+            "threshold",
+            "accuracy",
+            "latency",
+            "reliability",
+            "A/B",
+            "test",
+            "user study",
+            "metric",
+        ]
+        ai_evaluation_score = min(sum(1 for kw in eval_keywords if kw in eval_section) / len(eval_keywords), 1.0)
+
+    if "Release Gate" in content:
+        release_section = content.split("Release Gate")[-1].lower()
+        release_keywords = [
+            "canary",
+            "phased",
+            "rollback",
+            "trigger",
+            "threshold",
+            "error rate",
+            "latency",
+            "confidence",
+        ]
+        ai_release_score = min(sum(1 for kw in release_keywords if kw in release_section) / len(release_keywords), 1.0)
+
+    if "Monitoring Plan" in content:
+        monitoring_section = content.split("Monitoring Plan")[-1].lower()
+        monitoring_keywords = [
+            "primary signal",
+            "target threshold",
+            "escalation",
+            "alert",
+            "drift",
+            "latency",
+            "error rate",
+            "trust",
+        ]
+        ai_monitoring_score = min(
+            sum(1 for kw in monitoring_keywords if kw in monitoring_section) / len(monitoring_keywords),
+            1.0,
+        )
+
+    return ai_evaluation_score, ai_release_score, ai_monitoring_score
 
 
 def _has_assertion_evidence(content: str) -> bool:
@@ -868,97 +955,21 @@ def score_traceability_v2(
     max_score = _config.validation_traceability_weight
 
     # Check traceability fields in frontmatter
-    trace_data = frontmatter.get("traceability", {})
-    trace_fields = ["implements", "depends_on", "enables"]
-    populated_fields = 0
-    if isinstance(trace_data, dict):
-        for field in trace_fields:
-            val = trace_data.get(field, [])
-            if isinstance(val, list) and val:
-                populated_fields += 1
-
-    field_ratio = populated_fields / len(trace_fields)
-
-    # Check traceability matrix content
-    matrix_score = 0.0
-    proof_score = 0.0
-    if "Traceability Matrix" in content:
-        traceability_rows = _extract_traceability_matrix_rows(content)
-        fr_refs = sorted(traceability_rows)
-
-        if fr_refs:
-            rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
-            rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
-            rows_with_both = sum(
-                1
-                for row in traceability_rows.values()
-                if _has_impl_reference(row) and _has_test_reference(row)
-            )
-            matrix_score = min((rows_with_impl + rows_with_test) / (2 * len(fr_refs)), 1.0)
-            proof_score = min(rows_with_both / len(fr_refs), 1.0)
+    populated_fields = _count_populated_trace_fields(frontmatter.get("traceability", {}))
+    field_ratio = populated_fields / 3
+    matrix_score, proof_score = _score_traceability_matrix(content)
 
     behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
     behavior_switch_score = min(behavior_switch_rows / max(len(re.findall(r"FR\d+", content)), 1), 1.0)
 
     # AI/LLM(agentic evaluation, release, monitoring evidence scoring (PRD-QUAL-055)
+    ai_operational_evidence_detected = _is_ai_agentic_prd(frontmatter, content)
+
     ai_evaluation_score = 0.0
     ai_release_score = 0.0
     ai_monitoring_score = 0.0
-    ai_operational_evidence_detected = _is_ai_agentic_prd(frontmatter, content)
-
-    if ai_operational_evidence_detected and content is not None:
-        if "Evaluation Plan" in content:
-            eval_section = content.split("Evaluation Plan")[-1]
-            eval_keywords = [
-                "baseline",
-                "criteria",
-                "threshold",
-                "accuracy",
-                "latency",
-                "reliability",
-                "A/B",
-                "test",
-                "user study",
-                "metric",
-            ]
-            eval_section_lower = eval_section.lower()
-            ai_evaluation_score = min(
-                sum(1 for kw in eval_keywords if kw in eval_section_lower) / len(eval_keywords), 1.0
-            )
-
-        if "Release Gate" in content:
-            release_section = content.split("Release Gate")[-1]
-            release_keywords = [
-                "canary",
-                "phased",
-                "rollback",
-                "trigger",
-                "threshold",
-                "error rate",
-                "latency",
-                "confidence",
-            ]
-            release_section_lower = release_section.lower()
-            ai_release_score = min(
-                sum(1 for kw in release_keywords if kw in release_section_lower) / len(release_keywords), 1.0
-            )
-
-        if "Monitoring Plan" in content:
-            monitoring_section = content.split("Monitoring Plan")[-1]
-            monitoring_keywords = [
-                "primary signal",
-                "target threshold",
-                "escalation",
-                "alert",
-                "drift",
-                "latency",
-                "error rate",
-                "trust",
-            ]
-            monitoring_section_lower = monitoring_section.lower()
-            ai_monitoring_score = min(
-                sum(1 for kw in monitoring_keywords if kw in monitoring_section_lower) / len(monitoring_keywords), 1.0
-            )
+    if ai_operational_evidence_detected:
+        ai_evaluation_score, ai_release_score, ai_monitoring_score = _score_ai_operational_evidence(content)
 
     ai_operational_evidence_score = (ai_evaluation_score + ai_release_score + ai_monitoring_score) / 3
 

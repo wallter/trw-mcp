@@ -40,7 +40,7 @@ def _validate_pull_payload(raw_data: object) -> tuple[dict[str, Any], str, dict[
 
     sync_hints = raw_data.get("sync_hints")
     if not isinstance(sync_hints, dict):
-        raise ValueError("pull response missing valid sync_hints")
+        raise TypeError("pull response missing valid sync_hints")
 
     team_learnings = raw_data.get("team_learnings")
     if not isinstance(team_learnings, list) or any(not isinstance(item, dict) for item in team_learnings):
@@ -191,13 +191,12 @@ class SyncPuller:
             return 0
 
         try:
-            from trw_memory.models.memory import MemoryEntry
+            from trw_memory.storage._row_mapper import row_to_entry
             from trw_memory.sync.conflict import resolve_conflict
             from trw_memory.sync.delta import DeltaTracker
-            from trw_memory.storage._row_mapper import row_to_entry
 
             from trw_mcp.state._memory_connection import get_backend as _get_backend
-        except Exception:
+        except Exception:  # justified: import-guard, optional sync merge dependencies may be unavailable
             logger.warning("sync_team_merge_import_error", event_type="sync_team_merge", outcome="error", exc_info=True)
             return 0
 
@@ -249,7 +248,7 @@ class SyncPuller:
                     inserted += 1
                 else:
                     merged += 1
-            except Exception:  # noqa: PERF203
+            except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
                 logger.warning(
                     "sync_team_merge_entry_error",
                     event_type="sync_team_merge",
@@ -297,7 +296,7 @@ class SyncPuller:
                 client_profile="team_sync",
                 metadata=metadata,
             )
-        except Exception:
+        except Exception:  # justified: boundary, malformed remote payload must fail open for that entry
             logger.warning(
                 "sync_team_merge_invalid_entry",
                 event_type="sync_team_merge",
@@ -347,7 +346,7 @@ class SyncPuller:
         for key, value in raw.items():
             try:
                 result[str(key)] = int(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):  # noqa: PERF203
                 continue
         return result
 

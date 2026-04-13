@@ -17,7 +17,6 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp.state._paths import find_active_run
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_helpers import (
     PRE_AUDIT_SELF_REVIEW_EVENT as PRE_AUDIT_SELF_REVIEW_EVENT,
 )

@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING
 
 import structlog
 from pydantic import BaseModel
+from trw_memory.security.pii import anonymize_installation_id, redact_paths, strip_pii
 
 from trw_mcp.sync.identity import resolve_sync_client_id
-from trw_memory.security.pii import anonymize_installation_id, redact_paths, strip_pii
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry

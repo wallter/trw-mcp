@@ -9,9 +9,9 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-import logging
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 

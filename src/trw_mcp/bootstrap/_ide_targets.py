@@ -16,13 +16,12 @@ Covers:
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 import structlog
 
 from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict
-from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._utils import (
     _minimal_claude_md,

@@ -1,23 +1,23 @@
-"""Shared nudge gate for TRW Cursor hooks — anti-fatigue + adaptive skip + rotation.
+"""Shared nudge gate for TRW Cursor hooks - anti-fatigue + adaptive skip + rotation.
 
 Invoked from bash hook scripts with stdin=payload JSON and argv=[event_name,
 cooldown_seconds, messages_json]. Prints a single JSON line on stdout: either
 the gated user-visible response or ``{}`` when suppressed.
 
-Three levers (C1–C3 from the eval-and-customizations research doc, applied at
+Three levers (C1-C3 from the eval-and-customizations research doc, applied at
 the hook layer rather than the MCP layer so the UX-visible surface is
 throttled independently of the MCP ceremony tools):
 
-1. **Cooldown dedup** — `cursor-nudge-state.jsonl` records each emission keyed
+1. **Cooldown dedup** - `cursor-nudge-state.jsonl` records each emission keyed
    on (event_name, conversation_id). Re-fires within the cooldown window are
    suppressed. Default stop cooldown = 1 hour; session-start = 24 hours;
    pre-compact = 5 minutes (dedup per generation_id).
 
-2. **Adaptive skip** — scans `cursor-hooks.jsonl` for the ceremony tool the
+2. **Adaptive skip** - scans `cursor-hooks.jsonl` for the ceremony tool the
    nudge would prompt for. If already invoked in this conversation, the nudge
    is suppressed (the agent is already doing what we'd remind them to do).
 
-3. **Message rotation** — when emission IS decided, one of several high-value
+3. **Message rotation** - when emission IS decided, one of several high-value
    messages is picked via sha256(conversation_id) % len(messages), so the same
    conversation sees a single consistent message but the population of
    conversations rotates through the full set.
@@ -31,11 +31,11 @@ Argv:
     argv[2] = cooldown_seconds (int)
     argv[3] = adaptive_skip_tool (MCP tool name or empty string to skip this check)
     argv[4] = response_key (followup_message | additional_context | user_message)
-    argv[5] = messages_json (JSON array of strings — curated high-value set)
+    argv[5] = messages_json (JSON array of strings - curated high-value set)
 
 Example:
     payload_json | python3 _nudge_gate.py stop 3600 trw_deliver followup_message \\
-        '["TRW: Before ending, call trw_deliver() — ...", "TRW: Wrap up with ..."]'
+        '["TRW: Before ending, call trw_deliver() - ...", "TRW: Wrap up with ..."]'
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ import json
 import os
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import TypedDict
 
@@ -106,10 +107,8 @@ def _hook_log_file() -> Path:
 
 
 def _ensure_log_dir() -> None:
-    try:
+    with suppress(OSError):
         _log_dir().mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
 
 
 def _in_cooldown(event_name: str, dedup_key: str, cooldown_seconds: int) -> bool:
