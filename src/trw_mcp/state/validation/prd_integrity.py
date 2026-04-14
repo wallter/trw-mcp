@@ -14,7 +14,7 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 logger = structlog.get_logger(__name__)
 
 ALLOWED_PRD_CATEGORIES: frozenset[str] = frozenset(
-    {"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH"}
+    {"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH", "EVAL"}
 )
 
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
