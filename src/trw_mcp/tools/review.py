@@ -14,9 +14,13 @@ from pathlib import Path
 from typing import cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
-from trw_mcp.state._paths import find_active_run
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    find_active_run,
+    resolve_pin_key,
+)
 from trw_mcp.tools._review_helpers import (
     PRE_AUDIT_SELF_REVIEW_EVENT as PRE_AUDIT_SELF_REVIEW_EVENT,
 )
@@ -60,12 +64,25 @@ def register_review_tools(server: FastMCP) -> None:
     _register_review_tool(server)
 
 
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
+
+
 def _register_review_tool(server: FastMCP) -> None:
     """Register the structured review tool."""
 
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_review(
+        ctx: Context | None = None,
         findings: list[dict[str, str]] | None = None,
         run_path: str | None = None,
         mode: str | None = None,
@@ -113,12 +130,12 @@ def _register_review_tool(server: FastMCP) -> None:
         else:
             effective_mode = "manual"
 
-        # Resolve run directory
+        # Resolve run directory (PRD-CORE-141 FR03/FR05).
         resolved_run: Path | None = None
         if run_path:
             resolved_run = Path(run_path).resolve()
         else:
-            resolved_run = find_active_run()
+            resolved_run = find_active_run(context=_build_call_context(ctx))
 
         # Auto-update phase to REVIEW
         from trw_mcp.models.run import Phase

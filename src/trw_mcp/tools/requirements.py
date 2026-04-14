@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 # Re-export all template helpers for backward-compatible test imports
 # (e.g. ``from trw_mcp.tools.requirements import _load_template_body``).
@@ -286,7 +286,10 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_prd_validate(prd_path: str) -> ValidateResultDict:
+    def trw_prd_validate(
+        ctx: Context | None = None,
+        prd_path: str = "",
+    ) -> ValidateResultDict:
         """Check your PRD quality before implementation --- catches ambiguity, missing sections, and weak requirements early.
 
         Runs the full V2 validation suite: structure compliance, content quality,
@@ -297,6 +300,10 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         Args:
             prd_path: Path to the PRD markdown file to validate.
         """
+        # prd_path has an empty default so FastMCP can inject ctx as the first
+        # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.
+        if not prd_path:
+            raise StateError("prd_path is required", path="")
         path = Path(prd_path).resolve()
 
         # QUAL-042-FR03: Path containment --- prevent reading files outside project
@@ -322,12 +329,25 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         sections = _extract_sections(content)
 
-        # Auto-update phase to PLAN
+        # Auto-update phase to PLAN (PRD-CORE-141 FR03/FR05: ctx-aware
+        # find_active_run suppresses mtime-scan hijack for fresh sessions).
         from trw_mcp.models.run import Phase
-        from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state._paths import (
+            TRWCallContext,
+            find_active_run,
+            resolve_pin_key,
+        )
         from trw_mcp.state.phase import try_update_phase
 
-        try_update_phase(find_active_run(), Phase.PLAN)
+        _pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+        _raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+        _call_ctx = TRWCallContext(
+            session_id=_pin_key,
+            client_hint=None,
+            explicit=False,
+            fastmcp_session=_raw_session if isinstance(_raw_session, str) else None,
+        )
+        try_update_phase(find_active_run(context=_call_ctx), Phase.PLAN)
 
         _prd_id_str = str(path.stem)
         logger.info(

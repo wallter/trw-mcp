@@ -18,6 +18,11 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.state._pin_store import (
+    get_pin_entry,
+    remove_pin_entry,
+    upsert_pin_entry,
+)
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -293,42 +298,118 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     return process_key
 
 
-# --- Per-session run pinning (PRD-FIX-042 FR06) ---
-# Each Claude Code instance spawns its own MCP process (stdio transport).
-# trw_init pins the run it creates so all subsequent find_active_run() calls
-# for THIS session return it, preventing telemetry hijack when parallel
-# instances share the same filesystem.
+# --- Per-session run pinning (PRD-FIX-042 FR06, PRD-CORE-141 FR04) ---
+# Production storage lives at ``.trw/runtime/pins.json`` via the
+# :mod:`trw_mcp.state._pin_store` module.  The implementation there uses
+# atomic writes (``os.replace``) guarded by the portable file-lock shim
+# (``from trw_mcp._locking import _lock_ex, _lock_un``) and enforces
+# mode 0o600 on the pins file (NFR03).  Cache invalidation
+# (``_pin_store_cache = None`` immediately after every ``os.replace``)
+# is non-negotiable — see _pin_store.save_pin_store for details.  Load
+# eviction passes emit ``pin_stale_run_path_evicted`` and
+# ``pin_orphan_evicted`` WARN logs; malformed JSON fails open with
+# ``pin_store_malformed_fallback``.
+#
+# The in-memory ``_pinned_runs`` dict below is RETAINED ONLY for
+# conftest compat — legacy tests call ``_pinned_runs.clear()`` directly
+# via ``from trw_mcp.state._paths import _pinned_runs``.  Production
+# reads/writes flow through the on-disk store; this dict is never
+# consulted during tool calls.
 _pinned_runs: dict[str, Path] = {}
 
 
-def pin_active_run(run_dir: Path, *, session_id: str | None = None) -> None:
+def _resolve_session_id(
+    context: TRWCallContext | None,
+    session_id: str | None,
+) -> str:
+    """Resolve the effective pin-key for a helper call.
+
+    Precedence (PRD-CORE-141 FR01, API Changes):
+    1. ``context.session_id`` — ctx-aware callers (tool handlers wired
+       to FastMCP ``Context``) always win.
+    2. ``session_id`` — legacy kwarg, preserved for backward compat with
+       direct Python callers and tests.
+    3. Process-level :data:`_session_id` UUID — final fallback.
+    """
+    if context is not None:
+        return context.session_id
+    if session_id is not None:
+        return session_id
+    return get_session_id()
+
+
+def pin_active_run(
+    run_dir: Path,
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> None:
     """Pin a run directory as the active run for a session.
 
     After pinning, find_active_run() returns this directory instead of
     scanning the filesystem. This prevents telemetry hijack when multiple
     instances share the same project root.
 
+    Writes through to ``.trw/runtime/pins.json`` via :func:`upsert_pin_entry`
+    so the pin survives MCP server restart (PRD-CORE-141 FR04).
+
     Args:
         run_dir: Absolute path to the run directory to pin.
-        session_id: Session to pin for. Defaults to the current process session.
+        context: TRWCallContext resolved from the FastMCP Context (preferred,
+            PRD-CORE-141 FR01).  When provided, its ``session_id`` wins.
+        session_id: Legacy kwarg — retained for backward compat with direct
+            Python callers.  Ignored when ``context`` is provided.
     """
-    with _session_lock:
-        sid = session_id if session_id is not None else _session_id
-        _pinned_runs[sid] = run_dir.resolve()
+    sid = _resolve_session_id(context, session_id)
+    record = upsert_pin_entry(sid, run_dir)
+    logger.debug(
+        "pin_saved",
+        pin_key=sid,
+        run_path=record["run_path"],
+        pid=record["pid"],
+    )
 
 
-def unpin_active_run(*, session_id: str | None = None) -> None:
-    """Remove the run pin for a session, reverting to filesystem scan."""
-    with _session_lock:
-        sid = session_id if session_id is not None else _session_id
-        _pinned_runs.pop(sid, None)
+def unpin_active_run(
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> None:
+    """Remove the run pin for a session, reverting to filesystem scan.
+
+    Persists the removal to ``.trw/runtime/pins.json`` (PRD-CORE-141 FR04).
+
+    Args:
+        context: TRWCallContext resolved from FastMCP Context (preferred).
+        session_id: Legacy kwarg; ignored when ``context`` is provided.
+    """
+    sid = _resolve_session_id(context, session_id)
+    removed = remove_pin_entry(sid)
+    if removed:
+        logger.debug("pin_cleared", pin_key=sid)
 
 
-def get_pinned_run(*, session_id: str | None = None) -> Path | None:
-    """Return the currently pinned run directory for a session, or None."""
-    with _session_lock:
-        sid = session_id if session_id is not None else _session_id
-        return _pinned_runs.get(sid)
+def get_pinned_run(
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> Path | None:
+    """Return the currently pinned run directory for a session, or None.
+
+    Reads through the 1-second-TTL pin-store cache (PRD-CORE-141 FR04).
+
+    Args:
+        context: TRWCallContext resolved from FastMCP Context (preferred).
+        session_id: Legacy kwarg; ignored when ``context`` is provided.
+    """
+    sid = _resolve_session_id(context, session_id)
+    entry = get_pin_entry(sid)
+    if entry is None:
+        return None
+    run_path = entry.get("run_path")
+    if isinstance(run_path, str) and run_path:
+        return Path(run_path)
+    return None
 
 
 def resolve_memory_store_path() -> Path:
@@ -417,30 +498,53 @@ def _find_latest_run_dir(base_dir: Path) -> Path | None:
     return latest_run
 
 
-def find_active_run(*, session_id: str | None = None) -> Path | None:
+def find_active_run(
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> Path | None:
     """Find the active run directory for a session.
 
     Resolution order:
     1. Per-session pinned run (set by ``pin_active_run`` during ``trw_init``)
-    2. Filesystem scan: ``{runs_root}/{task}/{run_id}/meta/run.yaml``, highest
-       lexicographic name (ISO timestamp prefix ensures chronological ordering),
-       skipping runs with status "complete" or "failed" (PRD-FIX-042 FR02).
+    2. Filesystem scan fallback — ONLY when ``context is None`` (legacy /
+       stdio-per-instance callers).  PRD-CORE-141 FR05 forbids the scan
+       fallback for ctx-aware callers to eliminate cross-session run
+       hijack.  The scan selects ``{runs_root}/{task}/{run_id}/meta/run.yaml``
+       with the highest lexicographic name, skipping runs with status
+       ``"complete"`` / ``"failed"`` / ``"abandoned"`` / ``"delivered"``
+       (PRD-FIX-042 FR02).
 
     The pinned run prevents telemetry hijack when multiple Claude Code
     instances share the same filesystem — each instance's MCP process
     pins its own run at init time.
 
     Args:
-        session_id: Session to check pin for. Defaults to the current process session.
+        context: TRWCallContext resolved from FastMCP Context (preferred,
+            PRD-CORE-141 FR01).  When provided and no pin exists, returns
+            ``None`` immediately — scan fallback is SUPPRESSED.
+        session_id: Legacy kwarg; passed through to the pin lookup only.
+            Callers passing just ``session_id=`` (and no ``context=``)
+            retain the legacy scan fallback (PRD-CORE-141 FR15).
 
     Returns:
         Path to run directory, or None if no active run found.
     """
-    with _session_lock:
-        sid = session_id if session_id is not None else _session_id
-        pinned = _pinned_runs.get(sid)
+    pinned = get_pinned_run(context=context, session_id=session_id)
     if pinned is not None:
         return pinned
+
+    # FR05: Ctx-aware callers do NOT fall through to the legacy mtime scan.
+    # The fresh-session-hijack bug (PRD-CORE-141 §Background) requires this
+    # to be an early exit — a ctx with no pin means "no run for this
+    # session", not "grab whatever's latest on disk".
+    if context is not None:
+        logger.info(
+            "run_resolution_no_pin_scan_suppressed",
+            pin_key=context.session_id,
+            reason="ctx_aware_no_pin",
+        )
+        return None
 
     try:
         config = get_config()
@@ -470,7 +574,11 @@ def find_active_run(*, session_id: str | None = None) -> Path | None:
         return None
 
 
-def resolve_run_path(run_path: str | None = None) -> Path:
+def resolve_run_path(
+    run_path: str | None = None,
+    *,
+    context: TRWCallContext | None = None,
+) -> Path:
     """Resolve a run directory from an explicit path or auto-detection.
 
     Unified implementation (PRD-FIX-007) replacing the duplicated private
@@ -529,10 +637,24 @@ def resolve_run_path(run_path: str | None = None) -> Path:
             project_root=str(project_root),
         )
 
-    # Primary: prefer pinned/active run so trw_status aligns with trw_session_start
-    active = find_active_run()
+    # Primary: prefer pinned/active run so trw_status aligns with trw_session_start.
+    # Thread ctx through so FR05 suppression applies consistently — ctx-aware
+    # callers with no pin see ``active is None`` here and raise below.
+    active = find_active_run(context=context)
     if active is not None:
         return active
+
+    # FR05: Ctx-aware callers skip the mtime-fallback.  Raise a targeted
+    # StateError so the caller sees "no run for this session" rather than
+    # hijacking another session's directory.  The ``run_resolution_no_pin_scan_suppressed``
+    # INFO event was already emitted inside ``find_active_run`` — no need
+    # to log again here.
+    if context is not None:
+        raise StateError(
+            "No active run for this session (pin not found, scan fallback suppressed).",
+            project_root=str(project_root),
+            pin_key=context.session_id,
+        )
 
     # Fallback: latest mtime for clients that never pinned a run.
     latest_run = _find_latest_run_dir(runs_dir)

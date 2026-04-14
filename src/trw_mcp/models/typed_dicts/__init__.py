@@ -101,6 +101,8 @@ from trw_mcp.models.typed_dicts._ceremony import (
     ReflectResultDict,
     SessionRecallExtrasDict,
     TierCeremonyScoreResult,
+    TrwAdoptRunResultDict,
+    TrwHeartbeatResultDict,
 )
 
 # _codex
@@ -390,6 +392,8 @@ __all__ = [
     "ToolEventDataDict",
     "TrustIncrementResult",
     "TrustLevelQueryResult",
+    "TrwAdoptRunResultDict",
+    "TrwHeartbeatResultDict",
     "TrustLevelResult",
     "TrustSessionIncrementResult",
     "TrwInitConfigDataDict",

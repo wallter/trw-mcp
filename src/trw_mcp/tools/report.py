@@ -9,16 +9,33 @@ from __future__ import annotations
 from typing import cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import AnalyticsReport, RunReportResultDict
-from trw_mcp.state._paths import resolve_run_path, resolve_trw_dir
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    resolve_pin_key,
+    resolve_run_path,
+    resolve_trw_dir,
+)
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.report import assemble_report
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
 
 
 def register_report_tools(server: FastMCP) -> None:
@@ -30,7 +47,10 @@ def register_report_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_run_report(run_path: str | None = None) -> RunReportResultDict:
+    def trw_run_report(
+        ctx: Context | None = None,
+        run_path: str | None = None,
+    ) -> RunReportResultDict:
         """See what happened in a run — phase timing, event counts, learning yield, and build results.
 
         Reads run.yaml, events.jsonl, checkpoints.jsonl, and build-status.yaml to
@@ -41,7 +61,8 @@ def register_report_tools(server: FastMCP) -> None:
             run_path: Path to the run directory. Auto-detects if not provided.
         """
         try:
-            resolved_path = resolve_run_path(run_path)
+            # PRD-CORE-141 FR03/FR05: ctx-aware path resolution.
+            resolved_path = resolve_run_path(run_path, context=_build_call_context(ctx))
         except StateError as exc:
             return {"error": str(exc), "status": "failed"}
 

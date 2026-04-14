@@ -13,11 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
-from trw_mcp.state._paths import find_active_run, resolve_trw_dir
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    find_active_run,
+    resolve_pin_key,
+    resolve_trw_dir,
+)
 from trw_mcp.tools.build._core import (
     cache_build_status,
 )
@@ -31,12 +36,25 @@ _BUILD_CHECK_USAGE = (
 )
 
 
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
+
+
 def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_build_check(
+        ctx: Context | None = None,
         tests_passed: bool | None = None,
         test_count: int = 0,
         failure_count: int = 0,
@@ -109,7 +127,8 @@ def register_build_tools(server: FastMCP) -> None:
         if run_path:
             resolved_run = Path(run_path).resolve()
         else:
-            resolved_run = find_active_run()
+            # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run.
+            resolved_run = find_active_run(context=_build_call_context(ctx))
 
         # FIX-035-FR05: Auto-update phase to VALIDATE
         try_update_phase(resolved_run, Phase.VALIDATE)

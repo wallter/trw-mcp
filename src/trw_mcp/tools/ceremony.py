@@ -16,9 +16,9 @@ for step functions should target that module directly:
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import structlog
 from fastmcp import Context, FastMCP
@@ -31,6 +31,8 @@ from trw_mcp.models.typed_dicts import (
     ReflectResultDict,
     RunStatusDict,
     SessionStartResultDict,
+    TrwAdoptRunResultDict,
+    TrwHeartbeatResultDict,
 )
 from trw_mcp.state._paths import (
     TRWCallContext,
@@ -38,6 +40,13 @@ from trw_mcp.state._paths import (
     pin_active_run,
     resolve_pin_key,
     resolve_trw_dir,
+)
+from trw_mcp.state._pin_store import (
+    _iso_now,
+    get_pin_entry,
+    load_pin_store,
+    remove_pin_entry,
+    upsert_pin_entry,
 )
 from trw_mcp.state.analytics import (
     find_success_patterns,
@@ -274,6 +283,72 @@ def _learning_reflection_message(learnings_count: int) -> str:
         "Consider what you learned \u2014 even a one-line root cause "
         "helps the next agent avoid re-discovery."
     )
+
+
+# ── Pin-isolation helpers (PRD-CORE-141 FR07/FR08) ───────────────────
+
+
+def _parse_iso_utc(ts: str) -> datetime | None:
+    """Parse an ISO 8601 UTC timestamp tolerating the ``Z`` suffix.
+
+    Returns ``None`` when the value is empty or unparseable so heartbeat
+    / adopt callers can degrade gracefully without crashing the tool.
+    """
+    if not ts:
+        return None
+    try:
+        # datetime.fromisoformat in 3.11+ accepts "Z" via "+00:00" swap.
+        normalized = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _timedelta_hours(hours: float) -> timedelta:
+    """Return a ``timedelta`` spanning *hours* (isolated for patchability)."""
+    return timedelta(hours=hours)
+
+
+def _compute_run_age_hours(run_dir: Path | None) -> float:
+    """Return the run's age in hours from its run.yaml ``created_at`` field.
+
+    Falls back to file mtime, then ``0.0`` on unreadable state.  Used by
+    ``trw_heartbeat`` to decide ``should_checkpoint`` without throwing if
+    the run.yaml is missing timestamp metadata.
+    """
+    if run_dir is None:
+        return 0.0
+    run_yaml = run_dir / "meta" / "run.yaml"
+    if not run_yaml.exists():
+        return 0.0
+    try:
+        reader = FileStateReader()
+        data = reader.read_yaml(run_yaml)
+        for key in ("created_at", "created_ts", "started_at"):
+            val = data.get(key)
+            parsed: datetime | None = None
+            if isinstance(val, datetime):
+                parsed = val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+            elif isinstance(val, str) and val:
+                parsed = _parse_iso_utc(val)
+            if parsed is not None:
+                return max(
+                    0.0,
+                    (datetime.now(timezone.utc) - parsed).total_seconds() / 3600.0,
+                )
+    except Exception:  # justified: fail-open — run-age probe must not raise
+        logger.debug("run_age_read_failed", run_path=str(run_dir), exc_info=True)
+
+    # Fallback: use file mtime.
+    try:
+        mtime = run_yaml.stat().st_mtime
+        mtime_dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - mtime_dt).total_seconds() / 3600.0)
+    except OSError:
+        return 0.0
 
 
 # ── Tool registration ─────────────────────────────────────────────────
@@ -757,3 +832,269 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             errors=len(errors),
         )
         return results
+
+    # ── PRD-CORE-141 FR07 — trw_heartbeat ─────────────────────────────
+    @server.tool(output_schema=None)
+    @log_tool_call
+    def trw_heartbeat(
+        ctx: Context | None = None,
+        message: str = "",
+    ) -> TrwHeartbeatResultDict:
+        """Refresh the caller's pin heartbeat + append a heartbeat event.
+
+        Rate-limit: if ``now - last_heartbeat_ts < 60s`` the call short-circuits
+        (no events.jsonl append, no pin-store write) and returns
+        ``rate_limited=True`` so long-running campaigns can beat safely without
+        spamming the audit trail.  Rate-limit state is derived entirely from
+        ``pins.json::<pin_key>::last_heartbeat_ts`` — no separate in-memory
+        cache — so the 60s window survives server restart (PRD-CORE-141 FR07).
+
+        Returns:
+            ``{run_id, last_heartbeat_ts, stale_after_ts, age_hours,
+            should_checkpoint, rate_limited}`` on the success path, or
+            ``{error, hint}`` on the missing-pin path (fresh session that
+            never called ``trw_init`` / ``trw_adopt_run``).
+        """
+        pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+        call_ctx = TRWCallContext(
+            session_id=pin_key,
+            client_hint=None,
+            explicit=False,
+            fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+        )
+        del call_ctx  # reserved for future analytics hooks — keeps shape parity with other tools
+
+        entry = get_pin_entry(pin_key)
+        if entry is None:
+            logger.warning("trw_heartbeat_no_pin", pin_key=pin_key)
+            return {
+                "error": "no_active_pin",
+                "hint": "call trw_init or trw_adopt_run first",
+            }
+
+        config = get_config()
+        now_dt = datetime.now(timezone.utc)
+
+        # Rate-limit check — parse last heartbeat from on-disk record.
+        last_ts_str = str(entry.get("last_heartbeat_ts", "") or "")
+        last_dt = _parse_iso_utc(last_ts_str)
+        rate_limited = False
+        if last_dt is not None and (now_dt - last_dt).total_seconds() < 60.0:
+            rate_limited = True
+
+        run_path_str = str(entry.get("run_path", "") or "")
+        run_dir = Path(run_path_str) if run_path_str else None
+        run_id = run_dir.name if run_dir is not None else ""
+
+        age_hours = _compute_run_age_hours(run_dir)
+        stale_after_ts = ""
+        should_checkpoint = False
+
+        if rate_limited:
+            # Short-circuit path: return the existing state, no writes.
+            if last_dt is not None:
+                stale_after_ts = (
+                    last_dt + _timedelta_hours(config.run_staleness_hours)
+                ).isoformat()
+            should_checkpoint = age_hours > float(config.checkpoint_suggest_hours)
+            logger.debug(
+                "trw_heartbeat_rate_limited",
+                pin_key=pin_key,
+                run_id=run_id,
+                age_hours=age_hours,
+            )
+            return {
+                "run_id": run_id,
+                "last_heartbeat_ts": last_ts_str,
+                "stale_after_ts": stale_after_ts,
+                "age_hours": age_hours,
+                "should_checkpoint": should_checkpoint,
+                "rate_limited": True,
+            }
+
+        # Normal path: write pin + append event.
+        new_ts = _iso_now()
+        # Mutate the entry preserving created_ts and client_hint.
+        upsert_pin_entry(
+            pin_key,
+            Path(run_path_str) if run_path_str else Path("."),
+            client_hint=entry.get("client_hint") if isinstance(entry.get("client_hint"), str) else None,
+        )
+
+        if run_dir is not None and (run_dir / "meta").exists():
+            _events.log_event(
+                run_dir / "meta" / "events.jsonl",
+                "heartbeat",
+                {
+                    "message": message,
+                    "pin_key": pin_key,
+                },
+            )
+
+        stale_after_ts = (
+            now_dt + _timedelta_hours(config.run_staleness_hours)
+        ).isoformat()
+        should_checkpoint = age_hours > float(config.checkpoint_suggest_hours)
+
+        logger.debug(
+            "trw_heartbeat_applied",
+            pin_key=pin_key,
+            run_id=run_id,
+            age_hours=age_hours,
+            should_checkpoint=should_checkpoint,
+        )
+        return {
+            "run_id": run_id,
+            "last_heartbeat_ts": new_ts,
+            "stale_after_ts": stale_after_ts,
+            "age_hours": age_hours,
+            "should_checkpoint": should_checkpoint,
+            "rate_limited": False,
+        }
+
+    # ── PRD-CORE-141 FR08 — trw_adopt_run ─────────────────────────────
+    @server.tool(output_schema=None)
+    @log_tool_call
+    def trw_adopt_run(
+        ctx: Context | None = None,
+        run_path: str = "",
+        force: bool = False,
+    ) -> TrwAdoptRunResultDict:
+        """Transfer an existing run's pin to the caller's session.
+
+        Guards (PRD-CORE-141 FR08):
+          * Out-of-project ``run_path`` → ``StateError`` (no force override).
+          * Terminal status (``delivered``/``complete``/``failed``) → requires
+            ``force=True``.
+          * Live owner (heartbeat within ``pin_ttl_hours``) → requires
+            ``force=True``; adoption emits ``run_adopted_potential_writer_conflict``
+            WARN when displacing a live owner.
+
+        On success the previous owner's pin entry is removed, the caller's
+        pin entry is upserted, a ``run_adopted`` event is appended to the
+        adopted run's events.jsonl, and a ``run_adopted`` INFO log fires.
+        """
+        if not run_path:
+            raise StateError("run_path is required for trw_adopt_run")
+
+        # Containment check — must be under project root.  No force override.
+        # Import lazily so conftest's monkeypatch of the source attribute
+        # reaches this call site (FR08 containment).
+        from trw_mcp.state._paths import resolve_project_root
+
+        resolved = Path(run_path).resolve()
+        project_root = resolve_project_root()
+        if not resolved.is_relative_to(project_root):
+            raise StateError(
+                f"run_path escapes project root: {resolved}",
+                path=str(resolved),
+            )
+        if not resolved.exists():
+            raise StateError(f"run_path does not exist: {resolved}", path=str(resolved))
+
+        # Resolve caller pin key.
+        caller_pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+
+        # Read target run's status from run.yaml.
+        run_yaml = resolved / "meta" / "run.yaml"
+        target_status = "unknown"
+        if run_yaml.exists():
+            try:
+                reader = FileStateReader()
+                data = reader.read_yaml(run_yaml)
+                target_status = str(data.get("status", "unknown"))
+            except Exception:  # justified: fail-open, unreadable run.yaml treated as unknown
+                logger.debug("adopt_run_read_status_failed", run_path=str(resolved), exc_info=True)
+
+        if target_status in ("delivered", "complete", "failed") and not force:
+            raise StateError(
+                f"cannot adopt terminal-status run (status={target_status}); pass force=True to override",
+                path=str(resolved),
+                status=target_status,
+            )
+
+        # Find existing pin entry for the target run path (scan the store).
+        store = load_pin_store()
+        previous_pin_key: str | None = None
+        previous_entry: dict[str, Any] | None = None
+        target_str = str(resolved)
+        for pkey, pentry in store.items():
+            if not isinstance(pentry, dict):
+                continue
+            if str(pentry.get("run_path", "")) == target_str:
+                previous_pin_key = pkey
+                previous_entry = pentry
+                break
+
+        # Live-owner check.
+        from_owner_was_live = False
+        previous_owner_heartbeat_age_hours: float | None = None
+        config = get_config()
+        if previous_entry is not None:
+            prev_last_ts = _parse_iso_utc(str(previous_entry.get("last_heartbeat_ts", "") or ""))
+            if prev_last_ts is not None:
+                age_s = (datetime.now(timezone.utc) - prev_last_ts).total_seconds()
+                previous_owner_heartbeat_age_hours = age_s / 3600.0
+                if age_s < float(config.pin_ttl_hours) * 3600.0:
+                    from_owner_was_live = True
+
+        if from_owner_was_live and not force:
+            raise StateError(
+                "run is actively held by a live pin; pass force=True to override",
+                path=str(resolved),
+                pin_key=previous_pin_key,
+            )
+
+        # Perform the adoption.  Remove prior entry, then upsert the caller's
+        # pin pointing at the target run.  Atomic across two save calls is
+        # acceptable — the intermediate state (pin gone briefly) is no
+        # worse than a crash between the calls, and the file lock in the
+        # pin store serializes both writes.
+        if previous_pin_key is not None and previous_pin_key != caller_pin_key:
+            remove_pin_entry(previous_pin_key)
+
+        upsert_pin_entry(caller_pin_key, resolved)
+
+        adopted_ts = _iso_now()
+
+        if from_owner_was_live and force:
+            logger.warning(
+                "run_adopted_potential_writer_conflict",
+                previous_pin_key=previous_pin_key,
+                previous_owner_heartbeat_age_hours=previous_owner_heartbeat_age_hours,
+                new_pin_key=caller_pin_key,
+                run_path=str(resolved),
+            )
+
+        # Append run_adopted event.
+        if (resolved / "meta").exists():
+            _events.log_event(
+                resolved / "meta" / "events.jsonl",
+                "run_adopted",
+                {
+                    "from_pin_key": previous_pin_key,
+                    "to_pin_key": caller_pin_key,
+                    "force_used": force,
+                    "previous_owner_heartbeat_age_hours": previous_owner_heartbeat_age_hours,
+                },
+            )
+
+        logger.info(
+            "run_adopted",
+            run_path=str(resolved),
+            from_pin_key=previous_pin_key,
+            to_pin_key=caller_pin_key,
+            force_used=force,
+            from_owner_was_live=from_owner_was_live,
+        )
+
+        return {
+            "adopted_run_id": resolved.name,
+            "previous_pin_key": previous_pin_key,
+            "from_pin_key": previous_pin_key,
+            "to_pin_key": caller_pin_key,
+            "adopted_ts": adopted_ts,
+            "from_owner_was_live": from_owner_was_live,
+            "force_used": force,
+        }

@@ -121,7 +121,7 @@ class TestRunReportTool:
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
-            lambda run_path=None: rich_run_dir,
+            lambda run_path=None, **_: rich_run_dir,
         )
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_trw_dir",
@@ -138,7 +138,7 @@ class TestRunReportTool:
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
-            lambda run_path=None: (_ for _ in ()).throw(StateError("No active runs")),
+            lambda run_path=None, **_: (_ for _ in ()).throw(StateError("No active runs")),
         )
 
         result = tool.fn(run_path=None)
@@ -156,7 +156,7 @@ class TestRunReportTool:
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
-            lambda run_path=None: rich_run_dir,
+            lambda run_path=None, **_: rich_run_dir,
         )
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_trw_dir",
@@ -182,7 +182,7 @@ class TestRunReportTool:
 
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_run_path",
-            lambda run_path=None: rich_run_dir,
+            lambda run_path=None, **_: rich_run_dir,
         )
         monkeypatch.setattr(
             "trw_mcp.tools.report.resolve_trw_dir",

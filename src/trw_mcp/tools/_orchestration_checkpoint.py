@@ -8,7 +8,7 @@ from typing import cast
 import structlog
 
 from trw_mcp.models.typed_dicts import CheckpointEventDataDict, CheckpointRecordDict
-from trw_mcp.state._paths import resolve_run_path
+from trw_mcp.state._paths import TRWCallContext, resolve_run_path
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools._orchestration_lifecycle import _update_wave_status
 
@@ -21,11 +21,19 @@ def execute_checkpoint(
     message: str,
     shard_id: str | None,
     wave_id: str | None,
+    *,
+    context: TRWCallContext | None = None,
 ) -> dict[str, str]:
-    """Persist checkpoint state and return the base response payload."""
+    """Persist checkpoint state and return the base response payload.
+
+    Args:
+        context: Optional :class:`TRWCallContext` (PRD-CORE-141 FR03).  When
+            provided, ``resolve_run_path`` is ctx-aware — no-pin sessions
+            raise ``StateError`` instead of hijacking another session's run.
+    """
     reader = FileStateReader()
     writer = FileStateWriter()
-    resolved_path = resolve_run_path(run_path)
+    resolved_path = resolve_run_path(run_path, context=context)
     meta_path = resolved_path / "meta"
 
     state_data = reader.read_yaml(meta_path / "run.yaml")

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Literal, cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
@@ -21,7 +21,13 @@ from trw_mcp.models.run import (
 )
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
-from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    pin_active_run,
+    resolve_pin_key,
+    resolve_project_root,
+    resolve_run_path,
+)
 from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.artifact_scanner import scan_artifacts
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter, model_to_dict
@@ -55,6 +61,18 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
+
+
 def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
     """Register orchestration tools on the MCP server.
 
@@ -65,7 +83,8 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_init(
-        task_name: str,
+        ctx: Context | None = None,
+        task_name: str = "",
         objective: str = "",
         config_overrides: dict[str, str] | None = None,
         prd_scope: list[str] | None = None,
@@ -75,6 +94,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         complexity_signals: dict[str, object] | None = None,
         artifacts: list[str] | None = None,
         complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
+        protected: bool = False,
     ) -> dict[str, str]:
         """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
 
@@ -97,11 +117,16 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
                 to scan for knowledge requirements (PRD-CORE-106). Extracted domains and
                 learning IDs are stored in run metadata for recall boosting.
             complexity_hint: Optional hint to force a ceremony tier (EASY=MINIMAL, etc).
+            protected: When True, mark this run as protected — the stale-run sweep
+                (PRD-CORE-141 FR09/FR10) preserves protected runs regardless of age.
+                Useful for long-running trw-eval campaigns and multi-day workflows.
         """
         from trw_mcp.models.run import ComplexityClass
 
-        # Input validation (PRD-QUAL-042-FR01)
-        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
+        # Input validation (PRD-QUAL-042-FR01).  ``task_name`` defaults to ""
+        # purely so FastMCP can inject ``ctx`` as the leading typed kwarg
+        # (PRD-CORE-141 FR03); an empty name is still rejected here.
+        if not task_name or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
             raise StateError(
                 f"Invalid task_name: must match [a-zA-Z0-9][a-zA-Z0-9_-]*, got: {task_name!r}",
             )
@@ -221,6 +246,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             complexity_override=complexity_override_val,
             phase_requirements=phase_reqs_val,
             artifacts=resolved_artifacts,
+            protected=protected,
         )
         writer.write_yaml(
             run_root / "meta" / "run.yaml",
@@ -256,7 +282,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
         # Pin this run as the active run for this process (RC-001 fix).
         # Prevents telemetry hijack when parallel instances share filesystem.
-        pin_active_run(run_root)
+        # PRD-CORE-141 FR03: thread ctx so pin is keyed to the caller's
+        # ctx-resolved session (not the process UUID) on shared-HTTP deployments.
+        pin_active_run(run_root, context=_build_call_context(ctx))
 
         events_jsonl_path = run_root / "meta" / "events.jsonl"
         _events.log_event(
@@ -319,7 +347,10 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_status(run_path: str | None = None) -> TrwStatusDict:
+    def trw_status(
+        ctx: Context | None = None,
+        run_path: str | None = None,
+    ) -> TrwStatusDict:
         """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
 
         Returns run state including phase, wave progress, shard status, confidence,
@@ -330,7 +361,9 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             run_path: Path to the run directory. Auto-detects if not provided.
         """
         reader = FileStateReader()
-        resolved_path = resolve_run_path(run_path)
+        # PRD-CORE-141 FR03/FR05: ctx-aware resolve_run_path suppresses the
+        # mtime scan fallback when no pin exists for this session.
+        resolved_path = resolve_run_path(run_path, context=_build_call_context(ctx))
         meta_path = resolved_path / "meta"
 
         state_data = reader.read_yaml(meta_path / "run.yaml")
@@ -426,6 +459,7 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_checkpoint(
+        ctx: Context | None = None,
         run_path: str | None = None,
         message: str = "",
         shard_id: str | None = None,
@@ -446,7 +480,15 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
             shard_id: Optional shard identifier for sub-agent attribution.
             wave_id: Optional wave identifier for wave-aware progress tracking (PRD-INFRA-036).
         """
-        result = execute_checkpoint(run_path, message, shard_id, wave_id)
+        # PRD-CORE-141 FR03: thread ctx into execute_checkpoint so the
+        # underlying resolve_run_path call is ctx-aware.
+        result = execute_checkpoint(
+            run_path,
+            message,
+            shard_id,
+            wave_id,
+            context=_build_call_context(ctx),
+        )
 
         _apply_ceremony_status(
             cast("dict[str, object]", result),

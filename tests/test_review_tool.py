@@ -66,7 +66,7 @@ def _make_deliver_with_stubs(
     (trw_dir / "context").mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
-    monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda: run_dir)
+    monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda **_: run_dir)
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony._do_reflect",
         lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0},

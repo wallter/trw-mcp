@@ -372,6 +372,45 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Explicit run directory path (auto-detects if omitted)",
     )
 
+    # gc (PRD-CORE-141 FR11) — stale-run sweep CLI
+    gc_parser = subparsers.add_parser(
+        "gc",
+        help="Sweep stale active runs (mark status=abandoned). TRW_SESSION_ID is inherited from the parent env.",
+    )
+    # Default is DRY-RUN because this is the safer default for an operator
+    # invoking GC manually — the --no-dry-run flag must be explicit to mutate.
+    gc_parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        default=True,
+        help="Report what would be abandoned without writing (default).",
+    )
+    gc_parser.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="Actually mark stale runs as abandoned (the mutating mode).",
+    )
+    gc_parser.add_argument(
+        "--staleness-hours",
+        type=int,
+        default=None,
+        help="Override config.run_staleness_hours for this invocation.",
+    )
+    gc_parser.add_argument(
+        "--grace-hours",
+        type=int,
+        default=None,
+        help="Override config.run_staleness_grace_hours for this invocation.",
+    )
+    gc_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit the StaleRunReport as JSON instead of a human summary.",
+    )
+
     # build-release
     build_parser = subparsers.add_parser(
         "build-release",
@@ -511,4 +550,76 @@ def main() -> None:
     _check_mcp_json_portability()
 
     log = structlog.get_logger(__name__)
+
+    # PRD-CORE-141 FR09: boot-time stale-run sweep runs BEFORE FastMCP starts
+    # accepting connections.  Wrapped in try/except (NFR02 fail-open) — sweep
+    # failure MUST NOT block server startup.
+    _boot_sequence(config, log)
+
     resolve_and_run_transport(args, config, debug=debug, log=log)
+
+
+def _boot_sequence(
+    config: TRWConfig,
+    log: structlog.stdlib.BoundLogger,
+) -> None:
+    """Run boot-time maintenance (pin-store recovery + stale-run sweep).
+
+    PRD-CORE-141 FR09: executed from :func:`main` after config+logging are
+    resolved and BEFORE :func:`trw_mcp.server._transport.resolve_and_run_transport`
+    spawns the FastMCP server.  This is the single authoritative boot site.
+
+    Fail-open (NFR02): any exception is logged with a full traceback and
+    control returns to the caller so the server starts anyway.  A stale-sweep
+    bug must never take the server down.
+
+    Args:
+        config: Fully-resolved :class:`TRWConfig` — determines whether the
+            sweep runs (``cleanup_on_boot``) and which TTL/grace thresholds
+            to use.
+        log: Structured logger.
+    """
+    if not config.cleanup_on_boot:
+        log.info("boot_gc_skipped_config", reason="cleanup_on_boot=False")
+        return
+
+    try:
+        import time as _time
+        from datetime import datetime as _datetime, timezone as _timezone
+        from pathlib import Path as _Path
+
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state._pin_store import load_pin_store
+        from trw_mcp.state._run_gc import sweep_stale_runs
+
+        project_root = resolve_project_root()
+        runs_root = project_root / config.runs_root
+
+        pin_ttl_seconds = config.pin_ttl_hours * 3600
+        now = _time.time()
+        pinned_paths: list[_Path] = []
+        for entry in load_pin_store().values():
+            run_path_raw = entry.get("run_path")
+            heartbeat_raw = entry.get("last_heartbeat_ts")
+            if not isinstance(run_path_raw, str):
+                continue
+            if isinstance(heartbeat_raw, str):
+                try:
+                    hb_ts = heartbeat_raw.rstrip("Z")
+                    hb_dt = _datetime.fromisoformat(hb_ts)
+                    hb_unix = hb_dt.replace(tzinfo=_timezone.utc).timestamp()
+                    if now - hb_unix > pin_ttl_seconds:
+                        continue
+                except ValueError:
+                    pass  # malformed heartbeat — be conservative, keep pin
+            pinned_paths.append(_Path(run_path_raw))
+
+        sweep_stale_runs(
+            runs_root,
+            config.run_staleness_hours,
+            config.run_staleness_grace_hours,
+            pinned_paths,
+            dry_run=False,
+        )
+    except Exception:  # justified: NFR02 — sweep failure must never block server start
+        log.warning("boot_gc_failed", exc_info=True)
