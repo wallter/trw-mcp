@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from structlog.testing import capture_logs
+from tests._structlog_capture import captured_structlog  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +92,7 @@ def isolated_project(
 
 def test_ctx_aware_no_pin_returns_none_not_scan_match(
     isolated_project: Path,
+    captured_structlog: list[dict[str, object]],
 ) -> None:
     """FR05: ctx-aware find_active_run does NOT fall through to mtime scan."""
     from trw_mcp.state._paths import TRWCallContext, find_active_run
@@ -109,17 +110,20 @@ def test_ctx_aware_no_pin_returns_none_not_scan_match(
         fastmcp_session=None,
     )
 
-    with capture_logs() as logs:
-        result = find_active_run(context=fresh)
+    result = find_active_run(context=fresh)
 
     assert result is None, (
         f"Ctx-aware caller with no pin must return None; got {result!r}"
     )
 
-    events = [e for e in logs if e.get("event") == "run_resolution_no_pin_scan_suppressed"]
+    events = [
+        e
+        for e in captured_structlog
+        if e.get("event") == "run_resolution_no_pin_scan_suppressed"
+    ]
     assert events, (
         "FR05 requires a run_resolution_no_pin_scan_suppressed event on "
-        f"the no-pin path; logs were {logs!r}"
+        f"the no-pin path; logs were {captured_structlog!r}"
     )
     assert any(e.get("pin_key") == "fresh-session-no-pin" for e in events)
 
