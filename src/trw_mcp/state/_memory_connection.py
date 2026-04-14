@@ -62,6 +62,21 @@ def _is_corruption_error(exc: BaseException) -> bool:
     return any(marker in message for marker in _CORRUPTION_MARKERS)
 
 
+def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBackend:
+    """Instantiate ``SQLiteBackend`` with a compatibility fallback for tests.
+
+    Some tests monkeypatch ``SQLiteBackend`` with tiny fakes that only accept
+    ``(db_path, dim=None)``. Production backends support the extra kwargs, so we
+    retry without them only when constructor shape is the limiting factor.
+    """
+    try:
+        return SQLiteBackend(db_path, **backend_kwargs)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return SQLiteBackend(db_path, dim=backend_kwargs.get("dim"))
+
+
 # ---------------------------------------------------------------------------
 # Backend lifecycle
 # ---------------------------------------------------------------------------
@@ -113,7 +128,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
                 mem_cfg.memory_concurrent_writer_warn_threshold
             )
         try:
-            backend = SQLiteBackend(db_path, **backend_kwargs)
+            backend = _create_backend(db_path, backend_kwargs)
         except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
             if not _is_corruption_error(exc):
                 logger.exception("backend_init_failed", db=str(db_path), action="raise")
@@ -124,7 +139,7 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             if db_path.exists():
                 conn = SQLiteBackend.recover_db(db_path)
                 conn.close()
-            backend = SQLiteBackend(db_path, **backend_kwargs)
+            backend = _create_backend(db_path, backend_kwargs)
 
         if backend.recovered:
             # Remove migration sentinel so ensure_migrated re-runs the

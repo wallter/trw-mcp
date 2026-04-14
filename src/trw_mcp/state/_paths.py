@@ -28,6 +28,11 @@ from trw_mcp.state.persistence import FileStateReader
 logger = structlog.get_logger(__name__)
 
 
+def _runtime_logger() -> Any:
+    """Return a fresh logger so structlog test capture sees late-bound events."""
+    return structlog.get_logger(__name__)
+
+
 # Explicit public surface — keeps static analyzers (Pyright) from inferring
 # imported symbols as ``object`` via the module-level ``__getattr__`` shim
 # below.  Must list every name callers ``from trw_mcp.state._paths import …``.
@@ -152,7 +157,7 @@ def _walk_ctx_attrs(ctx: object, path: tuple[str, ...]) -> _ProbeOutcome:
     try:
         for name in path:
             current = getattr(current, name)
-    except (AttributeError, TypeError):
+    except (AttributeError, RuntimeError, TypeError):
         return _ProbeOutcome(value=None, broken=True)
     return _ProbeOutcome(value=current, broken=False)
 
@@ -177,20 +182,20 @@ def _extract_fastmcp_session_id(ctx: object) -> str | None:
         outcome = _walk_ctx_attrs(ctx, path)
         if outcome.broken:
             broken_paths.append(path_str)
-            logger.debug(
+            _runtime_logger().info(
                 "fastmcp_context_probe_skipped",
                 ctx_attr_path=path_str,
             )
             continue
         value = outcome.value
         if isinstance(value, str) and value:
-            logger.debug(
+            _runtime_logger().info(
                 "fastmcp_context_probe_hit",
                 ctx_attr_path=path_str,
                 has_value=True,
             )
             return value
-        logger.debug(
+        _runtime_logger().info(
             "fastmcp_context_probe_miss",
             ctx_attr_path=path_str,
             has_value=False,
@@ -199,7 +204,7 @@ def _extract_fastmcp_session_id(ctx: object) -> str | None:
     if broken_paths and len(broken_paths) == len(_FASTMCP_CTX_PROBES):
         # Every probe raised — ctx object shape is incompatible.  Warn so
         # analytics can spot FastMCP API drift on shared servers.
-        logger.warning(
+        _runtime_logger().warning(
             "fastmcp_context_probe_error",
             broken_paths=broken_paths,
             ctx_type=type(ctx).__name__,
@@ -247,11 +252,11 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
         kill_switch_enabled = not bool(get_config().ctx_isolation_enabled)
     except Exception:  # justified: config unavailable must not break pin resolution
         kill_switch_enabled = False
-        logger.debug("ctx_isolation_config_unavailable", exc_info=True)
+        _runtime_logger().debug("ctx_isolation_config_unavailable", exc_info=True)
 
     if kill_switch_enabled:
         process_key = get_session_id()
-        logger.debug(
+        _runtime_logger().info(
             "pin_resolved",
             source="process",
             kill_switch=True,
@@ -261,13 +266,13 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
 
     # Layer 1 — explicit arg
     if explicit:
-        logger.debug("pin_resolved", source="explicit", pin_key=explicit)
+        _runtime_logger().info("pin_resolved", source="explicit", pin_key=explicit)
         return explicit
 
     # Layer 2 — TRW_SESSION_ID env var
     env_id = os.environ.get("TRW_SESSION_ID")
     if env_id:
-        logger.debug("pin_resolved", source="env", pin_key=env_id)
+        _runtime_logger().info("pin_resolved", source="env", pin_key=env_id)
         return env_id
 
     # Layer 3 — FastMCP Context probing
@@ -284,7 +289,7 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
                 if isinstance(outcome.value, str) and outcome.value == ctx_id:
                     matched_path = ".".join(path)
                     break
-            logger.debug(
+            _runtime_logger().info(
                 "pin_resolved",
                 source="ctx",
                 ctx_attr_path=matched_path,
@@ -294,7 +299,7 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
 
     # Layer 4 — process-level UUID fallback
     process_key = get_session_id()
-    logger.debug("pin_resolved", source="process", pin_key=process_key)
+    _runtime_logger().info("pin_resolved", source="process", pin_key=process_key)
     return process_key
 
 

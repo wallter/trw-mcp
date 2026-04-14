@@ -82,7 +82,10 @@ def _build_call_ctx(ctx: Context | None) -> TRWCallContext:
     session's on-disk active run via telemetry or PRD knowledge-ID prefetch.
     """
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    try:
+        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    except Exception:
+        raw_session = None
     return TRWCallContext(
         session_id=pin_key,
         client_hint=None,
