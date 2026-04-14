@@ -343,10 +343,11 @@ def sweep_stale_runs(  # noqa: C901, PLR0912, PLR0915 -- single authoritative sw
         age_seconds = max(0.0, now - last_activity)
         age_hours = age_seconds / 3600.0
 
-        # Grace window — inside (grace_cutoff, staleness_cutoff] — preserve
-        # and warn.  Note the inequality: `last_activity > grace_cutoff` means
-        # the activity is NEWER than the outer grace boundary.
-        if last_activity > grace_cutoff:
+        # Grace window — inside [grace_cutoff, staleness_cutoff] — preserve
+        # and warn.  `>=` ensures a run whose last_activity falls exactly on
+        # the grace boundary is preserved (spec: "runs younger than
+        # staleness+grace") — audit P2-03.
+        if last_activity >= grace_cutoff:
             runs_in_grace_window += 1
             near_stale_ids.append(run_id)
             grace_remaining_hours = max(

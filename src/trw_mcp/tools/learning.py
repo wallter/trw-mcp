@@ -17,7 +17,7 @@ import re as _re
 from pathlib import Path
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
@@ -27,7 +27,7 @@ from trw_mcp.models.typed_dicts import (
     RecallResultDict,
 )
 from trw_mcp.scoring import rank_by_utility
-from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, resolve_trw_dir
 from trw_mcp.state.analytics import (
     generate_learning_id,
     save_learning_entry,
@@ -73,6 +73,22 @@ _SOLUTION_PATTERNS = _re.compile(
 def _is_solution_summary(summary: str) -> bool:
     """Return True if the summary matches solution-indicator patterns (FR05)."""
     return bool(_SOLUTION_PATTERNS.search(summary))
+
+
+def _build_call_ctx(ctx: Context | None) -> TRWCallContext:
+    """PRD-CORE-141 FR03: build a TRWCallContext from an incoming FastMCP ctx.
+
+    Used by ctx-aware learning tools so they don't scan-hijack another
+    session's on-disk active run via telemetry or PRD knowledge-ID prefetch.
+    """
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
 
 
 def __getattr__(name: str) -> object:
@@ -141,8 +157,9 @@ def register_learning_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_learn(
-        summary: str,
-        detail: str,
+        ctx: Context | None = None,
+        summary: str = "",
+        detail: str = "",
         tags: list[str] | None = None,
         evidence: list[str] | None = None,
         impact: float = 0.5,
@@ -241,7 +258,8 @@ def register_learning_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_learn_update(
-        learning_id: str,
+        ctx: Context | None = None,
+        learning_id: str = "",
         status: str | None = None,
         detail: str | None = None,
         impact: float | None = None,
@@ -422,7 +440,8 @@ def register_learning_tools(server: FastMCP) -> None:
     @server.tool()
     @log_tool_call
     def trw_recall(
-        query: str,
+        ctx: Context | None = None,
+        query: str = "",
         tags: list[str] | None = None,
         min_impact: float = 0.0,
         status: str | None = "active",
@@ -460,6 +479,9 @@ def register_learning_tools(server: FastMCP) -> None:
         """
         from trw_mcp.tools._recall_impl import execute_recall
 
+        # PRD-CORE-141 FR03: build call_ctx so downstream find_active_run()
+        # inside build_recall_context doesn't scan-hijack another session.
+        call_ctx = _build_call_ctx(ctx)
         trw_dir = resolve_trw_dir()
         injected_ids = _read_injected_ids(trw_dir)
         # Resolve from this module's namespace so test patches work
@@ -476,6 +498,7 @@ def register_learning_tools(server: FastMCP) -> None:
             compact=compact,
             ultra_compact=ultra_compact,
             topic=topic,
+            call_ctx=call_ctx,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,

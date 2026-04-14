@@ -25,6 +25,7 @@ logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from trw_mcp.scoring._recall import _IntelCacheProtocol
+    from trw_mcp.state._paths import TRWCallContext
 
 
 def _detect_surface_phase() -> str:
@@ -61,6 +62,7 @@ def _load_recall_intel_cache(trw_dir: Path) -> _IntelCacheProtocol | None:
 def build_recall_context(
     trw_dir: Path,
     query: str,
+    call_ctx: TRWCallContext | None = None,
 ) -> RecallContext | None:
     """Build a RecallContext from the current session state.
 
@@ -107,7 +109,9 @@ def build_recall_context(
     try:
         from trw_mcp.state._paths import find_active_run
 
-        active_run = find_active_run()
+        # PRD-CORE-141 FR03: thread ctx through so ctx-aware recall doesn't
+        # scan-hijack another session's on-disk active run.
+        active_run = find_active_run(context=call_ctx) if call_ctx is not None else find_active_run()
         if active_run:
             kr_path = Path(active_run) / "meta" / "knowledge_requirements.yaml"
             if kr_path.exists():
@@ -159,6 +163,7 @@ def execute_recall(
     compact: bool | None = None,
     ultra_compact: bool = False,
     topic: str | None = None,
+    call_ctx: TRWCallContext | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _adapter_update_access: Any = None,
@@ -219,7 +224,7 @@ def execute_recall(
     # Build recall context for contextual boosting (PRD-CORE-102)
     recall_context: RecallContext | None = None
     try:
-        recall_context = build_recall_context(trw_dir, query)
+        recall_context = build_recall_context(trw_dir, query, call_ctx=call_ctx)
     except Exception:  # justified: fail-open, recall context enrichment must not block recall
         logger.debug("recall_context_build_failed", exc_info=True)
 

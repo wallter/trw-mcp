@@ -287,3 +287,230 @@ def test_two_clients_trw_init_then_status_no_cross_read(
     assert status1["run_id"] == init1["run_id"]
     assert status2["run_id"] == init2["run_id"]
     assert status1["run_id"] != status2["run_id"]
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-141 audit follow-up — FR03 ctx flows through learning tools
+# ---------------------------------------------------------------------------
+
+
+def test_trw_recall_ctx_aware_no_scan_hijack(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit P1-01: trw_recall(ctx=fresh) must not scan-hijack another session.
+
+    Seeds an on-disk active run owned by "other session" and asserts that a
+    fresh ctx-scoped recall does NOT surface that run via build_recall_context's
+    find_active_run() probe (used to load PRD knowledge IDs).
+    """
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    # Seed an "other session" active run with a knowledge_requirements.yaml
+    # that would be picked up by a scan-hijack.
+    other_run = _seed_active_run(
+        isolated_project, "other-task", "20260101T000000Z-other0001"
+    )
+    kr_path = other_run / "meta" / "knowledge_requirements.yaml"
+    kr_path.write_text(
+        "learning_ids:\n  - L-SHOULD-NOT-LEAK\n",
+        encoding="utf-8",
+    )
+
+    # Capture find_active_run calls. _recall_impl uses a local import, so we
+    # patch the source module (trw_mcp.state._paths.find_active_run) and also
+    # watch log events for ctx-aware suppression.
+    captured_contexts: list[object | None] = []
+    from trw_mcp.state import _paths as paths_mod
+
+    original_find = paths_mod.find_active_run
+
+    def _spy_find(*, context: object | None = None) -> Path | None:
+        captured_contexts.append(context)
+        return original_find(context=context)
+
+    monkeypatch.setattr(paths_mod, "find_active_run", _spy_find)
+
+    server = make_test_server("learning")
+    trw_recall = extract_tool_fn(server, "trw_recall")
+
+    fresh_ctx = _fresh_ctx("fresh-recall-session")
+    result = trw_recall(ctx=fresh_ctx, query="anything")
+
+    # The spy should have been called with a TRWCallContext for the fresh
+    # session, NOT with context=None (which would trigger scan-hijack).
+    assert captured_contexts, "build_recall_context must probe find_active_run"
+    any_ctx_aware = any(c is not None for c in captured_contexts)
+    assert any_ctx_aware, (
+        "FR03: trw_recall must thread a TRWCallContext into find_active_run "
+        f"(captured: {captured_contexts!r})"
+    )
+
+    # Sanity — no crash; result is dict-shaped.
+    assert isinstance(result, dict)
+
+
+def test_trw_learn_ctx_aware_telemetry_not_scan_hijacked(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit P1-01: trw_learn(ctx=fresh) telemetry routes via ctx, not scan."""
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    # Seed other-session active run — the telemetry scan would pick this up.
+    _seed_active_run(
+        isolated_project, "other-task", "20260101T000000Z-other0001"
+    )
+
+    captured: list[object | None] = []
+
+    # Patch _get_cached_run_dir to record the call_ctx it receives.
+    from trw_mcp.tools import telemetry as tel_mod
+
+    original = tel_mod._get_cached_run_dir
+
+    def _spy(call_ctx: object | None = None) -> Path | None:
+        captured.append(call_ctx)
+        return original(call_ctx=call_ctx)
+
+    monkeypatch.setattr(tel_mod, "_get_cached_run_dir", _spy)
+
+    server = make_test_server("learning")
+    trw_learn = extract_tool_fn(server, "trw_learn")
+
+    fresh_ctx = _fresh_ctx("fresh-learn-session")
+    try:
+        trw_learn(
+            ctx=fresh_ctx,
+            summary="ctx parity",
+            detail="covers FR03 telemetry routing for trw_learn",
+        )
+    except Exception:
+        # trw_learn may raise on backend unavailability in isolated fixture;
+        # we only care about the telemetry decorator's ctx propagation.
+        pass
+
+    assert captured, "telemetry decorator must invoke _get_cached_run_dir"
+    assert any(c is not None for c in captured), (
+        "FR03: log_tool_call decorator must pass a TRWCallContext when the "
+        f"wrapped handler was given ctx (captured: {captured!r})"
+    )
+
+
+def test_log_tool_call_decorator_uses_ctx_when_available(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit P1-01: log_tool_call extracts ctx from kwargs and builds call_ctx."""
+    from trw_mcp.tools import telemetry as tel_mod
+    from trw_mcp.tools.telemetry import log_tool_call
+
+    captured: list[object | None] = []
+
+    def _spy(call_ctx: object | None = None) -> Path | None:
+        captured.append(call_ctx)
+        return None
+
+    monkeypatch.setattr(tel_mod, "_get_cached_run_dir", _spy)
+
+    @log_tool_call
+    def _fake_tool(ctx: object | None = None, payload: str = "") -> str:
+        return f"ok:{payload}"
+
+    ctx = _fresh_ctx("decorator-test-session")
+    _fake_tool(ctx=ctx, payload="x")
+
+    assert captured, "_get_cached_run_dir should have been invoked"
+    assert any(c is not None for c in captured), (
+        "Decorator must build a TRWCallContext from the wrapped handler's "
+        f"ctx kwarg (captured: {captured!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR12 — TRW_SESSION_ID env inheritance across subprocesses
+# ---------------------------------------------------------------------------
+
+
+def test_trw_session_id_subprocess_inheritance(
+    isolated_project: Path,
+) -> None:
+    """FR12: a subprocess inherits TRW_SESSION_ID and resolves to the same pin-key."""
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "from trw_mcp.state._paths import resolve_pin_key\n"
+        "print(resolve_pin_key(ctx=None))\n"
+    )
+    env = {**os.environ, "TRW_SESSION_ID": "parent-pin-001"}
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "parent-pin-001" in result.stdout, (
+        f"subprocess must resolve to inherited TRW_SESSION_ID; "
+        f"got stdout={result.stdout!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P2-03 — Grace window boundary semantics (>=)
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_preserves_run_at_exact_grace_boundary(
+    isolated_project: Path,
+) -> None:
+    """Audit P2-03: run whose last_activity == grace_cutoff is PRESERVED."""
+    import os
+    import time
+    from dataclasses import asdict, is_dataclass
+
+    from trw_mcp.state._run_gc import sweep_stale_runs
+
+    run_dir = _seed_active_run(
+        isolated_project, "boundary-task", "20260101T000000Z-boundary01"
+    )
+    events_path = run_dir / "meta" / "events.jsonl"
+    events_path.write_text("", encoding="utf-8")
+
+    from trw_mcp.models.config import get_config
+
+    staleness_hours = 24
+    grace_hours = 48
+    # Use a deterministic _now to avoid rounding races — set events.jsonl mtime
+    # EXACTLY to grace_cutoff = now - (staleness + grace) * 3600.
+    now = time.time()
+    target_mtime = now - ((staleness_hours + grace_hours) * 3600)
+    os.utime(events_path, (target_mtime, target_mtime))
+
+    runs_root = isolated_project / get_config().runs_root
+    report = sweep_stale_runs(
+        runs_root=runs_root,
+        staleness_hours=staleness_hours,
+        grace_hours=grace_hours,
+        pinned_paths=[],
+        dry_run=True,
+        _now=now,
+    )
+    if is_dataclass(report):
+        report_d = asdict(report)
+    elif hasattr(report, "model_dump"):
+        report_d = report.model_dump()
+    else:
+        report_d = dict(report)
+
+    abandoned = report_d.get("abandoned_run_ids") or []
+    assert "20260101T000000Z-boundary01" not in abandoned, (
+        f"Run at exact grace boundary must be preserved (>= semantics). "
+        f"report={report_d!r}"
+    )

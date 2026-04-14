@@ -857,13 +857,15 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         """
         pin_key = resolve_pin_key(ctx=ctx, explicit=None)
         raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-        call_ctx = TRWCallContext(
+        # PRD-CORE-141: construct TRWCallContext for shape parity with other
+        # ctx-aware tools.  Reserved for future analytics hooks (e.g. pin-key
+        # logging on heartbeat events) — no downstream consumer today.
+        _ = TRWCallContext(
             session_id=pin_key,
             client_hint=None,
             explicit=False,
             fastmcp_session=raw_session if isinstance(raw_session, str) else None,
         )
-        del call_ctx  # reserved for future analytics hooks — keeps shape parity with other tools
 
         entry = get_pin_entry(pin_key)
         if entry is None:
