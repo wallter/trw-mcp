@@ -13,6 +13,16 @@ argument-hint: "[PRD-ID or file path]"
 
 Generate a structured execution plan that bridges a groomed PRD to concrete implementation micro-tasks. The execution plan decomposes each FR into actionable steps with file paths, test names, verification commands, and dependency graphs — so agents can execute without self-decomposing.
 
+## Implementation-Readiness Guardrails
+
+Treat **implementation-readiness** as the load-bearing signal, not a license to
+chase a score.
+Before advancing, confirm the PRD makes **control points**, **testability**,
+proof-oriented tests / verification commands, **migration** / rollback
+semantics, and completion evidence explicit.
+Treat **score-gaming** or density-chasing as failure modes; add prose only when
+it improves implementability, traceability, or proof quality.
+
 ## Research Basis
 
 - Agent half-life ~35 min (Ord 2025): micro-tasks must fit within reliability window

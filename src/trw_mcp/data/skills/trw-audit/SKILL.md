@@ -15,6 +15,16 @@ argument-hint: "[PRD-ID or file path]"
 
 Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review (use `/trw-review-pr` for that). This audit answers one question: **does the code do what the PRD says it should?**
 
+## Implementation-Readiness Guardrails
+
+Treat **implementation-readiness** as the load-bearing signal, not a license to
+chase a score.
+Before advancing, confirm the PRD makes **control points**, **testability**,
+proof-oriented tests / verification commands, **migration** / rollback
+semantics, and completion evidence explicit.
+Treat **score-gaming** or density-chasing as failure modes; add prose only when
+it improves implementability, traceability, or proof quality.
+
 ## Why This Exists
 
 Sprint 29 proved that "all tests pass" is insufficient:

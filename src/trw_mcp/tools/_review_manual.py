@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_FR_LABEL_PATTERN = r"(?:PRD-[\w-]+-)?FR\d+"
+_FR_CAPTURE_PATTERN = r"(?:PRD-[\w-]+-)?FR(\d+)"
+
 
 # ---------------------------------------------------------------------------
 # Manual mode
@@ -171,7 +174,7 @@ def _extract_fr_mismatches(
 
     # Split into individual FRs
     fr_pattern = re.compile(
-        r"(?:^|\n)(?:###?\s*)?FR(\d+)\s*[:\-\u2013]\s*(.+?)(?=\n(?:###?\s*)?FR\d|\Z)",
+        rf"(?:^|\n)(?:###?\s*)?{_FR_CAPTURE_PATTERN}\s*[:\-\u2013]\s*(.+?)(?=\n(?:###?\s*)?{_FR_LABEL_PATTERN}|\Z)",
         re.DOTALL,
     )
     for m in fr_pattern.finditer(section):
@@ -196,7 +199,7 @@ def _count_frs_in_prd(prd_path: Path) -> int:
     try:
         return len(
             re.findall(
-                r"(?:^|\n)(?:###?\s*)?FR\d+",
+                rf"(?:^|\n)(?:###?\s*)?{_FR_LABEL_PATTERN}",
                 _extract_section(prd_path.read_text(encoding="utf-8"), "Functional Requirements"),
             )
         )
@@ -246,7 +249,7 @@ def handle_reconcile_mode(
             continue
         # Count FRs from already-loaded content (avoids double file read)
         fr_section = _extract_section(prd_content, "Functional Requirements")
-        total_frs += len(re.findall(r"(?:^|\n)(?:###?\s*)?FR\d+", fr_section))
+        total_frs += len(re.findall(rf"(?:^|\n)(?:###?\s*)?{_FR_LABEL_PATTERN}", fr_section))
         mismatches = _extract_fr_mismatches(prd_content, prd_id, diff)
         all_mismatches.extend(mismatches)
 

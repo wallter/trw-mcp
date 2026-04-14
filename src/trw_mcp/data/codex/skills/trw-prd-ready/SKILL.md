@@ -9,6 +9,16 @@ description: "Full PRD lifecycle in one command: create (or pick up existing) â†
 
 Take a requirement from idea to sprint-ready execution plan in a single invocation. This skill orchestrates the entire PRD pipeline so users never need to remember which steps come next.
 
+## Implementation-Readiness Guardrails
+
+Treat **implementation-readiness** as the load-bearing signal, not a license to
+chase a score.
+Before advancing, confirm the PRD makes **control points**, **testability**,
+proof-oriented tests / verification commands, **migration** / rollback
+semantics, and completion evidence explicit.
+Treat **score-gaming** or density-chasing as failure modes; add prose only when
+it improves implementability, traceability, or proof quality.
+
 ## Input Detection
 
 Parse `$ARGUMENTS` to determine the entry point:
