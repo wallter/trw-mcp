@@ -53,6 +53,8 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_pre_compact_checkpoint": "Save checkpoint before context compaction",
     "trw_init": "Initialize TRW in a project directory",
     "trw_claude_md_sync": "Synchronize CLAUDE.md with current TRW configuration",
+    "trw_heartbeat": "Refresh run liveness and report whether a checkpoint is due",
+    "trw_adopt_run": "Attach this session to an existing run for an explicit handoff or resume",
 }
 
 # Validate at import time: every tool in the "all" preset has a description
