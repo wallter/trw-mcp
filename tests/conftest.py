@@ -259,12 +259,20 @@ def _reset_config_singleton() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _reset_run_pin() -> Iterator[None]:
-    """Reset active run pin for test isolation."""
+    """Reset active run pin + pin-store cache for test isolation.
+
+    PRD-CORE-141: the 1-second TTL cache in ``_pin_store`` can carry state across
+    tests. Without invalidating it, a prior test's empty-dict read caches into
+    the next test's malformed-file scenario and the warning never fires.
+    """
     from trw_mcp.state._paths import _pinned_runs  # type: ignore[attr-defined]
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache
 
     _pinned_runs.clear()
+    invalidate_pin_store_cache()
     yield
     _pinned_runs.clear()
+    invalidate_pin_store_cache()
 
 
 def _join_and_reset_deferred() -> None:

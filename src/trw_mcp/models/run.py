@@ -196,6 +196,14 @@ class RunState(BaseModel):
     owner_session_id: str | None = None
     # PRD-CORE-106: Artifact paths scanned for knowledge requirements
     artifacts: list[str] = Field(default_factory=list)
+    # PRD-CORE-141-FR10: Protected runs survive the stale-run sweep regardless of age
+    protected: bool = Field(
+        default=False,
+        description=(
+            "If True, this run is preserved by the stale-run sweep regardless of age "
+            "(PRD-CORE-141 FR10)."
+        ),
+    )
 
 
 class EventType(str, Enum):

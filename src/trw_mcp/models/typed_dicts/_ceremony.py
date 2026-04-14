@@ -240,3 +240,38 @@ class FinalizeRunResult(TypedDict, total=False):
     Currently always returns ``{}`` — placeholder for future run-close fields
     such as ``run_id``, ``closed_at``, ``archived_path``.
     """
+
+
+class TrwHeartbeatResultDict(TypedDict, total=False):
+    """Return shape of ``trw_heartbeat`` (PRD-CORE-141 FR07).
+
+    All fields optional: the success path populates
+    ``run_id``/``last_heartbeat_ts``/``stale_after_ts``/``age_hours``/
+    ``should_checkpoint``/``rate_limited`` while the missing-pin path
+    populates ``error``/``hint`` instead.
+    """
+
+    run_id: str
+    last_heartbeat_ts: str
+    stale_after_ts: str
+    age_hours: float
+    should_checkpoint: bool
+    rate_limited: bool
+    error: str
+    hint: str
+
+
+class TrwAdoptRunResultDict(TypedDict):
+    """Return shape of ``trw_adopt_run`` (PRD-CORE-141 FR08).
+
+    All keys are present on the success path; failures raise ``StateError``.
+    ``previous_pin_key`` is ``None`` when the target run had no prior pin.
+    """
+
+    adopted_run_id: str
+    previous_pin_key: str | None
+    from_pin_key: str | None
+    to_pin_key: str
+    adopted_ts: str
+    from_owner_was_live: bool
+    force_used: bool

@@ -12,12 +12,17 @@ from pathlib import Path
 from typing import cast
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import CheckpointResultDict, PreCompactResultDict
 from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
-from trw_mcp.state._paths import find_active_run, resolve_project_root
+from trw_mcp.state._paths import (
+    TRWCallContext,
+    find_active_run,
+    resolve_pin_key,
+    resolve_project_root,
+)
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -263,12 +268,24 @@ def _write_compact_instructions(
     return instructions_path
 
 
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    return TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
+
+
 def register_checkpoint_tools(server: FastMCP) -> None:
     """Register checkpoint tools on the MCP server."""
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_pre_compact_checkpoint() -> PreCompactResultDict:
+    def trw_pre_compact_checkpoint(ctx: Context | None = None) -> PreCompactResultDict:
         """Create a safety checkpoint before context compaction (PRD-CORE-053).
 
         Called by the PreCompact hook to preserve state before the LLM
@@ -280,7 +297,9 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             return {"status": "skipped", "reason": "auto_checkpoint_pre_compact disabled"}
 
         try:
-            run_dir = find_active_run()
+            # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run suppresses
+            # scan fallback for fresh sessions.
+            run_dir = find_active_run(context=_build_call_context(ctx))
             if run_dir is None:
                 return {"status": "skipped", "reason": "no_active_run"}
 

@@ -54,6 +54,9 @@ TOOL_GROUP_ADMIN: tuple[str, ...] = (
     "trw_pre_compact_checkpoint",
     "trw_init",
     "trw_claude_md_sync",
+    # PRD-CORE-141 FR07/FR08 — per-connection pin liveness + adoption.
+    "trw_heartbeat",
+    "trw_adopt_run",
 )
 
 TOOL_PRESETS: dict[str, tuple[str, ...]] = {

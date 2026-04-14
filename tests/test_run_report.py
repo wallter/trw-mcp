@@ -664,7 +664,7 @@ class TestReportToolLayer:
         from trw_mcp.exceptions import StateError
         from trw_mcp.tools.report import register_report_tools
 
-        def _raise(_: object = None) -> None:
+        def _raise(_: object = None, **__: object) -> None:
             raise StateError("no active run", path="none")
 
         monkeypatch.setattr(report_mod, "resolve_run_path", _raise)
@@ -719,7 +719,7 @@ class TestReportToolLayer:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True)
 
-        monkeypatch.setattr(report_mod, "resolve_run_path", lambda _: run_dir)
+        monkeypatch.setattr(report_mod, "resolve_run_path", lambda _=None, **__: run_dir)
         monkeypatch.setattr(report_mod, "resolve_trw_dir", lambda: trw_dir)
 
         srv = FastMCP("run-report-valid-test")
