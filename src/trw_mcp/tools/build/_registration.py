@@ -39,7 +39,10 @@ _BUILD_CHECK_USAGE = (
 def _build_call_context(ctx: Context | None) -> TRWCallContext:
     """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    try:
+        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    except Exception:
+        raw_session = None
     return TRWCallContext(
         session_id=pin_key,
         client_hint=None,

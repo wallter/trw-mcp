@@ -87,13 +87,24 @@ def _build_call_context(ctx: Context | None) -> TRWCallContext:
     env / process identity.
     """
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    try:
+        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    except Exception:
+        raw_session = None
     return TRWCallContext(
         session_id=pin_key,
         client_hint=None,  # Wave 4 may populate from user-agent header
         explicit=False,
         fastmcp_session=raw_session if isinstance(raw_session, str) else None,
     )
+
+
+def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
+    """Call ctx-aware ``find_active_run`` when supported, else fall back."""
+    try:
+        return find_active_run(context=call_ctx)
+    except TypeError:
+        return find_active_run()
 
 
 def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
@@ -430,7 +441,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         call_ctx = _build_call_context(ctx)
         run_dir: Path | None = None
         try:
-            run_dir = find_active_run(context=call_ctx)
+            run_dir = _find_active_run_compat(call_ctx)
             if run_dir is not None:
                 pin_active_run(run_dir, context=call_ctx)
                 results["run"] = _get_run_status(run_dir)
@@ -640,7 +651,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         if run_path:
             resolved_run = Path(run_path).resolve()
         else:
-            resolved_run = find_active_run(context=call_ctx)
+            resolved_run = _find_active_run_compat(call_ctx)
 
         results["run_path"] = str(resolved_run) if resolved_run else None
 
@@ -1061,7 +1072,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         adopted_ts = _iso_now()
 
         if from_owner_was_live and force:
-            logger.warning(
+            structlog.get_logger(__name__).warning(
                 "run_adopted_potential_writer_conflict",
                 previous_pin_key=previous_pin_key,
                 previous_owner_heartbeat_age_hours=previous_owner_heartbeat_age_hours,

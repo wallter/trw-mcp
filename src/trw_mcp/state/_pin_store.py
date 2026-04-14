@@ -57,6 +57,11 @@ from trw_mcp._locking import _lock_ex, _lock_un
 
 logger = structlog.get_logger(__name__)
 
+
+def _runtime_logger() -> Any:
+    """Return a fresh logger so structlog test capture sees late-bound events."""
+    return structlog.get_logger(__name__)
+
 __all__ = [
     "PIN_STORE_CACHE_TTL_SECONDS",
     "invalidate_pin_store_cache",
@@ -94,6 +99,9 @@ _pin_store_cache: dict[str, dict[str, Any]] | None = None
 #: Monotonic timestamp the cache was populated at.
 _pin_store_cache_ts: float = 0.0
 
+#: Source file mtime associated with the cached snapshot.
+_pin_store_cache_mtime_ns: int | None = None
+
 
 # --- Path helpers ------------------------------------------------------------
 
@@ -127,9 +135,10 @@ def invalidate_pin_store_cache() -> None:
     tests and cross-module callers (e.g. boot-sweep code in Wave 4) can
     flush the cache explicitly when they know the disk state has changed.
     """
-    global _pin_store_cache, _pin_store_cache_ts
+    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
     _pin_store_cache = None
     _pin_store_cache_ts = 0.0
+    _pin_store_cache_mtime_ns = None
 
 
 # --- PID liveness -----------------------------------------------------------
@@ -153,7 +162,7 @@ def _is_pid_alive(pid: int) -> bool:
         try:
             import psutil  # type: ignore[import-not-found]
         except ImportError:
-            logger.debug("pid_check_skipped_no_psutil", pid=pid)
+            _runtime_logger().debug("pid_check_skipped_no_psutil", pid=pid)
             return True
         return bool(psutil.pid_exists(pid))
     try:
@@ -180,7 +189,7 @@ def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str
     survivors: dict[str, dict[str, Any]] = {}
     for pin_key, entry in raw.items():
         if not isinstance(entry, dict):
-            logger.warning(
+            _runtime_logger().warning(
                 "pin_store_entry_malformed",
                 pin_key=pin_key,
                 entry_type=type(entry).__name__,
@@ -189,12 +198,12 @@ def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str
 
         run_path_raw = entry.get("run_path")
         if not isinstance(run_path_raw, str) or not run_path_raw:
-            logger.warning("pin_store_entry_missing_run_path", pin_key=pin_key)
+            _runtime_logger().warning("pin_store_entry_missing_run_path", pin_key=pin_key)
             continue
 
         # Stale run_path eviction.
         if not Path(run_path_raw).exists():
-            logger.warning(
+            _runtime_logger().warning(
                 "pin_stale_run_path_evicted",
                 pin_key=pin_key,
                 run_path=run_path_raw,
@@ -204,7 +213,7 @@ def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str
         # Orphan pid eviction.
         pid_raw = entry.get("pid")
         if isinstance(pid_raw, int) and not _is_pid_alive(pid_raw):
-            logger.warning(
+            _runtime_logger().warning(
                 "pin_orphan_evicted",
                 pin_key=pin_key,
                 pid=pid_raw,
@@ -223,25 +232,28 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     at WARN level and returns ``{}``.  Each load applies the stale-path
     and orphan-pid eviction passes before caching.
     """
-    global _pin_store_cache, _pin_store_cache_ts
-
-    # Cache hit?  Return a shallow copy so callers cannot mutate the cache.
-    if _pin_store_cache is not None and (
-        time.monotonic() - _pin_store_cache_ts < PIN_STORE_CACHE_TTL_SECONDS
-    ):
-        return dict(_pin_store_cache)
+    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
 
     pins_path = pin_store_path()
+    if _pin_store_cache is not None and (time.monotonic() - _pin_store_cache_ts < PIN_STORE_CACHE_TTL_SECONDS):
+        try:
+            current_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
+        except OSError:
+            current_mtime_ns = None
+        if current_mtime_ns == _pin_store_cache_mtime_ns:
+            return dict(_pin_store_cache)
+
     if not pins_path.exists():
         _pin_store_cache = {}
         _pin_store_cache_ts = time.monotonic()
+        _pin_store_cache_mtime_ns = None
         return {}
 
     try:
         with pins_path.open("r", encoding="utf-8") as fh:
             raw = json.load(fh)
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning(
+        _runtime_logger().warning(
             "pin_store_malformed_fallback",
             path=str(pins_path),
             error=type(exc).__name__,
@@ -249,10 +261,11 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
         )
         _pin_store_cache = {}
         _pin_store_cache_ts = time.monotonic()
+        _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
         return {}
 
     if not isinstance(raw, dict):
-        logger.warning(
+        _runtime_logger().warning(
             "pin_store_malformed_fallback",
             path=str(pins_path),
             error="root_not_dict",
@@ -260,6 +273,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
         )
         _pin_store_cache = {}
         _pin_store_cache_ts = time.monotonic()
+        _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
         return {}
 
     # The json module can only produce str keys for root dicts, but cast
@@ -268,6 +282,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     survivors = _apply_eviction_passes(typed)
     _pin_store_cache = survivors
     _pin_store_cache_ts = time.monotonic()
+    _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns
     return dict(survivors)
 
 
@@ -292,8 +307,8 @@ def _atomic_write_json(pins_path: Path, payload: dict[str, dict[str, Any]]) -> N
             os.chmod(pins_path, 0o600)
         except OSError as exc:
             # Windows does not honor POSIX mode bits; log at DEBUG.
-            logger.debug(
-                "pin_store_chmod_failed",
+                _runtime_logger().debug(
+                    "pin_store_chmod_failed",
                 path=str(pins_path),
                 error=type(exc).__name__,
             )
