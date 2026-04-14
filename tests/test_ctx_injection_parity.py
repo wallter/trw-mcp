@@ -198,6 +198,11 @@ def test_all_pin_state_tools_declare_ctx() -> None:
             "trw_review",
             "trw_run_report",
             "trw_prd_validate",
+            # PRD-CORE-141 audit follow-up: learning tools also touch pin
+            # state transitively via telemetry decorator + recall context.
+            "trw_recall",
+            "trw_learn",
+            "trw_learn_update",
         }
     )
 

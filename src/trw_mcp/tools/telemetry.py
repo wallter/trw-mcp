@@ -41,8 +41,19 @@ _cached_run_dir_lock = threading.Lock()
 _RUN_DIR_CACHE_TTL: float = 5.0
 
 
-def _get_cached_run_dir() -> Path | None:
-    """Return cached active run directory, refreshing if TTL expired."""
+def _get_cached_run_dir(call_ctx: object | None = None) -> Path | None:
+    """Return cached active run directory, refreshing if TTL expired.
+
+    PRD-CORE-141 FR03: when *call_ctx* is provided (ctx-aware tool handler),
+    bypass the process-level cache and resolve via ctx so telemetry events
+    get routed to the caller's pinned run, not whichever run happens to be
+    latest on disk.  When *call_ctx* is None (legacy/stdio callers), fall
+    back to the scan-based cached lookup (FR15 compat).
+    """
+    if call_ctx is not None:
+        # Do not cache ctx-scoped lookups — different ctxs share this process.
+        return find_active_run(context=call_ctx)  # type: ignore[arg-type]
+
     global _cached_run_dir
     now = time.monotonic()
     ts, run_dir = _cached_run_dir
@@ -56,6 +67,31 @@ def _get_cached_run_dir() -> Path | None:
         run_dir = find_active_run()
         _cached_run_dir = (now, run_dir)
         return run_dir
+
+
+def _extract_call_ctx(kwargs: dict[str, object]) -> object | None:
+    """Build a TRWCallContext from a wrapped handler's ctx kwarg (FR03).
+
+    Returns None when no ctx was supplied (legacy/stdio callers) so the
+    downstream _get_cached_run_dir preserves its scan-based fallback.
+    Fail-open on import / attribute errors.
+    """
+    ctx = kwargs.get("ctx")
+    if ctx is None:
+        return None
+    try:
+        from trw_mcp.state._paths import TRWCallContext, resolve_pin_key
+
+        pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+        raw_session = getattr(ctx, "session_id", None)
+        return TRWCallContext(
+            session_id=pin_key,
+            client_hint=None,
+            explicit=False,
+            fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+        )
+    except Exception:  # justified: fail-open, telemetry must never block tool exec
+        return None
 
 
 def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
@@ -91,6 +127,11 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         if not config.telemetry_enabled:
             return func(*args, **kwargs)
 
+        # PRD-CORE-141 FR03: if the wrapped handler was invoked with ctx,
+        # build a TRWCallContext so telemetry events route to the caller's
+        # pinned run (not a scan-hijacked one).  No ctx → legacy scan path.
+        call_ctx = _extract_call_ctx(kwargs)
+
         # FR01 (PRD-CORE-082): Bind correlation ID for structured log tracing.
         # Preserve parent ID for nested tool calls (don't rebind).
         existing_ctx = structlog.contextvars.get_contextvars()
@@ -122,6 +163,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                     success,
                     error_msg,
                     error_type_name,
+                    call_ctx=call_ctx,
                 )
             except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
@@ -161,6 +203,8 @@ def _write_tool_event(
     success: bool,
     error: str | None,
     error_type: str | None = None,
+    *,
+    call_ctx: object | None = None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
@@ -179,7 +223,7 @@ def _write_tool_event(
     }
 
     # Include phase from active run state if available
-    run_dir = _get_cached_run_dir()
+    run_dir = _get_cached_run_dir(call_ctx=call_ctx)
     phase = "unknown"
     if run_dir is not None:
         run_yaml = run_dir / "meta" / "run.yaml"
@@ -217,7 +261,7 @@ def _write_tool_event(
     writer = FileStateWriter()
     events = FileEventLogger(writer)
 
-    run_dir = _get_cached_run_dir()
+    run_dir = _get_cached_run_dir(call_ctx=call_ctx)
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
         if events_path.parent.exists():
