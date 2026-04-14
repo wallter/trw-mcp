@@ -122,6 +122,16 @@ from trw_mcp.tools._session_recall_helpers import (
 logger = structlog.get_logger(__name__)
 
 
+def _resolve_trw_dir_compat() -> Path:
+    """Resolve the active ``.trw`` dir while honoring ceremony-module patches."""
+    try:
+        from trw_mcp.tools import ceremony as ceremony_mod
+
+        return ceremony_mod.resolve_trw_dir()
+    except Exception:
+        return resolve_trw_dir()
+
+
 # ── Session lifecycle step functions ─────────────────────────────────────
 
 
@@ -152,7 +162,7 @@ def step_log_session_event(
         if events_path.parent.exists():
             events.log_event(events_path, "session_start", event_data)
     else:
-        trw_dir_path = resolve_trw_dir()
+        trw_dir_path = _resolve_trw_dir_compat()
         context_path = trw_dir_path / config.context_dir
         writer.ensure_dir(context_path)
         fallback_path = context_path / "session-events.jsonl"
@@ -198,7 +208,7 @@ def step_telemetry_startup(
 def step_increment_session_counter() -> None:
     """Increment sessions_tracked counter (FIX-050-FR06)."""
     from trw_mcp.state.analytics.counters import increment_session_start_counter
-    increment_session_start_counter(resolve_trw_dir())
+    increment_session_start_counter(_resolve_trw_dir_compat())
 
 
 def step_sanitize_and_maintain(
@@ -219,11 +229,11 @@ def step_sanitize_and_maintain(
     # One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
     try:
         from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
-        sanitize_ceremony_feedback(resolve_trw_dir())
+        sanitize_ceremony_feedback(_resolve_trw_dir_compat())
     except Exception:  # justified: fail-open, sanitization must not block session start
         logger.warning("ceremony_feedback_sanitize_failed", exc_info=True)
 
-    return run_auto_maintenance(resolve_trw_dir(), config, run_dir)
+    return run_auto_maintenance(_resolve_trw_dir_compat(), config, run_dir)
 
 
 def step_embed_health() -> dict[str, object]:
@@ -249,7 +259,7 @@ def step_embed_health() -> dict[str, object]:
 def step_mark_session_started() -> None:
     """Mark session started in ceremony state tracker (PRD-CORE-074 FR04)."""
     from trw_mcp.state.ceremony_progress import mark_session_started
-    mark_session_started(resolve_trw_dir())
+    mark_session_started(_resolve_trw_dir_compat())
 
 
 def step_ceremony_status(
@@ -265,7 +275,7 @@ def step_ceremony_status(
     if config.effective_ceremony_mode == "light":
         return
 
-    append_ceremony_status(results, resolve_trw_dir())
+    append_ceremony_status(results, _resolve_trw_dir_compat())
 
 
 def _check_version_sentinel(
@@ -366,7 +376,7 @@ def run_auto_maintenance(
         elif emb_status.get("enabled") and emb_status.get("available"):
             from trw_mcp.state.memory_adapter import backfill_embeddings
 
-            backfill = backfill_embeddings(resolve_trw_dir())
+            backfill = backfill_embeddings(_resolve_trw_dir_compat())
             if backfill.get("embedded", 0) > 0:
                 maintenance["embeddings_backfill"] = backfill
     except Exception:  # justified: fail-open, embeddings check must not block session start

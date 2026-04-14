@@ -52,7 +52,12 @@ def _get_cached_run_dir(call_ctx: object | None = None) -> Path | None:
     """
     if call_ctx is not None:
         # Do not cache ctx-scoped lookups — different ctxs share this process.
-        return find_active_run(context=call_ctx)  # type: ignore[arg-type]
+        # Some tests monkeypatch find_active_run with the legacy zero-arg shape,
+        # so keep a compatibility fallback instead of surfacing TypeError.
+        try:
+            return find_active_run(context=call_ctx)  # type: ignore[arg-type]
+        except TypeError:
+            return find_active_run()
 
     global _cached_run_dir
     now = time.monotonic()
@@ -223,7 +228,10 @@ def _write_tool_event(
     }
 
     # Include phase from active run state if available
-    run_dir = _get_cached_run_dir(call_ctx=call_ctx)
+    try:
+        run_dir = _get_cached_run_dir(call_ctx=call_ctx)
+    except TypeError:
+        run_dir = _get_cached_run_dir()
     phase = "unknown"
     if run_dir is not None:
         run_yaml = run_dir / "meta" / "run.yaml"
@@ -261,7 +269,10 @@ def _write_tool_event(
     writer = FileStateWriter()
     events = FileEventLogger(writer)
 
-    run_dir = _get_cached_run_dir(call_ctx=call_ctx)
+    try:
+        run_dir = _get_cached_run_dir(call_ctx=call_ctx)
+    except TypeError:
+        run_dir = _get_cached_run_dir()
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
         if events_path.parent.exists():
