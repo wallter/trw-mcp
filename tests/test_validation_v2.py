@@ -943,6 +943,24 @@ class TestValidatePrdQualityV2:
         assert result.valid is False
         assert any(f.field == "category" and "Unsupported PRD category" in f.message for f in result.failures)
 
+    def test_v2_integrity_accepts_eval_category(self, tmp_path: Path) -> None:
+        """Integrity allowlist includes EVAL feature PRDs."""
+        repo_file = tmp_path / "src" / "existing.py"
+        repo_file.parent.mkdir(parents=True)
+        repo_file.write_text("value = 1\n", encoding="utf-8")
+
+        result = validate_prd_quality_v2(
+            _build_integrity_prd(
+                prd_id="PRD-EVAL-005",
+                title="Eval category fixture",
+                category="EVAL",
+                path_ref="src/existing.py",
+            ),
+            project_root=str(tmp_path),
+        )
+
+        assert not any(f.field == "category" for f in result.failures)
+
     def test_v2_integrity_rejects_missing_repo_reference(self, tmp_path: Path) -> None:
         """Integrity checks fail when cited repo paths do not exist."""
         result = validate_prd_quality_v2(
