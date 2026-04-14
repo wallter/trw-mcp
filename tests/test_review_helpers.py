@@ -20,10 +20,12 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_helpers import (
+    _extract_fr_mismatches,
     count_by_severity,
     handle_auto_mode,
     handle_cross_model_mode,
     handle_manual_mode,
+    handle_reconcile_mode,
     validate_manual_findings,
 )
 
@@ -289,6 +291,67 @@ class TestHandleManualMode:
         assert result["warning_count"] == 0
         assert result["info_count"] == 0
         assert result["total_findings"] == 0
+
+
+# ---------------------------------------------------------------------------
+# handle_reconcile_mode / fully-qualified FR parsing
+# ---------------------------------------------------------------------------
+
+
+class TestHandleReconcileMode:
+    """Reconcile mode counts and parses both bare and fully-qualified FR headings."""
+
+    def test_extract_fr_mismatches_supports_fully_qualified_fr_headings(self) -> None:
+        prd_content = """
+## Functional Requirements
+
+### PRD-QUAL-059-FR01: Harden review guidance
+Use `ReadinessGuard` to verify implementation surfaces.
+"""
+
+        mismatches = _extract_fr_mismatches(prd_content, "PRD-QUAL-059", diff="")
+
+        assert mismatches == [
+            {
+                "prd_id": "PRD-QUAL-059",
+                "fr": "FR01",
+                "identifier": "ReadinessGuard",
+                "recommendation": "update_spec",
+            }
+        ]
+
+    def test_handle_reconcile_mode_counts_fully_qualified_fr_headings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        prd_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prd_dir.mkdir(parents=True)
+        (prd_dir / "PRD-QUAL-059.md").write_text(
+            """
+# PRD-QUAL-059
+
+## Functional Requirements
+
+### PRD-QUAL-059-FR01: Harden review guidance
+The guidance must prioritize executable evidence before prose expansion.
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("trw_mcp.tools._review_helpers._get_git_diff", lambda: "")
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
+
+        result = handle_reconcile_mode(
+            TRWConfig(prds_relative_path="docs/requirements-aare-f/prds"),
+            None,
+            "review-reconcile",
+            "2026-04-14T00:00:00Z",
+            ["PRD-QUAL-059"],
+        )
+
+        assert result["verdict"] == "clean"
+        assert result["total_frs"] == 1
+        assert result["mismatch_count"] == 0
 
 
 # ---------------------------------------------------------------------------

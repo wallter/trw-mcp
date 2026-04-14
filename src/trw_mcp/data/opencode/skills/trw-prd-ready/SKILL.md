@@ -10,6 +10,16 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash, mcp__trw__trw_recall, mcp__t
 
 # OpenCode PRD Ready Skill
 
+## Implementation-Readiness Guardrails
+
+Treat **implementation-readiness** as the load-bearing signal, not a license to
+chase a score.
+Before advancing, confirm the PRD makes **control points**, **testability**,
+proof-oriented tests / verification commands, **migration** / rollback
+semantics, and completion evidence explicit.
+Treat **score-gaming** or density-chasing as failure modes; add prose only when
+it improves implementability, traceability, or proof quality.
+
 1. Detect whether the input is a feature description, PRD ID, or file path.
 2. Call `trw_recall()` for related learnings.
 3. If needed, call `trw_prd_create()`.

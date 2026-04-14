@@ -43,6 +43,14 @@ from `trw_prd_groom(dry_run=True)` that identifies which sections need work
 and what research topics to pursue.
 </context>
 
+<implementation-readiness-guardrails>
+Treat **implementation-readiness** as the load-bearing signal; scores are
+secondary to execution evidence.
+Prioritize **control points**, **testability**, proof tests, **migration** /
+rollback semantics, and completion evidence before expanding prose for density.
+Treat **score-gaming** or density-chasing as failure modes.
+</implementation-readiness-guardrails>
+
 <priority_order>
 When principles conflict, follow this hierarchy (highest priority first):
 
