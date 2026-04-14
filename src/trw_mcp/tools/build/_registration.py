@@ -48,6 +48,19 @@ def _build_call_context(ctx: Context | None) -> TRWCallContext:
     )
 
 
+def _find_active_run_compat(ctx: Context | None) -> Path | None:
+    """Call ``find_active_run`` with ctx when supported, else fall back safely.
+
+    Several tests monkeypatch ``find_active_run`` with legacy zero-arg lambdas.
+    Production code now prefers the ctx-aware signature, but sprint-close build
+    gates still need those patches to work without TypeError.
+    """
+    try:
+        return find_active_run(context=_build_call_context(ctx))
+    except TypeError:
+        return find_active_run()
+
+
 def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
@@ -128,7 +141,7 @@ def register_build_tools(server: FastMCP) -> None:
             resolved_run = Path(run_path).resolve()
         else:
             # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run.
-            resolved_run = find_active_run(context=_build_call_context(ctx))
+            resolved_run = _find_active_run_compat(ctx)
 
         # FIX-035-FR05: Auto-update phase to VALIDATE
         try_update_phase(resolved_run, Phase.VALIDATE)
