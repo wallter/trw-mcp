@@ -1558,6 +1558,33 @@ def phase_install_packages(
         sys.exit(1)
     ui.stop_spinner(True, f"Installed trw-mcp v{TRW_VERSION}")
 
+    # Force-reinstall trw-memory from bundled wheel (defeats PyPI downgrade).
+    # Rationale: trw-mcp's install triggers pip's dep resolver which reaches
+    # PyPI for trw-memory and may downgrade our bundled version if PyPI lags
+    # behind local builds. Force-reinstall with --no-deps guarantees the
+    # bundled wheel wins. --no-cache-dir bypasses any pip cache that could
+    # hold a stale PyPI copy.
+    # pip --target has a quirk: even with --force-reinstall, it doesn't
+    # overwrite existing directories (it just warns and skips). So we
+    # manually delete the package dirs first, then reinstall.
+    if validated_target:
+        target_path = Path(validated_target)
+        import shutil
+        for pattern in ("trw_memory", "trw_memory-*.dist-info"):
+            for p in target_path.glob(pattern):
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+    cmd = [python, "-B", "-m", "pip", "install", "--no-deps",
+           "--no-cache-dir", "--no-index"]
+    if validated_target:
+        cmd += ["--target", validated_target]
+    cmd.append(str(memory_whl))
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        ui.step_warn(f"trw-memory pin failed: {result.stderr[:200]}")
+    else:
+        ui.info(f"Pinned trw-memory to bundled wheel ({memory_whl.name})")
+
     # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
     if validated_target:
         wrapper = Path(validated_target) / "bin" / "trw-mcp"
