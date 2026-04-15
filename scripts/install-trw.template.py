@@ -83,6 +83,13 @@ _SUPPORTED_IDES = [
     "aider",
 ]
 
+# Legacy identifier migrations — old names that prior configs may still hold.
+# Map each retired identifier to its modern replacement. Applied silently on
+# load so an upgrade never fails because of a renamed client profile.
+_LEGACY_IDE_ALIASES: dict[str, str] = {
+    "cursor": "cursor-ide",  # split into cursor-ide / cursor-cli in v0.44
+}
+
 _IDE_META: dict[str, dict[str, str]] = {
     "claude-code": {
         "label": "Claude Code",
@@ -364,17 +371,47 @@ def _format_ide_list(ides: list[str]) -> str:
     return f"{', '.join(labels[:-1])}, and {labels[-1]}"
 
 
-def _normalize_ide_targets(ides: list[str]) -> list[str]:
-    """Validate installer IDE identifiers and expand ``all``."""
-    normalized = [ide.strip() for ide in ides if ide.strip()]
-    if not normalized:
-        return []
-    if "all" in normalized:
-        return _SUPPORTED_IDES.copy()
-    invalid = [ide for ide in normalized if ide not in _SUPPORTED_IDES]
-    if invalid:
-        supported = ", ".join(_SUPPORTED_IDES + ["all"])
-        raise ValueError(f"Unknown --ide value(s): {', '.join(invalid)}. Supported values: {supported}")
+def _normalize_ide_targets(ides: list[str], *, strict: bool = True) -> list[str]:
+    """Validate installer IDE identifiers and expand ``all``.
+
+    Applies ``_LEGACY_IDE_ALIASES`` so that prior configs written before a
+    rename keep working transparently (e.g. ``cursor`` → ``cursor-ide``).
+
+    In strict mode (CLI use), unknown identifiers raise ``ValueError`` with a
+    "did you mean?" hint. In non-strict mode (loading prior config), unknown
+    identifiers are dropped — we never want a stale config entry to crash the
+    installer and block the user from upgrading.
+    """
+    import difflib
+
+    normalized: list[str] = []
+    dropped: list[str] = []
+    for raw in ides:
+        ide = raw.strip()
+        if not ide:
+            continue
+        ide = _LEGACY_IDE_ALIASES.get(ide, ide)
+        if ide == "all":
+            return _SUPPORTED_IDES.copy()
+        if ide in _SUPPORTED_IDES:
+            normalized.append(ide)
+        else:
+            dropped.append(raw.strip())
+
+    if dropped:
+        if strict:
+            supported = ", ".join(_SUPPORTED_IDES + ["all"])
+            hints: list[str] = []
+            for bad in dropped:
+                matches = difflib.get_close_matches(bad, _SUPPORTED_IDES, n=1, cutoff=0.5)
+                if matches:
+                    hints.append(f"'{bad}' (did you mean '{matches[0]}'?)")
+                else:
+                    hints.append(f"'{bad}'")
+            raise ValueError(
+                f"Unknown --ide value(s): {', '.join(hints)}. Supported values: {supported}"
+            )
+        # Non-strict: silently drop unknowns; caller decides whether to warn.
     return _unique(normalized)
 
 
@@ -513,11 +550,15 @@ def _parse_simple_yaml(text: str) -> dict[str, str]:
     return result
 
 
-def _load_prior_config(target_dir: Path) -> dict[str, object]:
+def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, object]:
     """Load prior installation config from .trw/config.yaml if it exists.
 
     Returns a dict with keys that were previously configured, or empty dict
-    for first-time installs.
+    for first-time installs. If ``ui`` is provided and the stored
+    ``target_platforms`` contains identifiers that are neither a supported
+    client nor a known legacy alias, an orange warning is emitted naming the
+    unknowns and the supported values — the installer then proceeds with the
+    valid entries (if any).
     """
     config_path = target_dir / ".trw" / "config.yaml"
     if not config_path.is_file():
@@ -551,7 +592,33 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
                 if stripped and not stripped.startswith("#"):
                     in_target_platforms = False
         if target_platforms:
-            prior["target_platforms"] = _normalize_ide_targets(target_platforms)
+            # Non-strict: legacy aliases are applied, unknown entries dropped.
+            # A stale / renamed identifier in a user's prior config must never
+            # crash the installer — they get re-prompted (interactive) or fall
+            # back to detection (script mode) if nothing valid remains.
+            try:
+                unknowns = [
+                    raw.strip()
+                    for raw in target_platforms
+                    if raw.strip()
+                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip()) != "all"
+                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip())
+                    not in _SUPPORTED_IDES
+                ]
+                prior["target_platforms"] = _normalize_ide_targets(
+                    target_platforms, strict=False
+                )
+                if unknowns and ui is not None:
+                    supported = ", ".join(_SUPPORTED_IDES + ["all"])
+                    ui.warn(
+                        "Ignoring unknown target_platforms in .trw/config.yaml: "
+                        f"{', '.join(repr(u) for u in unknowns)}. "
+                        f"Supported values: {supported}"
+                    )
+            except Exception:
+                # Defence in depth: even unexpected errors here should not
+                # block the installer. Treat as "no prior platform choice".
+                pass
     except (OSError, UnicodeDecodeError):
         pass
     return prior
@@ -1701,7 +1768,7 @@ def phase_project_setup(
     # IDE detection and selection
     detected_clis = _detect_installed_clis()
     detected_ides = _detect_project_ides(str(target_dir))
-    prior_config = _load_prior_config(target_dir)
+    prior_config = _load_prior_config(target_dir, ui)
     prior_targets = prior_config.get("target_platforms", [])
     if not isinstance(prior_targets, list):
         prior_targets = []
@@ -1743,7 +1810,7 @@ def phase_project_setup(
         ui.stop_spinner(ok, success_message, f"Project {action} failed for {_ide_label(selected_ide)}")
 
     config_path = target_dir / ".trw" / "config.yaml"
-    refreshed_config = _load_prior_config(target_dir)
+    refreshed_config = _load_prior_config(target_dir, ui)
     project_name = str(refreshed_config.get("project_name", sanitize_project_name(target_dir.name)))
     api_key = str(refreshed_config.get("api_key", ""))
     telemetry_enabled = bool(refreshed_config.get("telemetry", False))
@@ -2159,7 +2226,7 @@ def main() -> None:
     # Gather all information BEFORE showing numbered steps so the step
     # count never changes mid-flow.
 
-    prior_config = _load_prior_config(target_dir)
+    prior_config = _load_prior_config(target_dir, ui)
     is_reinstall = bool(prior_config)
 
     if is_reinstall and interactive:
