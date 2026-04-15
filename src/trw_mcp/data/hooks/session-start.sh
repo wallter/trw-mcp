@@ -86,6 +86,23 @@ _framework_ref_enabled() {
   [ "${TRW_FRAMEWORK_MD_ENABLED:-true}" != "false" ]
 }
 
+# --- PRD-FIX-078 mitigation: MCP tool namespace reminder ---
+# Some models (e.g. qwen3-coder-next) intermittently drop the mcp__trw__ prefix
+# and call bare tool names (trw_session_start), which fail with
+# "No such tool available". This reminder is claude-code-specific because
+# opencode/cursor/codex expose tools WITHOUT the prefix — emitting this there
+# would confuse the agent.
+_emit_mcp_namespace_reminder() {
+  # Detect claude-code: either CLAUDE_PROJECT_DIR env is set by the client,
+  # or a .claude/ directory exists at the project root.
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ] || [ -d "$_project_root/.claude" ]; then
+    echo ""
+    echo "IMPORTANT: TRW tools use the mcp__trw__ prefix in this client."
+    echo "Call \`mcp__trw__trw_session_start\` (NOT bare \`trw_session_start\`)."
+    echo "Examples: mcp__trw__trw_learn, mcp__trw__trw_deliver, mcp__trw__trw_checkpoint."
+  fi
+}
+
 # --- Value-oriented protocol summary ---
 _emit_protocol() {
   echo "## TRW Behavioral Protocol"
@@ -129,6 +146,7 @@ case "$_source" in
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
+    _emit_mcp_namespace_reminder
     ;;
 
   resume)
@@ -142,6 +160,7 @@ case "$_source" in
       echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK.md this session, read it now — it defines exit criteria and phase gates that govern your work."
     fi
     echo "Call trw_status() to see where you left off and what to work on next."
+    _emit_mcp_namespace_reminder
     ;;
 
   compact)
@@ -179,6 +198,7 @@ case "$_source" in
     fi
     echo "After session_start, call trw_status() if you need the current run snapshot."
     echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
+    _emit_mcp_namespace_reminder
     ;;
 
   clear)
@@ -196,6 +216,7 @@ case "$_source" in
     echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
+    _emit_mcp_namespace_reminder
     ;;
 
   *)

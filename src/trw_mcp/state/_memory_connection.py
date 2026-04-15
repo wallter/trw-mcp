@@ -18,7 +18,7 @@ import contextlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -74,7 +74,7 @@ def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBack
     except TypeError as exc:
         if "unexpected keyword argument" not in str(exc):
             raise
-        return SQLiteBackend(db_path, dim=backend_kwargs.get("dim"))
+        return SQLiteBackend(db_path, dim=cast(int, backend_kwargs["dim"]))
 
 
 # ---------------------------------------------------------------------------
