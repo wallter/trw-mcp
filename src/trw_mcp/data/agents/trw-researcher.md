@@ -36,7 +36,7 @@ Cross-reference what you find online with the local codebase to produce well-gro
 
 <workflow>
 1. **Read your playbook FIRST** if one was provided
-2. **Call trw_recall** with keywords relevant to your research axis
+2. **Call {tool:trw_recall}** with keywords relevant to your research axis
 3. **Explore the codebase**:
    a. Use Glob to find relevant files by pattern
    b. Use Grep to search for specific code patterns
@@ -49,7 +49,7 @@ Cross-reference what you find online with the local codebase to produce well-gro
    e. Always include source URLs in your findings so teammates can verify
 5. **Cross-reference**: validate online findings against local code, and enrich local findings with external context
 6. **Write findings** to your designated output location
-7. **Call trw_learn** for significant discoveries
+7. **Call {tool:trw_learn}** for significant discoveries
 8. **Mark task complete** and message lead with summary
 
 ## Findings Output Schema

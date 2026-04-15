@@ -74,7 +74,7 @@ This pause-and-reflect pattern catches the drift that occurs when auditors becom
 - What do the user stories SAY the user should experience?
 
 **Check for prior domain learnings (PRD-QUAL-056-FR08):**
-- Call `trw_recall(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
+- Call `{tool:trw_recall}(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
 - If relevant learnings are found:
   1. Note them in audit context as "known patterns to watch for"
   2. Explicitly verify whether each known pattern has been addressed in this implementation
@@ -278,7 +278,7 @@ Maximum audit cycles before escalation: 3 (configurable via `.trw/config.yaml` f
 
 **Learning capture for P0/P1 findings:**
 
-For each P0 or P1 finding, call `trw_learn()` with:
+For each P0 or P1 finding, call `{tool:trw_learn}()` with:
 - `summary`: "Sprint {N}: {FR-ID} {one-line finding description}"
 - `detail`: Full finding text with evidence and fix recommendation
 - `tags`: ["audit-finding", "{prd-id}", "{finding-category}"]

@@ -231,7 +231,7 @@ tests_relative_path: tests             # Where your tests live
 debug: false                           # Set true for verbose logging
 ```
 
-**If you skip this**, `trw_build_check` will fail because the defaults point to `trw-mcp/src` (the framework's own source).
+**If you skip this**, `{tool:trw_build_check}` will fail because the defaults point to `trw-mcp/src` (the framework's own source).
 
 ### Step 2: Edit CLAUDE.md
 
@@ -252,7 +252,7 @@ Replace the placeholder sections in the generated `CLAUDE.md`:
 <!-- TRW auto-generated section below — don't edit between markers -->
 ```
 
-The section between `<!-- trw:start -->` and `<!-- trw:end -->` is auto-managed by `trw_claude_md_sync`.
+The section between `<!-- trw:start -->` and `<!-- trw:end -->` is auto-managed by `{tool:trw_claude_md_sync}`.
 
 ### Step 3: Start Claude Code
 
@@ -272,7 +272,7 @@ TRW PROTOCOL — tools that help you build effectively:
 SESSION START: Call trw_session_start() to load your learnings and any active run state.
 ```
 
-Claude Code will call `trw_session_start()` and begin working with the full TRW lifecycle.
+Claude Code will call `{tool:trw_session_start}()` and begin working with the full TRW lifecycle.
 
 ---
 
@@ -441,7 +441,7 @@ trw_usage_report()
 
 ### Ceremony scoring
 
-`trw_analytics_report` computes a 0-100 ceremony score per run:
+`{tool:trw_analytics_report}` computes a 0-100 ceremony score per run:
 
 | Component | Points |
 |-----------|--------|
@@ -571,7 +571,7 @@ Claude Code hooks automate TRW ceremony enforcement. They fire on session events
 | `session-start.sh` | `SessionStart` | Displays ceremony protocol, recovers state after compaction |
 | `pre-compact.sh` | `PreCompact` | Saves run path, phase, and last checkpoint before context compression |
 | `post-tool-event.sh` | `PostToolUse` | Logs `file_modified` events after Write/Edit tool use |
-| `stop-ceremony.sh` | `Stop` | Blocks session exit until `trw_deliver()` is called (max 2 blocks) |
+| `stop-ceremony.sh` | `Stop` | Blocks session exit until `{tool:trw_deliver}()` is called (max 2 blocks) |
 | `session-end.sh` | `SessionEnd` | Final cleanup |
 | `subagent-start.sh` | `SubagentStart` | Injects ceremony protocol + phase-specific self-review guidance |
 | `validate-prd-write.sh` | `PostToolUse` | Validates PRD writes against quality gates |
@@ -623,7 +623,7 @@ Learnings are ranked by a composite utility score:
 - **Ebbinghaus decay**: Knowledge that isn't accessed fades in relevance over time
 - **Manual impact**: Author-assigned importance (0.0-1.0)
 
-Learnings with impact >= 0.7 are promoted to `CLAUDE.md` by `trw_claude_md_sync`.
+Learnings with impact >= 0.7 are promoted to `CLAUDE.md` by `{tool:trw_claude_md_sync}`.
 
 ### What to record
 
@@ -675,21 +675,21 @@ Or use skills:
 3. Restart the MCP server: type `/mcp` in Claude Code
 4. Check debug logs: `.trw/logs/trw-mcp-*.jsonl`
 
-### "trw_build_check fails with path not found"
+### "{tool:trw_build_check} fails with path not found"
 
 Your `.trw/config.yaml` is missing the project-specific paths. Set `source_package_path`, `source_package_name`, and `tests_relative_path`.
 
-### "trw_session_start returns no learnings"
+### "{tool:trw_session_start} returns no learnings"
 
-Normal for a new project. Learnings accumulate over sessions. After a few sessions with `trw_learn` calls, recall will return relevant entries.
+Normal for a new project. Learnings accumulate over sessions. After a few sessions with `{tool:trw_learn}` calls, recall will return relevant entries.
 
 ### "CeremonyMiddleware warnings on every tool response"
 
-Call `trw_session_start()`. The middleware prepends warnings until this tool is called — this is intentional enforcement.
+Call `{tool:trw_session_start}()`. The middleware prepends warnings until this tool is called — this is intentional enforcement.
 
 ### "Session interrupted, work lost"
 
-Work is rarely lost with TRW. Start a new session — `trw_session_start()` detects the active run, `trw_status()` shows your last checkpoint. Continue from there.
+Work is rarely lost with TRW. Start a new session — `{tool:trw_session_start}()` detects the active run, `{tool:trw_status}()` shows your last checkpoint. Continue from there.
 
 ### "Hooks not firing"
 

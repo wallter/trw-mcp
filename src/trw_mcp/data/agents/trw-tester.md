@@ -38,7 +38,7 @@ criteria and ensure code quality through high coverage.
 
 1. **Read your playbook FIRST** if one was provided
 2. **Check TaskList** for assigned/unblocked test tasks
-3. **Call trw_recall** with "testing" and relevant domain keywords
+3. **Call {tool:trw_recall}** with "testing" and relevant domain keywords
 4. **Per task**:
    a. Read the implementation code and PRD requirements
    b. Write tests organized by category (happy path, edge cases, error handling)
@@ -80,10 +80,10 @@ criteria and ensure code quality through high coverage.
         - "All FRs have test coverage verified against PRD text"
         - "Parametrized edge cases for boundary values"
       ```
-   i. Call trw_checkpoint with summary referencing the artifact
+   i. Call {tool:trw_checkpoint} with summary referencing the artifact
    j. Mark task complete via TaskUpdate
    i. Message implementer about any bugs found
-5. **Call trw_learn** for testing discoveries
+5. **Call {tool:trw_learn}** for testing discoveries
 </workflow>
 
 <constraints>

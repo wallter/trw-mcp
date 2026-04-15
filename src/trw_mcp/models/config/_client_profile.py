@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from trw_mcp.models.run import Phase
 
@@ -182,3 +182,24 @@ class ClientProfile(BaseModel):
     learning_recall_enabled: bool = True
     mcp_instructions_enabled: bool = True
     skills_enabled: bool = True
+
+    # -- Tool namespace rendering (PRD-FIX-078) --
+    # Prepended to bare ``trw_*`` tool names in rendered instructional text.
+    # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to
+    # ``"mcp__trw__"`` for claude-code; bare names for all other clients.
+    tool_namespace_prefix: str = ""
+
+    @field_validator("tool_namespace_prefix")
+    @classmethod
+    def _validate_namespace_prefix(cls, v: str) -> str:
+        """PRD-FIX-078 NFR03: reject whitespace / shell metacharacters."""
+        if v == "":
+            return v
+        # Allow only alphanumerics + underscores (MCP namespace convention)
+        if not all(c.isalnum() or c == "_" for c in v):
+            msg = (
+                f"tool_namespace_prefix must contain only alphanumerics and "
+                f"underscores, got {v!r}"
+            )
+            raise ValueError(msg)
+        return v
