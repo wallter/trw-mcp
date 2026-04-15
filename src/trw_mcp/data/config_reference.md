@@ -700,25 +700,25 @@ Configures Claude Code hooks, permissions, and agent settings. Managed by `trw-m
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "command": ".claude/hooks/pre-edit.sh"
+        "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-edit.sh\""
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "command": ".claude/hooks/post-edit.sh"
+        "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit.sh\""
       }
     ],
     "Stop": [
       {
         "matcher": "",
-        "command": ".claude/hooks/stop-ceremony.sh"
+        "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-ceremony.sh\""
       }
     ],
     "PreCompact": [
       {
         "matcher": "",
-        "command": ".claude/hooks/pre-compact.sh"
+        "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-compact.sh\""
       }
     ]
   },

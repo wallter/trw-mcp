@@ -333,6 +333,59 @@ def _create_directory_structure(
         _ensure_dir(target_dir / rel_dir, result, on_progress)
 
 
+def _write_ceremony_state_skeleton(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
+) -> None:
+    """PRD-FIX-076: Write a ceremony-state.json skeleton with a
+    ``mcp_never_connected_yet=true`` sentinel.
+
+    The sentinel distinguishes "MCP never connected at all" from "MCP connected
+    but didn't complete ceremony" in trw-eval's ceremony-state fallback scorer.
+    When the MCP server's session_start tool runs, it flips this flag to
+    ``false`` (see ``mark_session_started``).
+
+    Written idempotently — if the file already exists, we leave it alone so a
+    re-run of init-project against an established project does not wipe real
+    ceremony state.
+    """
+    import json as _json
+
+    state_path = target_dir / ".trw" / "context" / "ceremony-state.json"
+    if state_path.exists():
+        return
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    skeleton: dict[str, object] = {
+        "session_started": False,
+        "checkpoint_count": 0,
+        "last_checkpoint_ts": None,
+        "files_modified_since_checkpoint": 0,
+        "build_check_result": None,
+        "last_build_check_ts": None,
+        "deliver_called": False,
+        "learnings_this_session": 0,
+        "nudge_counts": {},
+        "phase": "early",
+        "previous_phase": "",
+        "review_called": False,
+        "review_verdict": None,
+        "review_p0_count": 0,
+        "nudge_history": {},
+        "pool_nudge_counts": {},
+        "pool_ignore_counts": {},
+        "pool_cooldown_until": {},
+        "tool_call_counter": 0,
+        "last_nudge_pool": "",
+        # PRD-FIX-076 sentinel — flipped to False on first session_start.
+        "mcp_never_connected_yet": True,
+    }
+    state_path.write_text(_json.dumps(skeleton, separators=(",", ":")), encoding="utf-8")
+    result["created"].append(str(state_path.relative_to(target_dir)))
+    if on_progress is not None:
+        on_progress("created", str(state_path))
+
+
 def _copy_bundled_data_files(
     target_dir: Path,
     force: bool,
@@ -570,6 +623,10 @@ def init_project(
 
     # 1. Create directory structure
     _create_directory_structure(target_dir, result, on_progress)
+
+    # 1b. PRD-FIX-076: Write ceremony-state.json skeleton with mcp_never_connected
+    # sentinel so trw-eval can detect runs where MCP never connected.
+    _write_ceremony_state_skeleton(target_dir, result, on_progress)
 
     # 2. Copy bundled data files
     _copy_bundled_data_files(target_dir, force, result, on_progress)

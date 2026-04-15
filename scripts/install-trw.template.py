@@ -1852,7 +1852,15 @@ def phase_configure(
         project_name,
         api_key,
         telemetry_enabled,
-        embeddings_enabled=install_ai or None,
+        # PRD-EVAL-031: auto-enable embeddings when the host overlay is present
+        # (TRW_EMBEDDINGS_AVAILABLE=1) even if --install-ai was not passed.
+        # Without this, eval containers default embeddings_enabled=false and
+        # check_embeddings_status() short-circuits before attempting the import,
+        # so embed_health reports False despite sentence-transformers being
+        # importable via the overlay's PYTHONPATH.
+        embeddings_enabled=(
+            install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None
+        ),
         sqlite_vec_enabled=install_vec or None,
         target_platforms=target_platforms,
     ):

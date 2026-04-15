@@ -493,8 +493,19 @@ def _save_yaml_backup(
 ) -> Path:
     """Save YAML backup via analytics (dual-write for rollback safety)."""
     try:
+        import os as _os
+
         from trw_mcp.models.learning import LearningEntry
         from trw_mcp.scoring._io_boundary import _backfill_yaml_path_index
+
+        # C5 FIX: Stamp source_run_id so trw-eval's knowledge_scorer can
+        # distinguish self-authored entries from tar-pipe-injected entries in
+        # chain evaluation runs. Prefer TRW_RUN_ID; fall back to TRW_CHAIN_ID.
+        _source_run_id: str | None = (
+            _os.environ.get("TRW_RUN_ID")
+            or _os.environ.get("TRW_CHAIN_ID")
+            or None
+        )
 
         entry = LearningEntry(
             id=params.learning_id,
@@ -526,6 +537,7 @@ def _save_yaml_backup(
             else params.protection_tier,
             anchors=params.anchors or [],
             anchor_validity=params.anchor_validity,
+            source_run_id=_source_run_id,
         )
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
         update_analytics_fn(trw_dir, 1)

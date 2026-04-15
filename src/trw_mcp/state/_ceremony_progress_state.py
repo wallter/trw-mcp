@@ -189,6 +189,11 @@ def reset_ceremony_state(trw_dir: Path) -> None:
 
 
 def mark_session_started(trw_dir: Path) -> None:
+    # PRD-FIX-076: write_ceremony_state() rewrites the file from the
+    # CeremonyState dataclass (which does NOT carry ``mcp_never_connected_yet``),
+    # so the sentinel written by init-project is cleared automatically as soon
+    # as this function runs. Runs where MCP never connected keep the sentinel
+    # because nothing else calls write_ceremony_state().
     state = read_ceremony_state(trw_dir)
     state.session_started = True
     write_ceremony_state(trw_dir, state)

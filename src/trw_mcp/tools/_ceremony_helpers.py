@@ -127,9 +127,16 @@ def _resolve_trw_dir_compat() -> Path:
     try:
         from trw_mcp.tools import ceremony as ceremony_mod
 
-        return ceremony_mod.resolve_trw_dir()
+        # Dynamic lookup — ceremony module may expose resolve_trw_dir via re-export
+        # or via test monkeypatch. getattr with default preserves the fallback.
+        ceremony_resolver = getattr(ceremony_mod, "resolve_trw_dir", None)
+        if ceremony_resolver is not None:
+            result = ceremony_resolver()
+            if isinstance(result, Path):
+                return result
     except Exception:
-        return resolve_trw_dir()
+        pass
+    return resolve_trw_dir()
 
 
 # ── Session lifecycle step functions ─────────────────────────────────────

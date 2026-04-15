@@ -290,6 +290,15 @@ class LearningEntry(BaseModel):
     # PRD-FIX-052-FR02: Impact tier label (assigned during deliver tier sweep)
     impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"
 
+    # C5 FIX: Eval chain run attribution — identifies which run authored this
+    # learning. Used by trw-eval knowledge_scorer to distinguish self-authored
+    # entries from tar-pipe-injected entries in chain evaluation runs.
+    # Backward-compat: None for pre-stamping entries.
+    source_run_id: str | None = Field(
+        default=None,
+        description="Run ID of the eval run that authored this entry (C5 fix).",
+    )
+
 
 class LearningIndex(BaseModel):
     """Index of all learning entries in .trw/learnings/index.yaml."""
