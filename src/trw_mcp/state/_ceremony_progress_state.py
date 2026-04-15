@@ -31,6 +31,7 @@ class CeremonyState:
     last_checkpoint_ts: str | None = None
     files_modified_since_checkpoint: int = 0
     build_check_result: str | None = None
+    last_build_check_ts: str | None = None
     deliver_called: bool = False
     learnings_this_session: int = 0
     nudge_counts: dict[str, int] = field(default_factory=dict)
@@ -133,6 +134,7 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         last_checkpoint_ts=_opt_str("last_checkpoint_ts"),
         files_modified_since_checkpoint=_int("files_modified_since_checkpoint"),
         build_check_result=_opt_str("build_check_result"),
+        last_build_check_ts=_opt_str("last_build_check_ts"),
         deliver_called=_bool("deliver_called"),
         learnings_this_session=_int("learnings_this_session"),
         nudge_counts=nudge_counts,
@@ -176,7 +178,7 @@ def write_ceremony_state(trw_dir: Path, state: CeremonyState) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        os.rename(tmp_path, path)
+        os.replace(tmp_path, path)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
@@ -203,6 +205,7 @@ def mark_checkpoint(trw_dir: Path) -> None:
 def mark_build_check(trw_dir: Path, passed: bool) -> None:
     state = read_ceremony_state(trw_dir)
     state.build_check_result = "passed" if passed else "failed"
+    state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
     write_ceremony_state(trw_dir, state)
 
 
