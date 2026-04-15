@@ -4,6 +4,19 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Added
+
+- **2026-04-13 — Per-connection run isolation is stronger** (PRD-CORE-141) — parallel clients sharing one repo are less likely to step on each other's active run, which makes session state, logging, and follow-up tool calls more trustworthy.
+
+### Changed
+
+- **2026-04-13 — PRD guidance is more truthful** — lifecycle guidance and validation now better reflect the workflows the tools actually support, including eval-oriented PRDs, which reduces doc-vs-runtime drift.
+
+### Fixed
+
+- **2026-04-13 — Instruction and inventory drift was tightened further** — tool manifest descriptions and related inventory/docs were reconciled so generated guidance is less likely to describe the wrong surface area.
+- **2026-04-15 — Installer no longer crashes on renamed/legacy IDE identifiers in prior `.trw/config.yaml`** — when `cursor` was split into `cursor-ide` + `cursor-cli` in v0.44, upgrade runs of `install-trw.py` tripped `_normalize_ide_targets` and died with a raw `ValueError` traceback at preflight (reported from a v0.44.3 reinstall). `_LEGACY_IDE_ALIASES` now migrates `cursor` → `cursor-ide` silently; unknown identifiers in prior config emit an orange warning (`ui.warn`) naming the offenders plus the supported set and the installer proceeds with the valid entries. Typos in the `--ide` CLI flag get a `difflib`-powered "did you mean '<nearest>'?" hint instead of a plain enumeration. Applied to `trw-mcp/scripts/install-trw.template.py`, the repo-root `install-trw.py`, and `trw-mcp/dist/install-trw.py`. Verified with a five-case smoke test covering legacy alias, mixed alias+unknown, all-unknown, missing-ui path, and strict-mode typo suggestion.
+
 ## [0.44.5] — 2026-04-13
 
 ### Fixed
