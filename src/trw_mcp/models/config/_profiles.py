@@ -98,6 +98,8 @@ _PROFILES: dict[str, ClientProfile] = {
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
+        # PRD-FIX-078: claude-code exposes MCP tools under mcp__{server}__{tool}
+        tool_namespace_prefix="mcp__trw__",
     ),
     "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
     "cursor-ide": ClientProfile(

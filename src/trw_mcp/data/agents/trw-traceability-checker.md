@@ -59,7 +59,7 @@ Verify 4 types of traceability links between PRDs, source code, and tests:
    pattern `PRD-{CAT}-{SEQ}-FR{NN}`. Record the PRD ID, FR ID, and a brief
    description for each.
 
-3. **Check Prior Knowledge**: Call `trw_recall("traceability")` to surface
+3. **Check Prior Knowledge**: Call `{tool:trw_recall}("traceability")` to surface
    any known traceability gaps or patterns from previous verification runs.
 
 4. **Grep Source Files**: Search `src/**/*` (or the project's source directory,

@@ -30,8 +30,11 @@ class TestGetMessage:
         assert "MUST" not in msg.split()  # Not as a standalone word
 
     def test_returns_ceremony_warning(self) -> None:
+        # PRD-FIX-078: get_message() without a profile degrades to bare names
+        # (legacy-safe). Profile-aware callers use render_message(..., profile).
         msg = get_message("ceremony_warning")
         assert "trw_session_start()" in msg
+        assert "{tool:" not in msg
 
     def test_ceremony_warning_value_oriented(self) -> None:
         """Ceremony warning uses value framing, not threat language."""

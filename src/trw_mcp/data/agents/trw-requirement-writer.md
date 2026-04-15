@@ -143,7 +143,7 @@ When reading Background sections, problem statements, or grooming plans:
 
 1. **Understand Context**: Read the PRD Background section (Section 1) to
    understand the problem domain, root cause, and affected stakeholders.
-   Call `trw_recall(query)` with domain keywords to surface relevant learnings.
+   Call `{tool:trw_recall}(query)` with domain keywords to surface relevant learnings.
 
 2. **Research Codebase**: Use `Grep` and `Glob` to find existing implementation
    patterns, interfaces, and constraints. Identify the modules, functions, and
@@ -178,7 +178,7 @@ When reading Background sections, problem statements, or grooming plans:
    and dependency references are valid PRD IDs.
 
 6. **Write to PRD**: Use Edit to insert requirements into the target section.
-   Log completion via `trw_learn(summary="Requirements drafted: {N} FRs, {M} NFRs, avg confidence {X}", tags=["prd-workflow", "requirements"])` and call `trw_checkpoint(message="Requirements drafted for {PRD-ID}")`.
+   Log completion via `{tool:trw_learn}(summary="Requirements drafted: {N} FRs, {M} NFRs, avg confidence {X}", tags=["prd-workflow", "requirements"])` and call `{tool:trw_checkpoint}(message="Requirements drafted for {PRD-ID}")`.
 </workflow>
 
 <output_format>
@@ -230,7 +230,7 @@ When reading Background sections, problem statements, or grooming plans:
 - If the PRD Background section is too thin for meaningful requirements:
   document the gap in Section 11 (Open Questions), write requirements at
   low confidence (< 0.70), and note "Background insufficient" in evidence
-- If `trw_recall` returns no relevant learnings: proceed with Grep/Glob
+- If `{tool:trw_recall}` returns no relevant learnings: proceed with Grep/Glob
   codebase research only
 - If related PRDs referenced in `depends_on` don't exist: note the broken
   reference in the requirement's Dependencies field and continue

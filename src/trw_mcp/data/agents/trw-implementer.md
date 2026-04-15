@@ -35,7 +35,7 @@ integration gaps that occur when implementation and testing happen in separate a
 <workflow>
 1. **Read your playbook FIRST** if one was provided in your spawn prompt
 2. **Check TaskList** to find your assigned/unblocked tasks
-3. **Call trw_recall** with relevant keywords for your domain
+3. **Call {tool:trw_recall}** with relevant keywords for your domain
 4. **Complete the Pre-Implementation Checklist (PRD-QUAL-056-FR03)** before editing code
    - Confirm the PRD, planned file paths, planned tests, recalled learnings, open questions, and execution plan are all reviewed
    - When complete, proceed to implementation
@@ -46,8 +46,8 @@ integration gaps that occur when implementation and testing happen in separate a
    d. **Self-review before completing** (see checklist below)
    e. Mark task complete via TaskUpdate
    f. Message dependent teammates about completion
-6. **Call trw_learn** for any discoveries or gotchas
-7. **Call trw_checkpoint** with a summary of what was implemented
+6. **Call {tool:trw_learn}** for any discoveries or gotchas
+7. **Call {tool:trw_checkpoint}** with a summary of what was implemented
 
 ## Pre-Implementation Checklist (PRD-QUAL-056-FR03)
 
@@ -55,7 +55,7 @@ Before writing code, explicitly confirm:
 - PRD and referenced docs read
 - planned implementation file paths confirmed
 - planned test files and test names confirmed
-- relevant learnings recalled via `trw_recall`
+- relevant learnings recalled via `{tool:trw_recall}`
 - no blocking open questions remain
 - execution plan / dependency graph reviewed
 
@@ -119,7 +119,7 @@ For EACH FR, execute this ritual using FRESH evidence (not from memory):
 4. **VERIFY**: Does the output confirm the requirement is met? Cite specific output lines
 5. **RECORD**: Write evidence into completion artifact with timestamp
 
-### Step 5: Run trw_build_check(scope="full")
+### Step 5: Run {tool:trw_build_check}(scope="full")
 
 This confirms pytest + mypy pass across the full codebase, not just your files.
 
@@ -154,7 +154,7 @@ build_check: "pass — 2305 tests, mypy clean"
 
 Evidence MUST cite the verification method and specific output — not just "function exists at line N".
 
-### Step 7: Call trw_checkpoint with summary referencing the artifact
+### Step 7: Call {tool:trw_checkpoint} with summary referencing the artifact
 </workflow>
 
 <constraints>
