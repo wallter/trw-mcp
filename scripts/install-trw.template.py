@@ -1637,19 +1637,31 @@ def phase_install_extras(
         else:
             ui.step_warn("AI extras failed \u2014 base TRW still works fine")
 
-        ui.start_spinner("Installing sentence-transformers (embeddings)...")
-        ok = pip_install(
-            python,
-            "sentence-transformers>=2.0.0",
-            "sentence-transformers",
-            ui,
-            target_dir=validated_target,
-        )
-        ui.stop_spinner(ok, "Embeddings enabled", "Embeddings install failed (non-fatal)")
-        if ok:
+        # PRD-EVAL-031: when TRW_EMBEDDINGS_AVAILABLE=1, sentence-transformers is
+        # already importable via a host-staged read-only overlay mounted at
+        # /trw-embeddings (PYTHONPATH = /trw-embeddings/site-packages is set in
+        # the container env). Skip the pip install to avoid SSD writes in the
+        # SWE-bench eval sandbox where the overlay is present.
+        if os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1":
+            ui.step_ok(
+                "Embeddings available via host overlay (PYTHONPATH=/trw-embeddings) \u2014 skipping pip install"
+            )
             features.append("embeddings")
+            ok = True
         else:
-            ui.step_warn("sentence-transformers failed \u2014 recall uses keyword-only search")
+            ui.start_spinner("Installing sentence-transformers (embeddings)...")
+            ok = pip_install(
+                python,
+                "sentence-transformers>=2.0.0",
+                "sentence-transformers",
+                ui,
+                target_dir=validated_target,
+            )
+            ui.stop_spinner(ok, "Embeddings enabled", "Embeddings install failed (non-fatal)")
+            if ok:
+                features.append("embeddings")
+            else:
+                ui.step_warn("sentence-transformers failed \u2014 recall uses keyword-only search")
 
     if install_sqlitevec:
         ui.start_spinner("Installing sqlite-vec...")
