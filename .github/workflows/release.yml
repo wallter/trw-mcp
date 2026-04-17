@@ -27,8 +27,55 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  smoke-test:
+    # Verify the built wheel is usable on every supported platform BEFORE we
+    # publish to PyPI. Previously we only tested Linux, which meant macOS
+    # platform-specific regressions (e.g. system Python without
+    # SQLITE_ENABLE_LOAD_EXTENSION) reached users as installation failures.
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Install wheel with vectors extra
+        run: |
+          pip install "trw-memory @ git+https://github.com/wallter/trw-memory.git@main"
+          pip install dist/*.whl sqlite-vec
+      - name: Smoke test — SQLiteBackend store/get round-trip
+        run: |
+          python -c "
+          from pathlib import Path
+          import tempfile
+          from datetime import datetime, timezone
+          from trw_memory.storage.sqlite_backend import SQLiteBackend
+          from trw_memory.models.memory import MemoryEntry, MemoryStatus
+          with tempfile.TemporaryDirectory() as td:
+              b = SQLiteBackend(Path(td)/'smoke.db')
+              now = datetime.now(timezone.utc)
+              e = MemoryEntry(id='M-smoke', content='smoke', status=MemoryStatus.ACTIVE,
+                              created_at=now, updated_at=now)
+              b.store(e)
+              assert b.get('M-smoke') is not None, 'round-trip failed'
+              print(f'vec_available={b._vec_available}')
+          "
+      - name: Smoke test — trw-mcp import + CLI entry
+        run: |
+          python -c "import trw_mcp; print(trw_mcp.__version__)"
+          trw-mcp --help > /dev/null
+
+  publish:
+    needs: [build, smoke-test]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

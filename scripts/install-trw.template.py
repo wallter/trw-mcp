@@ -1735,7 +1735,46 @@ def phase_install_extras(
         ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui, target_dir=validated_target)
         ui.stop_spinner(ok, "sqlite-vec enabled", "sqlite-vec failed (non-fatal)")
         if ok:
-            features.append("sqlite-vec")
+            # Smoke test: verify the installed Python can actually load the
+            # sqlite-vec extension. macOS system Python and some python.org
+            # builds ship sqlite3 compiled without SQLITE_ENABLE_LOAD_EXTENSION,
+            # which makes enable_load_extension() raise AttributeError or
+            # OperationalError. Installing the wheel in that environment is a
+            # silent trap — the user sees success here, then every trw_learn
+            # call fails with "sqlite extension error" later.
+            ui.start_spinner("Verifying sqlite-vec loads on this Python...")
+            smoke = _run_quiet(
+                [
+                    python,
+                    "-c",
+                    "import sqlite3, sqlite_vec; "
+                    "c = sqlite3.connect(':memory:'); "
+                    "c.enable_load_extension(True); "
+                    "sqlite_vec.load(c); "
+                    "c.enable_load_extension(False); "
+                    "c.close()",
+                ],
+                timeout=15,
+            )
+            if smoke:
+                ui.stop_spinner(True, "sqlite-vec verified")
+                features.append("sqlite-vec")
+            else:
+                ui.stop_spinner(False, "sqlite-vec cannot load on this Python")
+                ui.step_warn(
+                    "Your Python was built without SQLITE_ENABLE_LOAD_EXTENSION."
+                )
+                ui.step_warn(
+                    "TRW will run with BM25 keyword search only (vector search disabled)."
+                )
+                if sys.platform == "darwin":
+                    ui.hint("To enable vector search on macOS, install a Python with extension support:")
+                    ui.hint("  brew install python@3.12")
+                    ui.hint("  OR download from https://www.python.org/downloads/")
+                    ui.hint("Then re-run the installer with that Python.")
+                else:
+                    ui.hint("Rebuild Python with --enable-loadable-sqlite-extensions or install")
+                    ui.hint("a distribution that enables it (most pyenv/uv/conda builds do).")
         else:
             ui.step_warn("sqlite-vec failed \u2014 TRW works without it")
 
