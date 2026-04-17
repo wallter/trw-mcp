@@ -160,12 +160,18 @@ _PRD_CATEGORY_DOMAIN_HINTS: dict[str, list[str]] = {
     "API": ["api"],
     "CORE": ["product"],
     "DATA": ["data"],
+    "DIST": ["cold-start", "knowledge-extraction", "git-history"],
+    "EVAL": ["testing", "evaluation"],
     "FIX": ["maintenance", "quality"],
+    "HPO": ["optimization", "meta-tune", "telemetry"],
     "INFRA": ["infrastructure", "operations"],
+    "INTENT": ["tool-contracts", "phase-exposure", "middleware"],
     "OPS": ["operations"],
     "PERF": ["performance"],
     "QUAL": ["testing", "quality"],
+    "SCALE": ["planning", "cognitive-scaling", "orchestration"],
     "SEC": ["security"],
+    "THRASH": ["trajectory", "observability", "stuck-detection"],
     "UX": ["ux"],
 }
 

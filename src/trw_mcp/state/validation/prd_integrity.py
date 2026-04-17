@@ -14,7 +14,13 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 logger = structlog.get_logger(__name__)
 
 ALLOWED_PRD_CATEGORIES: frozenset[str] = frozenset(
-    {"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH", "EVAL"}
+    {
+        # Established categories:
+        "CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH", "EVAL",
+        # Phase 5 agentic-HPO cluster categories (registered 2026-04-16
+        # per docs/requirements-aare-f/CLAUDE.md):
+        "INTENT", "SCALE", "THRASH", "HPO", "SEC", "DIST",
+    }
 )
 
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")

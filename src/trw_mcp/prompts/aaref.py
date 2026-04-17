@@ -69,7 +69,7 @@ def register_aaref_prompts(server: FastMCP) -> None:
 
         Args:
             requirements: Input requirements or feature description.
-            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH).
+            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX, EVAL, INTENT, SCALE, THRASH, HPO, SEC, DIST).
             project_name: Project name for PRD context.
 
         Returns:
