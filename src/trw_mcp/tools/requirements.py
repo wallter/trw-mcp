@@ -130,7 +130,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
 
         Args:
             input_text: Feature request, requirements, or description --- becomes the Problem Statement and Background.
-            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX, EVAL).
+            category: PRD category (CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX, EVAL, INTENT, SCALE, THRASH, HPO, SEC, DIST).
             priority: Priority level (P0, P1, P2, P3). Determines base confidence scores.
             title: PRD title. Auto-generated from input if not provided.
             sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
@@ -142,7 +142,11 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         writer = FileStateWriter()
 
         # Input validation (PRD-QUAL-042-FR03): category enum
-        valid_categories = {"CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX", "EVAL"}
+        valid_categories = {
+            "CORE", "QUAL", "INFRA", "LOCAL", "EXPLR", "RESEARCH", "FIX", "EVAL",
+            # Phase 5 agentic-HPO cluster categories (registered 2026-04-16):
+            "INTENT", "SCALE", "THRASH", "HPO", "SEC", "DIST",
+        }
         if category.upper() not in valid_categories:
             raise ValidationError(
                 f"Invalid category: {category!r}. Must be one of {sorted(valid_categories)}",
