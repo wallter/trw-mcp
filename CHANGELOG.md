@@ -6,6 +6,8 @@ All notable changes to the TRW MCP server package.
 
 ### Added
 
+- **2026-04-16 — Nudge telemetry now emits a `nudge_shown` event per impression** (PRD-QUAL-058-FR04). `record_nudge_shown()` in `_ceremony_progress_state.py` continues to update `ceremony-state.json` as before, but now also appends a discrete `{"event":"nudge_shown","learning_id":...,"phase":...,"data":{...}}` record to `.trw/context/session-events.jsonl`. This unblocks the trw-eval pipeline's event-based ceremony scoring path — previously ceremony scores for trw-full runs floored at 25/100 because only `session_start` detected via regex fallback. Emission is fail-open: the primary state update is never blocked by a session-event append failure. Event schema carries both top-level `learning_id`/`phase` (for the FR06 pre-analyzer JSONL matcher) and a nested `data` payload with `turn` + `surface_type` for downstream consumers (`proximal_reward.py`, `TraceAnalyzer`). A new `surface_type: str = "nudge"` keyword arg lets callers distinguish `phase_transition` vs `nudge` impressions. All existing positional callers are unaffected. Version bumped 0.44.7 → 0.45.0 (minor — additive feature).
+
 - **2026-04-13 — Per-connection run isolation is stronger** (PRD-CORE-141) — parallel clients sharing one repo are less likely to step on each other's active run, which makes session state, logging, and follow-up tool calls more trustworthy.
 
 ### Changed
