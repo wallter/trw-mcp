@@ -23,7 +23,8 @@ try:
     import sqlite_vec
 
     _SQLITE_VEC_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover — optional dep
+    sqlite_vec = None  # type: ignore[assignment]
     _SQLITE_VEC_AVAILABLE = False
 
 logger = structlog.get_logger(__name__)
@@ -55,12 +56,26 @@ class MemoryStore:
             return
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30.0)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout = 30000")
-        self._conn.enable_load_extension(True)
-        sqlite_vec.load(self._conn)
-        self._conn.enable_load_extension(False)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        try:
+            # AttributeError: Python built without SQLITE_ENABLE_LOAD_EXTENSION
+            # (common on macOS system Python / some python.org builds).
+            conn.enable_load_extension(True)
+            assert sqlite_vec is not None  # guarded by _SQLITE_VEC_AVAILABLE
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+        except (sqlite3.Error, OSError, AttributeError) as exc:
+            conn.close()
+            logger.warning(
+                "memory_store_extension_unavailable",
+                reason=type(exc).__name__,
+                detail=str(exc),
+                hint="Python lacks SQLite load_extension support; vector search disabled, retrieval falls back to BM25",
+            )
+            return
+        self._conn = conn
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:

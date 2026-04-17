@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.45.1] — 2026-04-17
+
+### Fixed
+
+- **Fresh macOS installs no longer surface "sqlite extension error in the MCP server" at every `trw_learn` call** — on macOS system Python and some python.org builds, `sqlite3` is compiled without `SQLITE_ENABLE_LOAD_EXTENSION`, so `conn.enable_load_extension(True)` in `MemoryStore.__init__` raised `AttributeError` (method absent) or `OperationalError` (not authorized), propagating up through the MCP server. Added try/except around the extension-load block in `trw_mcp/state/memory_store.py`: on failure the connection is closed and `self._conn` stays `None`, matching the existing docstring contract ("all operations are no-ops and available() returns False — the retrieval engine falls back to BM25-only"). A `memory_store_extension_unavailable` warning is emitted with the exception type + detail + remediation hint. Added two regression tests (`TestExtensionLoadFailureDegradesGracefully`) covering both exception types via a sqlite3 connection proxy. Requires `trw-memory>=0.6.9`, which carries the paired fix in `SQLiteBackend.__init__`.
+
 ### Added
 
 - **2026-04-16 — Nudge telemetry now emits a `nudge_shown` event per impression** (PRD-QUAL-058-FR04). `record_nudge_shown()` in `_ceremony_progress_state.py` continues to update `ceremony-state.json` as before, but now also appends a discrete `{"event":"nudge_shown","learning_id":...,"phase":...,"data":{...}}` record to `.trw/context/session-events.jsonl`. This unblocks the trw-eval pipeline's event-based ceremony scoring path — previously ceremony scores for trw-full runs floored at 25/100 because only `session_start` detected via regex fallback. Emission is fail-open: the primary state update is never blocked by a session-event append failure. Event schema carries both top-level `learning_id`/`phase` (for the FR06 pre-analyzer JSONL matcher) and a nested `data` payload with `turn` + `surface_type` for downstream consumers (`proximal_reward.py`, `TraceAnalyzer`). A new `surface_type: str = "nudge"` keyword arg lets callers distinguish `phase_transition` vs `nudge` impressions. All existing positional callers are unaffected. Version bumped 0.44.7 → 0.45.0 (minor — additive feature).
