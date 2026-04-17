@@ -126,9 +126,7 @@ def config_file(tmp_path: Path) -> Path:
     cfg = tmp_path / ".trw" / "config.yaml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(
-        'installation_id: "test-project"\n'
-        'platform_api_key: "trw_dk_existing123"\n'
-        "platform_telemetry_enabled: true\n",
+        'installation_id: "test-project"\nplatform_api_key: "trw_dk_existing123"\nplatform_telemetry_enabled: true\n',
         encoding="utf-8",
     )
     return cfg
@@ -485,8 +483,10 @@ class TestRunAuthLoginPersistence:
             "organizations": [{"id": 42, "name": "acme-corp", "slug": "acme-corp"}],
         }
 
-        with patch("trw_mcp.cli.auth.device_auth_login", return_value=mock_result), \
-             patch("trw_mcp.cli.auth.select_organization", return_value=mock_result["organizations"][0]):
+        with (
+            patch("trw_mcp.cli.auth.device_auth_login", return_value=mock_result),
+            patch("trw_mcp.cli.auth.select_organization", return_value=mock_result["organizations"][0]),
+        ):
             exit_code = run_auth_login("https://api.example.com", cfg)
 
         assert exit_code == 0
@@ -500,9 +500,7 @@ class TestRunAuthLoginPersistence:
         cfg = tmp_path / ".trw" / "config.yaml"
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text(
-            'platform_api_key: "trw_dk_test123"\n'
-            'platform_org_name: "acme-corp"\n'
-            'platform_user_email: "dev@acme.com"\n',
+            'platform_api_key: "trw_dk_test123"\nplatform_org_name: "acme-corp"\nplatform_user_email: "dev@acme.com"\n',
             encoding="utf-8",
         )
         status = device_auth_status(cfg, "https://api.example.com")

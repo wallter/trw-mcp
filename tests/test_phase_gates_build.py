@@ -24,7 +24,6 @@ Covers uncovered paths in state/validation/phase_gates_build.py:
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,17 +34,16 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.state.validation.phase_gates_build import (
     _BUILD_STALENESS_SECS,
+    _best_effort_build_check,
     _best_effort_check,
+    _best_effort_dry_check,
     _best_effort_integration_check,
     _best_effort_migration_check,
-    _best_effort_build_check,
-    _best_effort_dry_check,
     _best_effort_orphan_check,
     _best_effort_semantic_check,
     _check_build_status,
     check_migration_gate,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -305,9 +303,7 @@ class TestCheckBuildStatusPassingBuild:
 class TestCheckBuildStatusFailureSnippet:
     """Tests for failure message snippet formatting."""
 
-    def _make_build_status_with_failures(
-        self, trw_dir: Path, failures_list: list[str]
-    ) -> None:
+    def _make_build_status_with_failures(self, trw_dir: Path, failures_list: list[str]) -> None:
         """Write build-status.yaml with a list of failure messages."""
         ts_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         lines = [
@@ -320,9 +316,7 @@ class TestCheckBuildStatusFailureSnippet:
         ]
         for f in failures_list:
             lines.append(f'  - "{f}"\n')
-        (trw_dir / "context" / "build-status.yaml").write_text(
-            "".join(lines), encoding="utf-8"
-        )
+        (trw_dir / "context" / "build-status.yaml").write_text("".join(lines), encoding="utf-8")
 
     def test_single_failure_in_snippet(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
@@ -336,9 +330,7 @@ class TestCheckBuildStatusFailureSnippet:
 
     def test_multiple_failures_snippet_shows_count(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
-        self._make_build_status_with_failures(
-            trw_dir, ["test_foo FAILED", "test_bar FAILED", "test_baz FAILED"]
-        )
+        self._make_build_status_with_failures(trw_dir, ["test_foo FAILED", "test_bar FAILED", "test_baz FAILED"])
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         result = _check_build_status(trw_dir, config, "validate")
         tests_f = [f for f in result if f.rule == "tests_passed"]
@@ -370,8 +362,7 @@ class TestCheckBuildStatusInvalidTimestamp:
         cache_path = trw_dir / "context" / "build-status.yaml"
         # Write a status with a garbage timestamp
         cache_path.write_text(
-            'tests_passed: false\nmypy_clean: true\ncoverage_pct: 90.0\n'
-            'scope: full\ntimestamp: "NOT_A_DATE"\n',
+            'tests_passed: false\nmypy_clean: true\ncoverage_pct: 90.0\nscope: full\ntimestamp: "NOT_A_DATE"\n',
             encoding="utf-8",
         )
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
@@ -422,9 +413,7 @@ class TestCheckBuildStatusStaleness:
     def test_stale_build_uses_warning_severity_even_with_strict(self, tmp_path: Path) -> None:
         """Stale builds are always warnings even with strict enforcement."""
         trw_dir = _make_trw_dir(tmp_path)
-        _write_build_status(
-            trw_dir, tests_passed=False, age_secs=_BUILD_STALENESS_SECS + 120
-        )
+        _write_build_status(trw_dir, tests_passed=False, age_secs=_BUILD_STALENESS_SECS + 120)
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         result = _check_build_status(trw_dir, config, "validate")
         for failure in result:
@@ -445,15 +434,16 @@ class TestCheckBuildStatusStaleness:
 class TestBestEffortBuildCheck:
     """Tests for _best_effort_build_check wrapper."""
 
-    def test_delegates_to_check_build_status(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_delegates_to_check_build_status(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify it calls _check_build_status and appends results to failures."""
         trw_dir = _make_trw_dir(tmp_path)
         _write_build_status(trw_dir, tests_passed=False)
         monkeypatch.setattr(
             "trw_mcp.state.validation.phase_gates_build.resolve_trw_dir"
-            if hasattr(__import__("trw_mcp.state.validation.phase_gates_build", fromlist=["resolve_trw_dir"]), "resolve_trw_dir")
+            if hasattr(
+                __import__("trw_mcp.state.validation.phase_gates_build", fromlist=["resolve_trw_dir"]),
+                "resolve_trw_dir",
+            )
             else "trw_mcp.state._paths.resolve_trw_dir",
             lambda: trw_dir,
         )
@@ -468,9 +458,7 @@ class TestBestEffortBuildCheck:
         rules = [f.rule for f in failures]
         assert "tests_passed" in rules
 
-    def test_exception_in_resolve_does_not_raise(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_in_resolve_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If resolve_trw_dir raises, _best_effort_build_check swallows it."""
         import trw_mcp.state._paths as _paths_mod
 
@@ -489,9 +477,7 @@ class TestBestEffortBuildCheck:
 class TestBestEffortIntegrationCheck:
     """Tests for _best_effort_integration_check inner logic."""
 
-    def test_no_src_dir_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_src_dir_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When trw-mcp/src/trw_mcp doesn't exist, no failures added."""
         import trw_mcp.state._paths as _paths_mod
 
@@ -502,9 +488,7 @@ class TestBestEffortIntegrationCheck:
         _best_effort_integration_check(failures, severity="warning")
         assert failures == []
 
-    def test_unregistered_tools_add_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unregistered_tools_add_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unregistered tools in check_integration result add tool_registration failures."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import integration_check as ic
@@ -513,18 +497,14 @@ class TestBestEffortIntegrationCheck:
         src_dir = tmp_path / "trw-mcp" / "src" / "trw_mcp"
         src_dir.mkdir(parents=True)
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(
-            ic, "check_integration", lambda _: {"unregistered": ["new_tool"], "missing_tests": []}
-        )
+        monkeypatch.setattr(ic, "check_integration", lambda _: {"unregistered": ["new_tool"], "missing_tests": []})
 
         failures: list[ValidationFailure] = []
         _best_effort_integration_check(failures, severity="error")
         rules = [f.rule for f in failures]
         assert "tool_registration" in rules
 
-    def test_missing_tests_add_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_tests_add_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing test files in check_integration result add test_coverage failures."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import integration_check as ic
@@ -532,24 +512,18 @@ class TestBestEffortIntegrationCheck:
         src_dir = tmp_path / "trw-mcp" / "src" / "trw_mcp"
         src_dir.mkdir(parents=True)
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(
-            ic, "check_integration", lambda _: {"unregistered": [], "missing_tests": ["test_foo.py"]}
-        )
+        monkeypatch.setattr(ic, "check_integration", lambda _: {"unregistered": [], "missing_tests": ["test_foo.py"]})
 
         failures: list[ValidationFailure] = []
         _best_effort_integration_check(failures, severity="warning")
         rules = [f.rule for f in failures]
         assert "test_coverage" in rules
 
-    def test_exception_swallowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exception in integration check is swallowed."""
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(
-            _paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root"))
-        )
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
         failures: list[ValidationFailure] = []
         _best_effort_integration_check(failures)
 
@@ -562,9 +536,7 @@ class TestBestEffortIntegrationCheck:
 class TestBestEffortOrphanCheck:
     """Tests for _best_effort_orphan_check inner logic."""
 
-    def test_no_src_dir_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_src_dir_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When trw-mcp/src/trw_mcp doesn't exist, no failures added."""
         import trw_mcp.state._paths as _paths_mod
 
@@ -574,9 +546,7 @@ class TestBestEffortOrphanCheck:
         _best_effort_orphan_check(failures, severity="warning")
         assert failures == []
 
-    def test_orphan_modules_add_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_orphan_modules_add_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Orphan modules in check_orphan_modules result add module_reachability failures."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import integration_check as ic
@@ -584,18 +554,14 @@ class TestBestEffortOrphanCheck:
         src_dir = tmp_path / "trw-mcp" / "src" / "trw_mcp"
         src_dir.mkdir(parents=True)
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(
-            ic, "check_orphan_modules", lambda _: {"orphans": ["some_orphan_module"]}
-        )
+        monkeypatch.setattr(ic, "check_orphan_modules", lambda _: {"orphans": ["some_orphan_module"]})
 
         failures: list[ValidationFailure] = []
         _best_effort_orphan_check(failures, severity="warning")
         rules = [f.rule for f in failures]
         assert "module_reachability" in rules
 
-    def test_no_orphans_no_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_orphans_no_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty orphans list produces no failures."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import integration_check as ic
@@ -609,15 +575,11 @@ class TestBestEffortOrphanCheck:
         _best_effort_orphan_check(failures, severity="warning")
         assert failures == []
 
-    def test_exception_swallowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exception in orphan check is swallowed."""
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(
-            _paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root"))
-        )
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
         failures: list[ValidationFailure] = []
         _best_effort_orphan_check(failures)
 
@@ -630,11 +592,10 @@ class TestBestEffortOrphanCheck:
 class TestGetChangedFiles:
     """Tests for _get_changed_files via subprocess mock."""
 
-    def test_returns_deduped_file_list(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_deduped_file_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Files from diff, staged, and untracked are merged and deduped."""
         import subprocess as subprocess_mod
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         call_count = 0
@@ -658,11 +619,10 @@ class TestGetChangedFiles:
         assert "qux.py" in result
         assert len(result) == len(set(result))  # deduped
 
-    def test_returns_empty_on_subprocess_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_empty_on_subprocess_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """SubprocessError is caught and empty list returned."""
         import subprocess
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(
@@ -673,11 +633,10 @@ class TestGetChangedFiles:
         result = pgb._get_changed_files(tmp_path)
         assert result == []
 
-    def test_returns_empty_on_file_not_found(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_empty_on_file_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FileNotFoundError is caught when git is not installed."""
         import subprocess
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(
@@ -697,11 +656,10 @@ class TestGetChangedFiles:
 class TestCheckNullableDefaults:
     """Tests for _check_nullable_defaults via subprocess mock."""
 
-    def test_detects_nullable_false_column(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_detects_nullable_false_column(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Added lines with nullable=False and no server_default produce warning."""
         import subprocess
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         diff_output = (
@@ -723,18 +681,13 @@ class TestCheckNullableDefaults:
         assert "NOT NULL column" in result[0]
         assert "email" in result[0]
 
-    def test_no_nullable_columns_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_nullable_columns_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No nullable=False columns → empty warnings."""
         import subprocess
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
-        diff_output = (
-            "diff --git a/user.py b/user.py\n"
-            "+++ b/user.py\n"
-            "+    name = Column(String)\n"
-        )
+        diff_output = "diff --git a/user.py b/user.py\n+++ b/user.py\n+    name = Column(String)\n"
 
         def fake_run(cmd: list[str], **kwargs: object) -> object:
             r = subprocess.CompletedProcess(cmd, 0)
@@ -745,11 +698,10 @@ class TestCheckNullableDefaults:
         result = pgb._check_nullable_defaults(tmp_path, ["backend/models/database/user.py"])
         assert result == []
 
-    def test_subprocess_error_continues_gracefully(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_subprocess_error_continues_gracefully(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """SubprocessError on a file continues to next file."""
         import subprocess
+
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(
@@ -757,9 +709,7 @@ class TestCheckNullableDefaults:
             "run",
             lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.SubprocessError("fail")),
         )
-        result = pgb._check_nullable_defaults(
-            tmp_path, ["backend/models/database/user.py"]
-        )
+        result = pgb._check_nullable_defaults(tmp_path, ["backend/models/database/user.py"])
         assert result == []
 
     def test_empty_file_list_returns_empty(self, tmp_path: Path) -> None:
@@ -777,9 +727,7 @@ class TestCheckNullableDefaults:
 class TestBestEffortDryCheckEnabled:
     """Tests for _best_effort_dry_check inner logic when enabled."""
 
-    def test_no_changed_py_files_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_changed_py_files_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No changed Python files → no failures added."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import phase_gates_build as pgb
@@ -792,14 +740,13 @@ class TestBestEffortDryCheckEnabled:
         _best_effort_dry_check(config, failures)
         assert failures == []
 
-    def test_duplicated_blocks_add_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_duplicated_blocks_add_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Duplicated blocks from find_duplicated_blocks add duplication_detected failures."""
-        import trw_mcp.state._paths as _paths_mod
-        from trw_mcp.state.validation import phase_gates_build as pgb
-        from trw_mcp.state import dry_check as dc
         from unittest.mock import MagicMock
+
+        import trw_mcp.state._paths as _paths_mod
+        from trw_mcp.state import dry_check as dc
+        from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: ["src/foo.py"])
@@ -820,13 +767,11 @@ class TestBestEffortDryCheckEnabled:
         rules = [f.rule for f in failures]
         assert "duplication_detected" in rules
 
-    def test_test_files_excluded_from_dry_check(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_test_files_excluded_from_dry_check(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Files in /tests/ directories are excluded from dry check."""
         import trw_mcp.state._paths as _paths_mod
-        from trw_mcp.state.validation import phase_gates_build as pgb
         from trw_mcp.state import dry_check as dc
+        from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: ["trw-mcp/tests/test_foo.py"])
@@ -853,9 +798,7 @@ class TestBestEffortDryCheckEnabled:
 class TestBestEffortSemanticCheckEnabled:
     """Tests for _best_effort_semantic_check inner logic when enabled."""
 
-    def test_no_scannable_files_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_scannable_files_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No .py/.ts/.tsx/.js files → no failures added."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import phase_gates_build as pgb
@@ -868,14 +811,13 @@ class TestBestEffortSemanticCheckEnabled:
         _best_effort_semantic_check(config, failures)
         assert failures == []
 
-    def test_semantic_findings_add_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_semantic_findings_add_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Warning/error findings from run_semantic_checks add failures."""
-        import trw_mcp.state._paths as _paths_mod
-        from trw_mcp.state.validation import phase_gates_build as pgb
-        from trw_mcp.state import semantic_checks as sc
         from unittest.mock import MagicMock
+
+        import trw_mcp.state._paths as _paths_mod
+        from trw_mcp.state import semantic_checks as sc
+        from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: ["src/foo.py"])
@@ -897,14 +839,13 @@ class TestBestEffortSemanticCheckEnabled:
         rules = [f.rule for f in failures]
         assert "NO_BARE_EXCEPT" in rules
 
-    def test_info_severity_findings_excluded(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_info_severity_findings_excluded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Info-level findings are not added to failures."""
-        import trw_mcp.state._paths as _paths_mod
-        from trw_mcp.state.validation import phase_gates_build as pgb
-        from trw_mcp.state import semantic_checks as sc
         from unittest.mock import MagicMock
+
+        import trw_mcp.state._paths as _paths_mod
+        from trw_mcp.state import semantic_checks as sc
+        from trw_mcp.state.validation import phase_gates_build as pgb
 
         monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: tmp_path)
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: ["src/foo.py"])
@@ -931,9 +872,7 @@ class TestBestEffortSemanticCheckEnabled:
 class TestCheckMigrationGate:
     """Tests for check_migration_gate (PRD-INFRA-035)."""
 
-    def test_no_changed_files_returns_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_changed_files_returns_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When no files changed, no warnings returned."""
         from trw_mcp.state.validation import phase_gates_build as pgb
 
@@ -941,9 +880,7 @@ class TestCheckMigrationGate:
         result = check_migration_gate(tmp_path)
         assert result == []
 
-    def test_model_change_without_migration_adds_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_model_change_without_migration_adds_warning(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Model file changed but no migration → warning returned."""
         from trw_mcp.state.validation import phase_gates_build as pgb
 
@@ -955,9 +892,7 @@ class TestCheckMigrationGate:
         assert len(result) == 1
         assert "model" in result[0].lower() or "migration" in result[0].lower()
 
-    def test_model_change_with_migration_no_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_model_change_with_migration_no_warning(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Model file changed AND migration present → no model/migration warning."""
         from trw_mcp.state.validation import phase_gates_build as pgb
 
@@ -972,9 +907,7 @@ class TestCheckMigrationGate:
         # Nullable check is empty, no model-without-migration warning
         assert result == []
 
-    def test_nullable_default_warnings_appended(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_nullable_default_warnings_appended(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Nullable column warnings from _check_nullable_defaults are included."""
         from trw_mcp.state.validation import phase_gates_build as pgb
 
@@ -990,9 +923,7 @@ class TestCheckMigrationGate:
         # Both the model-without-migration warning and the nullable warning
         assert any("NOT NULL" in w for w in result)
 
-    def test_non_model_files_ignored(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_non_model_files_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-model file changes don't trigger migration warning."""
         from trw_mcp.state.validation import phase_gates_build as pgb
 
@@ -1018,9 +949,7 @@ class TestBestEffortMigrationCheck:
         _best_effort_migration_check(config, failures)
         assert failures == []
 
-    def test_enabled_appends_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_enabled_appends_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When enabled and a warning exists, it's appended as ValidationFailure."""
         import trw_mcp.state._paths as _paths_mod
         from trw_mcp.state.validation import phase_gates_build as pgb
@@ -1038,15 +967,11 @@ class TestBestEffortMigrationCheck:
         rules = [f.rule for f in failures]
         assert "migration_check" in rules
 
-    def test_exception_in_check_does_not_raise(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exceptions in the check are swallowed."""
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(
-            _paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root"))
-        )
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
         config = TRWConfig(migration_gate_enabled=True)
         failures: list[ValidationFailure] = []
         # Must NOT raise
@@ -1068,15 +993,11 @@ class TestBestEffortDryCheck:
         _best_effort_dry_check(config, failures)
         assert failures == []
 
-    def test_exception_in_check_does_not_raise(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exceptions are swallowed."""
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(
-            _paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root"))
-        )
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
         config = TRWConfig(dry_check_enabled=True)
         failures: list[ValidationFailure] = []
         _best_effort_dry_check(config, failures)
@@ -1097,15 +1018,11 @@ class TestBestEffortSemanticCheck:
         _best_effort_semantic_check(config, failures)
         assert failures == []
 
-    def test_exception_in_check_does_not_raise(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exceptions are swallowed."""
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(
-            _paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root"))
-        )
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
         config = TRWConfig(semantic_checks_enabled=True)
         failures: list[ValidationFailure] = []
         _best_effort_semantic_check(config, failures)

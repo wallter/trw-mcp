@@ -632,9 +632,13 @@ def smart_merge_cursor_json(
             for event, handlers in existing["hooks"].items():
                 if isinstance(handlers, list):
                     existing["hooks"][event] = [
-                        h for h in handlers
-                        if not (isinstance(h, dict) and isinstance(h.get("command"), str)
-                                and h["command"].startswith(identity_prefix))
+                        h
+                        for h in handlers
+                        if not (
+                            isinstance(h, dict)
+                            and isinstance(h.get("command"), str)
+                            and h["command"].startswith(identity_prefix)
+                        )
                     ]
 
         # Merge trw_entries into existing document

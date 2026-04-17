@@ -393,9 +393,7 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     # On teardown only _paths is restored, leaving orchestration with a stale fake.
     # Patching explicitly here ensures each test gets the correct tmp_path closure.
     try:
-        monkeypatch.setattr(
-            "trw_mcp.tools.orchestration.resolve_project_root", _fake_project_root
-        )
+        monkeypatch.setattr("trw_mcp.tools.orchestration.resolve_project_root", _fake_project_root)
     except AttributeError:
         pass  # Not yet imported
 

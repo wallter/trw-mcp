@@ -583,7 +583,11 @@ class TestSweepWarmToColdSkipEmpty:
             mock_list = MagicMock(
                 return_value=[
                     {"id": "", "summary": "empty id entry"},
-                    {"id": "valid-id", "summary": "valid entry", "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat()},
+                    {
+                        "id": "valid-id",
+                        "summary": "valid entry",
+                        "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
+                    },
                 ]
             )
             with patch(
@@ -617,7 +621,11 @@ class TestSweepYamlFallbackSkips:
         # Entry without ID — should be skipped (line 681)
         writer.write_yaml(
             entries_dir / "no-id.yaml",
-            {"summary": "no id entry", "status": "active", "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat()},
+            {
+                "summary": "no id entry",
+                "status": "active",
+                "last_accessed_at": datetime.now(tz=timezone.utc).date().isoformat(),
+            },
         )
 
         # Non-active entry — should be skipped (line 684)

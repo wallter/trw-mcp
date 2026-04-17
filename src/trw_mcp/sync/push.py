@@ -24,6 +24,7 @@ logger = structlog.get_logger(__name__)
 
 class PushResult(BaseModel):
     """Result of a push operation."""
+
     pushed: int = 0
     failed: int = 0
     skipped: int = 0
@@ -70,7 +71,7 @@ class SyncPusher:
 
         # Batch entries
         for i in range(0, len(entries), self._batch_size):
-            batch = entries[i:i + self._batch_size]
+            batch = entries[i : i + self._batch_size]
             payload = {
                 "entries": [self._serialize_entry(e) for e in batch],
                 "client_id": self._get_client_id(),
@@ -137,7 +138,7 @@ class SyncPusher:
             outcome="start",
         )
         for i in range(0, len(outcomes), self._batch_size):
-            batch = outcomes[i:i + self._batch_size]
+            batch = outcomes[i : i + self._batch_size]
             payload = {
                 "outcomes": batch,
                 "client_id": self._get_client_id(),

@@ -58,7 +58,13 @@ def test_preset_standard_includes_status_and_init() -> None:
 @pytest.mark.unit
 def test_preset_all_has_all_group_tools() -> None:
     """TOOL_PRESETS['all'] is the union of all 5 groups."""
-    all_groups = set(TOOL_GROUP_CORE) | set(TOOL_GROUP_MEMORY) | set(TOOL_GROUP_QUALITY) | set(TOOL_GROUP_OBSERVABILITY) | set(TOOL_GROUP_ADMIN)
+    all_groups = (
+        set(TOOL_GROUP_CORE)
+        | set(TOOL_GROUP_MEMORY)
+        | set(TOOL_GROUP_QUALITY)
+        | set(TOOL_GROUP_OBSERVABILITY)
+        | set(TOOL_GROUP_ADMIN)
+    )
     assert set(TOOL_PRESETS["all"]) == all_groups
 
 

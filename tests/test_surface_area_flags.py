@@ -13,7 +13,6 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._sub_models import ToolsConfig
 
-
 # ---------------------------------------------------------------------------
 # effective_nudge_enabled
 # ---------------------------------------------------------------------------
@@ -457,15 +456,12 @@ def test_surface_config_session_start_recall_false() -> None:
 @pytest.mark.unit
 def test_resolve_surface_disabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('nudge') returns '' when nudges are disabled."""
-    from trw_mcp.models.config._loader import get_config as _real_get_config
     from trw_mcp.state import surface_resolver
 
     cfg = TRWConfig(nudge_enabled=False)
     monkeypatch.setattr(surface_resolver, "get_config", lambda: cfg, raising=False)
     # Patch at the deferred import location inside resolve_surface
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -475,12 +471,9 @@ def test_resolve_surface_disabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.mark.unit
 def test_resolve_surface_enabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('nudge') returns '__ENABLED__' when nudges are enabled."""
-    from trw_mcp.state import surface_resolver
 
     cfg = TRWConfig(nudge_enabled=True)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -491,9 +484,7 @@ def test_resolve_surface_enabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_resolve_surface_disabled_recall(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('recall') returns '' when recall is disabled."""
     cfg = TRWConfig(learning_recall_enabled=False)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -504,9 +495,7 @@ def test_resolve_surface_disabled_recall(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_resolve_surface_disabled_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('hooks') returns '' when hooks are disabled."""
     cfg = TRWConfig(hooks_enabled=False)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -517,9 +506,7 @@ def test_resolve_surface_disabled_hooks(monkeypatch: pytest.MonkeyPatch) -> None
 def test_resolve_surface_disabled_skills(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('skills') returns '' when skills are disabled."""
     cfg = TRWConfig(skills_enabled=False)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -530,9 +517,7 @@ def test_resolve_surface_disabled_skills(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_resolve_surface_disabled_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('agents') returns '' when agents are disabled."""
     cfg = TRWConfig(agents_enabled=False)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -543,9 +528,7 @@ def test_resolve_surface_disabled_agents(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_resolve_surface_disabled_framework_ref(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface('framework_ref') returns '' when disabled."""
     cfg = TRWConfig(framework_md_enabled=False)
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -556,9 +539,7 @@ def test_resolve_surface_disabled_framework_ref(monkeypatch: pytest.MonkeyPatch)
 def test_resolve_surface_unknown_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """resolve_surface with unknown ID returns '__ENABLED__' (permissive)."""
     cfg = TRWConfig()
-    monkeypatch.setattr(
-        "trw_mcp.models.config._loader.get_config", lambda: cfg
-    )
+    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
 
     from trw_mcp.state.surface_resolver import resolve_surface
 
@@ -573,7 +554,6 @@ def test_resolve_surface_unknown_id(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.unit
 def test_render_framework_ref_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """render_framework_reference() returns '' when include_framework_ref=False."""
-    from trw_mcp.models.config._client_profile import ClientProfile
     from trw_mcp.state.claude_md import _static_sections
 
     # Create a config whose profile has include_framework_ref=False
@@ -583,7 +563,8 @@ def test_render_framework_ref_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     original_profile = cfg.client_profile
     patched_profile = original_profile.model_copy(update={"include_framework_ref": False})
     monkeypatch.setattr(
-        _static_sections, "get_config",
+        _static_sections,
+        "get_config",
         lambda: _MockConfigWithProfile(patched_profile),
     )
 
@@ -616,7 +597,8 @@ def test_render_delegation_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = TRWConfig()
     patched_profile = cfg.client_profile.model_copy(update={"include_delegation": False})
     monkeypatch.setattr(
-        _static_sections, "get_config",
+        _static_sections,
+        "get_config",
         lambda: _MockConfigWithProfile(patched_profile),
     )
 
@@ -648,7 +630,8 @@ def test_render_agent_teams_disabled_by_profile(monkeypatch: pytest.MonkeyPatch)
     cfg = TRWConfig()
     patched_profile = cfg.client_profile.model_copy(update={"include_agent_teams": False})
     monkeypatch.setattr(
-        _static_sections, "get_config",
+        _static_sections,
+        "get_config",
         lambda: _MockConfigWithProfile(patched_profile),
     )
 

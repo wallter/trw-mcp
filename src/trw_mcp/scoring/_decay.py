@@ -61,11 +61,11 @@ def _days_since_access(
 
 # Type-aware decay half-lives (PRD-CORE-110, PRD-CORE-116)
 _TYPE_HALF_LIFE: dict[str, float] = {
-    "incident": 90.0,       # Slow decay until fix confirmed (unverified = no decay, see _entry_utility)
-    "pattern": 180.0,       # Very slow -- validated patterns are durable
-    "convention": 9999.0,   # No auto-decay -- stable until human override
-    "hypothesis": 7.0,      # Fast -- validate or die
-    "workaround": 14.0,     # Fast -- scheduled expiry, typically paired with expires field
+    "incident": 90.0,  # Slow decay until fix confirmed (unverified = no decay, see _entry_utility)
+    "pattern": 180.0,  # Very slow -- validated patterns are durable
+    "convention": 9999.0,  # No auto-decay -- stable until human override
+    "hypothesis": 7.0,  # Fast -- validate or die
+    "workaround": 14.0,  # Fast -- scheduled expiry, typically paired with expires field
 }
 
 

@@ -460,9 +460,7 @@ def extract_learnings_from_llm(
             type=str(item.get("type", "pattern")),
             confidence=str(item.get("confidence", "unverified")),
             domain=[str(v) for v in raw_domain] if isinstance(raw_domain, list) else None,
-            phase_affinity=(
-                [str(v) for v in raw_phase_affinity] if isinstance(raw_phase_affinity, list) else None
-            ),
+            phase_affinity=([str(v) for v in raw_phase_affinity] if isinstance(raw_phase_affinity, list) else None),
         )
         entry = LearningEntry(
             id=_ac.generate_learning_id(),
@@ -475,9 +473,7 @@ def extract_learnings_from_llm(
             type=LearningType(str(normalized_audit["type"])),
             confidence=LearningConfidence(str(normalized_audit["confidence"])),
             domain=[str(value) for value in cast("list[object]", normalized_audit["domain"])],
-            phase_affinity=[
-                str(value) for value in cast("list[object]", normalized_audit["phase_affinity"])
-            ],
+            phase_affinity=[str(value) for value in cast("list[object]", normalized_audit["phase_affinity"])],
         )
         _save_and_record(trw_dir, entry, new_learnings)
 

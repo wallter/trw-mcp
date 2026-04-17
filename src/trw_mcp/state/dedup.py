@@ -181,9 +181,7 @@ def check_duplicate(
     # --- Fast path: sqlite-vec KNN search ---
     # Resolve .trw dir from entries_dir (entries_dir = trw_dir / learnings / entries)
     trw_dir = entries_dir.parent.parent
-    backend_result = _check_duplicate_via_backend(
-        new_vector, trw_dir, skip_threshold, merge_threshold
-    )
+    backend_result = _check_duplicate_via_backend(new_vector, trw_dir, skip_threshold, merge_threshold)
     if backend_result is not None:
         logger.debug(
             "dedup_check_complete",

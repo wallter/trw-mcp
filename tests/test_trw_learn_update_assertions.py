@@ -31,9 +31,7 @@ REPLACEMENT_ASSERTIONS = [
 class TestUpdateAddsAssertions:
     """FR12: trw_learn_update adds assertions to an entry."""
 
-    def test_update_adds_assertions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_update_adds_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When assertions are provided, they are validated and stored."""
         from trw_memory.models.memory import MemoryEntry
 
@@ -81,9 +79,7 @@ class TestUpdateAddsAssertions:
 class TestUpdateReplacesAssertions:
     """FR12: Providing new assertions replaces existing ones."""
 
-    def test_update_replaces_assertions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_update_replaces_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Existing assertions are replaced with the new list."""
         from trw_memory.models.memory import Assertion, MemoryEntry
 
@@ -126,9 +122,7 @@ class TestUpdateReplacesAssertions:
         update_call_kwargs = mock_backend.update.call_args
         assert len(update_call_kwargs[1]["assertions"]) == 2
 
-    def test_update_replaces_assertions_in_yaml_backup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_update_replaces_assertions_in_yaml_backup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """YAML backup assertions are kept in sync with the validated replacement list."""
         from trw_memory.models.memory import Assertion, MemoryEntry
 
@@ -187,9 +181,7 @@ class TestUpdateReplacesAssertions:
 class TestDeleteAssertionsWithEmptyList:
     """FR12: assertions=[] removes all assertions."""
 
-    def test_delete_assertions_with_empty_list(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_delete_assertions_with_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Passing empty list clears all assertions."""
         from trw_memory.models.memory import Assertion, MemoryEntry
 
@@ -236,9 +228,7 @@ class TestDeleteAssertionsWithEmptyList:
 class TestUpdateAssertionsNoneSkipsUpdate:
     """When assertions=None (not provided), no assertion update is done."""
 
-    def test_none_assertions_skips_update(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_none_assertions_skips_update(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When assertions is None, backend is not called for assertion update."""
         mock_backend = MagicMock()
 

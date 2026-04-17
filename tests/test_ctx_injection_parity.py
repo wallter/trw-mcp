@@ -28,9 +28,6 @@ import inspect
 from pathlib import Path
 from typing import Any, get_type_hints
 
-import pytest
-
-
 _PIN_STATE_HELPERS: frozenset[str] = frozenset(
     {
         "pin_active_run",
@@ -224,9 +221,7 @@ def test_all_pin_state_tools_declare_ctx() -> None:
         f"through to pin helpers: {sorted(missing)}"
     )
     # Sanity floor.
-    assert len(registered_required) >= 8, (
-        f"Expected >=8 ctx-required tools, got {sorted(registered_required)}"
-    )
+    assert len(registered_required) >= 8, f"Expected >=8 ctx-required tools, got {sorted(registered_required)}"
 
 
 def test_ctx_param_count_grep_floor() -> None:
@@ -242,10 +237,7 @@ def test_ctx_param_count_grep_floor() -> None:
         text = py_path.read_text(encoding="utf-8")
         if "ctx: Context" in text:
             hit_files.append(py_path.name)
-    assert len(hit_files) >= 5, (
-        "Expected >=5 tool files declaring `ctx: Context` — "
-        f"got {sorted(hit_files)}"
-    )
+    assert len(hit_files) >= 5, f"Expected >=5 tool files declaring `ctx: Context` — got {sorted(hit_files)}"
 
 
 def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
@@ -283,9 +275,7 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
                 # Skip comment-only or obvious compat shims
                 if "# compat" in src_line.lower() or "# legacy" in src_line.lower():
                     continue
-                violations.append(
-                    (str(py_path.relative_to(tools_dir.parent.parent)), node.lineno, callee)
-                )
+                violations.append((str(py_path.relative_to(tools_dir.parent.parent)), node.lineno, callee))
 
     # Filter out legacy compat + intentionally process-scoped paths.  These
     # sites are not tool handlers; they use the process-level pin intentionally
@@ -296,19 +286,12 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
         "telemetry.py",
         "_recall_impl.py",
     )
-    violations = [
-        v
-        for v in violations
-        if not any(exempt in v[0] for exempt in _process_scoped_exempt)
-    ]
+    violations = [v for v in violations if not any(exempt in v[0] for exempt in _process_scoped_exempt)]
     # checkpoint.py:81 is the auto-checkpoint telemetry helper
     # (_maybe_auto_checkpoint) — excluded for the same reason.
-    violations = [
-        v for v in violations if not (v[0].endswith("checkpoint.py") and v[1] == 81)
-    ]
+    violations = [v for v in violations if not (v[0].endswith("checkpoint.py") and v[1] == 81)]
 
     assert not violations, (
         "PRD-CORE-141 FR03 call-site violations (pin helpers invoked without "
-        "context= or session_id=): "
-        + "\n".join(f"  {path}:{line} -> {fn}(...)" for path, line, fn in violations)
+        "context= or session_id=): " + "\n".join(f"  {path}:{line} -> {fn}(...)" for path, line, fn in violations)
     )

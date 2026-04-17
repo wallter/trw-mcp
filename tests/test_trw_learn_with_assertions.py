@@ -107,9 +107,7 @@ class TestMemoryEntryHasAssertions:
 class TestStoreLearningThreadsAssertions:
     """FR05: store_learning threads assertions to _learning_to_memory_entry."""
 
-    def test_store_learning_with_assertions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_store_learning_with_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """store_learning passes assertions through to the memory entry."""
         from trw_mcp.state import memory_adapter
 
@@ -159,9 +157,7 @@ class TestStoreLearningThreadsAssertions:
 class TestTrwLearnStoresAssertions:
     """FR05: trw_learn tool threads assertions to adapter_store."""
 
-    def test_trw_learn_stores_assertions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_trw_learn_stores_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The trw_learn tool passes assertions through to adapter_store."""
         from tests.conftest import extract_tool_fn, make_test_server
 
@@ -176,9 +172,7 @@ class TestTrwLearnStoresAssertions:
                 "distribution_warning": "",
             }
 
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.adapter_store", mock_store
-        )
+        monkeypatch.setattr("trw_mcp.tools.learning.adapter_store", mock_store)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",

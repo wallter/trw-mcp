@@ -80,19 +80,11 @@ def _get_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
     """Return the cached YAML path index, rebuilding if stale."""
     global _yaml_path_index, _yaml_path_index_dir, _yaml_path_index_ts
     now = time.monotonic()
-    if (
-        _yaml_path_index_dir == entries_dir
-        and now - _yaml_path_index_ts < _YAML_INDEX_TTL
-        and _yaml_path_index
-    ):
+    if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
         return _yaml_path_index
     with _yaml_path_index_lock:
         # Double-check after acquiring lock
-        if (
-            _yaml_path_index_dir == entries_dir
-            and now - _yaml_path_index_ts < _YAML_INDEX_TTL
-            and _yaml_path_index
-        ):
+        if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
             return _yaml_path_index
         _yaml_path_index = _build_yaml_path_index(entries_dir)
         _yaml_path_index_dir = entries_dir

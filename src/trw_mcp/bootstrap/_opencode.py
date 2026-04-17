@@ -111,6 +111,7 @@ def _parse_jsonc(content: str) -> OpencodeConfig:
     result: OpencodeConfig = json.loads(stripped)
     return result
 
+
 def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
     if not manifest_hashes or key not in manifest_hashes or not dest.is_file():
         return False

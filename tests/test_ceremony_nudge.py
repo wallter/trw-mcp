@@ -1711,7 +1711,7 @@ class TestHydrateFilesModified:
         events = [
             {"type": "file_modified", "ts": "2026-01-01T01:00:00Z", "path": "foo.py"},
             {"type": "file_modified", "ts": "2026-01-01T02:00:00Z", "path": "bar.py"},
-            {"type": "checkpoint",    "ts": "2026-01-01T03:00:00Z"},
+            {"type": "checkpoint", "ts": "2026-01-01T03:00:00Z"},
             {"type": "file_modified", "ts": "2026-01-01T04:00:00Z", "path": "baz.py"},
         ]
         events_path.write_text(
@@ -1814,7 +1814,7 @@ class TestHydrateFilesModified:
         events_path = run_dir / "meta" / "events.jsonl"
 
         events = [
-            {"type": "checkpoint",    "ts": "2026-01-01T01:00:00Z"},
+            {"type": "checkpoint", "ts": "2026-01-01T01:00:00Z"},
             {"type": "tool_invocation", "ts": "2026-01-01T02:00:00Z"},
             {"type": "session_start", "ts": "2026-01-01T03:00:00Z"},
             # No file_modified events

@@ -81,7 +81,9 @@ def build_recall_context(
 
         git_result = subprocess.run(
             ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
             cwd=str(trw_dir.parent) if trw_dir.name == ".trw" else str(trw_dir),
         )
         if git_result.returncode == 0:
@@ -273,12 +275,8 @@ def execute_recall(
 
     # Move already-in-context learnings behind fresh results before truncation.
     if deprioritized_ids:
-        prioritized = [
-            entry for entry in ranked_learnings if str(entry.get("id", "")) not in deprioritized_ids
-        ]
-        deferred = [
-            entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids
-        ]
+        prioritized = [entry for entry in ranked_learnings if str(entry.get("id", "")) not in deprioritized_ids]
+        deferred = [entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids]
         ranked_learnings = prioritized + deferred
 
     from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
@@ -302,9 +300,7 @@ def execute_recall(
 
     # --- Assertion verification (PRD-CORE-086 FR06) ---
     if not use_compact:
-        ranked_learnings = _verify_assertions(
-            ranked_learnings, query_tokens, config, rank_fn, context=recall_context
-        )
+        ranked_learnings = _verify_assertions(ranked_learnings, query_tokens, config, rank_fn, context=recall_context)
 
     # Strip to compact fields when requested
     if use_compact:
@@ -591,13 +587,10 @@ def _verify_assertions(
 
                 # FR08: Auto-stale detection — if ALL assertions have been
                 # failing for longer than the threshold, mark learning stale
-                all_persistently_failing = (
-                    len(updated_assertions) > 0
-                    and all(
-                        a.get("first_failed_at") is not None
-                        and datetime.fromisoformat(str(a["first_failed_at"])) < stale_threshold
-                        for a in updated_assertions
-                    )
+                all_persistently_failing = len(updated_assertions) > 0 and all(
+                    a.get("first_failed_at") is not None
+                    and datetime.fromisoformat(str(a["first_failed_at"])) < stale_threshold
+                    for a in updated_assertions
                 )
                 if all_persistently_failing:
                     logger.info(
@@ -616,7 +609,9 @@ def _verify_assertions(
 
         if assertion_penalties:
             ranked_learnings = rank_fn(
-                ranked_learnings, query_tokens, config.recall_utility_lambda,
+                ranked_learnings,
+                query_tokens,
+                config.recall_utility_lambda,
                 assertion_penalties=assertion_penalties,
                 context=context,
             )

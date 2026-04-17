@@ -77,6 +77,7 @@ class _NamedTool(Protocol):
 
     name: str
 
+
 def _trw_mcp_server_entry() -> CodexMcpServerEntry:
     """Return the TRW MCP server entry for Codex config."""
     if shutil.which("trw-mcp"):

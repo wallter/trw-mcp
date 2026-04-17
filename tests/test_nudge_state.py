@@ -153,42 +153,48 @@ class TestFromDictDeserialization:
 
     def test_malformed_entry_skipped(self) -> None:
         """Malformed entries inside nudge_history are skipped."""
-        state = _from_dict({
-            "nudge_history": {
-                "L-good": {
-                    "phases_shown": ["IMPLEMENT"],
-                    "turn_first_shown": 5,
-                    "last_shown_turn": 5,
-                },
-                "L-bad-val": "not_a_dict",
-                123: {"phases_shown": ["X"]},  # non-str key
+        state = _from_dict(
+            {
+                "nudge_history": {
+                    "L-good": {
+                        "phases_shown": ["IMPLEMENT"],
+                        "turn_first_shown": 5,
+                        "last_shown_turn": 5,
+                    },
+                    "L-bad-val": "not_a_dict",
+                    123: {"phases_shown": ["X"]},  # non-str key
+                }
             }
-        })
+        )
         assert len(state.nudge_history) == 1
         assert "L-good" in state.nudge_history
 
     def test_entry_with_non_string_phases_filtered(self) -> None:
         """Non-string items in phases_shown are filtered out."""
-        state = _from_dict({
-            "nudge_history": {
-                "L-mix": {
-                    "phases_shown": ["IMPLEMENT", 42, None, "VALIDATE"],
-                    "turn_first_shown": 1,
-                    "last_shown_turn": 2,
-                },
+        state = _from_dict(
+            {
+                "nudge_history": {
+                    "L-mix": {
+                        "phases_shown": ["IMPLEMENT", 42, None, "VALIDATE"],
+                        "turn_first_shown": 1,
+                        "last_shown_turn": 2,
+                    },
+                }
             }
-        })
+        )
         assert state.nudge_history["L-mix"]["phases_shown"] == ["IMPLEMENT", "VALIDATE"]
 
     def test_missing_turn_fields_default_zero(self) -> None:
         """Missing turn fields default to 0."""
-        state = _from_dict({
-            "nudge_history": {
-                "L-no-turns": {
-                    "phases_shown": ["DELIVER"],
-                },
+        state = _from_dict(
+            {
+                "nudge_history": {
+                    "L-no-turns": {
+                        "phases_shown": ["DELIVER"],
+                    },
+                }
             }
-        })
+        )
         entry = state.nudge_history["L-no-turns"]
         assert entry["turn_first_shown"] == 0
         assert entry["last_shown_turn"] == 0
@@ -201,13 +207,15 @@ class TestFromDictDeserialization:
 
 class TestParseNudgeHistory:
     def test_valid_input(self) -> None:
-        result = _parse_nudge_history({
-            "L-1": {
-                "phases_shown": ["IMPLEMENT"],
-                "turn_first_shown": 1,
-                "last_shown_turn": 2,
+        result = _parse_nudge_history(
+            {
+                "L-1": {
+                    "phases_shown": ["IMPLEMENT"],
+                    "turn_first_shown": 1,
+                    "last_shown_turn": 2,
+                }
             }
-        })
+        )
         assert len(result) == 1
         assert result["L-1"]["turn_first_shown"] == 1
 
@@ -222,12 +230,14 @@ class TestParseNudgeHistory:
 
     def test_type_error_in_entry_skipped(self) -> None:
         """Entry that causes TypeError/ValueError is skipped."""
-        result = _parse_nudge_history({
-            "L-bad": {
-                "phases_shown": ["X"],
-                "turn_first_shown": "not_a_number",  # will cause ValueError on int()
+        result = _parse_nudge_history(
+            {
+                "L-bad": {
+                    "phases_shown": ["X"],
+                    "turn_first_shown": "not_a_number",  # will cause ValueError on int()
+                }
             }
-        })
+        )
         # The int() call on "not_a_number" should succeed since int("not_a_number")
         # raises ValueError which is caught. So the entry is skipped.
         assert result == {}

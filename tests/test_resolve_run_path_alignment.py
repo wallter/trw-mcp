@@ -77,9 +77,7 @@ def project_with_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 class TestResolveRunPathAlignment:
     """resolve_run_path MUST agree with find_active_run / trw_session_start."""
 
-    def test_pinned_run_wins_over_latest_mtime_run(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_pinned_run_wins_over_latest_mtime_run(self, project_with_runs: Path) -> None:
         """The bug scenario: abandoned run has newer mtime; pinned run wins.
 
         trw_session_start pins run A. Run B is marked abandoned but its
@@ -94,76 +92,88 @@ class TestResolveRunPathAlignment:
         runs_root = project_with_runs / ".trw" / "runs"
         # Build run A (active, older mtime) and run B (abandoned, newer mtime)
         run_a = _make_run(
-            runs_root, "current-task", "20260413T100000Z-a000",
-            status="active", touch_ts=1_000_000.0,
+            runs_root,
+            "current-task",
+            "20260413T100000Z-a000",
+            status="active",
+            touch_ts=1_000_000.0,
         )
         _make_run(
-            runs_root, "stale-task", "20260413T110000Z-b000",
-            status="abandoned", touch_ts=9_000_000.0,  # newer mtime
+            runs_root,
+            "stale-task",
+            "20260413T110000Z-b000",
+            status="abandoned",
+            touch_ts=9_000_000.0,  # newer mtime
         )
 
         pin_active_run(run_a)
         resolved = resolve_run_path()
-        assert resolved == run_a, (
-            f"Expected pinned run {run_a.name}, got {resolved.name}"
-        )
+        assert resolved == run_a, f"Expected pinned run {run_a.name}, got {resolved.name}"
 
-    def test_active_run_wins_over_complete_run_without_pin(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_active_run_wins_over_complete_run_without_pin(self, project_with_runs: Path) -> None:
         """No pin: find_active_run's status filter picks the active run even
         when a completed run has a newer mtime."""
         from trw_mcp.state._paths import resolve_run_path
 
         runs_root = project_with_runs / ".trw" / "runs"
         run_active = _make_run(
-            runs_root, "task-a", "20260413T100000Z-active",
-            status="active", touch_ts=1_000_000.0,
+            runs_root,
+            "task-a",
+            "20260413T100000Z-active",
+            status="active",
+            touch_ts=1_000_000.0,
         )
         _make_run(
-            runs_root, "task-b", "20260413T110000Z-complete",
-            status="complete", touch_ts=9_000_000.0,  # newer mtime, but complete
+            runs_root,
+            "task-b",
+            "20260413T110000Z-complete",
+            status="complete",
+            touch_ts=9_000_000.0,  # newer mtime, but complete
         )
 
         resolved = resolve_run_path()
-        assert resolved == run_active, (
-            "Active run must win over later-mtime complete run"
-        )
+        assert resolved == run_active, "Active run must win over later-mtime complete run"
 
-    def test_mtime_fallback_when_no_active_runs_exist(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_mtime_fallback_when_no_active_runs_exist(self, project_with_runs: Path) -> None:
         """All runs complete/failed → fall back to latest mtime (preserves
         backward compat for post-mortem discovery tooling)."""
         from trw_mcp.state._paths import resolve_run_path
 
         runs_root = project_with_runs / ".trw" / "runs"
         _make_run(
-            runs_root, "task-a", "20260413T100000Z-old",
-            status="complete", touch_ts=1_000_000.0,
+            runs_root,
+            "task-a",
+            "20260413T100000Z-old",
+            status="complete",
+            touch_ts=1_000_000.0,
         )
         run_newer = _make_run(
-            runs_root, "task-b", "20260413T110000Z-new",
-            status="failed", touch_ts=9_000_000.0,
+            runs_root,
+            "task-b",
+            "20260413T110000Z-new",
+            status="failed",
+            touch_ts=9_000_000.0,
         )
 
         resolved = resolve_run_path()
         # Both are non-active → mtime fallback kicks in → newer wins
         assert resolved == run_newer
 
-    def test_explicit_run_path_still_honored(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_explicit_run_path_still_honored(self, project_with_runs: Path) -> None:
         """Passing an explicit run_path bypasses pin + active-run resolution."""
         from trw_mcp.state._paths import pin_active_run, resolve_run_path
 
         runs_root = project_with_runs / ".trw" / "runs"
         run_pinned = _make_run(
-            runs_root, "pinned-task", "20260413T100000Z-pinned",
+            runs_root,
+            "pinned-task",
+            "20260413T100000Z-pinned",
             status="active",
         )
         run_explicit = _make_run(
-            runs_root, "other-task", "20260413T110000Z-explicit",
+            runs_root,
+            "other-task",
+            "20260413T110000Z-explicit",
             status="active",
         )
         pin_active_run(run_pinned)
@@ -172,9 +182,7 @@ class TestResolveRunPathAlignment:
         resolved = resolve_run_path(str(run_explicit))
         assert resolved == run_explicit
 
-    def test_raises_when_no_runs_and_no_pin(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_raises_when_no_runs_and_no_pin(self, project_with_runs: Path) -> None:
         """Empty runs/ directory → StateError (no active runs)."""
         from trw_mcp.exceptions import StateError
         from trw_mcp.state._paths import resolve_run_path
@@ -183,9 +191,7 @@ class TestResolveRunPathAlignment:
         with pytest.raises(StateError, match="No active runs found"):
             resolve_run_path()
 
-    def test_trw_status_agrees_with_trw_session_start(
-        self, project_with_runs: Path
-    ) -> None:
+    def test_trw_status_agrees_with_trw_session_start(self, project_with_runs: Path) -> None:
         """The end-to-end scenario from the bug report.
 
         Simulates: trw_session_start pins run A. trw_status (called with no
@@ -201,12 +207,18 @@ class TestResolveRunPathAlignment:
 
         runs_root = project_with_runs / ".trw" / "runs"
         run_session = _make_run(
-            runs_root, "cursor-cli-integration", "20260413T005703Z-12a40859",
-            status="active", touch_ts=1_000_000.0,
+            runs_root,
+            "cursor-cli-integration",
+            "20260413T005703Z-12a40859",
+            status="active",
+            touch_ts=1_000_000.0,
         )
         _make_run(
-            runs_root, "sprint-88-aaref-plan-fidelity", "20260411T014550Z-221fd1a1",
-            status="complete", touch_ts=9_000_000.0,  # newer mtime
+            runs_root,
+            "sprint-88-aaref-plan-fidelity",
+            "20260411T014550Z-221fd1a1",
+            status="complete",
+            touch_ts=9_000_000.0,  # newer mtime
         )
 
         # Simulate trw_session_start pinning the run
@@ -228,24 +240,21 @@ from tests._structlog_capture import captured_structlog  # noqa: F401
 class TestObservability:
     """mtime fallback emits a structured log so stale-run resolution is visible."""
 
-    def test_mtime_fallback_logs_warning(
-        self, project_with_runs: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_mtime_fallback_logs_warning(self, project_with_runs: Path, captured_structlog: list[dict]) -> None:
         """When mtime fallback is used, a structlog event is emitted."""
         from trw_mcp.state._paths import resolve_run_path
 
         runs_root = project_with_runs / ".trw" / "runs"
         run_complete = _make_run(
-            runs_root, "task-x", "20260413T100000Z-x",
+            runs_root,
+            "task-x",
+            "20260413T100000Z-x",
             status="complete",
         )
 
         resolved = resolve_run_path()
 
         assert resolved == run_complete  # mtime fallback fired
-        fallback_logs = [
-            le for le in captured_structlog
-            if le.get("event") == "resolve_run_path_mtime_fallback"
-        ]
+        fallback_logs = [le for le in captured_structlog if le.get("event") == "resolve_run_path_mtime_fallback"]
         assert len(fallback_logs) == 1
         assert fallback_logs[0]["reason"] == "no_pinned_or_active_run"

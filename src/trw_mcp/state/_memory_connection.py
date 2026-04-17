@@ -74,7 +74,7 @@ def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBack
     except TypeError as exc:
         if "unexpected keyword argument" not in str(exc):
             raise
-        return SQLiteBackend(db_path, dim=cast(int, backend_kwargs["dim"]))
+        return SQLiteBackend(db_path, dim=cast("int", backend_kwargs["dim"]))
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +121,8 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             from trw_memory.models.config import MemoryConfig
 
             mem_cfg = MemoryConfig()
-            backend_kwargs["integrity_check_interval_minutes"] = (
-                mem_cfg.memory_integrity_check_interval_minutes
-            )
-            backend_kwargs["concurrent_writer_warn_threshold"] = (
-                mem_cfg.memory_concurrent_writer_warn_threshold
-            )
+            backend_kwargs["integrity_check_interval_minutes"] = mem_cfg.memory_integrity_check_interval_minutes
+            backend_kwargs["concurrent_writer_warn_threshold"] = mem_cfg.memory_concurrent_writer_warn_threshold
         try:
             backend = _create_backend(db_path, backend_kwargs)
         except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
@@ -310,8 +306,7 @@ def _append_wal_health(result: dict[str, object]) -> None:
             if wal_size_mb > cfg.wal_checkpoint_threshold_mb:
                 result["wal_size_mb"] = round(wal_size_mb, 1)
                 result["wal_advisory"] = (
-                    f"WAL file is {wal_size_mb:.1f}MB "
-                    f"(threshold: {cfg.wal_checkpoint_threshold_mb}MB)"
+                    f"WAL file is {wal_size_mb:.1f}MB (threshold: {cfg.wal_checkpoint_threshold_mb}MB)"
                 )
     except Exception:  # justified: fail-open, WAL health is advisory only
         logger.debug("wal_health_check_failed", exc_info=True)

@@ -100,9 +100,12 @@ def _run_auto_maintenance(
         os.chdir(original_cwd)
         try:
             from trw_mcp.models.config import _reset_config
+
             _reset_config()
         except Exception:  # justified: cleanup, config reset is best-effort during finally
             _logger.debug("auto_maintenance_config_reset_failed", exc_info=True)
+
+
 from ._template_updater import _update_agents as _update_agents
 from ._template_updater import (
     _update_always_overwrite_files as _update_always_overwrite_files,
@@ -232,6 +235,7 @@ def _run_core_update_phases(
     """Execute core update phases (framework files, config, cleanup)."""
     if not dry_run:
         from . import _TRW_DIRS
+
         for rel_dir in _TRW_DIRS:
             _ensure_dir(target_dir / rel_dir, result, on_progress)
 

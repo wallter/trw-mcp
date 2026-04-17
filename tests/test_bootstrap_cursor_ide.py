@@ -10,9 +10,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,9 +22,13 @@ def _make_git_repo(tmp_path: Path) -> Path:
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         check=True,
         capture_output=True,
-        env={"GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t.com",
-             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t.com",
-             "HOME": str(tmp_path)},
+        env={
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t.com",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t.com",
+            "HOME": str(tmp_path),
+        },
     )
     return tmp_path
 
@@ -78,9 +79,7 @@ class TestUpdateCursorArtifactsCursorIde:
         # At least 20 cursor files total
         cursor_files = list((repo / ".cursor").rglob("*"))
         cursor_file_count = sum(1 for f in cursor_files if f.is_file())
-        assert cursor_file_count >= 20, (
-            f"Expected >= 20 cursor files, got {cursor_file_count}"
-        )
+        assert cursor_file_count >= 20, f"Expected >= 20 cursor files, got {cursor_file_count}"
 
     def test_ide_idempotent_no_drift(self, tmp_path: Path) -> None:
         """Running twice: second run reports updated-only, not created."""
@@ -90,9 +89,7 @@ class TestUpdateCursorArtifactsCursorIde:
 
         result2 = self._call_update(tmp_path)
         # Second run: no new creates, some updates
-        assert len(result2["created"]) == 0, (
-            f"Second run unexpectedly created: {result2['created']}"
-        )
+        assert len(result2["created"]) == 0, f"Second run unexpectedly created: {result2['created']}"
         assert len(result2["updated"]) > 0 or len(result2["preserved"]) > 0
 
     def test_ide_only_when_not_cli(self, tmp_path: Path) -> None:
@@ -166,9 +163,7 @@ class TestUpdateCursorArtifactsCursorIde:
         result: dict = {"created": [], "updated": [], "preserved": [], "errors": []}
         _update_cursor_artifacts(tmp_path, result, ide_override="opencode")
 
-        assert not (tmp_path / ".cursor").exists(), (
-            ".cursor/ should not be created for opencode target"
-        )
+        assert not (tmp_path / ".cursor").exists(), ".cursor/ should not be created for opencode target"
 
     def test_bootstrap_emits_tool_ceiling_advisory(self, tmp_path: Path) -> None:
         """cursor-ide bootstrap includes tool-ceiling advisory in result['info']."""
@@ -178,9 +173,7 @@ class TestUpdateCursorArtifactsCursorIde:
         assert any("24 MCP tools" in msg for msg in info), (
             f"Expected tool-ceiling advisory in result['info'], got: {info}"
         )
-        assert any("cursor-ide" in msg for msg in info), (
-            "Tool-ceiling advisory should mention cursor-ide"
-        )
+        assert any("cursor-ide" in msg for msg in info), "Tool-ceiling advisory should mention cursor-ide"
 
     def test_no_tool_ceiling_advisory_for_cli_only(self, tmp_path: Path) -> None:
         """cursor-cli-only bootstrap does NOT emit the IDE tool-ceiling advisory."""

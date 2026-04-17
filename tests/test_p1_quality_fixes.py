@@ -47,9 +47,7 @@ class TestDetectCurrentPhaseUsedInLearnImpl:
 class TestDetectCurrentPhaseUsedInRecallImpl:
     """_recall_impl uses _paths.detect_current_phase instead of inline glob."""
 
-    def test_build_recall_context_delegates_to_detect_current_phase(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_recall_context_delegates_to_detect_current_phase(self, tmp_path: Path) -> None:
         """Verify build_recall_context uses detect_current_phase from _paths."""
         from trw_mcp.tools._recall_impl import build_recall_context
 
@@ -57,9 +55,7 @@ class TestDetectCurrentPhaseUsedInRecallImpl:
         trw_dir.mkdir()
 
         with (
-            patch(
-                "trw_mcp.state._paths.detect_current_phase", return_value="validate"
-            ) as mock_detect,
+            patch("trw_mcp.state._paths.detect_current_phase", return_value="validate") as mock_detect,
             patch("subprocess.run") as mock_git,
         ):
             mock_git.return_value.returncode = 1  # No git output
@@ -249,6 +245,4 @@ class TestPurePosixPathModuleLevel:
                 for child in ast.walk(node):
                     if isinstance(child, ast.ImportFrom) and child.module == "pathlib":
                         for alias in child.names:
-                            assert alias.name != "PurePosixPath", (
-                                f"PurePosixPath imported inside function {node.name}"
-                            )
+                            assert alias.name != "PurePosixPath", f"PurePosixPath imported inside function {node.name}"

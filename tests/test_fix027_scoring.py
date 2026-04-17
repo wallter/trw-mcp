@@ -920,7 +920,9 @@ class TestBuildCheckMypyOnlyScope:
         assert q_obs >= 1, f"FR04: q_observations should be >= 1 after build_check, got {q_obs}"
 
     def test_build_check_leaves_no_q_learning_worker_running(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Regression: build_check must not leave a background SQLite worker alive."""
         import trw_mcp.tools.build as build_mod

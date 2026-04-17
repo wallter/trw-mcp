@@ -68,7 +68,18 @@ class TestModuleImports:
 
         assert all(
             m is not None
-            for m in (build, ceremony, checkpoint, knowledge, learning, orchestration, report, requirements, review, usage)
+            for m in (
+                build,
+                ceremony,
+                checkpoint,
+                knowledge,
+                learning,
+                orchestration,
+                report,
+                requirements,
+                review,
+                usage,
+            )
         )
 
     def test_import_middleware(self) -> None:

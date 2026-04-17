@@ -286,10 +286,12 @@ def test_assertion_reranking_preserves_context(tmp_path: Path) -> None:
         *,
         context: RecallContext | None = None,
     ) -> list[dict[str, object]]:
-        rank_fn_calls.append({
-            "assertion_penalties": assertion_penalties,
-            "context": context,
-        })
+        rank_fn_calls.append(
+            {
+                "assertion_penalties": assertion_penalties,
+                "context": context,
+            }
+        )
         return matches
 
     # Simulate failing assertion → penalty applied → rank_fn called with penalties
@@ -433,7 +435,9 @@ def test_trw_recall_token_budget_metadata(tmp_path: Path) -> None:
         patch("trw_mcp.tools._recall_impl.log_surface_event"),
     ):
         result = execute_recall(
-            query="test", trw_dir=trw_dir, config=config,
+            query="test",
+            trw_dir=trw_dir,
+            config=config,
             token_budget=4000,
             _adapter_recall=lambda *a, **kw: entries,
             _adapter_update_access=lambda *a, **kw: None,
@@ -465,7 +469,9 @@ def test_trw_recall_token_budget_truncates(tmp_path: Path) -> None:
         patch("trw_mcp.tools._recall_impl.log_surface_event"),
     ):
         result = execute_recall(
-            query="test", trw_dir=trw_dir, config=config,
+            query="test",
+            trw_dir=trw_dir,
+            config=config,
             token_budget=250,
             _adapter_recall=lambda *a, **kw: entries,
             _adapter_update_access=lambda *a, **kw: None,
@@ -492,7 +498,9 @@ def test_trw_recall_token_budget_none_informational(tmp_path: Path) -> None:
         patch("trw_mcp.tools._recall_impl.log_surface_event"),
     ):
         result = execute_recall(
-            query="test", trw_dir=trw_dir, config=config,
+            query="test",
+            trw_dir=trw_dir,
+            config=config,
             token_budget=None,
             _adapter_recall=lambda *a, **kw: [_make_sized_entry("L-1", 10)],
             _adapter_update_access=lambda *a, **kw: None,
@@ -509,6 +517,7 @@ def test_trw_recall_token_budget_none_informational(tmp_path: Path) -> None:
 def test_trw_recall_token_budget_invalid_raises(tmp_path: Path) -> None:
     """token_budget <= 0 raises ValueError."""
     import pytest
+
     from trw_mcp.tools._recall_impl import execute_recall
 
     config = _make_config()
@@ -517,7 +526,10 @@ def test_trw_recall_token_budget_invalid_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="token_budget must be positive"):
         execute_recall(
-            query="test", trw_dir=trw_dir, config=config, token_budget=0,
+            query="test",
+            trw_dir=trw_dir,
+            config=config,
+            token_budget=0,
             _adapter_recall=lambda *a, **kw: [],
             _adapter_update_access=lambda *a, **kw: None,
             _search_patterns=lambda *a, **kw: [],

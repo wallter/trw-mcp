@@ -260,10 +260,13 @@ class TestSessionScopedFileCounting:
 
         # Reproduce the exact event sequence from trw_init (orchestration.py:304-322)
         event_logger.log_event(
-            events_path, "run_init", {"task": "test-task", "framework": "v24.4_TRW"},
+            events_path,
+            "run_init",
+            {"task": "test-task", "framework": "v24.4_TRW"},
         )
         event_logger.log_event(
-            events_path, "session_start",
+            events_path,
+            "session_start",
             {"source": "trw_init", "run_detected": True, "query": "*"},
         )
 

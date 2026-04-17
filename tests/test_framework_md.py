@@ -52,9 +52,7 @@ class TestFrameworkMdEnforcement:
         """Rationalization watchlist contains ceremony-skip warning entries."""
         content = _framework_content()
         # v24.3 watchlist warns against skipping ceremony/recall, not review specifically
-        assert "RATIONALIZATION WATCHLIST" in content, (
-            "FRAMEWORK.md must contain a rationalization watchlist section"
-        )
+        assert "RATIONALIZATION WATCHLIST" in content, "FRAMEWORK.md must contain a rationalization watchlist section"
         # Verify the watchlist has substantive anti-skip entries
         content_lower = content.lower()
         assert "too simple" in content_lower or "don't need" in content_lower or "skip" in content_lower, (
@@ -65,9 +63,7 @@ class TestFrameworkMdEnforcement:
         """Phase reversion section exists and provides structural guidance."""
         content = _framework_content()
         # v24.3 frames reversion as structural gap response with a decision table
-        assert "PHASE REVERSION" in content, (
-            "FRAMEWORK.md must contain a PHASE REVERSION section"
-        )
+        assert "PHASE REVERSION" in content, "FRAMEWORK.md must contain a PHASE REVERSION section"
         # Verify it provides actionable reversion guidance (not just a title)
         assert "revert" in content.lower() and ("structural" in content.lower() or "redesign" in content.lower()), (
             "FRAMEWORK.md phase reversion section must provide structural reversion guidance"

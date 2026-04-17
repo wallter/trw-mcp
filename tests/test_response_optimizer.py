@@ -216,9 +216,7 @@ class FakeMiddlewareContext:
 async def test_middleware_optimizes_json_content() -> None:
     """Full middleware integration: JSON TextContent is compacted."""
     original_json = json.dumps({"score": 0.123456, "meta": None, "tags": []})
-    result = FakeToolResult(
-        content=[TextContent(type="text", text=original_json)]
-    )
+    result = FakeToolResult(content=[TextContent(type="text", text=original_json)])
 
     middleware = ResponseOptimizerMiddleware()
 
@@ -240,9 +238,7 @@ async def test_middleware_optimizes_json_content() -> None:
 async def test_middleware_ignores_non_json_text() -> None:
     """Plain text content passes through untouched."""
     plain_text = "This is not JSON at all."
-    result = FakeToolResult(
-        content=[TextContent(type="text", text=plain_text)]
-    )
+    result = FakeToolResult(content=[TextContent(type="text", text=plain_text)])
 
     middleware = ResponseOptimizerMiddleware()
 
@@ -261,9 +257,7 @@ async def test_middleware_ignores_non_json_text() -> None:
 async def test_middleware_handles_json_array() -> None:
     """JSON array content is also optimized."""
     original_json = json.dumps([{"val": 1.23456}, {"val": 2.34567}])
-    result = FakeToolResult(
-        content=[TextContent(type="text", text=original_json)]
-    )
+    result = FakeToolResult(content=[TextContent(type="text", text=original_json)])
 
     middleware = ResponseOptimizerMiddleware()
 
@@ -307,10 +301,8 @@ async def test_middleware_multiple_content_blocks() -> None:
 @pytest.mark.asyncio
 async def test_middleware_malformed_json_passthrough() -> None:
     """JSON that starts with { but is invalid passes through untouched."""
-    malformed = '{not valid json at all'
-    result = FakeToolResult(
-        content=[TextContent(type="text", text=malformed)]
-    )
+    malformed = "{not valid json at all"
+    result = FakeToolResult(content=[TextContent(type="text", text=malformed)])
 
     middleware = ResponseOptimizerMiddleware()
 
@@ -369,6 +361,7 @@ def test_yaml_dump_roundtrip_complex_data() -> None:
 @pytest.mark.unit
 def test_yaml_dump_fallback_on_error() -> None:
     """If YAML serialization fails, falls back to compact JSON."""
+
     # Custom objects can't be YAML-serialized with typ="safe"
     class Unserializable:
         pass
@@ -390,9 +383,7 @@ async def test_middleware_yaml_output(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     original_json = json.dumps({"score": 0.123456, "meta": None, "tags": ["a"]})
-    result = FakeToolResult(
-        content=[TextContent(type="text", text=original_json)]
-    )
+    result = FakeToolResult(content=[TextContent(type="text", text=original_json)])
 
     middleware = ResponseOptimizerMiddleware()
 

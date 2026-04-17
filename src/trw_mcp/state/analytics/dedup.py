@@ -405,7 +405,11 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
                 new_learnings = data.get("new_learnings", [])
                 if isinstance(new_learnings, list):
                     total_learnings_from_reflections += len(new_learnings)
-            except (StateError, ValueError, TypeError):  # per-item error handling: skip corrupt reflection files  # noqa: PERF203
+            except (
+                StateError,
+                ValueError,
+                TypeError,
+            ):  # per-item error handling: skip corrupt reflection files
                 continue
 
     # Scan entries for diversity + access + Q-learning metrics

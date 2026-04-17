@@ -11,8 +11,6 @@ from datetime import datetime, timezone
 from time import perf_counter
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _make_entry(
     entry_id: str = "L-001",

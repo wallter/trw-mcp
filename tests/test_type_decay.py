@@ -140,7 +140,7 @@ def test_type_half_life_lookup() -> None:
 
     cfg = get_config()
     assert _type_half_life("incident", cfg) == 90.0
-    assert _type_half_life("pattern", cfg) == 180.0     # PRD-CORE-116: was 30
+    assert _type_half_life("pattern", cfg) == 180.0  # PRD-CORE-116: was 30
     assert _type_half_life("convention", cfg) == 9999.0  # PRD-CORE-116: was 365
     assert _type_half_life("hypothesis", cfg) == 7.0
     assert _type_half_life("workaround", cfg) == 14.0

@@ -80,6 +80,7 @@ def _install_opencode_artifacts(
 ) -> None:
     """Install OpenCode-specific bootstrap artifacts."""
     from ._opencode import generate_agents_md, generate_opencode_config
+
     oc_result = generate_opencode_config(target_dir, force=force)
     _extend_result(result, oc_result, include_updated=True)
 
@@ -158,9 +159,7 @@ def _install_cursor_artifacts(
                 include_updated=True,
             )
         except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(
-                f".cursor/rules/trw-ceremony.mdc generation skipped: {exc}"
-            )
+            result.setdefault("warnings", []).append(f".cursor/rules/trw-ceremony.mdc generation skipped: {exc}")
 
         # FR03: .cursor/agents/trw-*.md
         try:

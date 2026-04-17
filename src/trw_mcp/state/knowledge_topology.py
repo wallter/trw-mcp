@@ -387,7 +387,9 @@ def _write_knowledge_files(
                     existing = topic_path.read_text(encoding="utf-8")
                     rendered = preserve_manual_markers(existing, rendered)
                 except OSError:
-                    logger.debug("knowledge_topic_read_skipped", exc_info=True)  # justified: fail-open, continue with fresh render
+                    logger.debug(
+                        "knowledge_topic_read_skipped", exc_info=True
+                    )  # justified: fail-open, continue with fresh render
 
             writer.write_text(topic_path, rendered)
             topics_generated += 1

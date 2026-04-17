@@ -243,7 +243,9 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
             )
             with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — see Request comment above
                 return bool(200 <= response.status < 300)
-        except urllib.error.HTTPError as e:  # per-item error handling: retry on 429, continue retry loop on other HTTP errors  # noqa: PERF203
+        except (
+            urllib.error.HTTPError
+        ) as e:  # per-item error handling: retry on 429, continue retry loop on other HTTP errors
             if e.code == 429 and attempt < max_attempts - 1:
                 retry_after = int(e.headers.get("Retry-After", str(2**attempt)))
                 logger.debug(

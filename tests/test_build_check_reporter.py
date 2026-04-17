@@ -22,9 +22,7 @@ from trw_mcp.models.config import TRWConfig
 class TestBuildCheckReporterAPI:
     """Tests for the trw_build_check result reporter signature."""
 
-    def test_build_check_accepts_result_params(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_accepts_result_params(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR01: Call with tests_passed=True, test_count=47, verify returns dict."""
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
@@ -61,9 +59,7 @@ class TestBuildCheckReporterAPI:
         assert result["scope"] == "full"
         assert "cache_path" in result
 
-    def test_build_check_tests_passed_false(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_tests_passed_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR01: tests_passed=False with failures produces correct result."""
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
@@ -126,9 +122,7 @@ class TestBuildCheckReporterAPI:
             ):
                 asyncio.run(server.call_tool("trw_build_check", {}))
 
-    def test_build_check_logs_event(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_logs_event(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR02: build_check_complete event is logged to events.jsonl."""
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
@@ -167,9 +161,7 @@ class TestBuildCheckReporterAPI:
             f"Expected build_check_complete event, got: {events}"
         )
 
-    def test_build_check_caches_to_yaml(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_caches_to_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR02: BuildStatus is cached via cache_build_status."""
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
@@ -203,9 +195,7 @@ class TestBuildCheckReporterAPI:
         assert cached_status.test_count == 25
         assert "cache_path" in result
 
-    def test_build_check_disabled_returns_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_disabled_returns_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """build_check_enabled=False returns skipped status."""
         config = TRWConfig(build_check_enabled=False)
         monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
@@ -225,9 +215,7 @@ class TestBuildCheckReporterAPI:
         assert result["status"] == "skipped"
         assert "build_check_enabled" in result["reason"]
 
-    def test_build_check_coverage_threshold_enforcement(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_build_check_coverage_threshold_enforcement(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """min_coverage param forces tests_passed=False when coverage is too low."""
         (tmp_path / ".trw" / "context").mkdir(parents=True)
 
@@ -270,12 +258,8 @@ class TestNoSubprocessImports:
         from trw_mcp.tools.build import _registration
 
         source = inspect.getsource(_registration)
-        assert "_runners" not in source, (
-            "_registration.py still references _runners"
-        )
-        assert "_subprocess" not in source, (
-            "_registration.py still references _subprocess"
-        )
+        assert "_runners" not in source, "_registration.py still references _runners"
+        assert "_subprocess" not in source, "_registration.py still references _subprocess"
 
     def test_core_has_no_subprocess_runner_imports(self) -> None:
         """_core.py must not import from _runners or _subprocess."""
@@ -284,12 +268,8 @@ class TestNoSubprocessImports:
         from trw_mcp.tools.build import _core
 
         source = inspect.getsource(_core)
-        assert "_runners" not in source, (
-            "_core.py still references _runners"
-        )
-        assert "_subprocess" not in source, (
-            "_core.py still references _subprocess"
-        )
+        assert "_runners" not in source, "_core.py still references _runners"
+        assert "_subprocess" not in source, "_core.py still references _subprocess"
 
     def test_registration_has_no_ceremony_nudge_references(self) -> None:
         """PRD-CORE-098: build reporter should not depend on ceremony nudges."""
@@ -306,6 +286,4 @@ class TestNoSubprocessImports:
         """_core.py must not export run_build_check."""
         from trw_mcp.tools.build import _core
 
-        assert not hasattr(_core, "run_build_check"), (
-            "_core.py still has run_build_check function"
-        )
+        assert not hasattr(_core, "run_build_check"), "_core.py still has run_build_check function"

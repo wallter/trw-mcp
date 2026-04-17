@@ -208,9 +208,15 @@ class TestWalCheckpointInMaintenance:
 
         with (
             patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={
-                "enabled": False, "available": False, "advisory": "", "recent_failures": 0,
-            }),
+            patch(
+                "trw_mcp.state.memory_adapter.check_embeddings_status",
+                return_value={
+                    "enabled": False,
+                    "available": False,
+                    "advisory": "",
+                    "recent_failures": 0,
+                },
+            ),
             patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
             patch(
                 "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",
@@ -223,16 +229,24 @@ class TestWalCheckpointInMaintenance:
         assert result.get("wal_checkpoint") == mock_wal_result
 
     def test_wal_checkpoint_failure_does_not_block_maintenance(
-        self, trw_dir: Path, config: TRWConfig,
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
     ) -> None:
         """WAL checkpoint failure is fail-open -- maintenance continues normally."""
         from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
         with (
             patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={
-                "enabled": False, "available": False, "advisory": "", "recent_failures": 0,
-            }),
+            patch(
+                "trw_mcp.state.memory_adapter.check_embeddings_status",
+                return_value={
+                    "enabled": False,
+                    "available": False,
+                    "advisory": "",
+                    "recent_failures": 0,
+                },
+            ),
             patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
             patch(
                 "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",
@@ -246,7 +260,9 @@ class TestWalCheckpointInMaintenance:
         assert "wal_checkpoint" not in result
 
     def test_wal_checkpoint_skipped_result_not_in_maintenance(
-        self, trw_dir: Path, config: TRWConfig,
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
     ) -> None:
         """When WAL checkpoint is skipped (under threshold), maintenance dict excludes it."""
         from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
@@ -255,9 +271,15 @@ class TestWalCheckpointInMaintenance:
 
         with (
             patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={
-                "enabled": False, "available": False, "advisory": "", "recent_failures": 0,
-            }),
+            patch(
+                "trw_mcp.state.memory_adapter.check_embeddings_status",
+                return_value={
+                    "enabled": False,
+                    "available": False,
+                    "advisory": "",
+                    "recent_failures": 0,
+                },
+            ),
             patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
             patch(
                 "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",

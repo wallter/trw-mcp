@@ -50,9 +50,8 @@ def test_state_does_not_import_tools() -> None:
             if _TOOLS_IMPORT_RE.match(line):
                 violations.append(f"{rel}:{i}: {line.strip()}")
 
-    assert not violations, (
-        f"Layer violation: state/ imports from tools/ ({len(violations)} violations):\n"
-        + "\n".join(violations)
+    assert not violations, f"Layer violation: state/ imports from tools/ ({len(violations)} violations):\n" + "\n".join(
+        violations
     )
 
 
@@ -93,9 +92,7 @@ def test_truncate_nudge_line_in_state_layer() -> None:
     from trw_mcp.tools._learning_helpers import truncate_nudge_line as tools_truncate_nudge_line
 
     assert truncate_nudge_line is tools_truncate_nudge_line
-    assert truncate_nudge_line("Recurring impl gap: wiring missing") == (
-        "Recurring impl gap: wiring missing"
-    )
+    assert truncate_nudge_line("Recurring impl gap: wiring missing") == ("Recurring impl gap: wiring missing")
 
 
 # --- FR02: _merge_session_events lives in state layer ---
@@ -114,9 +111,7 @@ def test_detect_audit_finding_recurrence_lives_in_helper_module() -> None:
     """Audit-pattern promotion logic lives outside _cycle.py for module-size hygiene."""
     from trw_mcp.state.consolidation import detect_audit_finding_recurrence
 
-    assert detect_audit_finding_recurrence.__module__ == (
-        "trw_mcp.state.consolidation._audit_patterns"
-    )
+    assert detect_audit_finding_recurrence.__module__ == ("trw_mcp.state.consolidation._audit_patterns")
 
 
 @pytest.mark.unit
@@ -148,9 +143,7 @@ def test_rework_metrics_helper_lives_outside_deferred_steps_learning() -> None:
     """Audit rework metric parsing stays extracted for module-size hygiene."""
     from trw_mcp.tools._deferred_steps_learning import _step_collect_rework_metrics
 
-    assert _step_collect_rework_metrics.__module__ == (
-        "trw_mcp.tools._deferred_learning_rework"
-    )
+    assert _step_collect_rework_metrics.__module__ == ("trw_mcp.tools._deferred_learning_rework")
 
 
 # --- FR05-T06: correlation accepts injected finder (no hard-coded state imports) ---
@@ -172,9 +165,7 @@ def test_correlation_accepts_finder_arg() -> None:
         "_correlation.py imports from state.memory_adapter (FR05 violation)"
     )
     # Verify the lookup_fn parameter exists (dependency injection in place)
-    assert "lookup_fn" in content, (
-        "_correlation.process_outcome must have a lookup_fn parameter"
-    )
+    assert "lookup_fn" in content, "_correlation.process_outcome must have a lookup_fn parameter"
 
 
 # --- FR06-T07: decay accepts entry iterator (no file I/O imports in _decay.py) ---
@@ -188,12 +179,8 @@ def test_decay_accepts_entry_iterator() -> None:
     """
     decay_src = _SCORING_DIR / "_decay.py"
     content = decay_src.read_text(encoding="utf-8")
-    assert "iter_yaml_entry_files" not in content, (
-        "_decay.py still references iter_yaml_entry_files (FR06 violation)"
-    )
-    assert "FileStateReader" not in content, (
-        "_decay.py still references FileStateReader (FR06 violation)"
-    )
+    assert "iter_yaml_entry_files" not in content, "_decay.py still references iter_yaml_entry_files (FR06 violation)"
+    assert "FileStateReader" not in content, "_decay.py still references FileStateReader (FR06 violation)"
     # Verify _load_entries_from_dir is still accessible (re-exported from _io_boundary)
     from trw_mcp.scoring._decay import _load_entries_from_dir
 
@@ -229,7 +216,4 @@ def test_scoring_no_direct_state_io_imports() -> None:
             if pattern in content:
                 violations.append(f"{module_name}: contains '{pattern}'")
 
-    assert not violations, (
-        "scoring/ I/O layer violations (FR03/FR05/FR06):\n"
-        + "\n".join(violations)
-    )
+    assert not violations, "scoring/ I/O layer violations (FR03/FR05/FR06):\n" + "\n".join(violations)

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -445,9 +444,7 @@ def test_bare_cursor_id_falls_back_with_actionable_message() -> None:
     with patch("trw_mcp.models.config._profiles.logger", mock_logger):
         profile = _resolve("cursor")
 
-    assert profile.client_id == "claude-code", (
-        "bare 'cursor' should fall back to claude-code"
-    )
+    assert profile.client_id == "claude-code", "bare 'cursor' should fall back to claude-code"
     mock_logger.warning.assert_called_once()
     call_kwargs = mock_logger.warning.call_args
     # First positional arg is the event name
@@ -827,7 +824,7 @@ def test_cursor_cli_profile_resolves() -> None:
     assert profile.write_targets.cli_config is True
     assert profile.write_targets.instruction_path == "AGENTS.md"
     assert profile.include_framework_ref is False  # 137-FR04 content gating
-    assert profile.include_agent_teams is False    # 137-FR04 content gating
+    assert profile.include_agent_teams is False  # 137-FR04 content gating
 
 
 @pytest.mark.unit

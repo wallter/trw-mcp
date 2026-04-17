@@ -159,7 +159,9 @@ class TestLearnWithNewFields:
         """Long summary (>80 chars) is truncated at word boundary for nudge_line."""
         store_fn = _make_store_fn()
         # Create a 100-char summary with spaces for word-boundary truncation
-        long_summary = "This is a very long summary that exceeds eighty characters and should be truncated at word boundary here"
+        long_summary = (
+            "This is a very long summary that exceeds eighty characters and should be truncated at word boundary here"
+        )
         assert len(long_summary) > 80
         execute_learn(
             summary=long_summary,

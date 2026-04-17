@@ -28,6 +28,7 @@ def _resolve_data_path(pkg_subdir: str, monorepo_subdir: str) -> Path:
         return mono
     pytest.skip(f"{pkg_subdir} not found in package data or monorepo")
 
+
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
@@ -523,7 +524,7 @@ class TestAgentDefinitions:
 
         required_snippets = [
             "For each P0 or P1 finding, call `trw_learn()` with:",
-            "- `tags`: [\"audit-finding\", \"{prd-id}\", \"{finding-category}\"]",
+            '- `tags`: ["audit-finding", "{prd-id}", "{finding-category}"]',
             "- `phase_affinity`: Determined by finding category per taxonomy table",
         ]
 
@@ -690,31 +691,27 @@ class TestSkillDefinitions:
 
     def test_exec_plan_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled exec-plan skill stays byte-for-byte aligned with root source."""
-        assert (
-            (skills_dir / "trw-exec-plan" / "SKILL.md").read_text(encoding="utf-8")
-            == (root_skills_dir / "trw-exec-plan" / "SKILL.md").read_text(encoding="utf-8")
-        )
+        assert (skills_dir / "trw-exec-plan" / "SKILL.md").read_text(encoding="utf-8") == (
+            root_skills_dir / "trw-exec-plan" / "SKILL.md"
+        ).read_text(encoding="utf-8")
 
     def test_self_review_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled self-review skill stays byte-for-byte aligned with root source."""
-        assert (
-            (skills_dir / "trw-self-review" / "SKILL.md").read_text(encoding="utf-8")
-            == (root_skills_dir / "trw-self-review" / "SKILL.md").read_text(encoding="utf-8")
-        )
+        assert (skills_dir / "trw-self-review" / "SKILL.md").read_text(encoding="utf-8") == (
+            root_skills_dir / "trw-self-review" / "SKILL.md"
+        ).read_text(encoding="utf-8")
 
     def test_audit_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled audit skill stays byte-for-byte aligned with root source."""
-        assert (
-            (skills_dir / "trw-audit" / "SKILL.md").read_text(encoding="utf-8")
-            == (root_skills_dir / "trw-audit" / "SKILL.md").read_text(encoding="utf-8")
-        )
+        assert (skills_dir / "trw-audit" / "SKILL.md").read_text(encoding="utf-8") == (
+            root_skills_dir / "trw-audit" / "SKILL.md"
+        ).read_text(encoding="utf-8")
 
     def test_sprint_finish_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled sprint-finish skill stays byte-for-byte aligned with root source."""
-        assert (
-            (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8")
-            == (root_skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8")
-        )
+        assert (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8") == (
+            root_skills_dir / "trw-sprint-finish" / "SKILL.md"
+        ).read_text(encoding="utf-8")
 
     def test_skill_variants_include_preflight_logging_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Root and bundled skill variants retain the pre-implementation checklist/self-review contract.

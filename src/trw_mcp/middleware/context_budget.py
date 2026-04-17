@@ -94,7 +94,9 @@ class ContextBudgetMiddleware(Middleware):
         try:
             return self._apply_masking(result, session_id, tool_name, turn)
         except Exception:  # justified: fail-open, observation masking must never block tool results
-            logger.debug("context_budget_masking_failed", op="observation_masking", tool=tool_name, turn=turn, exc_info=True)
+            logger.debug(
+                "context_budget_masking_failed", op="observation_masking", tool=tool_name, turn=turn, exc_info=True
+            )
             return result
 
     def _apply_masking(
@@ -124,7 +126,13 @@ class ContextBudgetMiddleware(Middleware):
         prev = session_hashes.get(tool_name)
 
         if prev is not None and prev[0] == content_hash:
-            logger.debug("context_budget_redundancy_detected", op="observation_masking", tool=tool_name, turn=turn, prev_turn=prev[1])
+            logger.debug(
+                "context_budget_redundancy_detected",
+                op="observation_masking",
+                tool=tool_name,
+                turn=turn,
+                prev_turn=prev[1],
+            )
             result.content = [
                 TextContent(
                     type="text",

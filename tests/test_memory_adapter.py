@@ -186,9 +186,7 @@ class TestGetBackend:
         backend = get_backend(trw_dir_with_entries)
         assert backend.count() == 3
 
-    def test_constructor_reraises_non_corruption_errors(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_constructor_reraises_non_corruption_errors(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-corruption init failures should surface instead of forcing recovery."""
         import trw_mcp.state._memory_connection as conn_mod
 
@@ -217,9 +215,7 @@ class TestGetBackend:
         assert FakeSQLiteBackend.init_calls == 1
         assert FakeSQLiteBackend.recover_calls == 0
 
-    def test_constructor_recovers_corruption_once(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_constructor_recovers_corruption_once(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Corruption-like init failures should recover and retry once."""
         import trw_mcp.state._memory_connection as conn_mod
 

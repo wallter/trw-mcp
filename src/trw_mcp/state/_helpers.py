@@ -202,8 +202,7 @@ def _compat_getattr(name: str) -> object:
     """
     if name == "_config":
         warnings.warn(
-            "Module-level '_config' is deprecated. "
-            "Import from the canonical module instead. Will be removed in v1.0.",
+            "Module-level '_config' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
             DeprecationWarning,
             stacklevel=3,
         )
@@ -212,8 +211,7 @@ def _compat_getattr(name: str) -> object:
         return get_config()
     if name == "_reader":
         warnings.warn(
-            "Module-level '_reader' is deprecated. "
-            "Import from the canonical module instead. Will be removed in v1.0.",
+            "Module-level '_reader' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
             DeprecationWarning,
             stacklevel=3,
         )
@@ -222,8 +220,7 @@ def _compat_getattr(name: str) -> object:
         return FileStateReader()
     if name == "_writer":
         warnings.warn(
-            "Module-level '_writer' is deprecated. "
-            "Import from the canonical module instead. Will be removed in v1.0.",
+            "Module-level '_writer' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
             DeprecationWarning,
             stacklevel=3,
         )

@@ -240,7 +240,9 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir, trw_dir=resolve_trw_dir())
                 if run_data is not None:
                     runs.append(run_data)
-            except Exception as exc:  # per-item error handling: skip bad run dirs without aborting report  # noqa: PERF203
+            except (
+                Exception
+            ) as exc:  # per-item error handling: skip bad run dirs without aborting report
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)
@@ -471,9 +473,7 @@ def _compute_aggregates(runs: list[RunAnalysisResult]) -> AggregateMetrics:
         "ceremony_trend": ceremony_trend,
         "ceremony_by_tier": ceremony_by_tier,
         "sprint_avg_audit_cycles": round(sprint_avg_audit_cycles, 4),
-        "sprint_first_pass_compliance_rate": round(
-            sprint_first_pass_compliance_rate, 4
-        ),
+        "sprint_first_pass_compliance_rate": round(sprint_first_pass_compliance_rate, 4),
     }
 
 

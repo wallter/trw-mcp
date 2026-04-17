@@ -42,6 +42,7 @@ def reset_template_cache() -> None:
     _CACHED_TEMPLATE_BODY = None
     _CACHED_TEMPLATE_VERSION = None
 
+
 _TEMPLATE_VERSION_RE = re.compile(r"\*Template version:\s*([\d.]+)")
 _FILE_REF_RE = re.compile(r"[\w/]+\.\w+")
 _GOAL_KW_RE = re.compile(r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE)

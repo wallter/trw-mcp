@@ -11,7 +11,6 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from tests.conftest import _run_async, make_test_server
 
 
@@ -44,15 +43,9 @@ class TestOfflineParity:
         with ExitStack() as stack:
             for context_manager in _tool_patches(trw_dir):
                 stack.enter_context(context_manager)
-            stack.enter_context(
-                patch("trw_mcp.tools.ceremony.find_active_run", return_value=None)
-            )
-            stack.enter_context(
-                patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[])
-            )
-            stack.enter_context(
-                patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=[])
-            )
+            stack.enter_context(patch("trw_mcp.tools.ceremony.find_active_run", return_value=None))
+            stack.enter_context(patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]))
+            stack.enter_context(patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=[]))
             result = _run_async(server.call_tool("trw_session_start", {"query": "test"}))
 
         payload = result.structured_content
@@ -112,9 +105,7 @@ class TestOfflineParity:
         ]
 
         # Without bandit, deterministic path returns first eligible
-        selected, is_fallback = select_nudge_learning(
-            state, candidates, "implement"
-        )
+        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
         assert selected is not None
         assert selected["id"] == "L-1"
         assert is_fallback is False
@@ -123,20 +114,23 @@ class TestOfflineParity:
         """_session_recall_helpers works offline without backend-only intelligence."""
         trw_dir = _prepare_trw_dir(tmp_path)
 
-        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir), \
-             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[
-                 {"id": "L-1", "summary": "test", "impact": 0.8},
-             ]), \
-             patch("trw_mcp.state.memory_adapter.update_access_tracking"):
+        with (
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[
+                    {"id": "L-1", "summary": "test", "impact": 0.8},
+                ],
+            ),
+            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
+        ):
             from trw_mcp.models.config import TRWConfig
             from trw_mcp.state.persistence import FileStateReader
             from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 
             config = TRWConfig(trw_dir=str(trw_dir))
             reader = FileStateReader()
-            learnings, auto_recalled, extras = perform_session_recalls(
-                trw_dir, "*", config, reader
-            )
+            learnings, auto_recalled, extras = perform_session_recalls(trw_dir, "*", config, reader)
             assert isinstance(learnings, list)
 
     def test_deliver_empty_cache(self, tmp_path: Path) -> None:
@@ -147,9 +141,7 @@ class TestOfflineParity:
         with ExitStack() as stack:
             for context_manager in _tool_patches(trw_dir):
                 stack.enter_context(context_manager)
-            stack.enter_context(
-                patch("trw_mcp.tools.ceremony.find_active_run", return_value=None)
-            )
+            stack.enter_context(patch("trw_mcp.tools.ceremony.find_active_run", return_value=None))
             result = _run_async(server.call_tool("trw_deliver", {}))
 
         payload = result.structured_content
@@ -159,14 +151,14 @@ class TestOfflineParity:
     def test_no_meta_tune_in_tool_registry(self) -> None:
         """The active tool registry loads offline and excludes trw_meta_tune."""
         # Import must succeed
+        import asyncio
+
         import trw_mcp  # noqa: F401
 
         # Check that meta_tune is not in the registered tools
         from trw_mcp.models.config import get_config
         from trw_mcp.models.config._defaults import TOOL_PRESETS
         from trw_mcp.server._tools import mcp
-
-        import asyncio
 
         async def _list() -> list[str]:
             tools = await mcp.list_tools()
@@ -179,6 +171,7 @@ class TestOfflineParity:
 
         if loop is not None and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 tool_names = pool.submit(asyncio.run, _list()).result()
         else:

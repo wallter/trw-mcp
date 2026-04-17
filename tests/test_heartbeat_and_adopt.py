@@ -20,7 +20,6 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-
 # ---------------------------------------------------------------------------
 # Helpers + fixture
 # ---------------------------------------------------------------------------
@@ -125,9 +124,7 @@ def test_heartbeat_refreshes_pin_timestamp(isolated_project: Path) -> None:
     from trw_mcp.state._pin_store import get_pin_entry, invalidate_pin_store_cache
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx = TRWCallContext(
-        session_id="sess-1", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx = TRWCallContext(session_id="sess-1", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
     entry_before = get_pin_entry("sess-1")
     assert entry_before is not None
@@ -138,9 +135,9 @@ def test_heartbeat_refreshes_pin_timestamp(isolated_project: Path) -> None:
 
     invalidate_pin_store_cache()
     # Direct JSON rewrite to backdate past 60s.
-    from trw_mcp.state._pin_store import pin_store_path
-
     import json
+
+    from trw_mcp.state._pin_store import pin_store_path
 
     path = pin_store_path()
     raw = json.loads(path.read_text())
@@ -163,9 +160,7 @@ def test_heartbeat_appends_event_to_events_jsonl(isolated_project: Path) -> None
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx = TRWCallContext(
-        session_id="sess-evt", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx = TRWCallContext(session_id="sess-evt", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
 
     import json
@@ -173,8 +168,8 @@ def test_heartbeat_appends_event_to_events_jsonl(isolated_project: Path) -> None
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["sess-evt"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=120)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -189,9 +184,7 @@ def test_heartbeat_rate_limited_within_60s(isolated_project: Path) -> None:
     from trw_mcp.state._paths import TRWCallContext, pin_active_run
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx = TRWCallContext(
-        session_id="sess-rl", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx = TRWCallContext(session_id="sess-rl", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
 
     server = _make_server()
@@ -216,9 +209,7 @@ def test_heartbeat_rate_limit_survives_restart(isolated_project: Path) -> None:
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx = TRWCallContext(
-        session_id="sess-restart", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx = TRWCallContext(session_id="sess-restart", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
 
     # Backdate to guarantee the first heartbeat fires the write path.
@@ -227,8 +218,8 @@ def test_heartbeat_rate_limit_survives_restart(isolated_project: Path) -> None:
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["sess-restart"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=120)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -268,12 +259,8 @@ def test_heartbeat_should_checkpoint_true_for_aged_run(
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
 
     aged_ts = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
-    run = _seed_run(
-        isolated_project, "alpha", "20260101T000000Z-aaaa1111", created_at=aged_ts
-    )
-    ctx = TRWCallContext(
-        session_id="sess-aged", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", created_at=aged_ts)
+    ctx = TRWCallContext(session_id="sess-aged", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
 
     # Backdate pin so heartbeat takes the write path.
@@ -282,8 +269,8 @@ def test_heartbeat_should_checkpoint_true_for_aged_run(
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["sess-aged"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=120)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -301,17 +288,15 @@ def test_heartbeat_returns_stale_after_ts(isolated_project: Path) -> None:
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx = TRWCallContext(
-        session_id="sess-stale", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx = TRWCallContext(session_id="sess-stale", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx)
     import json
 
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["sess-stale"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(seconds=120)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -346,9 +331,7 @@ def test_adopt_run_transfers_pin(isolated_project: Path) -> None:
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
     # Session A pins the run.
-    ctx_a = TRWCallContext(
-        session_id="sess-A", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx_a = TRWCallContext(session_id="sess-A", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx_a)
     # Age out A's heartbeat so live-owner guard does not fire without force.
     import json
@@ -356,8 +339,8 @@ def test_adopt_run_transfers_pin(isolated_project: Path) -> None:
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["sess-A"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(hours=48)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -397,9 +380,7 @@ def test_adopt_refuses_terminal_status_without_force(
 ) -> None:
     from trw_mcp.exceptions import StateError
 
-    run = _seed_run(
-        isolated_project, "alpha", "20260101T000000Z-aaaa1111", status="delivered"
-    )
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", status="delivered")
     server = _make_server()
     adopt = _adopt(server)
     with pytest.raises(StateError) as exc:
@@ -410,9 +391,7 @@ def test_adopt_refuses_terminal_status_without_force(
 def test_adopt_succeeds_terminal_status_with_force(
     isolated_project: Path,
 ) -> None:
-    run = _seed_run(
-        isolated_project, "alpha", "20260101T000000Z-aaaa1111", status="delivered"
-    )
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", status="delivered")
     server = _make_server()
     adopt = _adopt(server)
     result = adopt(
@@ -431,9 +410,7 @@ def test_adopt_refuses_live_owner_without_force(
     from trw_mcp.state._paths import TRWCallContext, pin_active_run
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx_a = TRWCallContext(
-        session_id="sess-live", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx_a = TRWCallContext(session_id="sess-live", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx_a)  # fresh heartbeat now
 
     server = _make_server()
@@ -468,11 +445,7 @@ def test_adopt_succeeds_on_live_owner_with_force(
 
     assert result["force_used"] is True
     assert result["from_owner_was_live"] is True
-    conflict = [
-        e
-        for e in logs
-        if e.get("event") == "run_adopted_potential_writer_conflict"
-    ]
+    conflict = [e for e in logs if e.get("event") == "run_adopted_potential_writer_conflict"]
     assert conflict, f"expected conflict warning; logs={logs!r}"
 
 
@@ -485,16 +458,14 @@ def test_adopt_run_adopted_event_carries_audit_fields(
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
 
     run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
-    ctx_a = TRWCallContext(
-        session_id="audit-A", client_hint=None, explicit=False, fastmcp_session=None
-    )
+    ctx_a = TRWCallContext(session_id="audit-A", client_hint=None, explicit=False, fastmcp_session=None)
     pin_active_run(run, context=ctx_a)
     # Age out to skip the force requirement.
     path = pin_store_path()
     raw = json.loads(path.read_text())
     raw["audit-A"]["last_heartbeat_ts"] = (
-        datetime.now(timezone.utc) - timedelta(hours=48)
-    ).isoformat().replace("+00:00", "Z")
+        (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat().replace("+00:00", "Z")
+    )
     path.write_text(json.dumps(raw))
     invalidate_pin_store_cache()
 
@@ -505,9 +476,7 @@ def test_adopt_run_adopted_event_carries_audit_fields(
     events_path = run / "meta" / "events.jsonl"
     lines = events_path.read_text().splitlines()
     adopted_lines = [
-        json.loads(line)
-        for line in lines
-        if line.strip() and json.loads(line).get("event") == "run_adopted"
+        json.loads(line) for line in lines if line.strip() and json.loads(line).get("event") == "run_adopted"
     ]
     assert len(adopted_lines) == 1
     payload = adopted_lines[0]

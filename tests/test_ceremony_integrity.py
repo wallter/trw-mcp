@@ -6,10 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.tools._deliver_integrity import check_memory_integrity_on_deliver
-
 
 # ---------------------------------------------------------------------------
 # Helpers

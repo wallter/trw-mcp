@@ -24,24 +24,26 @@ from typing import Any
 import structlog
 
 # Sensitive key patterns for redaction
-_SENSITIVE_PATTERNS: frozenset[str] = frozenset({
-    "password",
-    "passwd",
-    "secret",
-    "client_secret",
-    "token",
-    "refresh_token",
-    "id_token",
-    "jwt",
-    "api_key",
-    "apikey",
-    "authorization",
-    "cookie",
-    "credential",
-    "private_key",
-    "access_key",
-    "session_id",
-})
+_SENSITIVE_PATTERNS: frozenset[str] = frozenset(
+    {
+        "password",
+        "passwd",
+        "secret",
+        "client_secret",
+        "token",
+        "refresh_token",
+        "id_token",
+        "jwt",
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+        "private_key",
+        "access_key",
+        "session_id",
+    }
+)
 
 _SENSITIVE_VALUE_RE = re.compile(
     r"((?:Bearer|Basic|Token)\s+)\S+",
@@ -77,9 +79,7 @@ def _redact_secrets(
         if any(pat in key_lower for pat in _SENSITIVE_PATTERNS):
             event_dict[key] = "***REDACTED***"
         elif isinstance(event_dict[key], str):
-            event_dict[key] = _SENSITIVE_VALUE_RE.sub(
-                r"\1***REDACTED***", event_dict[key]
-            )
+            event_dict[key] = _SENSITIVE_VALUE_RE.sub(r"\1***REDACTED***", event_dict[key])
     return event_dict
 
 

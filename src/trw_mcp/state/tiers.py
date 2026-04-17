@@ -560,7 +560,9 @@ class TierManager:
                 file_data["impact_tier"] = tier
                 self._writer.write_yaml(yaml_path, file_data)
                 cast("dict[str, int]", distribution)[tier] += 1
-            except Exception:  # justified: scan-resilience, one failed tier write must not abort the full assignment sweep
+            except (
+                Exception
+            ):  # justified: scan-resilience, one failed tier write must not abort the full assignment sweep
                 logger.warning(
                     "assign_impact_tiers_write_failed",
                     entry_id=entry_id,

@@ -279,7 +279,11 @@ def consolidate_cycle(
 
             # FR03: Create consolidated entry
             new_entry = _create_consolidated_entry(
-                cluster, summary, detail, entries_dir, writer,
+                cluster,
+                summary,
+                detail,
+                entries_dir,
+                writer,
                 max_consolidated_tags=cfg.max_consolidated_tags,
             )
             consolidated_id = str(new_entry["id"])
@@ -319,4 +323,3 @@ def consolidate_cycle(
         errors=len(errors),
     )
     return result
-

@@ -6,14 +6,11 @@ Tests MCP tools through the FastMCP server extraction pattern.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
-
 
 # ── 1. Session & Delivery Lifecycle ─────────────────────────────────────────
 
@@ -113,12 +110,12 @@ class TestLearningTools:
         """3.1: Store a learning entry."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
-        result = (learn_fn(
+        result = learn_fn(
             summary="Pydantic v2 requires model_config",
             detail="Use ConfigDict instead of class Config",
             tags=["pydantic", "migration"],
             impact=0.7,
-        ))
+        )
         assert result is not None
         result_str = str(result)
         assert "L-" in result_str or "learning" in result_str.lower(), f"No learning ID: {result}"
@@ -128,13 +125,13 @@ class TestLearningTools:
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
         for t in ["pattern", "incident", "convention", "hypothesis", "workaround"]:
-            result = (learn_fn(
+            result = learn_fn(
                 summary=f"Test {t} learning",
                 detail=f"Detail for {t}",
                 tags=["e2e"],
                 impact=0.5,
                 type=t,
-            ))
+            )
             assert result is not None, f"Failed to create {t} learning"
 
     def test_recall_keyword_search(self, tmp_project: Path) -> None:
@@ -190,6 +187,7 @@ class TestLearningTools:
         # Extract learning ID from result
         result_str = str(r)
         import re
+
         match = re.search(r"L-[A-Za-z0-9]+", result_str)
         if match:
             learning_id = match.group(0)
@@ -201,12 +199,12 @@ class TestLearningTools:
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
 
-        result = (learn_fn(
+        result = learn_fn(
             summary="日本語テスト Unicode test",
             detail="Ümlauts and ñ characters",
             tags=["unicode"],
             impact=0.5,
-        ))
+        )
         assert result is not None
 
 
@@ -223,10 +221,13 @@ class TestBuildQuality:
         build_fn = extract_tool_fn(server, "trw_build_check")
 
         init_fn(task_name="build-pass-test")
-        result = (build_fn(
-            tests_passed=True, test_count=150,
-            failure_count=0, coverage_pct=85.0, mypy_clean=True,
-        ))
+        result = build_fn(
+            tests_passed=True,
+            test_count=150,
+            failure_count=0,
+            coverage_pct=85.0,
+            mypy_clean=True,
+        )
         assert result is not None
 
     def test_build_check_failing(self, tmp_project: Path) -> None:
@@ -236,10 +237,13 @@ class TestBuildQuality:
         build_fn = extract_tool_fn(server, "trw_build_check")
 
         init_fn(task_name="build-fail-test")
-        result = (build_fn(
-            tests_passed=False, test_count=150,
-            failure_count=3, coverage_pct=75.0, mypy_clean=False,
-        ))
+        result = build_fn(
+            tests_passed=False,
+            test_count=150,
+            failure_count=3,
+            coverage_pct=75.0,
+            mypy_clean=False,
+        )
         assert result is not None
 
 
@@ -274,11 +278,11 @@ class TestRequirementsTools:
         """6.1: Create a PRD."""
         server = make_test_server("requirements")
         fn = extract_tool_fn(server, "trw_prd_create")
-        result = (fn(
+        result = fn(
             input_text="Add rate limiting to API endpoints",
             category="CORE",
             priority="P1",
-        ))
+        )
         assert result is not None
 
 
@@ -295,10 +299,10 @@ class TestReviewTool:
         review_fn = extract_tool_fn(server, "trw_review")
 
         init_fn(task_name="review-test")
-        result = (review_fn(
+        result = review_fn(
             mode="manual",
             findings=[{"severity": "P2", "file": "test.py", "line": 1, "message": "test finding"}],
-        ))
+        )
         assert result is not None
 
 

@@ -931,7 +931,9 @@ def _stub_all_deferred_steps() -> dict[str, Any]:
         "_do_index_sync": patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
         "_step_auto_progress": patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
         "_step_publish_learnings": patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
-        "_step_outcome_correlation": patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop),
+        "_step_outcome_correlation": patch(
+            "trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop
+        ),
         "_step_recall_outcome": patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=noop),
         "_step_telemetry": patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=noop),
         "_step_batch_send": patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=noop),
@@ -1719,6 +1721,4 @@ class TestCeremonyStateMutationWiring:
 
         # Ceremony state must reflect deliver_called=True
         state_after = read_ceremony_state(trw_dir)
-        assert state_after.deliver_called is True, (
-            "mark_deliver was not called — deliver_called flag is still False"
-        )
+        assert state_after.deliver_called is True, "mark_deliver was not called — deliver_called flag is still False"

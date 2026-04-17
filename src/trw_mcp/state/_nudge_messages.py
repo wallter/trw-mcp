@@ -126,7 +126,9 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
                 if mins > 0:
                     elapsed = f", {mins} min ago"
             except (ValueError, TypeError):
-                logger.debug("checkpoint_elapsed_parse_skipped", exc_info=True)  # justified: fail-open, elapsed display is cosmetic
+                logger.debug(
+                    "checkpoint_elapsed_parse_skipped", exc_info=True
+                )  # justified: fail-open, elapsed display is cosmetic
         if n > 0:
             return _select_message_by_urgency(
                 urgency,
@@ -188,10 +190,7 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
     if step == "review":
         return _select_message_by_urgency(
             urgency,
-            low=(
-                "\u26a1 Independent review not yet called — "
-                "trw_review() catches spec drift that passing tests miss."
-            ),
+            low=("\u26a1 Independent review not yet called — trw_review() catches spec drift that passing tests miss."),
             medium=(
                 "\u26a1 Review skipped — delivering without review ships unverified changes. "
                 "trw_review() takes under 1 minute."

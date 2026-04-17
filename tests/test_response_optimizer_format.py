@@ -57,9 +57,7 @@ class TestYamlDump:
         assert "-" in result or "1" in result
 
     @pytest.mark.unit
-    def test_fallback_to_json_on_yaml_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fallback_to_json_on_yaml_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When YAML dump raises, falls back to compact JSON."""
         import trw_mcp.middleware.response_optimizer as ro_mod
 
@@ -82,9 +80,7 @@ class TestGetResponseFormat:
     """Tests for the _get_response_format resolution order."""
 
     @pytest.mark.unit
-    def test_env_var_yaml_returns_yaml(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_yaml_returns_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TRW_RESPONSE_FORMAT=yaml returns 'yaml'."""
         from trw_mcp.middleware.response_optimizer import _get_response_format
 
@@ -92,9 +88,7 @@ class TestGetResponseFormat:
         assert _get_response_format() == "yaml"
 
     @pytest.mark.unit
-    def test_env_var_json_returns_json(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_json_returns_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TRW_RESPONSE_FORMAT=json returns 'json'."""
         from trw_mcp.middleware.response_optimizer import _get_response_format
 
@@ -102,9 +96,7 @@ class TestGetResponseFormat:
         assert _get_response_format() == "json"
 
     @pytest.mark.unit
-    def test_env_var_unset_falls_through_to_config(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_unset_falls_through_to_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No env var falls through to config — returns a valid format."""
         from trw_mcp.middleware.response_optimizer import _get_response_format
 
@@ -113,9 +105,7 @@ class TestGetResponseFormat:
         assert result in ("yaml", "json")
 
     @pytest.mark.unit
-    def test_config_resolution_failure_returns_yaml(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_config_resolution_failure_returns_yaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When config resolution raises, fallback is 'yaml'."""
         from trw_mcp.middleware.response_optimizer import _get_response_format
 

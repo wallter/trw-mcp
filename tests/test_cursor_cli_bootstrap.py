@@ -24,10 +24,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import structlog.testing
 
 from tests._structlog_capture import captured_structlog  # noqa: F401
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -307,9 +305,7 @@ class TestCliConfigSmartMergeParameterized:
         assert "Shell(git)" in merged["permissions"]["allow"]
         assert "Read(.env*)" in merged["permissions"]["deny"]
 
-    def test_case3_user_shell_rm_allow_coexists_with_trw_shell_rm_rf_deny(
-        self, tmp_path: Path
-    ) -> None:
+    def test_case3_user_shell_rm_allow_coexists_with_trw_shell_rm_rf_deny(self, tmp_path: Path) -> None:
         """Case 3: User's Shell(rm) allow + TRW's Shell(rm -rf) deny both kept.
 
         These are semantically different tokens; user allow wins at runtime per
@@ -441,11 +437,7 @@ class TestAgentsMdSentinelMerge:
         agents_file = tmp_path / "AGENTS.md"
         pre_content = "# My Project Rules\nBe concise.\n\n"
         post_content = "\n## Custom Stuff\nDon't break things.\n"
-        agents_file.write_text(
-            pre_content
-            + "<!-- TRW:BEGIN -->\nOld TRW content\n<!-- TRW:END -->"
-            + post_content
-        )
+        agents_file.write_text(pre_content + "<!-- TRW:BEGIN -->\nOld TRW content\n<!-- TRW:END -->" + post_content)
 
         generate_cursor_cli_agents_md(tmp_path, "New TRW content")
         content = agents_file.read_text()
@@ -458,9 +450,7 @@ class TestAgentsMdSentinelMerge:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         agents_file = tmp_path / "AGENTS.md"
-        agents_file.write_text(
-            "<!-- TRW:BEGIN -->\nOld content\n<!-- TRW:END -->\n"
-        )
+        agents_file.write_text("<!-- TRW:BEGIN -->\nOld content\n<!-- TRW:END -->\n")
         result = generate_cursor_cli_agents_md(tmp_path, "New content")
         assert "AGENTS.md" in result["updated"]
 
@@ -504,15 +494,11 @@ class TestAgentsMdCursorCliContentGating:
 
         # Explicit negative assertions — these are Claude-Code-specific surfaces
         # the cursor-cli profile deliberately excludes.
-        assert "TeamCreate" not in agents_md, (
-            "AGENTS.md must not mention TeamCreate — cursor-cli disables Agent Teams"
-        )
+        assert "TeamCreate" not in agents_md, "AGENTS.md must not mention TeamCreate — cursor-cli disables Agent Teams"
         assert "Agent Teams" not in agents_md, (
             "AGENTS.md must not describe Agent Teams — cursor-cli has include_agent_teams=False"
         )
-        assert "SendMessage" not in agents_md, (
-            "AGENTS.md must not reference SendMessage (Agent Teams dispatch)"
-        )
+        assert "SendMessage" not in agents_md, "AGENTS.md must not reference SendMessage (Agent Teams dispatch)"
         assert "FRAMEWORK.md" not in agents_md, (
             "AGENTS.md must not reference FRAMEWORK.md — cursor-cli has include_framework_ref=False"
         )
@@ -721,14 +707,7 @@ class TestHookScriptSyntax:
     def test_bash_syntax(self, script_name: str) -> None:
         from pathlib import Path as _Path
 
-        hooks_dir = (
-            _Path(__file__).parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "hooks"
-            / "cursor"
-        )
+        hooks_dir = _Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor"
         script = hooks_dir / script_name
         assert script.is_file(), f"Hook script missing: {script}"
         result = subprocess.run(
@@ -736,9 +715,7 @@ class TestHookScriptSyntax:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, (
-            f"bash -n failed on {script_name}:\n{result.stderr}"
-        )
+        assert result.returncode == 0, f"bash -n failed on {script_name}:\n{result.stderr}"
 
 
 # ===========================================================================
@@ -746,9 +723,7 @@ class TestHookScriptSyntax:
 # ===========================================================================
 
 
-_HOOKS_DATA_DIR = (
-    Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor"
-)
+_HOOKS_DATA_DIR = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor"
 
 
 def _run_hook(script_name: str, stdin_payload: str) -> subprocess.CompletedProcess[str]:
@@ -879,9 +854,7 @@ class TestMergeAgentsMdPureFunction:
 class TestTtyReminderStructlog:
     """Verify _emit_cli_safety_reminder emits cursor_cli_tty_reminder via structlog."""
 
-    def test_structlog_event_emitted(
-        self, tmp_path: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_structlog_event_emitted(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """cursor_cli_tty_reminder event captured by structlog.testing.capture_logs."""
         from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
         from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
@@ -894,9 +867,7 @@ class TestTtyReminderStructlog:
             f"Expected cursor_cli_tty_reminder in structlog output; got: {events}"
         )
 
-    def test_structlog_event_has_tty_required(
-        self, tmp_path: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_structlog_event_has_tty_required(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """cursor_cli_tty_reminder log entry includes tty_required=True."""
         from trw_mcp.bootstrap._cursor_cli import _emit_cli_safety_reminder
         from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
@@ -904,9 +875,7 @@ class TestTtyReminderStructlog:
         result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
         _emit_cli_safety_reminder(result)
 
-        reminder_events = [
-            e for e in captured_structlog if e.get("event") == "cursor_cli_tty_reminder"
-        ]
+        reminder_events = [e for e in captured_structlog if e.get("event") == "cursor_cli_tty_reminder"]
         assert len(reminder_events) >= 1
         assert reminder_events[0].get("tty_required") is True
 
@@ -982,12 +951,8 @@ class TestCursorCliDetectionNegative:
         (rules_dir / "trw-ceremony.mdc").write_text("# rules")
 
         # No cli.json, no cursor-agent binary, no CURSOR_API_KEY env
-        with patch("shutil.which", return_value=None), patch.dict(
-            "os.environ", {}, clear=True
-        ):
+        with patch("shutil.which", return_value=None), patch.dict("os.environ", {}, clear=True):
             result = detect_ide(tmp_path)
 
         # cursor-ide may be detected (has .cursor dir), cursor-cli must NOT be
-        assert "cursor-cli" not in result, (
-            ".cursor/rules/ alone should not trigger cursor-cli detection"
-        )
+        assert "cursor-cli" not in result, ".cursor/rules/ alone should not trigger cursor-cli detection"

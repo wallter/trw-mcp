@@ -19,9 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import structlog
 from structlog.testing import capture_logs
-
 
 # ---------------------------------------------------------------------------
 # FR01 — TRWCallContext value object
@@ -103,10 +101,9 @@ def test_resolve_pin_key_layer_3_ctx_session_id_probe(
 
     assert result == "x"
     resolved_events = [e for e in logs if e.get("event") == "pin_resolved"]
-    assert any(
-        e.get("source") == "ctx" and e.get("ctx_attr_path") == "session_id"
-        for e in resolved_events
-    ), f"Expected pin_resolved source=ctx ctx_attr_path=session_id, got {resolved_events}"
+    assert any(e.get("source") == "ctx" and e.get("ctx_attr_path") == "session_id" for e in resolved_events), (
+        f"Expected pin_resolved source=ctx ctx_attr_path=session_id, got {resolved_events}"
+    )
 
 
 def test_resolve_pin_key_layer_3_ctx_request_context_meta_probe(
@@ -127,9 +124,7 @@ def test_resolve_pin_key_layer_3_ctx_request_context_meta_probe(
     assert result == "y"
     resolved = [e for e in logs if e.get("event") == "pin_resolved"]
     assert any(
-        e.get("source") == "ctx"
-        and e.get("ctx_attr_path") == "request_context.meta.session_id"
-        for e in resolved
+        e.get("source") == "ctx" and e.get("ctx_attr_path") == "request_context.meta.session_id" for e in resolved
     ), f"Expected ctx_attr_path=request_context.meta.session_id, got {resolved}"
 
 
@@ -147,10 +142,9 @@ def test_resolve_pin_key_layer_3_ctx_request_id_probe(
 
     assert result == "z"
     resolved = [e for e in logs if e.get("event") == "pin_resolved"]
-    assert any(
-        e.get("source") == "ctx" and e.get("ctx_attr_path") == "request_id"
-        for e in resolved
-    ), f"Expected ctx_attr_path=request_id, got {resolved}"
+    assert any(e.get("source") == "ctx" and e.get("ctx_attr_path") == "request_id" for e in resolved), (
+        f"Expected ctx_attr_path=request_id, got {resolved}"
+    )
 
 
 class _ExplodingCtx:
@@ -260,10 +254,9 @@ def test_ctx_isolation_disabled_reverts_to_process_uuid(
 
     assert result == get_session_id()
     resolved = [e for e in logs if e.get("event") == "pin_resolved"]
-    assert any(
-        e.get("source") == "process" and e.get("kill_switch") is True
-        for e in resolved
-    ), f"Expected kill_switch=True pin_resolved event, got {resolved}"
+    assert any(e.get("source") == "process" and e.get("kill_switch") is True for e in resolved), (
+        f"Expected kill_switch=True pin_resolved event, got {resolved}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -416,8 +409,7 @@ def test_save_pin_store_invalidates_cache_immediately(tmp_path: Path) -> None:
     )
     # Immediately after save, the cache MUST be None.
     assert ps_mod._pin_store_cache is None, (
-        "Cache was not invalidated after save — write-after-read isolation "
-        "hazard reintroduced."
+        "Cache was not invalidated after save — write-after-read isolation hazard reintroduced."
     )
 
 
@@ -441,9 +433,7 @@ def test_save_pin_store_atomic_leaves_no_tmp_on_success(tmp_path: Path) -> None:
     assert not tmp_pins.exists(), "Orphan pins.json.tmp remained after save"
 
 
-def test_save_pin_store_atomic_cleans_up_tmp_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_save_pin_store_atomic_cleans_up_tmp_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If os.replace raises, the tmp file is cleaned up and no orphan remains."""
     import trw_mcp.state._pin_store as ps_mod
     from trw_mcp.state._pin_store import pin_store_path, save_pin_store
@@ -622,10 +612,7 @@ def test_concurrent_threads_pin_distinct_sessions_no_corruption(
     def _worker(sid: str) -> None:
         pin_active_run(run_dir, session_id=sid)
 
-    threads = [
-        threading.Thread(target=_worker, args=(f"sid-{i:02d}",))
-        for i in range(10)
-    ]
+    threads = [threading.Thread(target=_worker, args=(f"sid-{i:02d}",)) for i in range(10)]
     for t in threads:
         t.start()
     for t in threads:
@@ -638,9 +625,7 @@ def test_concurrent_threads_pin_distinct_sessions_no_corruption(
         assert f"sid-{i:02d}" in data, f"missing sid-{i:02d} after concurrent pin"
 
 
-def test_pin_store_cache_ttl_collapses_burst_reads(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_pin_store_cache_ttl_collapses_burst_reads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Two reads within 1s hit disk exactly once (cache collapses burst)."""
     import trw_mcp.state._pin_store as ps_mod
     from trw_mcp.state._pin_store import (
@@ -681,14 +666,10 @@ def test_pin_store_cache_ttl_collapses_burst_reads(
     load_pin_store()
     load_pin_store()
 
-    assert call_count["n"] == 1, (
-        f"Expected 1 disk read across 3 calls within TTL, got {call_count['n']}"
-    )
+    assert call_count["n"] == 1, f"Expected 1 disk read across 3 calls within TTL, got {call_count['n']}"
 
 
-def test_pin_store_save_acquires_file_lock(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_pin_store_save_acquires_file_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every save invokes _lock_ex on the pin-store lock-file FD.
 
     Tests the cross-process coordination path without spinning up a

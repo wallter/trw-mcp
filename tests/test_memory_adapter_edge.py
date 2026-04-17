@@ -299,7 +299,6 @@ class TestMemoryToLearningDict:
         assert result["access_count"] == 7
         assert result["session_count"] == 3
 
-
     def test_maps_source_to_source_type(self) -> None:
         """MemoryEntry.source maps to learning dict 'source_type'."""
         entry = self._make_entry(source="human")
@@ -552,7 +551,9 @@ class TestRecallLearningsBoundary:
         backend_second = MagicMock()
 
         with (
-            patch("trw_mcp.state.memory_adapter.get_backend", side_effect=[backend_first, backend_second, backend_second]),
+            patch(
+                "trw_mcp.state.memory_adapter.get_backend", side_effect=[backend_first, backend_second, backend_second]
+            ),
             patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
             patch("trw_mcp.state.memory_adapter._embed_and_store"),
             patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,

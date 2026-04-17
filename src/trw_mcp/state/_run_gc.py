@@ -218,7 +218,7 @@ def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
-def sweep_stale_runs(  # noqa: C901, PLR0912, PLR0915 -- single authoritative sweep loop; splitting obscures the decision tree
+def sweep_stale_runs(
     runs_root: Path,
     staleness_hours: int,
     grace_hours: int,

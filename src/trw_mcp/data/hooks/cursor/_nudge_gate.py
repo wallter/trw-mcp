@@ -157,9 +157,7 @@ def _record_emission(event_name: str, dedup_key: str) -> None:
         pass
 
 
-def _ceremony_tool_already_invoked(
-    adaptive_skip_tool: str, conversation_id: str
-) -> bool:
+def _ceremony_tool_already_invoked(adaptive_skip_tool: str, conversation_id: str) -> bool:
     """Has the MCP tool we'd prompt for already fired in this conversation?
 
     Scans cursor-hooks.jsonl for preToolUse entries where tool is

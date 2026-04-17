@@ -8,8 +8,8 @@ ambiguity rate computation, weight recalibration).
 
 from __future__ import annotations
 
-from pathlib import Path
 import textwrap
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError

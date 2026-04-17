@@ -11,41 +11,45 @@ import re
 from trw_mcp.state._helpers import truncate_nudge_line
 
 # Known audit-finding category tags.
-_AUDIT_FINDING_CATEGORIES: frozenset[str] = frozenset({
-    "spec_gap",
-    "impl_gap",
-    "test_gap",
-    "integration_gap",
-    "traceability_gap",
-})
+_AUDIT_FINDING_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "spec_gap",
+        "impl_gap",
+        "test_gap",
+        "integration_gap",
+        "traceability_gap",
+    }
+)
 
 _PRD_TAG_PREFIX = "PRD-"
-_AUDIT_PATTERN_STOPWORDS: frozenset[str] = frozenset({
-    "a",
-    "an",
-    "and",
-    "another",
-    "audit",
-    "audits",
-    "detected",
-    "finding",
-    "findings",
-    "for",
-    "from",
-    "in",
-    "into",
-    "is",
-    "missing",
-    "not",
-    "of",
-    "on",
-    "same",
-    "surfaced",
-    "the",
-    "this",
-    "to",
-    "with",
-})
+_AUDIT_PATTERN_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "another",
+        "audit",
+        "audits",
+        "detected",
+        "finding",
+        "findings",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "missing",
+        "not",
+        "of",
+        "on",
+        "same",
+        "surfaced",
+        "the",
+        "this",
+        "to",
+        "with",
+    }
+)
 _AUDIT_PATTERN_SYNONYMS: dict[str, str] = {
     "callsite": "callsite",
     "callsites": "callsite",
@@ -203,16 +207,18 @@ def detect_audit_finding_recurrence(
             f"Recurring {category.replace('_', ' ')}: {pattern_summary}",
         )
 
-        candidates.append({
-            "category": category,
-            "normalized_pattern": normalized_pattern,
-            "pattern_summary": pattern_summary,
-            "prd_count": distinct_prds,
-            "prd_ids": prd_ids_sorted,
-            "sample_summaries": sample_summaries,
-            "synthesized_summary": synthesized_summary,
-            "prevention_strategy": prevention_strategy,
-            "nudge_line": nudge_line,
-        })
+        candidates.append(
+            {
+                "category": category,
+                "normalized_pattern": normalized_pattern,
+                "pattern_summary": pattern_summary,
+                "prd_count": distinct_prds,
+                "prd_ids": prd_ids_sorted,
+                "sample_summaries": sample_summaries,
+                "synthesized_summary": synthesized_summary,
+                "prevention_strategy": prevention_strategy,
+                "nudge_line": nudge_line,
+            }
+        )
 
     return candidates

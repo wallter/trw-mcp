@@ -273,10 +273,7 @@ class SyncPuller:
         try:
             from trw_memory.models.memory import MemoryEntry, MemoryStatus, MemoryType
 
-            metadata = {
-                str(key): str(value)
-                for key, value in dict(raw_learning.get("metadata") or {}).items()
-            }
+            metadata = {str(key): str(value) for key, value in dict(raw_learning.get("metadata") or {}).items()}
             pull_seq = raw_learning.get("sync_seq")
             if pull_seq is not None:
                 metadata["team_sync_pull_seq"] = str(pull_seq)
@@ -314,10 +311,7 @@ class SyncPuller:
         remote_metadata: object,
         pull_seq: object,
     ) -> MemoryEntry:
-        metadata = {
-            str(key): str(value)
-            for key, value in dict(entry.metadata or {}).items()
-        }
+        metadata = {str(key): str(value) for key, value in dict(entry.metadata or {}).items()}
         if isinstance(remote_metadata, dict):
             metadata.update({str(key): str(value) for key, value in remote_metadata.items()})
         if pull_seq is not None:

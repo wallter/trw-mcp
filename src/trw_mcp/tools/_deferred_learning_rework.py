@@ -78,8 +78,7 @@ def _step_collect_rework_metrics(
         return empty
 
     first_pass_compliance: dict[str, bool] = {
-        prd_id: first_verdict.get(prd_id, "") == "PASS"
-        for prd_id in audit_cycles
+        prd_id: first_verdict.get(prd_id, "") == "PASS" for prd_id in audit_cycles
     }
     prd_count = len(audit_cycles)
     compliant_count = sum(1 for value in first_pass_compliance.values() if value)

@@ -205,8 +205,13 @@ _NOISE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^updated the (?:file|code)\b", flags=re.IGNORECASE),
     re.compile(r"^the build (?:completed|passed|succeeded)\b", flags=re.IGNORECASE),
     # PRD-QUAL-032-FR09: Catch task/phase completions that are PURE status reports (whole string match)
-    re.compile(r"^(?:PRD|FR|INFRA|CORE|QUAL|FIX)-\d+ (?:grooming|implementation|research|phase|sprint) (?:complete|completed|done|status)\.?$", flags=re.IGNORECASE),
-    re.compile(r"^(?:grooming|implementation|research|phase|sprint) (?:complete|completed|done)\.?$", flags=re.IGNORECASE),
+    re.compile(
+        r"^(?:PRD|FR|INFRA|CORE|QUAL|FIX)-\d+ (?:grooming|implementation|research|phase|sprint) (?:complete|completed|done|status)\.?$",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:grooming|implementation|research|phase|sprint) (?:complete|completed|done)\.?$", flags=re.IGNORECASE
+    ),
     re.compile(r"^task completed\.?$", flags=re.IGNORECASE),
     re.compile(r"^all tests (?:passed|succeeded|passing)\.?$", flags=re.IGNORECASE),
     re.compile(r"^[a-z0-9\-_\s]+ (?:complete|completed|done|succeeded)$", flags=re.IGNORECASE),
@@ -421,7 +426,11 @@ def find_entry_by_id(
             data = reader.read_yaml(entry_file)
             if data.get("id") == learning_id:
                 return entry_file, data
-        except (StateError, ValueError, TypeError):  # per-item error handling: skip unparseable entry files  # noqa: PERF203
+        except (
+            StateError,
+            ValueError,
+            TypeError,
+        ):  # per-item error handling: skip unparseable entry files
             continue
     return None
 

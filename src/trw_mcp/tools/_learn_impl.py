@@ -501,11 +501,7 @@ def _save_yaml_backup(
         # C5 FIX: Stamp source_run_id so trw-eval's knowledge_scorer can
         # distinguish self-authored entries from tar-pipe-injected entries in
         # chain evaluation runs. Prefer TRW_RUN_ID; fall back to TRW_CHAIN_ID.
-        _source_run_id: str | None = (
-            _os.environ.get("TRW_RUN_ID")
-            or _os.environ.get("TRW_CHAIN_ID")
-            or None
-        )
+        _source_run_id: str | None = _os.environ.get("TRW_RUN_ID") or _os.environ.get("TRW_CHAIN_ID") or None
 
         entry = LearningEntry(
             id=params.learning_id,

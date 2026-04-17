@@ -62,6 +62,7 @@ def _runtime_logger() -> Any:
     """Return a fresh logger so structlog test capture sees late-bound events."""
     return structlog.get_logger(__name__)
 
+
 __all__ = [
     "PIN_STORE_CACHE_TTL_SECONDS",
     "invalidate_pin_store_cache",
@@ -307,8 +308,8 @@ def _atomic_write_json(pins_path: Path, payload: dict[str, dict[str, Any]]) -> N
             os.chmod(pins_path, 0o600)
         except OSError as exc:
             # Windows does not honor POSIX mode bits; log at DEBUG.
-                _runtime_logger().debug(
-                    "pin_store_chmod_failed",
+            _runtime_logger().debug(
+                "pin_store_chmod_failed",
                 path=str(pins_path),
                 error=type(exc).__name__,
             )

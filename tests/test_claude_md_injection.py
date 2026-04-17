@@ -275,6 +275,7 @@ class TestFullSyncNoUnreplacedMarkers:
         from trw_memory.integrations._backend import create_backend_from_config
         from trw_memory.models.config import MemoryConfig
         from trw_memory.models.memory import MemoryEntry
+
         from trw_mcp.state.persistence import FileStateReader
 
         trw_dir = tmp_path / ".trw"

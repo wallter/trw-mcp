@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation.phase_gates import (
@@ -39,8 +40,6 @@ from trw_mcp.state.validation.phase_gates import (
     check_phase_exit,
     check_phase_input,
 )
-from trw_mcp.models.requirements import ValidationFailure
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,17 +120,13 @@ class TestBuildPhaseResult:
 
     @pytest.mark.unit
     def test_error_severity_marks_invalid(self) -> None:
-        failures = [
-            ValidationFailure(field="f", rule="r", message="m", severity="error")
-        ]
+        failures = [ValidationFailure(field="f", rule="r", message="m", severity="error")]
         result = _build_phase_result(failures, ["crit1"], "plan", "phase_exit_checked")
         assert result.valid is False
 
     @pytest.mark.unit
     def test_warning_only_stays_valid(self) -> None:
-        failures = [
-            ValidationFailure(field="f", rule="r", message="m", severity="warning")
-        ]
+        failures = [ValidationFailure(field="f", rule="r", message="m", severity="warning")]
         result = _build_phase_result(failures, ["crit1"], "research", "phase_exit_checked")
         assert result.valid is True
 
@@ -154,9 +149,7 @@ class TestBuildPhaseResult:
 class TestCheckImplementExit:
     """Tests for implement phase exit checker."""
 
-    def test_shards_exist_no_manifest_adds_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_shards_exist_no_manifest_adds_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # shards/ dir exists (created by _make_run_dir) but no manifest.yaml
         failures: list[ValidationFailure] = []
@@ -165,9 +158,7 @@ class TestCheckImplementExit:
         rules = [f.rule for f in failures]
         assert "manifest_exists" in rules
 
-    def test_no_shards_dir_no_manifest_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_shards_dir_no_manifest_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "shards").rmdir()
         failures: list[ValidationFailure] = []
@@ -177,9 +168,7 @@ class TestCheckImplementExit:
         # No shards dir → no manifest_exists warning
         assert "manifest_exists" not in rules
 
-    def test_shards_with_manifest_no_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_shards_with_manifest_no_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         manifest = run_dir / "shards" / "manifest.yaml"
         manifest.write_text("shards: []\n", encoding="utf-8")
@@ -189,9 +178,7 @@ class TestCheckImplementExit:
         rules = [f.rule for f in failures]
         assert "manifest_exists" not in rules
 
-    def test_invalid_prd_required_status_falls_back_to_approved(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_invalid_prd_required_status_falls_back_to_approved(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """If prd_required_status_for_implement is invalid, no ValueError raised."""
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
@@ -212,9 +199,7 @@ class TestCheckImplementExit:
 class TestCheckValidateExit:
     """Tests for validate phase exit checker."""
 
-    def test_advisory_info_always_appended(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_advisory_info_always_appended(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig(build_check_enabled=False)
@@ -222,9 +207,7 @@ class TestCheckValidateExit:
         rules = [f.rule for f in failures]
         assert "phase_test_advisory" in rules
 
-    def test_phase_test_advisory_severity_is_info(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_phase_test_advisory_severity_is_info(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig(build_check_enabled=False)
@@ -242,9 +225,7 @@ class TestCheckValidateExit:
 class TestCheckReviewExit:
     """Tests for review phase exit checker."""
 
-    def test_missing_final_report_adds_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_final_report_adds_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
@@ -252,9 +233,7 @@ class TestCheckReviewExit:
         rules = [f.rule for f in failures]
         assert "final_report_exists" in rules
 
-    def test_final_report_exists_no_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_final_report_exists_no_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "final.md").write_text("# Final Report\n", encoding="utf-8")
         failures: list[ValidationFailure] = []
@@ -263,9 +242,7 @@ class TestCheckReviewExit:
         rules = [f.rule for f in failures]
         assert "final_report_exists" not in rules
 
-    def test_no_events_adds_reflection_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_events_adds_reflection_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "final.md").write_text("# Final\n", encoding="utf-8")
         # No events.jsonl
@@ -275,9 +252,7 @@ class TestCheckReviewExit:
         rules = [f.rule for f in failures]
         assert "reflection_required" in rules
 
-    def test_events_with_reflection_no_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_with_reflection_no_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "final.md").write_text("# Final\n", encoding="utf-8")
         # Use recognized event name from _REFLECTION_EVENTS frozenset
@@ -291,9 +266,7 @@ class TestCheckReviewExit:
         rules = [f.rule for f in failures]
         assert "reflection_required" not in rules
 
-    def test_events_without_reflection_adds_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_without_reflection_adds_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "final.md").write_text("# Final\n", encoding="utf-8")
         _write_events(
@@ -315,9 +288,7 @@ class TestCheckReviewExit:
 class TestCheckDeliverExit:
     """Tests for deliver phase exit checker."""
 
-    def test_run_not_complete_adds_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_run_not_complete_adds_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig(build_check_enabled=False)
@@ -325,9 +296,7 @@ class TestCheckDeliverExit:
         rules = [f.rule for f in failures]
         assert "status_complete" in rules
 
-    def test_run_complete_no_status_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_run_complete_no_status_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # Overwrite run.yaml with status=complete
         writer.write_yaml(
@@ -347,9 +316,7 @@ class TestCheckDeliverExit:
         rules = [f.rule for f in failures]
         assert "status_complete" not in rules
 
-    def test_advisory_always_appended(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_advisory_always_appended(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig(build_check_enabled=False)
@@ -357,9 +324,7 @@ class TestCheckDeliverExit:
         rules = [f.rule for f in failures]
         assert "phase_test_advisory" in rules
 
-    def test_events_with_sync_no_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_with_sync_no_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         writer.write_yaml(
             run_dir / "meta" / "run.yaml",
@@ -382,9 +347,7 @@ class TestCheckDeliverExit:
         rules = [f.rule for f in failures]
         assert "sync_required" not in rules
 
-    def test_events_without_sync_adds_warning(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_without_sync_adds_warning(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         _write_events(
             run_dir / "meta",
@@ -405,9 +368,7 @@ class TestCheckDeliverExit:
 class TestCheckPlanExit:
     """Tests for plan phase exit checker."""
 
-    def test_missing_plan_md_adds_error(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_plan_md_adds_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
@@ -415,9 +376,7 @@ class TestCheckPlanExit:
         rules = [f.rule for f in failures]
         assert "plan_exists" in rules
 
-    def test_plan_md_exists_no_error(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_plan_md_exists_no_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "plan.md").write_text("# Plan\n", encoding="utf-8")
         failures: list[ValidationFailure] = []
@@ -435,9 +394,7 @@ class TestCheckPlanExit:
 class TestCheckImplementInput:
     """Tests for implement phase input checker."""
 
-    def test_missing_plan_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_plan_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
@@ -445,9 +402,7 @@ class TestCheckImplementInput:
         rules = [f.rule for f in failures]
         assert "plan_exists" in rules
 
-    def test_missing_manifest_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_manifest_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "plan.md").write_text("# Plan\n", encoding="utf-8")
         failures: list[ValidationFailure] = []
@@ -456,9 +411,7 @@ class TestCheckImplementInput:
         rules = [f.rule for f in failures]
         assert "manifest_exists" in rules
 
-    def test_all_present_no_failures(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_all_present_no_failures(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "reports" / "plan.md").write_text("# Plan\n", encoding="utf-8")
         (run_dir / "shards" / "manifest.yaml").write_text("shards: []\n", encoding="utf-8")
@@ -478,9 +431,7 @@ class TestCheckImplementInput:
 class TestCheckValidateInput:
     """Tests for validate phase input checker."""
 
-    def test_empty_shards_dir_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_empty_shards_dir_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # shards/ exists but is empty
         failures: list[ValidationFailure] = []
@@ -489,9 +440,7 @@ class TestCheckValidateInput:
         rules = [f.rule for f in failures]
         assert "implementation_complete" in rules
 
-    def test_no_shards_dir_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_shards_dir_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "shards").rmdir()
         failures: list[ValidationFailure] = []
@@ -500,9 +449,7 @@ class TestCheckValidateInput:
         rules = [f.rule for f in failures]
         assert "implementation_complete" in rules
 
-    def test_nonempty_shards_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_nonempty_shards_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         (run_dir / "shards" / "shard-1.yaml").write_text("shard: done\n", encoding="utf-8")
         failures: list[ValidationFailure] = []
@@ -520,9 +467,7 @@ class TestCheckValidateInput:
 class TestCheckReviewInput:
     """Tests for review phase input checker."""
 
-    def test_no_validate_pass_event_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_validate_pass_event_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         _write_events(
             run_dir / "meta",
@@ -534,9 +479,7 @@ class TestCheckReviewInput:
         rules = [f.rule for f in failures]
         assert "validate_passed" in rules
 
-    def test_no_events_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_events_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When there are no events, we don't know if validate passed — no failure added."""
         run_dir = _make_run_dir(tmp_path, writer)
         # No events.jsonl
@@ -546,9 +489,7 @@ class TestCheckReviewInput:
         rules = [f.rule for f in failures]
         assert "validate_passed" not in rules
 
-    def test_validate_pass_event_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_validate_pass_event_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # _is_validate_pass requires event="phase_check" with data.phase="validate" and data.valid=True
         _write_events(
@@ -576,21 +517,18 @@ class TestCheckReviewInput:
 class TestCheckDeliverInput:
     """Tests for deliver phase input checker."""
 
-    def test_no_events_adds_events_exist_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_no_events_adds_events_exist_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # No events.jsonl
         failures: list[ValidationFailure] = []
         config = TRWConfig()
         from trw_mcp.state.validation.phase_gates import _check_deliver_input
+
         _check_deliver_input(run_dir, config, "error", failures)
         rules = [f.rule for f in failures]
         assert "events_exist" in rules
 
-    def test_events_without_reflection_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_without_reflection_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         _write_events(
             run_dir / "meta",
@@ -599,13 +537,12 @@ class TestCheckDeliverInput:
         failures: list[ValidationFailure] = []
         config = TRWConfig()
         from trw_mcp.state.validation.phase_gates import _check_deliver_input
+
         _check_deliver_input(run_dir, config, "error", failures)
         rules = [f.rule for f in failures]
         assert "reflection_complete" in rules
 
-    def test_events_with_reflection_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_events_with_reflection_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         # Use recognized event name from _REFLECTION_EVENTS frozenset
         _write_events(
@@ -615,6 +552,7 @@ class TestCheckDeliverInput:
         failures: list[ValidationFailure] = []
         config = TRWConfig()
         from trw_mcp.state.validation.phase_gates import _check_deliver_input
+
         _check_deliver_input(run_dir, config, "error", failures)
         rules = [f.rule for f in failures]
         assert "reflection_complete" not in rules
@@ -629,9 +567,7 @@ class TestCheckDeliverInput:
 class TestCheckPlanInput:
     """Tests for plan phase input checker."""
 
-    def test_missing_synthesis_adds_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_synthesis_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
@@ -639,9 +575,7 @@ class TestCheckPlanInput:
         rules = [f.rule for f in failures]
         assert "research_complete" in rules
 
-    def test_synthesis_in_scratch_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_synthesis_in_scratch_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         synthesis = run_dir / "scratch" / "_orchestrator" / "research_synthesis.md"
         synthesis.write_text("# Research Synthesis\n", encoding="utf-8")
@@ -651,9 +585,7 @@ class TestCheckPlanInput:
         rules = [f.rule for f in failures]
         assert "research_complete" not in rules
 
-    def test_synthesis_in_reports_no_failure(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_synthesis_in_reports_no_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         alt = run_dir / "reports" / "research_synthesis.md"
         alt.write_text("# Research Synthesis\n", encoding="utf-8")
@@ -702,9 +634,7 @@ class TestCheckPhaseInputUniversalGuard:
 class TestCheckPhaseExitDispatch:
     """Verify check_phase_exit dispatches to all per-phase checkers."""
 
-    def test_implement_exit(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_implement_exit(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig(build_check_enabled=False)
         result = check_phase_exit(Phase.IMPLEMENT, run_dir, config)
@@ -712,27 +642,21 @@ class TestCheckPhaseExitDispatch:
         rules = [f.rule for f in result.failures]
         assert "manifest_exists" in rules
 
-    def test_validate_exit(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_validate_exit(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig(build_check_enabled=False)
         result = check_phase_exit(Phase.VALIDATE, run_dir, config)
         rules = [f.rule for f in result.failures]
         assert "phase_test_advisory" in rules
 
-    def test_review_exit(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_review_exit(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig()
         result = check_phase_exit(Phase.REVIEW, run_dir, config)
         rules = [f.rule for f in result.failures]
         assert "final_report_exists" in rules
 
-    def test_deliver_exit(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_deliver_exit(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         config = TRWConfig(build_check_enabled=False)
         result = check_phase_exit(Phase.DELIVER, run_dir, config)
@@ -757,42 +681,30 @@ class TestCheckPhaseExitDispatch:
 class TestCheckPhaseInputDispatch:
     """Verify check_phase_input dispatches correctly to all per-phase checkers."""
 
-    def test_implement_input(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_implement_input(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True))
         rules = [f.rule for f in result.failures]
         assert "plan_exists" in rules
 
-    def test_validate_input(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_validate_input(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_input(Phase.VALIDATE, run_dir, TRWConfig(strict_input_criteria=True))
         rules = [f.rule for f in result.failures]
         assert "implementation_complete" in rules
 
-    def test_review_input_no_events(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_review_input_no_events(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_input(Phase.REVIEW, run_dir, TRWConfig(strict_input_criteria=True))
         # No events → no validate_passed check (review checker is silent when no events)
         rules = [f.rule for f in result.failures]
         assert "validate_passed" not in rules
 
-    def test_strict_vs_non_strict_severity(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_strict_vs_non_strict_severity(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """strict_input_criteria=True uses error severity; False uses warning."""
         run_dir = _make_run_dir(tmp_path, writer)
-        strict_result = check_phase_input(
-            Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True)
-        )
-        non_strict_result = check_phase_input(
-            Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=False)
-        )
+        strict_result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True))
+        non_strict_result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=False))
 
         # Both should have plan_exists failure but different severities
         strict_severities = {f.rule: f.severity for f in strict_result.failures}
@@ -803,9 +715,7 @@ class TestCheckPhaseInputDispatch:
         if "plan_exists" in non_strict_severities:
             assert non_strict_severities["plan_exists"] == "warning"
 
-    def test_research_input_passes(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_research_input_passes(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_input(Phase.RESEARCH, run_dir, TRWConfig())
         # research has no per-phase checker — only universal run.yaml check

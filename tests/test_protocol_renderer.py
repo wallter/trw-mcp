@@ -7,7 +7,6 @@ import pytest
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.state.claude_md._renderer import (
     SESSION_BOUNDARY_TEXT,
-    CeremonyMode,
     ProtocolRenderer,
 )
 from trw_mcp.state.claude_md._templates import CEREMONY_TOOLS, PHASE_DESCRIPTIONS
@@ -15,9 +14,7 @@ from trw_mcp.state.claude_md._templates import CEREMONY_TOOLS, PHASE_DESCRIPTION
 
 def test_renderer_initialization() -> None:
     """Verify ProtocolRenderer can be initialized with a ClientProfile."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="test-client", display_name="test-client")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test-client", display_name="test-client"))
     assert renderer.client_profile.client_id == "test-client"
     assert renderer.platform == "test-client"
     assert renderer.ceremony_mode == "FULL"
@@ -25,9 +22,7 @@ def test_renderer_initialization() -> None:
 
 def test_render_ceremony_table() -> None:
     """FR02: Verify ceremony table is rendered from CEREMONY_TOOLS data."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="test-client", display_name="test-client")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test-client", display_name="test-client"))
     table = renderer.render_ceremony_table()
 
     # Check for header
@@ -41,9 +36,7 @@ def test_render_ceremony_table() -> None:
 
 def test_render_ceremony_quick_ref_generated_from_ceremony_tools() -> None:
     """FR02: Quick ref is generated from CEREMONY_TOOLS, not hardcoded."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="gemini", display_name="gemini")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
     table = renderer.render_ceremony_quick_ref()
     # All 4 quick-ref tools should appear (from CEREMONY_TOOLS data)
     for tool_name in ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver"):
@@ -128,9 +121,7 @@ def test_gemini_instructions_parity() -> None:
     """Regression: Verify generated Gemini instructions match expected content."""
     from trw_mcp.bootstrap._gemini import _gemini_instructions_content
 
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="gemini", display_name="gemini")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
     renderer_content = renderer.render_gemini_instructions()
 
     # Both should produce identical content since _gemini_instructions_content
@@ -141,9 +132,7 @@ def test_gemini_instructions_parity() -> None:
 
 def test_render_phase_descriptions() -> None:
     """Verify phase descriptions include all 6 phases."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="claude-code", display_name="claude-code")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="claude-code", display_name="claude-code"))
     output = renderer.render_phase_descriptions()
     assert "RESEARCH" in output
     assert "DELIVER" in output
@@ -152,9 +141,7 @@ def test_render_phase_descriptions() -> None:
 
 def test_render_ceremony_flows() -> None:
     """Verify ceremony flows include quick task and full run."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="claude-code", display_name="claude-code")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="claude-code", display_name="claude-code"))
     output = renderer.render_ceremony_flows()
     assert "Quick Task" in output
     assert "Full Run" in output
@@ -164,14 +151,10 @@ def test_render_ceremony_flows() -> None:
 def test_render_framework_reference_gated() -> None:
     """Verify framework reference is gated by client profile flag."""
     renderer_enabled = ProtocolRenderer(
-        client_profile=ClientProfile(
-            client_id="test", display_name="test", include_framework_ref=True
-        )
+        client_profile=ClientProfile(client_id="test", display_name="test", include_framework_ref=True)
     )
     renderer_disabled = ProtocolRenderer(
-        client_profile=ClientProfile(
-            client_id="test", display_name="test", include_framework_ref=False
-        )
+        client_profile=ClientProfile(client_id="test", display_name="test", include_framework_ref=False)
     )
     assert "FRAMEWORK.md" in renderer_enabled.render_framework_reference()
     assert renderer_disabled.render_framework_reference() == ""
@@ -179,9 +162,7 @@ def test_render_framework_reference_gated() -> None:
 
 def test_render_closing_reminder() -> None:
     """Verify closing reminder includes session boundary text."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="test", display_name="test")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test", display_name="test"))
     output = renderer.render_closing_reminder()
     assert "Session Boundaries" in output
     assert "trw_session_start()" in output
@@ -191,7 +172,8 @@ def test_render_behavioral_protocol_full() -> None:
     """FR04: FULL mode behavioral protocol includes all sections."""
     renderer = ProtocolRenderer(
         client_profile=ClientProfile(
-            client_id="claude-code", display_name="claude-code",
+            client_id="claude-code",
+            display_name="claude-code",
             include_framework_ref=True,
         ),
         ceremony_mode="FULL",
@@ -218,9 +200,7 @@ def test_opencode_generic_fallback() -> None:
 
 def test_gemini_instructions_contains_markers() -> None:
     """Verify Gemini instructions have start/end markers."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="gemini", display_name="gemini")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
     output = renderer.render_gemini_instructions()
     assert "<!-- trw:gemini:start -->" in output
     assert "<!-- trw:gemini:end -->" in output
@@ -228,9 +208,7 @@ def test_gemini_instructions_contains_markers() -> None:
 
 def test_render_table_gemini_platform() -> None:
     """FR02: Verify render for Gemini platform contains Gemini-specific notes."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="gemini", display_name="gemini")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
     output = renderer.render_gemini_instructions()
     assert "mcp_trw_" in output
     assert "Gemini" in output
@@ -243,10 +221,9 @@ def test_render_table_gemini_platform() -> None:
 
 def test_static_sections_delegate_to_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
     """FR01: _static_sections functions delegate to ProtocolRenderer."""
-    from trw_mcp.state.claude_md import _static_sections
-
     # Patch get_config to return a profile
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.claude_md import _static_sections
 
     mock_config = TRWConfig()
     monkeypatch.setattr(_static_sections, "get_config", lambda: mock_config)
@@ -274,9 +251,7 @@ def test_opencode_sections_delegate_to_renderer() -> None:
 
 def test_ceremony_table_has_all_tools() -> None:
     """FR02: Every tool in CEREMONY_TOOLS appears in the rendered table."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="test", display_name="test")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test", display_name="test"))
     table = renderer.render_ceremony_table()
     for ct in CEREMONY_TOOLS:
         assert ct.tool in table, f"Tool '{ct.tool}' missing from ceremony table"
@@ -284,9 +259,7 @@ def test_ceremony_table_has_all_tools() -> None:
 
 def test_phase_descriptions_has_all_phases() -> None:
     """FR02: All 6 phases appear in the phase descriptions output."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="test", display_name="test")
-    )
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test", display_name="test"))
     output = renderer.render_phase_descriptions()
     for name, purpose in PHASE_DESCRIPTIONS:
         assert name in output, f"Phase '{name}' missing"

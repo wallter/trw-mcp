@@ -30,18 +30,10 @@ def _candidate_domains(learning: dict[str, object]) -> set[str]:
     domains: set[str] = set()
     raw_domains = learning.get("domain")
     if isinstance(raw_domains, list):
-        domains.update(
-            str(domain).strip().lower()
-            for domain in raw_domains
-            if str(domain).strip()
-        )
+        domains.update(str(domain).strip().lower() for domain in raw_domains if str(domain).strip())
     raw_tags = learning.get("tags")
     if isinstance(raw_tags, list):
-        domains.update(
-            str(tag).strip().lower()
-            for tag in raw_tags
-            if str(tag).strip()
-        )
+        domains.update(str(tag).strip().lower() for tag in raw_tags if str(tag).strip())
     return domains
 
 
@@ -63,11 +55,7 @@ def _phase_match_score(learning: dict[str, object], phase: str) -> float:
 
     phase_affinity = learning.get("phase_affinity")
     if isinstance(phase_affinity, list):
-        normalized_affinity = {
-            str(value).strip().lower()
-            for value in phase_affinity
-            if str(value).strip()
-        }
+        normalized_affinity = {str(value).strip().lower() for value in phase_affinity if str(value).strip()}
         if normalized_affinity:
             return 1.0 if normalized_phase in normalized_affinity else 0.1
 
@@ -102,22 +90,14 @@ def _normalized_modified_files(recall_context: object | None) -> list[str]:
     modified_files = getattr(recall_context, "modified_files", [])
     if not isinstance(modified_files, list):
         return []
-    return [
-        str(path).strip().lower()
-        for path in modified_files
-        if str(path).strip()
-    ]
+    return [str(path).strip().lower() for path in modified_files if str(path).strip()]
 
 
 def _normalize_inferred_domains(raw_domains: object) -> set[str]:
     """Return normalized inferred domains from best-effort recall context data."""
     if not isinstance(raw_domains, (list, tuple, set, frozenset)):
         return set()
-    return {
-        str(domain).strip().lower()
-        for domain in raw_domains
-        if str(domain).strip()
-    }
+    return {str(domain).strip().lower() for domain in raw_domains if str(domain).strip()}
 
 
 def _coerce_float(value: object, default: float = 0.0) -> float:
@@ -151,9 +131,7 @@ def _contextualize_candidates(
     filtered_candidates = candidates
     if inferred_domains:
         domain_filtered = [
-            candidate
-            for candidate in candidates
-            if _matches_inferred_domains(candidate, inferred_domains)
+            candidate for candidate in candidates if _matches_inferred_domains(candidate, inferred_domains)
         ]
         if domain_filtered:
             filtered_candidates = domain_filtered
@@ -166,11 +144,7 @@ def _contextualize_candidates(
 
     shortlist_size = min(len(filtered_candidates), 5 if is_transition else 3)
     ranked_ids: list[str] = []
-    remaining_ids = [
-        str(candidate.get("id", ""))
-        for candidate in filtered_candidates
-        if candidate.get("id")
-    ]
+    remaining_ids = [str(candidate.get("id", "")) for candidate in filtered_candidates if candidate.get("id")]
     while remaining_ids and len(ranked_ids) < shortlist_size:
         selected_id, _ = contextual_selector.select(
             remaining_ids,
@@ -183,9 +157,7 @@ def _contextualize_candidates(
         return filtered_candidates
 
     candidate_map = {
-        str(candidate.get("id", "")): candidate
-        for candidate in filtered_candidates
-        if candidate.get("id")
+        str(candidate.get("id", "")): candidate for candidate in filtered_candidates if candidate.get("id")
     }
     return [candidate_map[arm_id] for arm_id in ranked_ids if arm_id in candidate_map]
 
@@ -240,11 +212,7 @@ def _select_cached_or_deterministic_learning(
     bandit_params: dict[str, float] | None,
 ) -> dict[str, object] | None:
     """Prefer cached backend weights, else preserve deterministic recall order."""
-    contentful = [
-        candidate
-        for candidate in candidates
-        if _deterministic_fallback_text(candidate)
-    ]
+    contentful = [candidate for candidate in candidates if _deterministic_fallback_text(candidate)]
     if not contentful:
         return None
     if not bandit_params:
@@ -333,10 +301,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             return None
 
         # ── Dedup: filter candidates already shown in current phase (P1 fix) ─
-        eligible_candidates = [
-            c for c in candidates
-            if is_nudge_eligible(state, str(c.get("id", "")), state.phase)
-        ]
+        eligible_candidates = [c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), state.phase)]
         if not eligible_candidates:
             # Fall back to full pool if all candidates are already deduplicated
             eligible_candidates = candidates
@@ -464,6 +429,7 @@ def append_ceremony_status(
         elif pool == "workflow":
             try:
                 from trw_mcp.state._nudge_content import load_pool_message
+
                 nudge_content = load_pool_message("workflow", phase_hint=state.phase)
             except ImportError:
                 pass
@@ -472,6 +438,7 @@ def append_ceremony_status(
             if pending:
                 try:
                     from trw_mcp.state._nudge_content import load_pool_message
+
                     nudge_content = load_pool_message("ceremony", phase_hint=pending)
                 except ImportError:
                     pass

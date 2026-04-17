@@ -16,6 +16,7 @@ import pytest
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.analytics.core import _NOISE_PATTERNS
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import (
     LearningParams,
@@ -25,7 +26,6 @@ from trw_mcp.tools._learning_helpers import (
     enforce_distribution,
     is_noise_summary,
 )
-from trw_mcp.state.analytics.core import _NOISE_PATTERNS
 
 _CFG = TRWConfig()
 

@@ -178,9 +178,9 @@ class TestCeremonyDeliverSubStepFailures:
         ):
             _run_step(
                 "auto_progress",
-                lambda: __import__("trw_mcp.tools._deferred_delivery", fromlist=["_step_auto_progress"])._step_auto_progress(
-                    None
-                ),
+                lambda: __import__(
+                    "trw_mcp.tools._deferred_delivery", fromlist=["_step_auto_progress"]
+                )._step_auto_progress(None),
                 results,
                 errors,
             )

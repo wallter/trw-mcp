@@ -13,9 +13,9 @@ def _make_prd_with_matrix(row: str) -> str:
         "  status: draft\n"
         "  priority: P1\n"
         "traceability:\n"
-        "  implements: [\"REQ-001\"]\n"
-        "  depends_on: [\"PRD-CORE-074\"]\n"
-        "  enables: [\"PRD-CORE-097\"]\n"
+        '  implements: ["REQ-001"]\n'
+        '  depends_on: ["PRD-CORE-074"]\n'
+        '  enables: ["PRD-CORE-097"]\n'
         "---\n\n"
         "## 12. Traceability Matrix\n\n"
         "| Requirement | Source | Implementation | Test | Status |\n"

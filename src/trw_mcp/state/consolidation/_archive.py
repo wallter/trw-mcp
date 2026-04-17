@@ -121,7 +121,10 @@ def _rollback_archive(
     for entry_path, original_data in processed:
         try:
             writer.write_yaml(entry_path, original_data)
-        except (OSError, StateError):  # per-item error handling: log rollback failure per entry, continue rollback  # noqa: PERF203
+        except (
+            OSError,
+            StateError,
+        ):  # per-item error handling: log rollback failure per entry, continue rollback
             logger.exception(
                 "consolidation_rollback_failed",
                 path=str(entry_path),

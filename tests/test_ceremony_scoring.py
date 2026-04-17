@@ -23,11 +23,7 @@ class TestFR04ClaudeMdSyncedRemoval:
             capture_output=True,
             text=True,
         )
-        matches = [
-            line
-            for line in result.stdout.strip().split("\n")
-            if line.strip()
-        ]
+        matches = [line for line in result.stdout.strip().split("\n") if line.strip()]
         assert len(matches) == 0, (
             f"Expected zero 'claude_md_synced' references in {SRC_DIR}, "
             f"found {len(matches)}:\n" + "\n".join(matches[:20])
@@ -42,14 +38,7 @@ class TestFR07CeremonyWeights:
         from trw_mcp.models.config._client_profile import CeremonyWeights
 
         w = CeremonyWeights()
-        total = (
-            w.session_start
-            + w.deliver
-            + w.checkpoint
-            + w.learn
-            + w.build_check
-            + w.review
-        )
+        total = w.session_start + w.deliver + w.checkpoint + w.learn + w.build_check + w.review
         assert total == 100
 
     def test_ceremony_weights_checkpoint_20(self) -> None:

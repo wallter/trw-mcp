@@ -41,8 +41,7 @@ def collect_promotable_learnings(
         List of high-impact learning entry dicts.
     """
     warnings.warn(
-        "collect_promotable_learnings is deprecated (PRD-CORE-093). "
-        "Use trw_session_start() for learning delivery.",
+        "collect_promotable_learnings is deprecated (PRD-CORE-093). Use trw_session_start() for learning delivery.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -77,7 +76,9 @@ def collect_promotable_learnings(
                     created_dt = _dt.fromisoformat(created_at_raw.replace("Z", "+00:00"))
                     score = apply_time_decay(score, created_dt)
                 except (ValueError, ImportError):
-                    logger.debug("time_decay_apply_skipped", exc_info=True)  # justified: fail-open, malformed date — use raw score
+                    logger.debug(
+                        "time_decay_apply_skipped", exc_info=True
+                    )  # justified: fail-open, malformed date — use raw score
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)
@@ -110,7 +111,11 @@ def collect_patterns(
     for pattern_file in iter_yaml_entry_files(patterns_dir):
         try:
             patterns.append(reader.read_yaml(pattern_file))
-        except (StateError, ValueError, TypeError):  # per-item error handling: skip corrupt pattern files  # noqa: PERF203
+        except (
+            StateError,
+            ValueError,
+            TypeError,
+        ):  # per-item error handling: skip corrupt pattern files
             continue
 
     return patterns

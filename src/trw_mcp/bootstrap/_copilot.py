@@ -243,9 +243,9 @@ def generate_copilot_path_instructions(
             continue
 
         content = f"""---
-applyTo: "{template['applyTo']}"
+applyTo: "{template["applyTo"]}"
 ---
-{template['content']}"""
+{template["content"]}"""
 
         try:
             path.write_text(content, encoding="utf-8")
@@ -298,11 +298,11 @@ def _build_hook_adapter_command(event_name: str, hook_path: str) -> str:
     # Use double-quote wrapper with escaped inner quotes to avoid
     # the single-quote nesting bug (all grep/sed patterns work correctly)
     json_extract = (
-        '_input=$(cat); '
+        "_input=$(cat); "
         'export TOOL_NAME=$(printf "%s" "$_input" | '
         'grep -o \'"toolName"[[:space:]]*:[[:space:]]*"[^"]*"\' 2>/dev/null | '
         "head -1 | "
-        "sed 's/.*\"toolName\"[[:space:]]*:[[:space:]]*\"//;s/\"$//' || true)"
+        'sed \'s/.*"toolName"[[:space:]]*:[[:space:]]*"//;s/"$//\' || true)'
     )
 
     if event_name == "preToolUse":
@@ -313,20 +313,15 @@ def _build_hook_adapter_command(event_name: str, hook_path: str) -> str:
             f'printf "%s" "$_input" | /bin/sh "{hook_path}" 2>/dev/null; '
             f"_rc=$?; "
             f'if [ "$_rc" -eq 2 ]; then '
-            f"printf '{{\"permissionDecision\":\"deny\"}}'; "
+            f'printf \'{{"permissionDecision":"deny"}}\'; '
             f"else "
-            f"printf '{{\"permissionDecision\":\"allow\"}}'; "
+            f'printf \'{{"permissionDecision":"allow"}}\'; '
             f"fi"
             f"'"
         )
 
     # Non-permission hooks: pipe stdin to hook, fail-open
-    return (
-        f"/bin/sh -c '"
-        f"{json_extract}; "
-        f'printf "%s" "$_input" | /bin/sh "{hook_path}" 2>/dev/null || true'
-        f"'"
-    )
+    return f'/bin/sh -c \'{json_extract}; printf "%s" "$_input" | /bin/sh "{hook_path}" 2>/dev/null || true\''
 
 
 def _copilot_hooks_payload() -> CopilotHooksPayload:
@@ -384,7 +379,9 @@ def _merge_copilot_hooks(
 
         # Keep user-managed groups, replace TRW-managed ones
         user_groups: list[CopilotHookGroup] = [
-            g for g in existing_groups if isinstance(g, dict) and not _is_trw_hook_group(g)  # type: ignore[misc]
+            g
+            for g in existing_groups
+            if isinstance(g, dict) and not _is_trw_hook_group(g)  # type: ignore[misc]
         ]
         trw_groups = trw_hooks.get(event_name, [])
 

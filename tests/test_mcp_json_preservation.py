@@ -21,9 +21,7 @@ import pytest
 class TestIsUserCustomizedTrwEntry:
     """Unit-test the customization-detection heuristic in isolation."""
 
-    def test_absolute_path_to_existing_file_is_customized(
-        self, tmp_path: Path
-    ) -> None:
+    def test_absolute_path_to_existing_file_is_customized(self, tmp_path: Path) -> None:
         """command='/path/to/.venv/bin/trw-mcp' (file exists) → preserve."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
@@ -31,50 +29,39 @@ class TestIsUserCustomizedTrwEntry:
         binary.write_text("#!/bin/sh\n")
         binary.chmod(0o755)
 
-        assert _is_user_customized_trw_entry(
-            {"command": str(binary), "args": ["--debug"]}
-        ) is True
+        assert _is_user_customized_trw_entry({"command": str(binary), "args": ["--debug"]}) is True
 
-    def test_absolute_path_to_missing_file_is_not_customized(
-        self, tmp_path: Path
-    ) -> None:
+    def test_absolute_path_to_missing_file_is_not_customized(self, tmp_path: Path) -> None:
         """Stale absolute path → not preserved (refresh to default)."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
-        assert _is_user_customized_trw_entry(
-            {"command": str(tmp_path / "does-not-exist"), "args": ["--debug"]}
-        ) is False
+        assert (
+            _is_user_customized_trw_entry({"command": str(tmp_path / "does-not-exist"), "args": ["--debug"]}) is False
+        )
 
     def test_bare_trw_mcp_command_is_not_customized(self) -> None:
         """Default entry (bare ``trw-mcp``) → safe to refresh."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
-        assert _is_user_customized_trw_entry(
-            {"command": "trw-mcp", "args": ["--debug"]}
-        ) is False
+        assert _is_user_customized_trw_entry({"command": "trw-mcp", "args": ["--debug"]}) is False
 
     def test_python_module_invocation_is_not_customized(self) -> None:
         """Default fallback ([python, -m, trw_mcp.server]) → safe to refresh."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
-        assert _is_user_customized_trw_entry(
-            {"command": "/usr/bin/python3", "args": ["-m", "trw_mcp.server", "--debug"]}
-        ) is True  # absolute path to existing file
+        assert (
+            _is_user_customized_trw_entry({"command": "/usr/bin/python3", "args": ["-m", "trw_mcp.server", "--debug"]})
+            is True
+        )  # absolute path to existing file
 
     def test_extra_keys_indicate_customization(self) -> None:
         """Entry with ``env`` / ``cwd`` / etc. → user-added → preserve."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
-        assert _is_user_customized_trw_entry(
-            {"command": "trw-mcp", "args": ["--debug"], "env": {"FOO": "bar"}}
-        ) is True
-        assert _is_user_customized_trw_entry(
-            {"command": "trw-mcp", "args": ["--debug"], "cwd": "/tmp"}
-        ) is True
+        assert _is_user_customized_trw_entry({"command": "trw-mcp", "args": ["--debug"], "env": {"FOO": "bar"}}) is True
+        assert _is_user_customized_trw_entry({"command": "trw-mcp", "args": ["--debug"], "cwd": "/tmp"}) is True
 
-    def test_list_command_with_absolute_interpreter_is_customized(
-        self, tmp_path: Path
-    ) -> None:
+    def test_list_command_with_absolute_interpreter_is_customized(self, tmp_path: Path) -> None:
         """command=['/path/to/python', '-m', 'trw_mcp.server'] → preserve."""
         from trw_mcp.bootstrap._mcp_json import _is_user_customized_trw_entry
 
@@ -82,9 +69,9 @@ class TestIsUserCustomizedTrwEntry:
         py.write_text("")
         py.chmod(0o755)
 
-        assert _is_user_customized_trw_entry(
-            {"command": [str(py), "-m", "trw_mcp.server"], "args": ["--debug"]}
-        ) is True
+        assert (
+            _is_user_customized_trw_entry({"command": [str(py), "-m", "trw_mcp.server"], "args": ["--debug"]}) is True
+        )
 
     def test_non_dict_input_is_not_customized(self) -> None:
         """Defensive: list / None / string inputs → not customized."""
@@ -113,16 +100,10 @@ class TestMergePreservesUserCustomization:
         venv_bin.write_text("#!/bin/sh\n")
         venv_bin.chmod(0o755)
 
-        original = {
-            "mcpServers": {
-                "trw": {"command": str(venv_bin), "args": ["--debug"]}
-            }
-        }
+        original = {"mcpServers": {"trw": {"command": str(venv_bin), "args": ["--debug"]}}}
         path = self._seed_mcp(tmp_path, original)
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         # On-disk file: command must still be the absolute venv path
@@ -148,15 +129,14 @@ class TestMergePreservesUserCustomization:
         }
         path = self._seed_mcp(tmp_path, original)
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         on_disk = json.loads(path.read_text())
         # env must survive
         assert on_disk["mcpServers"]["trw"]["env"] == {
-            "TRW_LOG_LEVEL": "DEBUG", "CUSTOM_FLAG": "1",
+            "TRW_LOG_LEVEL": "DEBUG",
+            "CUSTOM_FLAG": "1",
         }
 
     def test_other_servers_preserved_alongside_trw(self, tmp_path: Path) -> None:
@@ -179,9 +159,7 @@ class TestMergePreservesUserCustomization:
         }
         path = self._seed_mcp(tmp_path, original)
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         on_disk = json.loads(path.read_text())
@@ -194,14 +172,10 @@ class TestMergePreservesUserCustomization:
         from trw_mcp.bootstrap._mcp_json import _merge_mcp_json
 
         # Default-shape entry — just bare command, no extras
-        original = {
-            "mcpServers": {"trw": {"command": "trw-mcp", "args": ["--debug"]}}
-        }
+        original = {"mcpServers": {"trw": {"command": "trw-mcp", "args": ["--debug"]}}}
         self._seed_mcp(tmp_path, original)
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         # Default entries are refreshed (reported in updated/created), not preserved
@@ -213,9 +187,7 @@ class TestMergePreservesUserCustomization:
         """No pre-existing .mcp.json → default created (no preservation needed)."""
         from trw_mcp.bootstrap._mcp_json import _merge_mcp_json
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         path = tmp_path / ".mcp.json"
@@ -231,9 +203,7 @@ from tests._structlog_capture import captured_structlog  # noqa: F401
 class TestObservability:
     """Structured logs surface preservation vs refresh decisions."""
 
-    def test_preservation_emits_mcp_config_preserved_log(
-        self, tmp_path: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_preservation_emits_mcp_config_preserved_log(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """When preserving a user-customized entry, log mcp_config_preserved."""
         from trw_mcp.bootstrap._mcp_json import _merge_mcp_json
 
@@ -242,20 +212,13 @@ class TestObservability:
         venv_bin.chmod(0o755)
 
         path = tmp_path / ".mcp.json"
-        path.write_text(
-            json.dumps(
-                {"mcpServers": {"trw": {"command": str(venv_bin), "args": ["--debug"]}}}
-            )
-        )
+        path.write_text(json.dumps({"mcpServers": {"trw": {"command": str(venv_bin), "args": ["--debug"]}}}))
 
-        result: dict[str, list[str]] = {
-            "created": [], "updated": [], "preserved": [], "errors": []
-        }
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
         _merge_mcp_json(tmp_path, result)
 
         preserved_logs = [
-            log_entry for log_entry in captured_structlog
-            if log_entry.get("event") == "mcp_config_preserved"
+            log_entry for log_entry in captured_structlog if log_entry.get("event") == "mcp_config_preserved"
         ]
         assert len(preserved_logs) == 1
         log = preserved_logs[0]

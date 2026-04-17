@@ -35,8 +35,7 @@ class TestSigmoidNormalize:
         results = [sigmoid_normalize(s) for s in scores]
         for i in range(len(results) - 1):
             assert results[i] < results[i + 1], (
-                f"Not monotonic: sigmoid({scores[i]})={results[i]} >= "
-                f"sigmoid({scores[i+1]})={results[i+1]}"
+                f"Not monotonic: sigmoid({scores[i]})={results[i]} >= sigmoid({scores[i + 1]})={results[i + 1]}"
             )
 
     def test_steepness_parameter(self) -> None:
@@ -51,6 +50,4 @@ class TestSigmoidNormalize:
         for x in [0.5, 1.0, 2.0, 3.0, 5.0]:
             pos = sigmoid_normalize(x)
             neg = sigmoid_normalize(-x)
-            assert abs(pos + neg - 1.0) < 0.0001, (
-                f"Symmetry violated: sigmoid({x})={pos} + sigmoid({-x})={neg} != 1.0"
-            )
+            assert abs(pos + neg - 1.0) < 0.0001, f"Symmetry violated: sigmoid({x})={pos} + sigmoid({-x})={neg} != 1.0"

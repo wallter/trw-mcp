@@ -64,9 +64,7 @@ _DESCRIBED_TOOLS = set(TOOL_DESCRIPTIONS)
 if _ALL_TOOLS != _DESCRIBED_TOOLS:
     _missing = _ALL_TOOLS - _DESCRIBED_TOOLS
     _extra = _DESCRIBED_TOOLS - _ALL_TOOLS
-    raise RuntimeError(
-        f"TOOL_DESCRIPTIONS / TOOL_PRESETS mismatch: missing={_missing}, extra={_extra}"
-    )
+    raise RuntimeError(f"TOOL_DESCRIPTIONS / TOOL_PRESETS mismatch: missing={_missing}, extra={_extra}")
 
 
 # ---------------------------------------------------------------------------

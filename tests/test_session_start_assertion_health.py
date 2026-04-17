@@ -82,10 +82,12 @@ class TestHealthSummaryPresentWhenAssertionsExist:
         recent = now - timedelta(hours=1)
 
         entries = [
-            _make_mock_entry([
-                _make_mock_assertion(last_result=True, last_verified_at=recent),
-                _make_mock_assertion(last_result=False, last_verified_at=recent),
-            ]),
+            _make_mock_entry(
+                [
+                    _make_mock_assertion(last_result=True, last_verified_at=recent),
+                    _make_mock_assertion(last_result=False, last_verified_at=recent),
+                ]
+            ),
         ]
 
         health = _compute_assertion_health(entries)
@@ -118,33 +120,36 @@ class TestHealthCountsMatchStates:
 
         entries = [
             # Entry 1: one passing, one stale (never verified)
-            _make_mock_entry([
-                _make_mock_assertion(last_result=True, last_verified_at=recent),
-                _make_mock_assertion(last_result=None, last_verified_at=None),
-            ]),
+            _make_mock_entry(
+                [
+                    _make_mock_assertion(last_result=True, last_verified_at=recent),
+                    _make_mock_assertion(last_result=None, last_verified_at=None),
+                ]
+            ),
             # Entry 2: one failing, one stale (verified long ago)
-            _make_mock_entry([
-                _make_mock_assertion(last_result=False, last_verified_at=recent),
-                _make_mock_assertion(last_result=True, last_verified_at=old),
-            ]),
+            _make_mock_entry(
+                [
+                    _make_mock_assertion(last_result=False, last_verified_at=recent),
+                    _make_mock_assertion(last_result=True, last_verified_at=old),
+                ]
+            ),
             # Entry 3: one unverifiable (recently verified but result is None)
-            _make_mock_entry([
-                _make_mock_assertion(last_result=None, last_verified_at=recent),
-            ]),
+            _make_mock_entry(
+                [
+                    _make_mock_assertion(last_result=None, last_verified_at=recent),
+                ]
+            ),
         ]
 
         health = _compute_assertion_health(entries)
 
         assert health is not None
-        assert health["passing"] == 1    # Entry 1, assertion 1
-        assert health["failing"] == 1    # Entry 2, assertion 1
-        assert health["stale"] == 2      # Entry 1 a2 (None) + Entry 2 a2 (old)
+        assert health["passing"] == 1  # Entry 1, assertion 1
+        assert health["failing"] == 1  # Entry 2, assertion 1
+        assert health["stale"] == 2  # Entry 1 a2 (None) + Entry 2 a2 (old)
         assert health["unverifiable"] == 1  # Entry 3, assertion 1
         assert health["total"] == 3
 
         # Verify total assertions across all entries sum correctly
-        total_assertions = (
-            health["passing"] + health["failing"]
-            + health["stale"] + health["unverifiable"]
-        )
+        total_assertions = health["passing"] + health["failing"] + health["stale"] + health["unverifiable"]
         assert total_assertions == 5

@@ -13,7 +13,6 @@ import pytest
 
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES, detect_ide
 
-
 # ---------------------------------------------------------------------------
 # SUPPORTED_IDES constant
 # ---------------------------------------------------------------------------
@@ -53,8 +52,7 @@ def test_detect_cursor_ide_dir_only(tmp_path: Path) -> None:
     """detect_ide returns cursor-ide when .cursor/ dir is present."""
     (tmp_path / ".cursor").mkdir()
 
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", return_value=None), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-ide" in result
@@ -64,8 +62,10 @@ def test_detect_cursor_ide_dir_only(tmp_path: Path) -> None:
 @pytest.mark.integration
 def test_detect_cursor_ide_trace_env_only(tmp_path: Path) -> None:
     """detect_ide returns cursor-ide when CURSOR_TRACE_ID is set."""
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {"CURSOR_TRACE_ID": "trace-abc"}, clear=True):
+    with (
+        patch("shutil.which", return_value=None),
+        patch.dict("os.environ", {"CURSOR_TRACE_ID": "trace-abc"}, clear=True),
+    ):
         result = detect_ide(tmp_path)
 
     assert "cursor-ide" in result
@@ -83,8 +83,7 @@ def test_detect_cursor_cli_config_only(tmp_path: Path) -> None:
     cursor_dir.mkdir()
     (cursor_dir / "cli.json").write_text('{"version":1}', encoding="utf-8")
 
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", return_value=None), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-cli" in result
@@ -101,10 +100,9 @@ def test_detect_cursor_cli_only_no_cursor_dir(tmp_path: Path) -> None:
     # being detected alongside cursor-ide.
     cursor_dir = tmp_path / ".cursor"
     cursor_dir.mkdir()
-    (cursor_dir / "cli.json").write_text('{}', encoding="utf-8")
+    (cursor_dir / "cli.json").write_text("{}", encoding="utf-8")
 
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", return_value=None), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-cli" in result
@@ -113,8 +111,7 @@ def test_detect_cursor_cli_only_no_cursor_dir(tmp_path: Path) -> None:
 @pytest.mark.integration
 def test_detect_cursor_cli_via_api_key_env(tmp_path: Path) -> None:
     """detect_ide returns cursor-cli when CURSOR_API_KEY is set."""
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {"CURSOR_API_KEY": "sk-test"}, clear=True):
+    with patch("shutil.which", return_value=None), patch.dict("os.environ", {"CURSOR_API_KEY": "sk-test"}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-cli" in result
@@ -127,8 +124,7 @@ def test_detect_cursor_cli_via_cursor_agent_binary(tmp_path: Path) -> None:
     def mock_which(name: str) -> str | None:
         return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
 
-    with patch("shutil.which", side_effect=mock_which), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", side_effect=mock_which), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-cli" in result
@@ -143,8 +139,10 @@ def test_detect_cursor_cli_agent_binary_suppressed_when_trace_id_set(tmp_path: P
     def mock_which(name: str) -> str | None:
         return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
 
-    with patch("shutil.which", side_effect=mock_which), \
-         patch.dict("os.environ", {"CURSOR_TRACE_ID": "trace-123"}, clear=True):
+    with (
+        patch("shutil.which", side_effect=mock_which),
+        patch.dict("os.environ", {"CURSOR_TRACE_ID": "trace-123"}, clear=True),
+    ):
         result = detect_ide(tmp_path)
 
     # CURSOR_TRACE_ID means IDE is active → cursor-cli should NOT be triggered by binary
@@ -171,8 +169,7 @@ def test_detect_cursor_dual(tmp_path: Path) -> None:
             return "/usr/bin/cursor-agent"
         return None
 
-    with patch("shutil.which", side_effect=mock_which), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", side_effect=mock_which), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-ide" in result
@@ -182,8 +179,7 @@ def test_detect_cursor_dual(tmp_path: Path) -> None:
 @pytest.mark.integration
 def test_detect_neither_cursor_when_both_absent(tmp_path: Path) -> None:
     """detect_ide returns neither cursor-ide nor cursor-cli when no signals present."""
-    with patch("shutil.which", return_value=None), \
-         patch.dict("os.environ", {}, clear=True):
+    with patch("shutil.which", return_value=None), patch.dict("os.environ", {}, clear=True):
         result = detect_ide(tmp_path)
 
     assert "cursor-ide" not in result

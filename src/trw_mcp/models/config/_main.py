@@ -176,6 +176,7 @@ class TRWConfig(_TRWConfigFields):
         try:
             from trw_mcp.state._paths import resolve_run_path
             from trw_mcp.state.persistence import FileStateReader
+
             run_path = resolve_run_path()
             if run_path and run_path.exists():
                 reader = FileStateReader()

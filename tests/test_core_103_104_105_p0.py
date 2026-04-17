@@ -12,8 +12,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _bandit_available() -> bool:
     """Check if trw-memory bandit module is available."""
@@ -64,12 +62,8 @@ class TestSurfaceEventMetadataFields:
             "trw_mcp.models.config.get_config",
             side_effect=ImportError("no config"),
         ):
-            log_surface_event(
-                trw_dir, learning_id="L-noconfig", surface_type="recall"
-            )
-        event = json.loads(
-            (trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip()
-        )
+            log_surface_event(trw_dir, learning_id="L-noconfig", surface_type="recall")
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
         # When config fails, fields stay empty
         assert event["client_profile"] == ""
         assert event["model_family"] == ""
@@ -85,15 +79,9 @@ class TestSurfaceEventMetadataFields:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        with patch(
-            "trw_mcp.models.config.get_config", return_value=mock_cfg
-        ):
-            log_surface_event(
-                trw_dir, learning_id="L-auto", surface_type="nudge"
-            )
-        event = json.loads(
-            (trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip()
-        )
+        with patch("trw_mcp.models.config.get_config", return_value=mock_cfg):
+            log_surface_event(trw_dir, learning_id="L-auto", surface_type="nudge")
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
         assert event["client_profile"] == "cursor-ide"
         assert event["trw_version"] == "v99.9_TRW"
 
@@ -107,9 +95,7 @@ class TestSurfaceEventMetadataFields:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        with patch(
-            "trw_mcp.models.config.get_config", return_value=mock_cfg
-        ):
+        with patch("trw_mcp.models.config.get_config", return_value=mock_cfg):
             log_surface_event(
                 trw_dir,
                 learning_id="L-explicit",
@@ -117,9 +103,7 @@ class TestSurfaceEventMetadataFields:
                 client_profile="my-client",
                 trw_version="my-version",
             )
-        event = json.loads(
-            (trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip()
-        )
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
         assert event["client_profile"] == "my-client"
         assert event["trw_version"] == "my-version"
 
@@ -154,9 +138,7 @@ class TestPropensityEntryMetadataFields:
             model_family="gpt",
             trw_version="v24.4_TRW",
         )
-        entry = json.loads(
-            (trw_dir / "logs" / "propensity.jsonl").read_text().strip()
-        )
+        entry = json.loads((trw_dir / "logs" / "propensity.jsonl").read_text().strip())
         assert entry["client_profile"] == "opencode"
         assert entry["model_family"] == "gpt"
         assert entry["trw_version"] == "v24.4_TRW"
@@ -171,13 +153,9 @@ class TestPropensityEntryMetadataFields:
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        with patch(
-            "trw_mcp.models.config.get_config", return_value=mock_cfg
-        ):
+        with patch("trw_mcp.models.config.get_config", return_value=mock_cfg):
             log_selection(trw_dir, selected="L-auto")
-        entry = json.loads(
-            (trw_dir / "logs" / "propensity.jsonl").read_text().strip()
-        )
+        entry = json.loads((trw_dir / "logs" / "propensity.jsonl").read_text().strip())
         assert entry["client_profile"] == "aider"
         assert entry["trw_version"] == "v24.3_TRW"
 
@@ -192,9 +170,7 @@ class TestPropensityEntryMetadataFields:
             side_effect=RuntimeError("no config"),
         ):
             log_selection(trw_dir, selected="L-fail")
-        entry = json.loads(
-            (trw_dir / "logs" / "propensity.jsonl").read_text().strip()
-        )
+        entry = json.loads((trw_dir / "logs" / "propensity.jsonl").read_text().strip())
         assert entry["client_profile"] == ""
         assert entry["model_family"] == "generic"
         assert entry["trw_version"] == ""
@@ -432,9 +408,7 @@ class TestBurstTruncationFix:
             {"id": "L-2", "summary": "Second"},
         ]
         burst: list[dict[str, object]] = []
-        selected, is_fallback = select_nudge_learning(
-            state, candidates, "implement", burst_items=burst
-        )
+        selected, is_fallback = select_nudge_learning(state, candidates, "implement", burst_items=burst)
         assert selected is not None
         assert selected["id"] == "L-1"
         assert burst == []  # No burst in deterministic path
@@ -449,9 +423,7 @@ class TestBurstTruncationFix:
         candidates = [
             {"id": "L-1", "summary": "First"},
         ]
-        selected, is_fallback = select_nudge_learning(
-            state, candidates, "implement"
-        )
+        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
         assert selected is not None
         assert selected["id"] == "L-1"
 
@@ -482,6 +454,7 @@ class TestBurstTruncationFix:
     def test_bandit_selector_arg_falls_through_to_deterministic(self) -> None:
         """Even a real BanditSelector is ignored by the public deterministic path."""
         from trw_memory.bandit import BanditSelector
+
         from trw_mcp.state._nudge_rules import select_nudge_learning
         from trw_mcp.state._nudge_state import CeremonyState
 
