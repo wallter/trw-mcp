@@ -269,7 +269,7 @@ def render_rationalization_watchlist() -> str:
         "| Prior learnings contain gotchas for exactly this area "
         "| Agents who skip recall consistently re-discover known gotchas, spending 2-3x the time |\n"
         '| "I can implement directly, delegation is overhead" '
-        "| Focused subagents produce fewer defects "
+        "| Focused subagents are expected to produce fewer defects (operational heuristic, not measured on TRW's eval bench) "
         "| Your focused context is valuable \u2014 subagents get deeper context per task |\n"
         '| "The build check can wait until the end" '
         "| Late build failures cascade into multi-file rework "
