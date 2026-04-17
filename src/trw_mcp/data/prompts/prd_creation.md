@@ -31,7 +31,7 @@ You are a product manager creating an AARE-F compliant PRD. Generate a complete 
 
 ## PRD Context
 - Project: {project name}
-- Category: {CORE | QUAL | INFRA | LOCAL | EXPLR | RESEARCH | FIX | EVAL | INTENT | SCALE | THRASH | HPO | SEC | DIST}
+- Category: {CORE | QUAL | INFRA | LOCAL | EXPLR | RESEARCH | FIX | any project-specific category from `.trw/config.yaml` `extra_prd_categories`}
 - Sprint Target: {sprint number or "backlog"}
 
 ## Generation Guidelines
@@ -217,7 +217,7 @@ You are a product manager rapidly drafting a PRD from a feature request. Create 
 
 ## Quick Generation Guidelines
 
-1. **Infer Category**: CORE | QUAL | INFRA | LOCAL | EXPLR | RESEARCH | FIX | EVAL | INTENT | SCALE | THRASH | HPO | SEC | DIST
+1. **Infer Category**: Built-in: CORE | QUAL | INFRA | LOCAL | EXPLR | RESEARCH | FIX. Projects may extend via `.trw/config.yaml` (`extra_prd_categories`).
 2. **Assess Priority**:
    - P0: System broken, blocking
    - P1: Major feature/quality impact
