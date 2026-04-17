@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.45.2] — 2026-04-17
+
+### Changed
+
+- **Tightened trw-memory pin to `>=0.6.10,<1.0.0`** — v0.45.1 pinned `>=0.6.9` but v0.6.9 never published to PyPI (smoke-test-gated release caught a latent bug where `import trw_memory` failed on a bare install without httpx). v0.6.10 ships the sqlite-vec AttributeError fix (original intent of v0.6.9) + the httpx base-dep fix. No code changes in this bump; pin tightening only.
+
 ## [0.45.1] — 2026-04-17
 
 ### Fixed
