@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.45.0"
+version = "0.45.1"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -31,7 +31,7 @@ dependencies = [
     "ruamel.yaml>=0.18.0",
     "structlog>=24.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
-    "trw-memory>=0.6.0,<1.0.0",
+    "trw-memory>=0.6.9,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
