@@ -50,9 +50,7 @@ def _make_mock_backend(learning_id: str = "L-test") -> MagicMock:
 class TestYamlDualWriteNewFields:
     """Verify YAML backup captures all 10 new PRD-CORE-110 fields."""
 
-    def _run_update_and_capture_yaml(
-        self, tmp_project: Path, **kwargs: object
-    ) -> dict[str, object]:
+    def _run_update_and_capture_yaml(self, tmp_project: Path, **kwargs: object) -> dict[str, object]:
         """Run trw_learn_update and return the YAML data that was written."""
         import asyncio
 
@@ -144,37 +142,27 @@ class TestYamlDualWriteNewFields:
 
     def test_domain_written_to_yaml(self, tmp_project: Path) -> None:
         """domain field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(
-            tmp_project, domain=["testing", "mcp"]
-        )
+        data = self._run_update_and_capture_yaml(tmp_project, domain=["testing", "mcp"])
         assert data.get("domain") == ["testing", "mcp"]
 
     def test_phase_origin_written_to_yaml(self, tmp_project: Path) -> None:
         """phase_origin field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(
-            tmp_project, phase_origin="IMPLEMENT"
-        )
+        data = self._run_update_and_capture_yaml(tmp_project, phase_origin="IMPLEMENT")
         assert data.get("phase_origin") == "IMPLEMENT"
 
     def test_phase_affinity_written_to_yaml(self, tmp_project: Path) -> None:
         """phase_affinity field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(
-            tmp_project, phase_affinity=["IMPLEMENT", "VALIDATE"]
-        )
+        data = self._run_update_and_capture_yaml(tmp_project, phase_affinity=["IMPLEMENT", "VALIDATE"])
         assert data.get("phase_affinity") == ["IMPLEMENT", "VALIDATE"]
 
     def test_team_origin_written_to_yaml(self, tmp_project: Path) -> None:
         """team_origin field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(
-            tmp_project, team_origin="sprint-80"
-        )
+        data = self._run_update_and_capture_yaml(tmp_project, team_origin="sprint-80")
         assert data.get("team_origin") == "sprint-80"
 
     def test_protection_tier_written_to_yaml(self, tmp_project: Path) -> None:
         """protection_tier field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(
-            tmp_project, protection_tier="protected"
-        )
+        data = self._run_update_and_capture_yaml(tmp_project, protection_tier="protected")
         assert data.get("protection_tier") == "protected"
 
     def test_none_fields_not_written(self, tmp_project: Path) -> None:

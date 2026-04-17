@@ -197,9 +197,7 @@ def _resolve_run_path(run_path: Path | None) -> Path:
     # Auto-detect: find the most recently modified run dir
     runs_root = Path.cwd() / ".trw" / "runs"
     if not runs_root.exists():
-        raise FileNotFoundError(
-            "No .trw/runs/ directory found. Run 'trw-mcp local init --task NAME' first."
-        )
+        raise FileNotFoundError("No .trw/runs/ directory found. Run 'trw-mcp local init --task NAME' first.")
 
     # Walk runs/ looking for meta/run.yaml
     candidates = [(run_yaml.stat().st_mtime, run_yaml.parent.parent) for run_yaml in runs_root.glob("**/meta/run.yaml")]

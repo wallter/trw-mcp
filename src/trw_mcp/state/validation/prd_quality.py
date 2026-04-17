@@ -170,6 +170,7 @@ def validate_prd_quality_v2(
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
     from pathlib import Path as _Path
+
     _proj_root_path = _Path(project_root) if project_root else None
 
     # Score active dimensions -- density, structure, implementation readiness,
@@ -204,7 +205,9 @@ def validate_prd_quality_v2(
     for dim_name, scorer, max_score in _active_dims:
         try:
             dimensions.append(scorer())
-        except Exception:  # per-item error handling: one dimension failure must not block entire scoring  # noqa: PERF203
+        except (
+            Exception
+        ):  # per-item error handling: one dimension failure must not block entire scoring
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
@@ -264,9 +267,7 @@ def validate_prd_quality_v2(
         if project_root is not None:
             from pathlib import Path as _Path
 
-            status_drift_warnings.extend(
-                _check_sprint_deferral(frontmatter, project_root=_Path(project_root))
-            )
+            status_drift_warnings.extend(_check_sprint_deferral(frontmatter, project_root=_Path(project_root)))
     except Exception:  # justified: fail-open, integrity checks must not block scoring
         logger.warning("status_integrity_check_failed", exc_info=True)
 

@@ -7,16 +7,15 @@ them stale for recent failures, mixed pass/fail, or missing first_failed_at.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.models.memory import AssertionType
 
 from trw_mcp.models.config import TRWConfig
-from trw_memory.models.memory import AssertionType
 
 
 def _make_assertion_dict(
@@ -118,15 +117,18 @@ class TestAllAssertionsFailingOverThresholdMarksStale:
         # Both have first_failed_at > 30 days ago
         old_failure = datetime.now(timezone.utc) - timedelta(days=45)
         learnings = [
-            _make_learning("L-stale", [
-                _make_assertion_dict(first_failed_at=old_failure),
-                _make_assertion_dict(
-                    type_=AssertionType.GLOB_EXISTS,
-                    pattern="",
-                    target="src/main.py",
-                    first_failed_at=old_failure,
-                ),
-            ]),
+            _make_learning(
+                "L-stale",
+                [
+                    _make_assertion_dict(first_failed_at=old_failure),
+                    _make_assertion_dict(
+                        type_=AssertionType.GLOB_EXISTS,
+                        pattern="",
+                        target="src/main.py",
+                        first_failed_at=old_failure,
+                    ),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -166,9 +168,12 @@ class TestRecentFailureNotStale:
         # first_failed_at is only 5 days ago (under 30-day threshold)
         recent_failure = datetime.now(timezone.utc) - timedelta(days=5)
         learnings = [
-            _make_learning("L-recent", [
-                _make_assertion_dict(first_failed_at=recent_failure),
-            ]),
+            _make_learning(
+                "L-recent",
+                [
+                    _make_assertion_dict(first_failed_at=recent_failure),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -209,15 +214,18 @@ class TestMixedPassFailNotStale:
 
         old_failure = datetime.now(timezone.utc) - timedelta(days=45)
         learnings = [
-            _make_learning("L-mixed", [
-                _make_assertion_dict(first_failed_at=None),  # passes -> cleared
-                _make_assertion_dict(
-                    type_=AssertionType.GLOB_EXISTS,
-                    pattern="",
-                    target="src/main.py",
-                    first_failed_at=old_failure,
-                ),
-            ]),
+            _make_learning(
+                "L-mixed",
+                [
+                    _make_assertion_dict(first_failed_at=None),  # passes -> cleared
+                    _make_assertion_dict(
+                        type_=AssertionType.GLOB_EXISTS,
+                        pattern="",
+                        target="src/main.py",
+                        first_failed_at=old_failure,
+                    ),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -257,9 +265,12 @@ class TestNoFirstFailedAtNotStale:
 
         # first_failed_at is None — this is a brand new failure
         learnings = [
-            _make_learning("L-new-fail", [
-                _make_assertion_dict(first_failed_at=None),
-            ]),
+            _make_learning(
+                "L-new-fail",
+                [
+                    _make_assertion_dict(first_failed_at=None),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -302,9 +313,12 @@ class TestCustomThresholdRespected:
         # first_failed_at is 5 days ago — under default 30 but over custom 3
         failure_time = datetime.now(timezone.utc) - timedelta(days=5)
         learnings = [
-            _make_learning("L-custom", [
-                _make_assertion_dict(first_failed_at=failure_time),
-            ]),
+            _make_learning(
+                "L-custom",
+                [
+                    _make_assertion_dict(first_failed_at=failure_time),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)

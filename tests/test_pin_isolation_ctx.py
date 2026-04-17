@@ -12,14 +12,13 @@ size gate and scopes Wave 3 regression coverage to one place.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from tests._structlog_capture import captured_structlog  # noqa: F401
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,15 +111,9 @@ def test_ctx_aware_no_pin_returns_none_not_scan_match(
 
     result = find_active_run(context=fresh)
 
-    assert result is None, (
-        f"Ctx-aware caller with no pin must return None; got {result!r}"
-    )
+    assert result is None, f"Ctx-aware caller with no pin must return None; got {result!r}"
 
-    events = [
-        e
-        for e in captured_structlog
-        if e.get("event") == "run_resolution_no_pin_scan_suppressed"
-    ]
+    events = [e for e in captured_structlog if e.get("event") == "run_resolution_no_pin_scan_suppressed"]
     assert events, (
         "FR05 requires a run_resolution_no_pin_scan_suppressed event on "
         f"the no-pin path; logs were {captured_structlog!r}"
@@ -140,8 +133,7 @@ def test_stdio_no_ctx_falls_back_to_scan(
     # No context, no session_id — mirror the stdio-per-instance path.
     result = find_active_run()
     assert result == latest, (
-        "Legacy callers must still scan and return the latest active run "
-        f"(expected {latest}, got {result})"
+        f"Legacy callers must still scan and return the latest active run (expected {latest}, got {result})"
     )
 
 
@@ -165,7 +157,10 @@ def test_resolve_run_path_ctx_aware_raises_without_pin(
         resolve_run_path(context=fresh)
     # The error should mention scan suppression; the pin_key context hint
     # is carried as a structured attribute.
-    assert "scan fallback suppressed" in str(exc_info.value).lower() or exc_info.value.context.get("pin_key") == "another-fresh-session"
+    assert (
+        "scan fallback suppressed" in str(exc_info.value).lower()
+        or exc_info.value.context.get("pin_key") == "another-fresh-session"
+    )
 
 
 def test_concurrent_ctx_clients_isolated(
@@ -219,9 +214,7 @@ def test_fresh_session_start_no_hijack_returns_null_run_with_hint(
     from tests.conftest import extract_tool_fn, make_test_server
 
     # Seed a sprint-92-style active run on disk owned by another session.
-    _seed_active_run(
-        isolated_project, "sprint-92", "20260101T000000Z-aaaa1111"
-    )
+    _seed_active_run(isolated_project, "sprint-92", "20260101T000000Z-aaaa1111")
 
     # Silence heavy session_start substeps we don't care about.
     monkeypatch.setattr(
@@ -243,15 +236,12 @@ def test_fresh_session_start_no_hijack_returns_null_run_with_hint(
     # Run field reflects the no-pin state (NOT the on-disk run).
     run_dict = result.get("run") or {}
     assert run_dict.get("active_run") is None, (
-        "Fresh ctx session must NOT hijack another session's on-disk active "
-        f"run via scan fallback; got {run_dict!r}"
+        f"Fresh ctx session must NOT hijack another session's on-disk active run via scan fallback; got {run_dict!r}"
     )
     assert run_dict.get("status") == "no_active_run"
 
     hint = result.get("hint", "")
-    assert hint and "trw_init" in hint, (
-        f"Expected FR06 hint pointing at trw_init; got {hint!r}"
-    )
+    assert hint and "trw_init" in hint, f"Expected FR06 hint pointing at trw_init; got {hint!r}"
     assert "run_path" in hint
 
 
@@ -280,9 +270,7 @@ def test_two_clients_trw_init_then_status_no_cross_read(
     init1 = trw_init(ctx=ctx1, task_name="alpha-task", objective="")
     init2 = trw_init(ctx=ctx2, task_name="beta-task", objective="")
 
-    assert init1["run_path"] != init2["run_path"], (
-        "Distinct ctxs should produce distinct runs"
-    )
+    assert init1["run_path"] != init2["run_path"], "Distinct ctxs should produce distinct runs"
     # Each ctx resolves to its own run via trw_status.
     status1 = trw_status(ctx=ctx1)
     status2 = trw_status(ctx=ctx2)
@@ -312,9 +300,7 @@ def test_trw_recall_ctx_aware_no_scan_hijack(
 
     # Seed an "other session" active run with a knowledge_requirements.yaml
     # that would be picked up by a scan-hijack.
-    other_run = _seed_active_run(
-        isolated_project, "other-task", "20260101T000000Z-other0001"
-    )
+    other_run = _seed_active_run(isolated_project, "other-task", "20260101T000000Z-other0001")
     kr_path = other_run / "meta" / "knowledge_requirements.yaml"
     kr_path.write_text(
         "learning_ids:\n  - L-SHOULD-NOT-LEAK\n",
@@ -346,8 +332,7 @@ def test_trw_recall_ctx_aware_no_scan_hijack(
     assert captured_contexts, "build_recall_context must probe find_active_run"
     any_ctx_aware = any(c is not None for c in captured_contexts)
     assert any_ctx_aware, (
-        "FR03: trw_recall must thread a TRWCallContext into find_active_run "
-        f"(captured: {captured_contexts!r})"
+        f"FR03: trw_recall must thread a TRWCallContext into find_active_run (captured: {captured_contexts!r})"
     )
 
     # Sanity — no crash; result is dict-shaped.
@@ -362,9 +347,7 @@ def test_trw_learn_ctx_aware_telemetry_not_scan_hijacked(
     from tests.conftest import extract_tool_fn, make_test_server
 
     # Seed other-session active run — the telemetry scan would pick this up.
-    _seed_active_run(
-        isolated_project, "other-task", "20260101T000000Z-other0001"
-    )
+    _seed_active_run(isolated_project, "other-task", "20260101T000000Z-other0001")
 
     captured: list[object | None] = []
 
@@ -426,8 +409,7 @@ def test_log_tool_call_decorator_uses_ctx_when_available(
 
     assert captured, "_get_cached_run_dir should have been invoked"
     assert any(c is not None for c in captured), (
-        "Decorator must build a TRWCallContext from the wrapped handler's "
-        f"ctx kwarg (captured: {captured!r})"
+        f"Decorator must build a TRWCallContext from the wrapped handler's ctx kwarg (captured: {captured!r})"
     )
 
 
@@ -444,10 +426,7 @@ def test_trw_session_id_subprocess_inheritance(
     import subprocess
     import sys
 
-    script = (
-        "from trw_mcp.state._paths import resolve_pin_key\n"
-        "print(resolve_pin_key(ctx=None))\n"
-    )
+    script = "from trw_mcp.state._paths import resolve_pin_key\nprint(resolve_pin_key(ctx=None))\n"
     env = {**os.environ, "TRW_SESSION_ID": "parent-pin-001"}
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -457,12 +436,9 @@ def test_trw_session_id_subprocess_inheritance(
         timeout=30,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
+    assert result.returncode == 0, f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
     assert "parent-pin-001" in result.stdout, (
-        f"subprocess must resolve to inherited TRW_SESSION_ID; "
-        f"got stdout={result.stdout!r}"
+        f"subprocess must resolve to inherited TRW_SESSION_ID; got stdout={result.stdout!r}"
     )
 
 
@@ -481,9 +457,7 @@ def test_sweep_preserves_run_at_exact_grace_boundary(
 
     from trw_mcp.state._run_gc import sweep_stale_runs
 
-    run_dir = _seed_active_run(
-        isolated_project, "boundary-task", "20260101T000000Z-boundary01"
-    )
+    run_dir = _seed_active_run(isolated_project, "boundary-task", "20260101T000000Z-boundary01")
     events_path = run_dir / "meta" / "events.jsonl"
     events_path.write_text("", encoding="utf-8")
 
@@ -515,6 +489,5 @@ def test_sweep_preserves_run_at_exact_grace_boundary(
 
     abandoned = report_d.get("abandoned_run_ids") or []
     assert "20260101T000000Z-boundary01" not in abandoned, (
-        f"Run at exact grace boundary must be preserved (>= semantics). "
-        f"report={report_d!r}"
+        f"Run at exact grace boundary must be preserved (>= semantics). report={report_d!r}"
     )

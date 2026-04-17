@@ -30,13 +30,9 @@ def lint_research_markdown(content: str) -> list[str]:
         if _skip_line(normalized):
             continue
         if _looks_quantitative_claim(normalized) and not _has_provenance_tag(normalized):
-            failures.append(
-                f"{scope_name} line {line_number}: quantitative claim is missing a provenance tag."
-            )
+            failures.append(f"{scope_name} line {line_number}: quantitative claim is missing a provenance tag.")
         if _looks_hypothesis(normalized) and not _has_provenance_tag(normalized):
-            failures.append(
-                f"{scope_name} line {line_number}: speculative claim is missing a provenance tag."
-            )
+            failures.append(f"{scope_name} line {line_number}: speculative claim is missing a provenance tag.")
 
     if "install-trw.py" in body and not any(
         marker in body for marker in ("build_installer.py", "install-trw.template.py")

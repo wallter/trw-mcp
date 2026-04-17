@@ -16,7 +16,6 @@ from trw_mcp.state.claude_md._tool_manifest import (
     validate_instruction_manifest,
 )
 
-
 # ---------------------------------------------------------------------------
 # FR01: TOOL_DESCRIPTIONS mapping
 # ---------------------------------------------------------------------------
@@ -30,8 +29,7 @@ class TestToolDescriptions:
         all_tools = set(TOOL_PRESETS["all"])
         described = set(TOOL_DESCRIPTIONS)
         assert all_tools == described, (
-            f"Missing descriptions: {all_tools - described}, "
-            f"Extra descriptions: {described - all_tools}"
+            f"Missing descriptions: {all_tools - described}, Extra descriptions: {described - all_tools}"
         )
 
     def test_descriptions_are_nonempty_strings(self) -> None:
@@ -183,10 +181,7 @@ class TestValidateInstructionManifest:
 
     def test_unexposed_tools_detected(self) -> None:
         """Unexposed tool mentions are returned sorted."""
-        text = (
-            "Call trw_session_start() first, then trw_build_check() "
-            "and trw_deliver() to finish."
-        )
+        text = "Call trw_session_start() first, then trw_build_check() and trw_deliver() to finish."
         exposed = {"trw_session_start"}
         result = validate_instruction_manifest(text, exposed)
         assert result == ["trw_build_check", "trw_deliver"]
@@ -233,9 +228,7 @@ class TestCheckInstructionToolParity:
     def test_mismatch_returns_warning(self, tmp_path: Path) -> None:
         """Returns a warning string when unexposed tools are mentioned."""
         agents = tmp_path / "AGENTS.md"
-        agents.write_text(
-            "Call trw_session_start() then trw_build_check() and trw_deliver().\n"
-        )
+        agents.write_text("Call trw_session_start() then trw_build_check() and trw_deliver().\n")
         exposed = {"trw_session_start"}
         result = check_instruction_tool_parity(tmp_path, exposed)
         assert result is not None
@@ -319,7 +312,6 @@ class TestCheckInstructionsCLI:
     def test_clean_exit_code_zero(self, tmp_path: Path) -> None:
         """Exit 0 when all instruction files are clean."""
         import argparse
-
         from unittest.mock import patch
 
         # Create a clean AGENTS.md
@@ -328,10 +320,14 @@ class TestCheckInstructionsCLI:
 
         args = argparse.Namespace(target_dir=str(tmp_path))
 
-        mock_config = type("MockConfig", (), {
-            "effective_tool_exposure_mode": "all",
-            "tool_exposure_list": [],
-        })()
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "effective_tool_exposure_mode": "all",
+                "tool_exposure_list": [],
+            },
+        )()
 
         with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
             from trw_mcp.server._subcommands import _run_check_instructions
@@ -343,7 +339,6 @@ class TestCheckInstructionsCLI:
     def test_mismatch_exit_code_one(self, tmp_path: Path) -> None:
         """Exit 1 when instruction files reference unexposed tools."""
         import argparse
-
         from unittest.mock import patch
 
         # Create AGENTS.md with unexposed tool
@@ -352,10 +347,14 @@ class TestCheckInstructionsCLI:
 
         args = argparse.Namespace(target_dir=str(tmp_path))
 
-        mock_config = type("MockConfig", (), {
-            "effective_tool_exposure_mode": "core",
-            "tool_exposure_list": [],
-        })()
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "effective_tool_exposure_mode": "core",
+                "tool_exposure_list": [],
+            },
+        )()
 
         with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
             from trw_mcp.server._subcommands import _run_check_instructions
@@ -367,15 +366,18 @@ class TestCheckInstructionsCLI:
     def test_no_instruction_files_exit_zero(self, tmp_path: Path) -> None:
         """Exit 0 when no instruction files are present."""
         import argparse
-
         from unittest.mock import patch
 
         args = argparse.Namespace(target_dir=str(tmp_path))
 
-        mock_config = type("MockConfig", (), {
-            "effective_tool_exposure_mode": "all",
-            "tool_exposure_list": [],
-        })()
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "effective_tool_exposure_mode": "all",
+                "tool_exposure_list": [],
+            },
+        )()
 
         with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
             from trw_mcp.server._subcommands import _run_check_instructions
@@ -606,10 +608,14 @@ class TestCheckInstructionsCore:
     def test_returns_zero_no_files(self, tmp_path: Path) -> None:
         from unittest.mock import patch
 
-        mock_config = type("MockConfig", (), {
-            "effective_tool_exposure_mode": "all",
-            "tool_exposure_list": [],
-        })()
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "effective_tool_exposure_mode": "all",
+                "tool_exposure_list": [],
+            },
+        )()
 
         with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
             from trw_mcp.server._subcommands import _check_instructions_core
@@ -624,10 +630,14 @@ class TestCheckInstructionsCore:
         agents = tmp_path / "AGENTS.md"
         agents.write_text("Use trw_build_check() here.\n")
 
-        mock_config = type("MockConfig", (), {
-            "effective_tool_exposure_mode": "core",
-            "tool_exposure_list": [],
-        })()
+        mock_config = type(
+            "MockConfig",
+            (),
+            {
+                "effective_tool_exposure_mode": "core",
+                "tool_exposure_list": [],
+            },
+        )()
 
         with patch("trw_mcp.models.config.TRWConfig", return_value=mock_config):
             from trw_mcp.server._subcommands import _check_instructions_core

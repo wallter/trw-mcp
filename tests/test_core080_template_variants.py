@@ -485,9 +485,7 @@ def test_prd_create_fix_category() -> None:
     matches = re.findall(r"^## (\d+)\. (.+)$", body, re.MULTILINE)
     section_names = [name.strip() for _num, name in matches]
 
-    assert len(section_names) == 8, (
-        f"FIX PRD should have 8 sections, got {len(section_names)}: {section_names}"
-    )
+    assert len(section_names) == 8, f"FIX PRD should have 8 sections, got {len(section_names)}: {section_names}"
 
     expected_fix_sections = {
         "Problem Statement",
@@ -526,9 +524,7 @@ def test_prd_create_research_category() -> None:
     matches = re.findall(r"^## (\d+)\. (.+)$", body, re.MULTILINE)
     section_names = [name.strip() for _num, name in matches]
 
-    assert len(section_names) == 7, (
-        f"RESEARCH PRD should have 7 sections, got {len(section_names)}: {section_names}"
-    )
+    assert len(section_names) == 7, f"RESEARCH PRD should have 7 sections, got {len(section_names)}: {section_names}"
 
     expected_research_sections = {
         "Problem Statement",
@@ -565,12 +561,7 @@ def test_existing_prd_score_regression(prd_filename: str) -> None:
 
     from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
 
-    prds_dir = (
-        Path(__file__).resolve().parent.parent.parent
-        / "docs"
-        / "requirements-aare-f"
-        / "prds"
-    )
+    prds_dir = Path(__file__).resolve().parent.parent.parent / "docs" / "requirements-aare-f" / "prds"
     prd_path = prds_dir / prd_filename
     assert prd_path.exists(), f"PRD file not found: {prd_path}"
 
@@ -578,6 +569,5 @@ def test_existing_prd_score_regression(prd_filename: str) -> None:
     result = validate_prd_quality_v2(content)
 
     assert result.total_score >= 50, (
-        f"{prd_filename} scored {result.total_score:.2f} — must be >= 50 "
-        f"(implementation-readiness calibration floor)"
+        f"{prd_filename} scored {result.total_score:.2f} — must be >= 50 (implementation-readiness calibration floor)"
     )

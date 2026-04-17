@@ -32,10 +32,12 @@ logger = structlog.get_logger(__name__)
 
 PRE_IMPLEMENTATION_CHECKLIST_EVENT = "pre_implementation_checklist_complete"
 PRE_AUDIT_SELF_REVIEW_EVENT = "pre_audit_self_review"
-_PREFLIGHT_EVENT_TYPES: frozenset[str] = frozenset({
-    PRE_IMPLEMENTATION_CHECKLIST_EVENT,
-    PRE_AUDIT_SELF_REVIEW_EVENT,
-})
+_PREFLIGHT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        PRE_IMPLEMENTATION_CHECKLIST_EVENT,
+        PRE_AUDIT_SELF_REVIEW_EVENT,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Shared constants and low-level helpers (canonical definitions)

@@ -8,14 +8,11 @@ FR03: Specific exception handling for analytics loading
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # FR01 — Turn-scoped analytics cache
@@ -168,9 +165,9 @@ class TestGeminiAbsolutePath:
 
     def test_resolve_helper_uses_which_when_available(self) -> None:
         """_resolve_trw_mcp_command returns absolute path when on PATH."""
-        from trw_mcp.bootstrap._gemini import _resolve_trw_mcp_command
-
         import shutil
+
+        from trw_mcp.bootstrap._gemini import _resolve_trw_mcp_command
 
         with patch.object(shutil, "which", return_value="/usr/bin/trw-mcp"):
             cmd, args = _resolve_trw_mcp_command()

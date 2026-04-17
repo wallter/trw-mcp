@@ -74,9 +74,7 @@ def test_opted_in_research_docs_pass_lint() -> None:
     docs_root = Path(__file__).resolve().parents[2] / "docs" / "research"
     markdown_files = sorted(docs_root.rglob("*.md"))
 
-    opted_in_files = [
-        path for path in markdown_files if "provenance_lint: true" in path.read_text(encoding="utf-8")
-    ]
+    opted_in_files = [path for path in markdown_files if "provenance_lint: true" in path.read_text(encoding="utf-8")]
 
     assert opted_in_files
 

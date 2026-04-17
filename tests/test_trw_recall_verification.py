@@ -118,10 +118,13 @@ class TestVerifyAssertionsAttachesStatus:
         ]
 
         learnings = [
-            _make_learning("L-1", assertions=[
-                _make_assertion_dict(),
-                _make_assertion_dict(type_=AssertionType.GLOB_EXISTS, pattern="", target="src/main.py"),
-            ]),
+            _make_learning(
+                "L-1",
+                assertions=[
+                    _make_assertion_dict(),
+                    _make_assertion_dict(type_=AssertionType.GLOB_EXISTS, pattern="", target="src/main.py"),
+                ],
+            ),
         ]
 
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -282,9 +285,12 @@ class TestFirstFailedAtSetOnFailure:
 
         # first_failed_at starts as None
         learnings = [
-            _make_learning("L-fail", assertions=[
-                _make_assertion_dict(first_failed_at=None),
-            ]),
+            _make_learning(
+                "L-fail",
+                assertions=[
+                    _make_assertion_dict(first_failed_at=None),
+                ],
+            ),
         ]
 
         _verify_assertions(learnings, ["test"], config, mock_rank_fn)
@@ -331,9 +337,12 @@ class TestFirstFailedAtClearedOnPass:
         # first_failed_at was previously set
         past = datetime(2026, 1, 1, tzinfo=timezone.utc)
         learnings = [
-            _make_learning("L-recover", assertions=[
-                _make_assertion_dict(first_failed_at=past),
-            ]),
+            _make_learning(
+                "L-recover",
+                assertions=[
+                    _make_assertion_dict(first_failed_at=past),
+                ],
+            ),
         ]
 
         _verify_assertions(learnings, ["test"], config, mock_rank_fn)

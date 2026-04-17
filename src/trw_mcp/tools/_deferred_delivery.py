@@ -284,7 +284,8 @@ def _run_deferred_steps(
             _persist_session_metrics(metrics_result, resolved_run)
 
         steps_ok = sum(
-            1 for k, v in results.items()
+            1
+            for k, v in results.items()
             if k not in ("timestamp", "elapsed_seconds")
             and isinstance(v, dict)
             and v.get("status") not in ("skipped", "error", None)

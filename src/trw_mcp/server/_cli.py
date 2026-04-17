@@ -362,7 +362,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     local_cp = local_sub.add_parser("checkpoint", help="Save progress checkpoint")
     local_cp.add_argument(
-        "--message", "-m",
+        "--message",
+        "-m",
         default="",
         help="Checkpoint message describing progress",
     )
@@ -585,7 +586,8 @@ def _boot_sequence(
 
     try:
         import time as _time
-        from datetime import datetime as _datetime, timezone as _timezone
+        from datetime import datetime as _datetime
+        from datetime import timezone as _timezone
         from pathlib import Path as _Path
 
         from trw_mcp.state._paths import resolve_project_root

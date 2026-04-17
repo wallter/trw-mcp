@@ -80,7 +80,10 @@ def compute_hot_set(
                 for tool_name in tools_used:
                     if isinstance(tool_name, str):
                         counter[tool_name] += 1
-        except (json.JSONDecodeError, TypeError):  # per-item error handling: skip malformed JSONL lines, continue profiling  # noqa: PERF203
+        except (
+            json.JSONDecodeError,
+            TypeError,
+        ):  # per-item error handling: skip malformed JSONL lines, continue profiling
             continue
 
     if not counter:

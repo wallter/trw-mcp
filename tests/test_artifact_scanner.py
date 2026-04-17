@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.state.artifact_scanner import (
     KnowledgeRequirements,
     scan_artifact,
@@ -276,9 +274,7 @@ class TestKnowledgeRequirementsMerge:
         assert a.research_notes == ["note1", "note2"]
 
     def test_merge_phase_requirements(self) -> None:
-        a = KnowledgeRequirements(
-            phase_requirements={"implement": {"domains": ["persistence"]}}
-        )
+        a = KnowledgeRequirements(phase_requirements={"implement": {"domains": ["persistence"]}})
         b = KnowledgeRequirements(
             phase_requirements={
                 "implement": {"checks": ["run tests"]},

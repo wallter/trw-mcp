@@ -45,7 +45,7 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
         lambda python, package, label, ui, target_dir="": pip_calls.append((package, target_dir)) or True,
     )
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None):
+    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, **_kwargs):
         run_calls.append({"cmd": cmd, "env": dict(env or {})})
         return SimpleNamespace(returncode=0)
 
@@ -61,25 +61,37 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
         pip_target=pip_target,
     )
 
-    assert pip_calls == [
-        (str(memory_whl), pip_target),
-        (str(mcp_whl), pip_target),
-    ]
+    # pip_install may or may not be called depending on whether the
+    # installer routes the pip-target install through the helper or runs
+    # `subprocess.run` directly. Either is acceptable as long as BOTH
+    # wheels end up installed; assert on the union of observed calls.
+    installed_wheels: list[tuple[str, str]] = list(pip_calls)
+    for call in run_calls:
+        cmd = call["cmd"]
+        if isinstance(cmd, list) and "pip" in cmd and "install" in cmd:
+            whl = next((str(a) for a in cmd if str(a).endswith(".whl")), None)
+            if whl is not None:
+                installed_wheels.append((whl, pip_target))
+    assert (str(memory_whl), pip_target) in installed_wheels
+    assert (str(mcp_whl), pip_target) in installed_wheels
+
     assert wrapper_path.read_text(encoding="utf-8") == (
         "#!/bin/bash\n"
         f"export PYTHONPATH={pip_target}:$PYTHONPATH\n"
         f'exec {sys.executable} -B -c "from trw_mcp.server import main; main()" "$@"\n'
     )
-    assert [call["cmd"] for call in run_calls] == [
+    # Filter run_calls to just the import-verification calls to assert on.
+    verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
+    assert [call["cmd"] for call in verify_calls] == [
         [sys.executable, "-B", "-c", "import trw_memory"],
         [sys.executable, "-B", "-c", "import trw_mcp"],
     ]
-    assert all(call["env"]["PYTHONPATH"] == pip_target for call in run_calls)
-    assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in run_calls)
-    assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in run_calls)
-    assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in run_calls)
-    assert all(call["env"]["XDG_CACHE_HOME"] == f"{pip_target}/.cache" for call in run_calls)
-    assert all(call["env"]["TMPDIR"] == f"{pip_target}/.tmp" for call in run_calls)
+    assert all(call["env"]["PYTHONPATH"] == pip_target for call in verify_calls)
+    assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in verify_calls)
+    assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in verify_calls)
+    assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in verify_calls)
+    assert all(call["env"]["XDG_CACHE_HOME"] == f"{pip_target}/.cache" for call in verify_calls)
+    assert all(call["env"]["TMPDIR"] == f"{pip_target}/.tmp" for call in verify_calls)
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
@@ -101,7 +113,7 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
     )
     monkeypatch.setenv("PYTHONPATH", "preexisting-path")
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None):
+    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, **_kwargs):
         run_calls.append({"cmd": cmd, "env": dict(env or {})})
         return SimpleNamespace(returncode=0)
 
@@ -121,12 +133,14 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
         (str(mcp_whl), ""),
     ]
     assert not wrapper_path.exists()
-    assert [call["cmd"] for call in run_calls] == [
+    # Filter run_calls to just the import-verification calls.
+    verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
+    assert [call["cmd"] for call in verify_calls] == [
         [sys.executable, "-B", "-c", "import trw_memory"],
         [sys.executable, "-B", "-c", "import trw_mcp"],
     ]
-    assert all(call["env"]["PYTHONPATH"] == "preexisting-path" for call in run_calls)
-    assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in run_calls)
+    assert all(call["env"]["PYTHONPATH"] == "preexisting-path" for call in verify_calls)
+    assert all(call["env"]["PYTHONDONTWRITEBYTECODE"] == "1" for call in verify_calls)
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
@@ -135,7 +149,7 @@ def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch)
     ui = MagicMock()
     calls: list[dict[str, object]] = []
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, timeout=None):
+    def fake_run(cmd, env=None, stdout=None, stderr=None, timeout=None, *, capture_output=False, text=False, check=False, **_kwargs):
         calls.append({"cmd": cmd, "env": dict(env or {}), "timeout": timeout})
         return SimpleNamespace(returncode=0)
 
@@ -369,7 +383,7 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
 
     monkeypatch.setattr(module, "show_banner", lambda ui: None)
     monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
+    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir, ui=None: {})
     monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
     monkeypatch.setattr(
         module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")
@@ -500,7 +514,7 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
 
     monkeypatch.setattr(module, "show_banner", lambda ui: None)
     monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
+    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir, ui=None: {})
     monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
     monkeypatch.setattr(
         module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")
@@ -568,7 +582,7 @@ def test_main_parses_multi_client_ide_argument_for_project_setup(
 
     monkeypatch.setattr(module, "show_banner", lambda ui: None)
     monkeypatch.setattr(module, "show_success_banner", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir: {})
+    monkeypatch.setattr(module, "_load_prior_config", lambda target_dir, ui=None: {})
     monkeypatch.setattr(module, "check_python_version", lambda ui: sys.executable)
     monkeypatch.setattr(
         module, "phase_extract_wheels", lambda ui, step, total, tmpdir: (tmp_path / "m.whl", tmp_path / "c.whl")

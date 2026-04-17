@@ -259,9 +259,7 @@ def _write_compact_instructions(
         last_checkpoint="pre-compaction safety checkpoint",
         file_ownership_path=file_ownership_path or "not set",
         failing_tests=", ".join(failing_tests) if failing_tests else "none",
-        ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony)
-        if pending_ceremony
-        else "- all complete",
+        ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
     )
     instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
     instructions_path.write_text(instructions)

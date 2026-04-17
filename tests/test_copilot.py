@@ -36,7 +36,6 @@ from trw_mcp.bootstrap._copilot import (
 from trw_mcp.bootstrap._utils import detect_ide, resolve_ide_targets
 from trw_mcp.models.config._profiles import _PROFILES, resolve_client_profile
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -506,9 +505,7 @@ class TestCopilotHooks:
                 for hook in group.get("hooks", []):
                     command = hook.get("command", "")
                     # All TRW hook commands use stdin reading via cat
-                    assert "_input=$(cat)" in command, (
-                        f"Hook {event_name} missing stdin adapter"
-                    )
+                    assert "_input=$(cat)" in command, f"Hook {event_name} missing stdin adapter"
 
     def test_hooks_pre_tool_use_has_permission_decision(self, fake_git_repo: Path) -> None:
         """preToolUse hook must output JSON with permissionDecision."""
@@ -727,9 +724,7 @@ class TestCopilotSkills:
         skills_dir = fake_git_repo / _COPILOT_SKILLS_DIR
         for skill_dir in skills_dir.iterdir():
             if skill_dir.is_dir():
-                assert (skill_dir / "SKILL.md").is_file(), (
-                    f"Skill {skill_dir.name} missing SKILL.md"
-                )
+                assert (skill_dir / "SKILL.md").is_file(), f"Skill {skill_dir.name} missing SKILL.md"
 
     def test_skills_created_list(self, fake_git_repo: Path) -> None:
         result = install_copilot_skills(fake_git_repo)

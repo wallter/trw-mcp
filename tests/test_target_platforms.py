@@ -39,6 +39,7 @@ def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     the CURSOR_* env vars so tests see only the IDEs the fixture seeds.
     """
     import shutil as _shutil
+
     from trw_mcp.bootstrap import _utils
 
     original_which = _shutil.which
@@ -111,7 +112,9 @@ class TestInitTargetPlatforms:
         result = init_project(fake_git_repo, ide="all")
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
-        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"])
+        assert sorted(platforms) == sorted(
+            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"]
+        )
 
     def test_init_detects_opencode_dir(self, fake_git_repo: Path) -> None:
         """When .opencode/ exists, auto-detection includes 'opencode'."""
@@ -247,7 +250,9 @@ class TestUpdateTargetPlatforms:
         assert not result["errors"]
 
         platforms = _read_target_platforms(initialized_repo)
-        assert sorted(platforms) == sorted(["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"])
+        assert sorted(platforms) == sorted(
+            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"]
+        )
 
 
 # ---------------------------------------------------------------------------

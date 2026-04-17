@@ -15,16 +15,21 @@ import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
 
-
 # ---------------------------------------------------------------------------
 # Helper: create a server with commonly needed tool groups
 # ---------------------------------------------------------------------------
 
+
 def _full_server() -> Any:
     """Create a server with all groups needed for full lifecycle tests."""
     return make_test_server(
-        "ceremony", "orchestration", "learning", "checkpoint",
-        "build", "review", "ceremony_feedback",
+        "ceremony",
+        "orchestration",
+        "learning",
+        "checkpoint",
+        "build",
+        "review",
+        "ceremony_feedback",
     )
 
 
@@ -46,6 +51,7 @@ class TestPhaseModel:
         # Verify run.yaml also has phase = research
         run_path = Path(result["run_path"])
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         run_data = reader.read_yaml(run_path / "meta" / "run.yaml")
         assert run_data["phase"] == "research"
@@ -62,6 +68,7 @@ class TestPhaseModel:
         # Manually advance phase to IMPLEMENT so build_check can advance to VALIDATE
         from trw_mcp.models.run import Phase
         from trw_mcp.state.phase import update_run_phase
+
         update_run_phase(run_path, Phase.PLAN)
         update_run_phase(run_path, Phase.IMPLEMENT)
 
@@ -69,6 +76,7 @@ class TestPhaseModel:
         build_fn(tests_passed=True, test_count=50, coverage_pct=90.0)
 
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         run_data = reader.read_yaml(run_path / "meta" / "run.yaml")
         assert run_data["phase"] == "validate", f"Expected VALIDATE, got: {run_data['phase']}"
@@ -134,7 +142,9 @@ class TestCeremonyStateTracking:
     """E2E 2.5, 2.7: Ceremony state flags and metrics."""
 
     def test_ceremony_state_flags_progression(
-        self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """2.7: Ceremony state flags set correctly across a session lifecycle.
 
@@ -221,8 +231,10 @@ class TestQualityGates:
 
         init_fn(task_name="build-pass-gate")
         result = build_fn(
-            tests_passed=True, test_count=100,
-            coverage_pct=85.0, min_coverage=80.0,
+            tests_passed=True,
+            test_count=100,
+            coverage_pct=85.0,
+            min_coverage=80.0,
         )
         assert result["tests_passed"] is True
         assert result.get("coverage_threshold_failed") is not True
@@ -235,8 +247,10 @@ class TestQualityGates:
 
         init_fn(task_name="build-fail-gate")
         result = build_fn(
-            tests_passed=True, test_count=100,
-            coverage_pct=60.0, min_coverage=80.0,
+            tests_passed=True,
+            test_count=100,
+            coverage_pct=60.0,
+            min_coverage=80.0,
         )
         # Coverage threshold enforcement overrides tests_passed
         assert result["tests_passed"] is False
@@ -304,6 +318,7 @@ class TestRunLifecycle:
         assert checkpoints_path.exists()
 
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         entries = reader.read_jsonl(checkpoints_path)
         assert len(entries) >= 1
@@ -326,6 +341,7 @@ class TestRunLifecycle:
 
         # Verify events.jsonl contains deliver event
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         events = reader.read_jsonl(run_path / "meta" / "events.jsonl")
         event_types = [e.get("event_type", e.get("event", "")) for e in events]
@@ -409,9 +425,7 @@ class TestErrorScenarios:
         context_dir.mkdir(parents=True, exist_ok=True)
 
         # Write corrupt JSON
-        (context_dir / "ceremony-state.json").write_text(
-            "{invalid json!!!}", encoding="utf-8"
-        )
+        (context_dir / "ceremony-state.json").write_text("{invalid json!!!}", encoding="utf-8")
 
         # read_ceremony_state should return defaults, not raise
         state = read_ceremony_state(trw_dir)
@@ -488,6 +502,7 @@ class TestEventLogging:
         update_run_phase(run_path, Phase.PLAN)
 
         from trw_mcp.state.persistence import FileStateReader
+
         reader = FileStateReader()
         events = reader.read_jsonl(run_path / "meta" / "events.jsonl")
         event_types = [e.get("event_type", e.get("event", "")) for e in events]
@@ -515,8 +530,11 @@ class TestBuildCheckDetailed:
 
         # Build fails with specific failure details
         result = build_fn(
-            tests_passed=False, test_count=50, failure_count=3,
-            coverage_pct=40.0, failures=["test_a failed", "test_b failed"],
+            tests_passed=False,
+            test_count=50,
+            failure_count=3,
+            coverage_pct=40.0,
+            failures=["test_a failed", "test_b failed"],
         )
 
         # Verify the build result reflects failure

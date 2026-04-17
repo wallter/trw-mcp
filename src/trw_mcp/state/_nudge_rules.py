@@ -187,9 +187,7 @@ def select_nudge_learning(
     # --- Deterministic ranking path (original / fallback behavior) ---
 
     # Filter to eligible candidates
-    eligible = [
-        c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), current_phase)
-    ]
+    eligible = [c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), current_phase)]
 
     if eligible:
         return eligible[0], False

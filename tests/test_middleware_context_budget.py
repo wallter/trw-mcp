@@ -175,13 +175,15 @@ class TestJsonCompression:
 
     def test_compact_strips_metadata(self) -> None:
         """Keys like 'metadata', 'ceremony' removed at compact tier."""
-        data = json.dumps({
-            "status": "ok",
-            "metadata": {"x": 1},
-            "ceremony": {"active": True},
-            "debug": "verbose",
-            "result": "pass",
-        })
+        data = json.dumps(
+            {
+                "status": "ok",
+                "metadata": {"x": 1},
+                "ceremony": {"active": True},
+                "debug": "verbose",
+                "result": "pass",
+            }
+        )
         result = json.loads(compress_text_block(data, "compact"))
         assert "status" in result
         assert "result" in result
@@ -198,13 +200,15 @@ class TestJsonCompression:
 
     def test_minimal_strips_deep_nesting(self) -> None:
         """Objects >2 levels deep replaced at minimal tier."""
-        data = json.dumps({
-            "level1": {
-                "level2": {
-                    "level3": {"deep": True},
+        data = json.dumps(
+            {
+                "level1": {
+                    "level2": {
+                        "level3": {"deep": True},
+                    },
                 },
-            },
-        })
+            }
+        )
         result = json.loads(compress_text_block(data, "minimal"))
         assert result["level1"]["level2"] == "[nested]"
 
@@ -291,9 +295,7 @@ class TestRedundancyDetection:
         async def call_next(_ctx: Any) -> Any:
             nonlocal call_count
             call_count += 1
-            return FakeToolResult(
-                content=[TextContent(type="text", text=f"output-{call_count}")]
-            )
+            return FakeToolResult(content=[TextContent(type="text", text=f"output-{call_count}")])
 
         ctx1 = self._make_ctx("trw_status")
         await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
@@ -446,15 +448,15 @@ class TestIntegration:
         assert get_turn_count("anything") == 0
 
     @pytest.mark.asyncio
-    async def test_compression_applied_when_text_changes(
-        self, middleware: ContextBudgetMiddleware
-    ) -> None:
+    async def test_compression_applied_when_text_changes(self, middleware: ContextBudgetMiddleware) -> None:
         """When compression actually changes the text, the block is replaced."""
         # A JSON payload with a metadata key — compact tier will strip it
-        payload = json.dumps({
-            "summary": "done",
-            "metadata": {"internal": True},
-        })
+        payload = json.dumps(
+            {
+                "summary": "done",
+                "metadata": {"internal": True},
+            }
+        )
         result = FakeToolResult(content=[TextContent(type="text", text=payload)])
 
         async def call_next(_ctx: Any) -> Any:

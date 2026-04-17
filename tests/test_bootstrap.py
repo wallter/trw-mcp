@@ -1086,7 +1086,7 @@ class TestManagedArtifactsManifest:
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
 
-        # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed, 
+        # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed,
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
         assert len(skills) == 24
@@ -1295,12 +1295,7 @@ class TestRunClaudeMdSync:
         non_structlog_lines = [
             line
             for line in captured.out.splitlines()
-            if not (
-                "[warning " in line
-                or "[info " in line
-                or "[debug " in line
-                or "[error " in line
-            )
+            if not ("[warning " in line or "[info " in line or "[debug " in line or "[error " in line)
         ]
         plain_output = "\n".join(non_structlog_lines)
         assert "authentication" not in plain_output.lower()
@@ -1411,10 +1406,7 @@ class TestClaudeMdSyncTimeoutFix:
         elapsed = time_mod.monotonic() - start
 
         # Must complete well under 10s — the old code would block for 300s
-        assert elapsed < 10, (
-            f"_run_claude_md_sync blocked for {elapsed:.1f}s; "
-            f"expected <10s (timeout was 2s)"
-        )
+        assert elapsed < 10, f"_run_claude_md_sync blocked for {elapsed:.1f}s; expected <10s (timeout was 2s)"
         assert any("timed out" in w for w in result["warnings"])
 
     def test_sync_success_adds_updated_entry(
@@ -1830,6 +1822,7 @@ class TestIDEDetection:
         / CURSOR_TRACE_ID env-var leakage.
         """
         import shutil as _shutil
+
         from trw_mcp.bootstrap import _utils
 
         original_which = _shutil.which
@@ -2176,8 +2169,7 @@ class TestCodexBootstrap:
         assert hooks["hooks"]["Notification"][0]["description"] == "notify"
         assert hooks["hooks"]["UserPromptSubmit"][0]["description"] == "user custom"
         assert any(
-            entry.get("description", "").startswith("TRW managed:")
-            for entry in hooks["hooks"]["UserPromptSubmit"]
+            entry.get("description", "").startswith("TRW managed:") for entry in hooks["hooks"]["UserPromptSubmit"]
         )
 
     def test_codex_agents_created(self, tmp_path: Path) -> None:

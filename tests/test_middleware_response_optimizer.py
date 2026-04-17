@@ -353,9 +353,7 @@ class TestOnCallTool:
         return ResponseOptimizerMiddleware()
 
     @pytest.mark.unit
-    async def test_json_text_content_compacted(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_json_text_content_compacted(self, middleware: ResponseOptimizerMiddleware) -> None:
         """JSON TextContent blocks have floats rounded and nulls stripped."""
         payload = json.dumps({"score": 0.87654, "meta": None, "tags": ["a"]})
         result = FakeToolResult(content=[TextContent(type="text", text=payload)])
@@ -371,9 +369,7 @@ class TestOnCallTool:
         assert parsed["tags"] == ["a"]
 
     @pytest.mark.unit
-    async def test_plain_text_passthrough(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_plain_text_passthrough(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Non-JSON TextContent (no leading { or [) passes through unchanged."""
         plain = "This is a plain text response."
         result = FakeToolResult(content=[TextContent(type="text", text=plain)])
@@ -385,9 +381,7 @@ class TestOnCallTool:
         assert out.content[0].text == plain
 
     @pytest.mark.unit
-    async def test_empty_text_passthrough(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_empty_text_passthrough(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Empty string TextContent passes through unchanged."""
         result = FakeToolResult(content=[TextContent(type="text", text="")])
 
@@ -398,9 +392,7 @@ class TestOnCallTool:
         assert out.content[0].text == ""
 
     @pytest.mark.unit
-    async def test_invalid_json_passthrough_fail_open(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_invalid_json_passthrough_fail_open(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Invalid JSON starting with '{' passes through unchanged (fail-open)."""
         bad = "{not: valid json at all!!}"
         result = FakeToolResult(content=[TextContent(type="text", text=bad)])
@@ -412,9 +404,7 @@ class TestOnCallTool:
         assert out.content[0].text == bad
 
     @pytest.mark.unit
-    async def test_non_text_content_block_passthrough(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_non_text_content_block_passthrough(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Non-TextContent blocks (e.g. image) are skipped entirely."""
         from unittest.mock import MagicMock
 
@@ -429,9 +419,7 @@ class TestOnCallTool:
         assert out.content[0] is fake_image
 
     @pytest.mark.unit
-    async def test_multiple_blocks_each_optimized(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_multiple_blocks_each_optimized(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Multiple TextContent blocks are each independently optimized."""
         block1 = json.dumps({"a": 1.999, "drop": None})
         block2 = json.dumps({"b": 2.001, "keep": "hello"})
@@ -452,9 +440,7 @@ class TestOnCallTool:
         assert p2 == {"b": 2.0, "keep": "hello"}
 
     @pytest.mark.unit
-    async def test_json_array_block_compacted(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_json_array_block_compacted(self, middleware: ResponseOptimizerMiddleware) -> None:
         """JSON arrays in TextContent are also compacted."""
         payload = json.dumps([{"x": 1.999, "y": None}, {"x": 2.0}])
         result = FakeToolResult(content=[TextContent(type="text", text=payload)])
@@ -467,9 +453,7 @@ class TestOnCallTool:
         assert parsed == [{"x": 2.0}, {"x": 2.0}]
 
     @pytest.mark.unit
-    async def test_output_is_compact_json_no_whitespace(
-        self, middleware: ResponseOptimizerMiddleware
-    ) -> None:
+    async def test_output_is_compact_json_no_whitespace(self, middleware: ResponseOptimizerMiddleware) -> None:
         """Re-serialized JSON uses compact separators (no whitespace)."""
         payload = json.dumps({"a": 1, "b": 2}, indent=2)  # Pretty-printed input
         result = FakeToolResult(content=[TextContent(type="text", text=payload)])
@@ -523,9 +507,7 @@ class TestYamlFormatPath:
         assert "value" in result
 
     @pytest.mark.unit
-    def test_yaml_dump_fallback_to_json_on_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_yaml_dump_fallback_to_json_on_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_yaml_dump falls back to compact JSON when YAML serialization fails."""
         from trw_mcp.middleware import response_optimizer as ro
 

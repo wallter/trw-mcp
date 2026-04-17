@@ -118,11 +118,28 @@ class RecallContext:
 # ---------------------------------------------------------------------------
 
 # Structural path stems excluded from domain inference
-_STRUCTURAL_STEMS: frozenset[str] = frozenset({
-    "src", "lib", "test", "tests", "spec", "specs", "dist", "build",
-    "node_modules", "vendor", "venv", ".venv", "__pycache__",
-    "migrations", "fixtures", "mocks", "stubs", "helpers",
-})
+_STRUCTURAL_STEMS: frozenset[str] = frozenset(
+    {
+        "src",
+        "lib",
+        "test",
+        "tests",
+        "spec",
+        "specs",
+        "dist",
+        "build",
+        "node_modules",
+        "vendor",
+        "venv",
+        ".venv",
+        "__pycache__",
+        "migrations",
+        "fixtures",
+        "mocks",
+        "stubs",
+        "helpers",
+    }
+)
 
 
 def _extract_path_stems(paths: list[str]) -> list[str]:
@@ -138,12 +155,7 @@ def _extract_path_stems(paths: list[str]) -> list[str]:
         parts = PurePosixPath(p).parts
         for part in parts:
             stem = part.split(".")[0].lower()  # Strip extension
-            if (
-                stem
-                and len(stem) > 1
-                and stem not in _STRUCTURAL_STEMS
-                and stem not in seen
-            ):
+            if stem and len(stem) > 1 and stem not in _STRUCTURAL_STEMS and stem not in seen:
                 seen.add(stem)
                 stems.append(stem)
 
@@ -231,11 +243,7 @@ def infer_domains(
     if query:
         for token in query.lower().split():
             token = token.strip(".,;:!?()[]{}\"'")
-            if (
-                token
-                and len(token) > 1
-                and token not in _STRUCTURAL_STEMS
-            ):
+            if token and len(token) > 1 and token not in _STRUCTURAL_STEMS:
                 domains.add(token)
 
     return domains
@@ -354,7 +362,11 @@ def rank_by_utility(
         if context is not None:
             # 1. Domain match boost (1.4x)
             entry_domains = entry.get("domain", [])
-            if isinstance(entry_domains, list) and context.inferred_domains and any(d in context.inferred_domains for d in entry_domains):
+            if (
+                isinstance(entry_domains, list)
+                and context.inferred_domains
+                and any(d in context.inferred_domains for d in entry_domains)
+            ):
                 domain_boost = 1.4
 
             # 2. Phase match boost (1.3x)
@@ -391,7 +403,10 @@ def rank_by_utility(
                 if entry_id in bandit_params:
                     intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
 
-            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)):
+            if any(
+                f != 1.0
+                for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)
+            ):
                 boosted_entries += 1
                 if intel_boost != 1.0:
                     intel_boosted_entries += 1

@@ -177,9 +177,7 @@ class TestRecordNudgeShownEmitsSessionEvent:
     def test_surface_type_propagates(self, tmp_path: Path) -> None:
         """Non-default surface_type is recorded in the emitted event."""
         trw_dir = _setup_trw_dir(tmp_path)
-        record_nudge_shown(
-            trw_dir, "L-wire-002", "VALIDATE", turn=7, surface_type="phase_transition"
-        )
+        record_nudge_shown(trw_dir, "L-wire-002", "VALIDATE", turn=7, surface_type="phase_transition")
 
         events = _read_events_jsonl(trw_dir / "context" / "session-events.jsonl")
         assert events[0]["data"]["surface_type"] == "phase_transition"

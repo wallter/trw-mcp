@@ -191,9 +191,7 @@ def test_agent_lead_prose_has_no_bare_trw_calls() -> None:
     # Strip frontmatter block (first --- ... ---)
     stripped = re.sub(r"^---\n.*?\n---\n", "", stripped, count=1, flags=re.DOTALL)
     # After stripping, there should be no bare `trw_session_start(` prose.
-    assert "trw_session_start(" not in stripped, (
-        "bare trw_session_start( remains in prose of trw-lead.md"
-    )
+    assert "trw_session_start(" not in stripped, "bare trw_session_start( remains in prose of trw-lead.md"
 
 
 # --- FR05: per-profile regression tests --------------------------------------

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import math
 import json
+import math
 import time
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 
 def _build_large_state() -> dict[str, object]:
@@ -306,8 +304,9 @@ def test_cache_corrupt_file_logs_file_size_and_error_type(tmp_path: Path) -> Non
 
 def test_cache_file_permissions(tmp_path: Path) -> None:
     """Cache file is written with restricted permissions (0o600)."""
-    from trw_mcp.sync.cache import IntelligenceCache
     import stat
+
+    from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
     cache.update({"bandit_params": {}}, etag="v1")

@@ -23,10 +23,10 @@ from trw_mcp.scoring._correlation import (
     process_outcome,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_events_jsonl(events_path: Path, events: list[dict[str, object]]) -> None:
     """Write a list of event dicts to an events.jsonl file."""
@@ -95,9 +95,7 @@ class TestFR01SessionScopeDetection:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         runs_root = tmp_path / ".trw" / "runs"
-        events_path = (
-            runs_root / "my-task" / "runs" / "run-nested-001" / "meta" / "events.jsonl"
-        )
+        events_path = runs_root / "my-task" / "runs" / "run-nested-001" / "meta" / "events.jsonl"
         ts = "2026-04-06T12:00:00+00:00"
         _write_events_jsonl(events_path, [{"event": "session_start", "ts": ts}])
 
@@ -279,12 +277,8 @@ class TestFR03BatchSQLiteSync:
             _batch_sync_to_sqlite(updates, trw_dir)
 
         assert mock_backend.update.call_count == 3
-        mock_backend.update.assert_any_call(
-            "id-1", q_value=0.6, q_observations=1, outcome_history=["h1"]
-        )
-        mock_backend.update.assert_any_call(
-            "id-2", q_value=0.7, q_observations=2, outcome_history=["h2"]
-        )
+        mock_backend.update.assert_any_call("id-1", q_value=0.6, q_observations=1, outcome_history=["h1"])
+        mock_backend.update.assert_any_call("id-2", q_value=0.7, q_observations=2, outcome_history=["h2"])
 
     def test_batch_sync_single_get_backend_call(self, tmp_path: Path) -> None:
         """get_backend is called only once for the entire batch (not N times)."""
@@ -381,9 +375,7 @@ class TestFR04ThreePhaseOrdering:
         original_write_yaml = MagicMock(side_effect=lambda *a, **kw: call_order.append("yaml_write"))
         original_batch_sync = MagicMock(side_effect=lambda *a, **kw: call_order.append("sqlite_batch"))
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return tmp_path / f"{lid}.yaml", _make_sqlite_data(lid)
 
         with (
@@ -412,9 +404,7 @@ class TestFR04ThreePhaseOrdering:
             [{"timestamp": now_ts, "learning_id": "lr-1"}],
         )
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return None, _make_sqlite_data(lid)
 
         with (
@@ -447,9 +437,7 @@ class TestFR04ThreePhaseOrdering:
             if "lr-bad" in str(path):
                 raise OSError("disk full")
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return tmp_path / f"{lid}.yaml", _make_sqlite_data(lid)
 
         with (
@@ -483,9 +471,7 @@ class TestFR07QValueCorrectness:
         data = _make_sqlite_data("q-test-001")
         original_q = float(str(data["q_value"]))  # 0.5
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return None, data
 
         with patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite"):
@@ -507,9 +493,7 @@ class TestFR07QValueCorrectness:
 
         data = _make_sqlite_data("q-obs-001")
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return None, data
 
         with patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite"):
@@ -529,9 +513,7 @@ class TestFR07QValueCorrectness:
 
         data = _make_sqlite_data("hist-001")
 
-        def fake_lookup(
-            lid: str, trw_dir: Path, entries_dir: Path
-        ) -> tuple[Path | None, dict[str, object] | None]:
+        def fake_lookup(lid: str, trw_dir: Path, entries_dir: Path) -> tuple[Path | None, dict[str, object] | None]:
             return None, data
 
         with patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite"):

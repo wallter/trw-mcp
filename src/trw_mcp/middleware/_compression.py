@@ -50,11 +50,7 @@ def truncate(s: str, limit: int) -> str:
 
 def _is_learning_item(value: object) -> bool:
     """Detect compact learning-like dicts returned by recall/session_start."""
-    return (
-        isinstance(value, dict)
-        and "id" in value
-        and "summary" in value
-    )
+    return isinstance(value, dict) and "id" in value and "summary" in value
 
 
 def _should_strip_key(
@@ -159,10 +155,7 @@ def strip_deep(data: object, max_depth: int, current: int = 0) -> object:
             return "[nested]"
         return data
     if isinstance(data, dict):
-        return {
-            k: strip_deep(v, max_depth, current + 1)
-            for k, v in data.items()
-        }
+        return {k: strip_deep(v, max_depth, current + 1) for k, v in data.items()}
     if isinstance(data, list):
         return [strip_deep(item, max_depth, current + 1) for item in data]
     return data

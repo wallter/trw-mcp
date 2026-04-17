@@ -59,11 +59,7 @@ def _load_analytics_counts() -> tuple[int, int]:
     analytics_path = resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
     analytics_key = str(analytics_path)
     cached = _analytics_cache.get()
-    if (
-        cached is not None
-        and cached.path == analytics_key
-        and (time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS
-    ):
+    if cached is not None and cached.path == analytics_key and (time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS:
         return cached.sessions, cached.learnings
 
     if not analytics_path.exists():
@@ -378,9 +374,7 @@ def render_closing_reminder() -> str:
     """
     return (
         "### Session Boundaries\n"
-        "\n"
-        + _SESSION_BOUNDARY_TEXT
-        + "\n"
+        "\n" + _SESSION_BOUNDARY_TEXT + "\n"
         "### Troubleshooting\n"
         "\n"
         "If MCP tools fail with 'fetch failed', use the local CLI fallback:\n"
@@ -436,9 +430,7 @@ def render_agents_trw_section(
         "## TRW Tools\n"
         "\n"
         "These MCP tools are available when the TRW server is configured:\n"
-        "\n"
-        + tool_list
-        + "\n"
+        "\n" + tool_list + "\n"
         "## Workflow\n"
         "\n"
         f"1. **Start**: call `trw_session_start()` — it loads {total_learnings} learnings from {sessions_tracked} prior {session_label} and recovers any active run; use it to load context from {sessions_tracked} prior {session_label}\n"
@@ -474,9 +466,7 @@ def render_codex_trw_section(
         "- If the task depends on current Codex behavior, check the OpenAI developer docs MCP server before relying on memory\n"
         "\n"
         "## Core TRW Tools\n"
-        "\n"
-        + tool_list
-        + "\n"
+        "\n" + tool_list + "\n"
         "## Codex Workflow\n"
         "\n"
         "1. Start with `trw_session_start()`\n"

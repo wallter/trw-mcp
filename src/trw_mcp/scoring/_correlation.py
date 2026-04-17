@@ -87,6 +87,7 @@ def compute_initial_q_value(impact: float) -> float:
 
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
+
 def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
     """Return learning IDs only for actual recall receipts.
 
@@ -204,9 +205,7 @@ def correlate_recalls(
                 continue
         else:
             try:
-                receipt_ts = _ensure_utc(
-                    datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                )
+                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
             except ValueError:
                 continue
 
@@ -358,9 +357,7 @@ def process_outcome(
         if data is None:
             continue
         q_new, data = _update_entry_q_values(data, reward, discount, cfg)
-        data = _update_entry_history(
-            data, reward, event_label, cfg.learning_outcome_history_cap
-        )
+        data = _update_entry_history(data, reward, event_label, cfg.learning_outcome_history_cap)
         q_obs = safe_int(data, "q_observations", 0)
         history = data.get("outcome_history", [])
         if not isinstance(history, list):
@@ -412,6 +409,7 @@ def process_outcome_for_event(
     except (StateError, OSError) as exc:
         _su.logger.debug("outcome_correlation_skipped", reason=str(exc))
         return []
+
 
 __all__ = [
     "EVENT_ALIASES",

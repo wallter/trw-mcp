@@ -119,7 +119,9 @@ class TestEmbedFailureCounter:
         count = memory_adapter.get_embed_failure_count()
         assert count == 5, f"Expected 5 failures, got {count}"
 
-    @pytest.mark.skip(reason="Pre-existing: mock_embedder patched at wrong layer — get_embedder not consulted by SQLite backend")
+    @pytest.mark.skip(
+        reason="Pre-existing: mock_embedder patched at wrong layer — get_embedder not consulted by SQLite backend"
+    )
     def test_counter_does_not_increment_when_embedder_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

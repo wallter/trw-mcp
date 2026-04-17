@@ -69,9 +69,7 @@ class TestCoerceProtectionTierRejects:
     def test_invalid_tier_raises(self) -> None:
         """Invalid protection_tier string raises ValidationError."""
         with pytest.raises(ValidationError, match="protection_tier must be one of"):
-            LearningEntry(
-                id="L-x", summary="s", detail="d", protection_tier="top-secret"
-            )
+            LearningEntry(id="L-x", summary="s", detail="d", protection_tier="top-secret")
 
     def test_empty_tier_defaults_to_normal(self) -> None:
         """Empty string defaults to 'normal' for backward compat."""
@@ -81,9 +79,7 @@ class TestCoerceProtectionTierRejects:
     def test_valid_tiers_accepted(self) -> None:
         """All valid protection_tier strings are accepted."""
         for p in ("critical", "high", "normal", "low", "protected", "permanent"):
-            entry = LearningEntry(
-                id="L-x", summary="s", detail="d", protection_tier=p
-            )
+            entry = LearningEntry(id="L-x", summary="s", detail="d", protection_tier=p)
             assert entry.protection_tier == p
 
     def test_non_string_raises(self) -> None:

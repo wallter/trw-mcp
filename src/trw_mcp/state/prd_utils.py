@@ -164,9 +164,7 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
 
     if not isinstance(data, dict):
-        raise StateError(
-            f"Frontmatter is not a mapping in: {path}", path=str(path)
-        )
+        raise StateError(f"Frontmatter is not a mapping in: {path}", path=str(path))
 
     try:
         # Determine target dict: nested 'prd' key or top-level
@@ -213,7 +211,6 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
 
     except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
         raise StateError(f"Failed to update frontmatter: {exc}", path=str(path)) from exc
-
 
 
 # VALID_TRANSITIONS moved to models/requirements.py (next to PRDStatus enum)

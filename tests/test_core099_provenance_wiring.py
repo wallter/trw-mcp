@@ -29,9 +29,7 @@ def _setup_trw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 class TestAutoDetectionWiring:
     """Verify auto-detection flows through to stored entries."""
 
-    def test_auto_detects_claude_code_client(
-        self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_auto_detects_claude_code_client(self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """trw_learn with no client_profile arg stores auto-detected 'claude-code'."""
         from trw_mcp.tools._learn_impl import execute_learn
 
@@ -48,9 +46,7 @@ class TestAutoDetectionWiring:
             return {"learning_id": learning_id, "status": "recorded"}
 
         monkeypatch.setattr("trw_mcp.tools.learning.adapter_store", mock_store)
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.generate_learning_id", lambda: "L-wire-001"
-        )
+        monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-wire-001")
         monkeypatch.setattr(
             "trw_mcp.tools.learning.save_learning_entry",
             lambda trw_dir, entry: _setup_trw / "learnings" / "entries" / "test.yaml",
@@ -89,9 +85,7 @@ class TestAutoDetectionWiring:
         assert stored_entries[0]["client_profile"] == "claude-code"
         assert stored_entries[0]["model_id"] == "claude-opus-4-6"
 
-    def test_explicit_override_beats_detection(
-        self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_override_beats_detection(self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Explicit client_profile/model_id args override auto-detection."""
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._learn_impl import execute_learn
@@ -134,9 +128,7 @@ class TestAutoDetectionWiring:
         assert stored_entries[0]["client_profile"] == "custom-ide"
         assert stored_entries[0]["model_id"] == "custom-model-v1"
 
-    def test_empty_string_suppresses_detection(
-        self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_string_suppresses_detection(self, _setup_trw: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Explicit empty string is NOT overridden by auto-detection."""
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._learn_impl import execute_learn

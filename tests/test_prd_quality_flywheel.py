@@ -293,10 +293,9 @@ def test_assertion_coverage_scoring_recognizes_markdown_json_bullets() -> None:
 
 
 def test_validate_prd_quality_v2_scores_repo_prd_assertions_non_zero() -> None:
-    content = (
-        Path(__file__).resolve().parents[2]
-        / "docs/requirements-aare-f/prds/PRD-QUAL-056.md"
-    ).read_text(encoding="utf-8")
+    content = (Path(__file__).resolve().parents[2] / "docs/requirements-aare-f/prds/PRD-QUAL-056.md").read_text(
+        encoding="utf-8"
+    )
 
     result = validate_prd_quality_v2(content)
     traceability = next(dim for dim in result.dimensions if dim.name == "traceability")
@@ -691,7 +690,9 @@ def test_audit_pattern_promotion_supports_integration_and_traceability_categorie
     with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]):
         result = consolidate_cycle(trw_dir, config=cfg)
 
-    promotions = {(entry["category"], entry["normalized_pattern"]): entry for entry in result["audit_pattern_promotions"]}
+    promotions = {
+        (entry["category"], entry["normalized_pattern"]): entry for entry in result["audit_pattern_promotions"]
+    }
     integration = promotions[("integration_gap", "callback path runtime service wiring")]
     traceability = promotions[("traceability_gap", "after matrix remediation stale traceability update")]
     assert integration["prevention_strategy"] == (
@@ -731,21 +732,12 @@ def test_audit_pattern_promotion_does_not_promote_same_category_count_without_sh
     assert result["audit_pattern_promotions"] == []
 
 
-
 def test_exec_plan_includes_verification_commands() -> None:
     skill_path = (
-        Path(__file__).resolve().parent.parent
-        / "src"
-        / "trw_mcp"
-        / "data"
-        / "skills"
-        / "trw-exec-plan"
-        / "SKILL.md"
+        Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data" / "skills" / "trw-exec-plan" / "SKILL.md"
     )
     content = skill_path.read_text(encoding="utf-8")
 
     assert "Pre-Implementation Checklist (PRD-QUAL-056-FR03)" in content
     assert "Pre-Implementation Checklist" in content
     assert "FR{N} PASS" in content
-
-

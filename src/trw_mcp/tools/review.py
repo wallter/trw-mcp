@@ -210,7 +210,9 @@ def _register_review_tool(server: FastMCP) -> None:
             )
         logger.debug(
             "review_detail",
-            dimensions=list(response["dimensions"]) if "dimensions" in response and isinstance(response["dimensions"], list) else [],
+            dimensions=list(response["dimensions"])
+            if "dimensions" in response and isinstance(response["dimensions"], list)
+            else [],
             run_dir=str(resolved_run) if resolved_run else "",
         )
 

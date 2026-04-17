@@ -47,9 +47,7 @@ TOOL_GROUP_QUALITY: tuple[str, ...] = (
     "trw_prd_create",
     "trw_prd_validate",
 )
-TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
-    "trw_status",
-)
+TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = ("trw_status",)
 TOOL_GROUP_ADMIN: tuple[str, ...] = (
     "trw_pre_compact_checkpoint",
     "trw_init",
@@ -64,11 +62,5 @@ TOOL_PRESETS: dict[str, tuple[str, ...]] = {
     "core": TOOL_GROUP_CORE,
     "minimal": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY,
     "standard": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY + TOOL_GROUP_QUALITY + ("trw_status", "trw_init"),
-    "all": (
-        TOOL_GROUP_CORE
-        + TOOL_GROUP_MEMORY
-        + TOOL_GROUP_QUALITY
-        + TOOL_GROUP_OBSERVABILITY
-        + TOOL_GROUP_ADMIN
-    ),
+    "all": (TOOL_GROUP_CORE + TOOL_GROUP_MEMORY + TOOL_GROUP_QUALITY + TOOL_GROUP_OBSERVABILITY + TOOL_GROUP_ADMIN),
 }

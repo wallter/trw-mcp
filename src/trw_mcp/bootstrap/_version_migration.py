@@ -207,9 +207,15 @@ def _write_manifest(
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
-        "opencode_commands": [n for n in bundled.get("opencode_commands", []) if (target_dir / ".opencode" / "commands" / n).is_file()],
-        "opencode_agents": [n for n in bundled.get("opencode_agents", []) if (target_dir / ".opencode" / "agents" / n).is_file()],
-        "opencode_skills": [n for n in bundled.get("opencode_skills", []) if (target_dir / ".opencode" / "skills" / n).is_dir()],
+        "opencode_commands": [
+            n for n in bundled.get("opencode_commands", []) if (target_dir / ".opencode" / "commands" / n).is_file()
+        ],
+        "opencode_agents": [
+            n for n in bundled.get("opencode_agents", []) if (target_dir / ".opencode" / "agents" / n).is_file()
+        ],
+        "opencode_skills": [
+            n for n in bundled.get("opencode_skills", []) if (target_dir / ".opencode" / "skills" / n).is_dir()
+        ],
         "content_hashes": content_hashes,
         "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
         "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],

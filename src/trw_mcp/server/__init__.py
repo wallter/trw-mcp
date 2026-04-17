@@ -23,6 +23,7 @@ _configure_logging(
     package_name="trw-mcp",
 )
 
+
 def _load_mcp() -> object:
     from trw_mcp.server._app import mcp as _mcp
 

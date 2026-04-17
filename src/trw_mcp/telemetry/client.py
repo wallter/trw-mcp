@@ -163,6 +163,9 @@ def _event_to_record(event: TelemetryEvent) -> dict[str, object]:
 
             _json.dumps(value)
             result[key] = value
-        except (TypeError, ValueError):  # per-item error handling: fall back to serializer for non-JSON-native values  # noqa: PERF203
+        except (
+            TypeError,
+            ValueError,
+        ):  # per-item error handling: fall back to serializer for non-JSON-native values
             result[key] = json_serializer(value)
     return result

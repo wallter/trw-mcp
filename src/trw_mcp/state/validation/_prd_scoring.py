@@ -147,9 +147,7 @@ _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 _FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 
 # Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
-_ASSERTION_RE = re.compile(
-    r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists"
-)
+_ASSERTION_RE = re.compile(r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists")
 _ASSERTION_BLOCK_RE = re.compile(r"```assertions\b.*?```", re.IGNORECASE | re.DOTALL)
 _ASSERTIONS_HEADING_RE = re.compile(
     r"^\s*(?:\*\*|__)?Assertions(?:\*\*|__)?\s*:\s*$",
@@ -284,6 +282,7 @@ def compute_grounding_penalty(content: str, project_root: Path | None) -> tuple[
     except Exception:  # justified: fail-open, missing filesystem context should not zero traceability scoring
         # Fail open if filesystem access fails
         return 1.0, []
+
 
 def _get_section_weights(config: TRWConfig) -> dict[str, float]:
     """Build per-section weight map from TRWConfig (PRD-CORE-080-FR04).
@@ -436,10 +435,7 @@ def _has_impl_reference(content: str) -> bool:
     impl_refs = _collect_reference_matches(content, _IMPL_REF_RE, _BARE_IMPL_REF_RE)
     test_refs = _collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE)
     normalized_test_refs = {_normalize_reference_token(token) for token in test_refs}
-    return any(
-        _normalize_reference_token(token) not in normalized_test_refs
-        for token in impl_refs
-    )
+    return any(_normalize_reference_token(token) not in normalized_test_refs for token in impl_refs)
 
 
 def _has_test_reference(content: str) -> bool:
@@ -500,7 +496,9 @@ def _score_traceability_matrix(content: str) -> tuple[float, float]:
 
     rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
     rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
-    rows_with_both = sum(1 for row in traceability_rows.values() if _has_impl_reference(row) and _has_test_reference(row))
+    rows_with_both = sum(
+        1 for row in traceability_rows.values() if _has_impl_reference(row) and _has_test_reference(row)
+    )
     matrix_score = min((rows_with_impl + rows_with_test) / (2 * len(fr_refs)), 1.0)
     proof_score = min(rows_with_both / len(fr_refs), 1.0)
     return matrix_score, proof_score
@@ -703,9 +701,7 @@ def _score_assertion_coverage(
     if not fr_sections:
         return 0.0
 
-    frs_with_assertion = sum(
-        1 for _name, body in fr_sections if _has_assertion_evidence(body)
-    )
+    frs_with_assertion = sum(1 for _name, body in fr_sections if _has_assertion_evidence(body))
     return frs_with_assertion / len(fr_sections)
 
 
@@ -1020,16 +1016,16 @@ def score_traceability_v2(
     # Suggestions when coverage is low
     suggestions: list[str] = []
     if project_root is not None and hallucinated:
-        suggestions.append(f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding.")
+        suggestions.append(
+            f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding."
+        )
     if file_path_cov < 0.7:
         suggestions.append(
-            "Add implementation and test file paths to FR acceptance "
-            "criteria for first-pass audit compliance"
+            "Add implementation and test file paths to FR acceptance criteria for first-pass audit compliance"
         )
     if assertion_cov < 0.5:
         suggestions.append(
-            "Add machine-verifiable assertions (grep_present/grep_absent) "
-            "to FRs for automated audit pre-flight"
+            "Add machine-verifiable assertions (grep_present/grep_absent) to FRs for automated audit pre-flight"
         )
     if suggestions:
         details["suggestions"] = suggestions
@@ -1109,9 +1105,9 @@ def score_implementation_readiness(
             "Regression Tests",
             "Negative / Fallback Tests",
         )
-        test_subsection_ratio = sum(
-            1 for heading in test_subsections if heading in present_subheadings
-        ) / len(test_subsections)
+        test_subsection_ratio = sum(1 for heading in test_subsections if heading in present_subheadings) / len(
+            test_subsections
+        )
         control_ratio = min(control_point_rows / fr_count, 1.0)
         behavior_switch_ratio = min(behavior_switch_rows / fr_count, 1.0)
         file_map_ratio = min(max(key_files_rows, impl_refs) / fr_count, 1.0)
@@ -1150,11 +1146,7 @@ def score_implementation_readiness(
             / 3
         )
         regression_ratio = (
-            sum(
-                1
-                for heading in ("Regression Tests", "Negative / Fallback Tests")
-                if heading in present_subheadings
-            )
+            sum(1 for heading in ("Regression Tests", "Negative / Fallback Tests") if heading in present_subheadings)
             / 2
         )
         file_map_ratio = min(max(impl_refs, 1 if "Key Files" in present_subheadings else 0) / fr_count, 1.0)
@@ -1206,8 +1198,10 @@ def score_implementation_readiness(
             details["grounding_penalty_mult"] = round(penalty_mult, 4)
             details["hallucinated_paths"] = len(hallucinated)
 
-            suggestions: list[str] = details.get("suggestions", []) # type: ignore
-            suggestions.append(f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding.")
+            suggestions: list[str] = details.get("suggestions", [])  # type: ignore
+            suggestions.append(
+                f"Remove or fix {len(hallucinated)} non-existent file paths (e.g. {hallucinated[0]}) to improve technical grounding."
+            )
             details["suggestions"] = suggestions
 
     return DimensionScore(

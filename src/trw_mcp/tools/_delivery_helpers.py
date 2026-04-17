@@ -195,9 +195,7 @@ def _check_review_gate(
                 "Run trw_review() or /trw-audit before delivering."
             )
         else:
-            advisory = (
-                "No trw_review was run before delivery. Consider running trw_review for quality assurance."
-            )
+            advisory = "No trw_review was run before delivery. Consider running trw_review for quality assurance."
 
     return warning, advisory
 
@@ -224,9 +222,7 @@ def _check_integration_review_gate(
                     f"Delivery blocked. Fix critical integration issues before delivering."
                 )
             elif int_verdict == "warn":
-                warning = (
-                    "Integration review has warnings. Review findings before merging."
-                )
+                warning = "Integration review has warnings. Review findings before merging."
         except Exception:  # justified: fail-open, integration review check must not block delivery
             logger.warning("maintenance_integration_review_failed", exc_info=True)
 
@@ -323,10 +319,7 @@ def _check_checkpoint_blocker_gate(
         message = str(last_checkpoint.get("message", ""))
 
         if "blocker" in message.lower():
-            return (
-                f"Last checkpoint mentions a blocker: '{message}'. "
-                "Verify the blocker is resolved before delivering."
-            )
+            return f"Last checkpoint mentions a blocker: '{message}'. Verify the blocker is resolved before delivering."
     except Exception:  # justified: fail-open — checkpoint blocker gate must not block delivery on errors
         logger.warning("checkpoint_blocker_gate_failed", exc_info=True)
 
@@ -364,14 +357,16 @@ def _check_build_and_work_events(
             )
 
         # Premature delivery guard
-        _CEREMONY_ONLY_EVENTS: frozenset[str] = frozenset({
-            "run_init",
-            "checkpoint",
-            "reflection_complete",
-            "trw_reflect_complete",
-            "trw_deliver_complete",
-            "trw_session_start_complete",
-        })
+        _CEREMONY_ONLY_EVENTS: frozenset[str] = frozenset(
+            {
+                "run_init",
+                "checkpoint",
+                "reflection_complete",
+                "trw_reflect_complete",
+                "trw_deliver_complete",
+                "trw_session_start_complete",
+            }
+        )
         work_events = [e for e in events if str(e.get("event", "")) not in _CEREMONY_ONLY_EVENTS]
         if not work_events:
             premature_warning = (

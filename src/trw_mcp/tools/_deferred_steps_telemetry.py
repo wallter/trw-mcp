@@ -65,6 +65,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     # FIX-051-FR05: Pass trw_dir so compute_ceremony_score can also read
     # session-events.jsonl (where trw_session_start events land before trw_init).
     from trw_mcp.state._paths import resolve_trw_dir
+
     trw_dir_for_score = resolve_trw_dir()
     profile_weights = cfg.client_profile.ceremony_weights
     ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score, weights=profile_weights)
@@ -102,6 +103,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
 
     try:
         from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
+
         trw_dir = _resolve_trw_dir()
         context_dir = trw_dir / cfg.context_dir
 

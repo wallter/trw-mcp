@@ -119,7 +119,5 @@ class TestComputeReworkRate:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
         with capture_logs() as cap_logs:
             compute_rework_rate(["src/foo.py"])
-        timeout_logs = [
-            log for log in cap_logs if log.get("rework_rate_git_timeout") is True
-        ]
+        timeout_logs = [log for log in cap_logs if log.get("rework_rate_git_timeout") is True]
         assert len(timeout_logs) >= 1

@@ -433,12 +433,7 @@ def _run_config_reference(args: argparse.Namespace) -> None:
     for name, field_info in _TRWConfigFields.model_fields.items():
         env_var = f"TRW_{name.upper()}"
         annotation = field_info.annotation
-        field_type = (
-            str(annotation)
-            .replace("typing.", "")
-            .replace("<class '", "")
-            .replace("'>", "")
-        )
+        field_type = str(annotation).replace("typing.", "").replace("<class '", "").replace("'>", "")
         default = field_info.default if field_info.default is not None else ""
         # Truncate long defaults
         default_str = str(default)
@@ -562,7 +557,8 @@ def _run_gc(args: argparse.Namespace) -> None:
     """
     import time as _time
     from dataclasses import asdict
-    from datetime import datetime as _datetime, timezone as _timezone
+    from datetime import datetime as _datetime
+    from datetime import timezone as _timezone
     from pathlib import Path as _Path
 
     from trw_mcp.models.config import TRWConfig
@@ -571,12 +567,8 @@ def _run_gc(args: argparse.Namespace) -> None:
     from trw_mcp.state._run_gc import sweep_stale_runs
 
     config = TRWConfig()
-    staleness_hours = (
-        args.staleness_hours if args.staleness_hours is not None else config.run_staleness_hours
-    )
-    grace_hours = (
-        args.grace_hours if args.grace_hours is not None else config.run_staleness_grace_hours
-    )
+    staleness_hours = args.staleness_hours if args.staleness_hours is not None else config.run_staleness_hours
+    grace_hours = args.grace_hours if args.grace_hours is not None else config.run_staleness_grace_hours
     dry_run = bool(getattr(args, "dry_run", True))
     as_json = bool(getattr(args, "as_json", False))
 

@@ -15,10 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trw_mcp.models.learning import LearningConfidence, LearningEntry, LearningType
+from trw_mcp.models.learning import LearningConfidence, LearningEntry
 from trw_mcp.scoring._recall import _sanitize_path, infer_domains
 from trw_mcp.tools._learning_helpers import LearningParams
-
 
 # ---------------------------------------------------------------------------
 # Fix C: HYPOTHESIS in LearningConfidence
@@ -92,26 +91,41 @@ class TestLearningParamsAnchors:
 
     def test_default_anchors_none(self) -> None:
         params = LearningParams(
-            summary="s", detail="d", learning_id="L-1",
-            tags=[], evidence=[], impact=0.5,
-            source_type="agent", source_identity="",
+            summary="s",
+            detail="d",
+            learning_id="L-1",
+            tags=[],
+            evidence=[],
+            impact=0.5,
+            source_type="agent",
+            source_identity="",
         )
         assert params.anchors is None
 
     def test_default_anchor_validity(self) -> None:
         params = LearningParams(
-            summary="s", detail="d", learning_id="L-1",
-            tags=[], evidence=[], impact=0.5,
-            source_type="agent", source_identity="",
+            summary="s",
+            detail="d",
+            learning_id="L-1",
+            tags=[],
+            evidence=[],
+            impact=0.5,
+            source_type="agent",
+            source_identity="",
         )
         assert params.anchor_validity == 1.0
 
     def test_custom_anchors(self) -> None:
         anchors = [{"file": "src/foo.py", "symbol_name": "bar"}]
         params = LearningParams(
-            summary="s", detail="d", learning_id="L-1",
-            tags=[], evidence=[], impact=0.5,
-            source_type="agent", source_identity="",
+            summary="s",
+            detail="d",
+            learning_id="L-1",
+            tags=[],
+            evidence=[],
+            impact=0.5,
+            source_type="agent",
+            source_identity="",
             anchors=anchors,
             anchor_validity=0.8,
         )
@@ -217,10 +231,12 @@ class TestInferDomainsTraversalRejection:
 
     def test_mixed_paths_only_safe_domains(self) -> None:
         """Safe paths produce domains; traversal paths are silently dropped."""
-        result = infer_domains(file_paths=[
-            "backend/payments/handler.py",
-            "../../etc/passwd",
-        ])
+        result = infer_domains(
+            file_paths=[
+                "backend/payments/handler.py",
+                "../../etc/passwd",
+            ]
+        )
         assert "etc" not in result
         assert "passwd" not in result
         assert "backend" in result or "payments" in result

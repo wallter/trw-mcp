@@ -105,7 +105,7 @@ class WriteTargets(BaseModel):
     claude_md: bool = False
     agents_md: bool = False
     agents_md_primary: bool = False  # primary write target (CLI profiles, e.g. cursor-cli)
-    cli_config: bool = False          # .cursor/cli.json managed (cursor-cli only)
+    cli_config: bool = False  # .cursor/cli.json managed (cursor-cli only)
     cursor_rules: bool = False
     copilot_instructions: bool = False
     gemini_md: bool = False
@@ -197,9 +197,6 @@ class ClientProfile(BaseModel):
             return v
         # Allow only alphanumerics + underscores (MCP namespace convention)
         if not all(c.isalnum() or c == "_" for c in v):
-            msg = (
-                f"tool_namespace_prefix must contain only alphanumerics and "
-                f"underscores, got {v!r}"
-            )
+            msg = f"tool_namespace_prefix must contain only alphanumerics and underscores, got {v!r}"
             raise ValueError(msg)
         return v

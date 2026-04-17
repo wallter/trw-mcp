@@ -175,4 +175,3 @@ def _deploy_templates(trw_dir: Path) -> None:
     template_data = _get_bundled_file("claude_md.md", subdir="templates")
     if template_data:
         template_path.write_text(template_data, encoding="utf-8")
-

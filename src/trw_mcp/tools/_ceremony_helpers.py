@@ -192,12 +192,14 @@ def step_telemetry_startup(
     config = get_config()
     inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
-    tel_client.record_event(SessionStartEvent(
-        installation_id=inst_id,
-        framework_version=config.framework_version,
-        learnings_loaded=int(str(results.get("learnings_count", 0))),
-        run_id=str(run_dir.name) if run_dir else None,
-    ))
+    tel_client.record_event(
+        SessionStartEvent(
+            installation_id=inst_id,
+            framework_version=config.framework_version,
+            learnings_loaded=int(str(results.get("learnings_count", 0))),
+            run_id=str(run_dir.name) if run_dir else None,
+        )
+    )
     tel_client.flush()
     # Start the unified telemetry pipeline (periodic background flush
     # replaces the old fire-and-forget BatchSender thread).
@@ -206,6 +208,7 @@ def step_telemetry_startup(
     # pipeline here — no separate enqueue, which would create a duplicate event.
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
         pipeline = TelemetryPipeline.get_instance()
         pipeline.start()
     except Exception:  # justified: fail-open, pipeline start must not block session start
@@ -215,6 +218,7 @@ def step_telemetry_startup(
 def step_increment_session_counter() -> None:
     """Increment sessions_tracked counter (FIX-050-FR06)."""
     from trw_mcp.state.analytics.counters import increment_session_start_counter
+
     increment_session_start_counter(_resolve_trw_dir_compat())
 
 
@@ -236,6 +240,7 @@ def step_sanitize_and_maintain(
     # One-time sanitization of test-polluted ceremony feedback (FIX-050-FR07)
     try:
         from trw_mcp.state.ceremony_feedback import sanitize_ceremony_feedback
+
         sanitize_ceremony_feedback(_resolve_trw_dir_compat())
     except Exception:  # justified: fail-open, sanitization must not block session start
         logger.warning("ceremony_feedback_sanitize_failed", exc_info=True)
@@ -252,6 +257,7 @@ def step_embed_health() -> dict[str, object]:
     """
     try:
         from trw_mcp.state.memory_adapter import check_embeddings_status
+
         embed_status = check_embeddings_status()
         return dict(embed_status)
     except Exception:  # justified: fail-open, embed health check must not block session start
@@ -266,6 +272,7 @@ def step_embed_health() -> dict[str, object]:
 def step_mark_session_started() -> None:
     """Mark session started in ceremony state tracker (PRD-CORE-074 FR04)."""
     from trw_mcp.state.ceremony_progress import mark_session_started
+
     mark_session_started(_resolve_trw_dir_compat())
 
 

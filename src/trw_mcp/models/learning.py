@@ -181,9 +181,7 @@ class LearningEntry(BaseModel):
             try:
                 return LearningType(v)
             except ValueError as err:
-                raise ValueError(
-                    f"type must be one of {', '.join(t.value for t in LearningType)}"
-                ) from err
+                raise ValueError(f"type must be one of {', '.join(t.value for t in LearningType)}") from err
         raise ValueError(f"type must be a string or LearningType, got {type(v).__name__}")
 
     @field_validator("confidence", mode="before")
@@ -198,9 +196,7 @@ class LearningEntry(BaseModel):
             try:
                 return LearningConfidence(v)
             except ValueError as err:
-                raise ValueError(
-                    f"confidence must be one of {', '.join(c.value for c in LearningConfidence)}"
-                ) from err
+                raise ValueError(f"confidence must be one of {', '.join(c.value for c in LearningConfidence)}") from err
         raise ValueError(f"confidence must be a string or LearningConfidence, got {type(v).__name__}")
 
     @field_validator("protection_tier", mode="before")

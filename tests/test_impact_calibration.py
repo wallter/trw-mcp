@@ -286,7 +286,9 @@ class TestApplyTimeDecay:
 
     def test_naive_datetime_treated_as_utc(self) -> None:
         """Naive datetimes are treated as UTC (no error)."""
-        naive_dt = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)  # intentionally naive for backward-compat test
+        naive_dt = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc).replace(
+            tzinfo=None
+        )  # intentionally naive for backward-compat test
         result = apply_time_decay(0.8, naive_dt)
         assert 0.0 <= result <= 1.0
 

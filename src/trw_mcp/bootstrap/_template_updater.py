@@ -547,4 +547,3 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
         )
 
     return result
-

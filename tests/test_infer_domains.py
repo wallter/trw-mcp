@@ -1,7 +1,6 @@
 """Tests for infer_domains() and _extract_path_stems() (PRD-CORE-102, Task 2)."""
 
 
-
 def test_python_paths() -> None:
     """['src/auth/middleware.py'] → includes 'auth', 'middleware'."""
     from trw_mcp.scoring._recall import infer_domains

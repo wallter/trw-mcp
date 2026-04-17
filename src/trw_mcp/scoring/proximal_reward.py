@@ -13,6 +13,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+
 class ProximalSignal(TypedDict):
     learning_id: str
     signal_type: str
@@ -57,9 +58,7 @@ def detect_proximal_signals(
     return signals
 
 
-def read_recent_events(
-    events_path: Path, max_events: int = 200
-) -> list[dict[str, object]]:
+def read_recent_events(events_path: Path, max_events: int = 200) -> list[dict[str, object]]:
     """Read most recent events from events.jsonl. Fail-open."""
     if not events_path.exists():
         return []

@@ -286,9 +286,7 @@ def _learning_reflection_message(learnings_count: int) -> str:
     - >0 learnings: positive reinforcement with count
     """
     if learnings_count > 0:
-        return (
-            f"{learnings_count} discovery/discoveries persisted for future sessions."
-        )
+        return f"{learnings_count} discovery/discoveries persisted for future sessions."
     return (
         "Note: No discoveries were recorded this session. "
         "Consider what you learned \u2014 even a one-line root cause "
@@ -373,7 +371,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
     def trw_session_start(
         ctx: Context | None = None,
         query: str = "",
-    ) -> SessionStartResultDict:  # noqa: C901 — complex session start orchestration
+    ) -> SessionStartResultDict:
         """Load your prior learnings and any active run — gives you full context before writing code.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
@@ -507,9 +505,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 )
                 if phase_recalled:
                     primary_ids = {
-                        str(entry.get("id", ""))
-                        for entry in results.get("learnings", [])
-                        if entry.get("id")
+                        str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
                     }
                     auto_ids = [
                         str(entry.get("id", ""))
@@ -907,9 +903,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         if rate_limited:
             # Short-circuit path: return the existing state, no writes.
             if last_dt is not None:
-                stale_after_ts = (
-                    last_dt + _timedelta_hours(config.run_staleness_hours)
-                ).isoformat()
+                stale_after_ts = (last_dt + _timedelta_hours(config.run_staleness_hours)).isoformat()
             should_checkpoint = age_hours > float(config.checkpoint_suggest_hours)
             logger.debug(
                 "trw_heartbeat_rate_limited",
@@ -945,9 +939,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 },
             )
 
-        stale_after_ts = (
-            now_dt + _timedelta_hours(config.run_staleness_hours)
-        ).isoformat()
+        stale_after_ts = (now_dt + _timedelta_hours(config.run_staleness_hours)).isoformat()
         should_checkpoint = age_hours > float(config.checkpoint_suggest_hours)
 
         logger.debug(

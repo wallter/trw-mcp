@@ -101,7 +101,9 @@ def test_default_lookup_entry_uses_sqlite_yaml_and_scan_fallbacks(
     yaml_path.write_text("id: L1\n", encoding="utf-8")
 
     monkeypatch.setattr(io_boundary, "_get_yaml_path_index", lambda _: {"L1": yaml_path, "L2": yaml_path})
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.find_entry_by_id", lambda _trw_dir, lid: {"id": lid} if lid == "L1" else None)
+    monkeypatch.setattr(
+        "trw_mcp.state.memory_adapter.find_entry_by_id", lambda _trw_dir, lid: {"id": lid} if lid == "L1" else None
+    )
 
     sqlite_path, sqlite_data = io_boundary._default_lookup_entry("L1", tmp_path / ".trw", entries_dir)
     assert sqlite_path == yaml_path
@@ -117,7 +119,9 @@ def test_default_lookup_entry_uses_sqlite_yaml_and_scan_fallbacks(
     assert yaml_only_data == {"id": "L2", "path": str(yaml_path)}
 
     monkeypatch.setattr(io_boundary, "_get_yaml_path_index", lambda _: {})
-    monkeypatch.setattr("trw_mcp.state.analytics.find_entry_by_id", lambda _entries_dir, _lid: (yaml_path, {"id": "L3"}))
+    monkeypatch.setattr(
+        "trw_mcp.state.analytics.find_entry_by_id", lambda _entries_dir, _lid: (yaml_path, {"id": "L3"})
+    )
     fallback_path, fallback_data = io_boundary._default_lookup_entry("L3", tmp_path / ".trw", entries_dir)
     assert fallback_path == yaml_path
     assert fallback_data == {"id": "L3"}

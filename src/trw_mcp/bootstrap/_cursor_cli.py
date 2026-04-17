@@ -151,12 +151,12 @@ def _extract_cli_permissions(raw: object) -> tuple[list[str], list[str]]:
     Raises TypeError for invalid structure (caught by the callers try/except).
     """
     if not isinstance(raw, dict):
-        raise TypeError('cli.json root must be a JSON object')
-    perms = raw.setdefault('permissions', {})
+        raise TypeError("cli.json root must be a JSON object")
+    perms = raw.setdefault("permissions", {})
     if not isinstance(perms, dict):
-        raise TypeError('permissions must be a JSON object')
-    allow: list[str] = perms.setdefault('allow', [])
-    deny: list[str] = perms.setdefault('deny', [])
+        raise TypeError("permissions must be a JSON object")
+    allow: list[str] = perms.setdefault("allow", [])
+    deny: list[str] = perms.setdefault("deny", [])
     return allow, deny
 
 
@@ -297,12 +297,7 @@ def generate_cursor_cli_agents_md(
 
     begin = "<!-- TRW:BEGIN -->"
     end = "<!-- TRW:END -->"
-    trw_block = (
-        f"{begin}\n"
-        "# TRW Ceremony Protocol (cursor-cli)\n\n"
-        f"{trw_section}\n"
-        f"{end}"
-    )
+    trw_block = f"{begin}\n# TRW Ceremony Protocol (cursor-cli)\n\n{trw_section}\n{end}"
 
     if agents_file.exists() and not force:
         existing = agents_file.read_text(encoding="utf-8")
@@ -368,9 +363,7 @@ def generate_cursor_cli_hooks(
     #    preserves them and only appends/replaces entries keyed by
     #    identity_prefix=".cursor/hooks/trw-".
     hooks_file = target_dir / ".cursor" / "hooks.json"
-    trw_hooks_body = build_cursor_hook_config(
-        {k: list(v) for k, v in _CLI_HOOK_EVENTS.items()}
-    )
+    trw_hooks_body = build_cursor_hook_config({k: list(v) for k, v in _CLI_HOOK_EVENTS.items()})
     merge_result = smart_merge_cursor_json(
         hooks_file,
         trw_hooks_body,
@@ -398,9 +391,7 @@ _TTY_REMINDER_LINES: Final[tuple[str, ...]] = (
         "Cursor CLI requires a real TTY in automation. "
         "Wrap 'cursor-agent -p' invocations in tmux for raw subprocess environments."
     ),
-    (
-        "GitHub Actions runners provide a TTY implicitly; no wrapping needed there."
-    ),
+    ("GitHub Actions runners provide a TTY implicitly; no wrapping needed there."),
 )
 
 

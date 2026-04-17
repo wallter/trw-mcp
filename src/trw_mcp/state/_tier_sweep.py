@@ -232,7 +232,9 @@ def _sweep_cold_to_purge(
                         days=days,
                         importance_score=importance,
                     )
-            except Exception:  # per-item error handling: skip unreadable cold files, continue purge sweep  # noqa: PERF203
+            except (
+                Exception
+            ):  # per-item error handling: skip unreadable cold files, continue purge sweep
                 logger.warning(
                     "sweep_cold_purge_failed",
                     path=str(yaml_file),

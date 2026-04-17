@@ -223,7 +223,9 @@ class TestAutoRecallEnabled:
             ),
             patch(
                 "trw_mcp.tools._ceremony_helpers.record_session_start_surfaces",
-                side_effect=lambda _trw_dir, learning_ids: surface_calls.append(list(learning_ids)) or list(learning_ids),
+                side_effect=lambda _trw_dir, learning_ids: (
+                    surface_calls.append(list(learning_ids)) or list(learning_ids)
+                ),
             ),
         ):
             result = tools["trw_session_start"].fn()

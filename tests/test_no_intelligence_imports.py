@@ -66,23 +66,17 @@ class TestNoIntelligenceImports:
 
     def test_no_attribution_imports(self) -> None:
         """No source file imports from scoring.attribution (backend-only)."""
-        violations = [
-            v for v in _scan_source_files() if "scoring.attribution" in v
-        ]
+        violations = [v for v in _scan_source_files() if "scoring.attribution" in v]
         assert violations == [], "\n".join(violations)
 
     def test_no_bandit_policy_imports(self) -> None:
         """No source file imports from state.bandit_policy (backend-only)."""
-        violations = [
-            v for v in _scan_source_files() if "state.bandit_policy" in v
-        ]
+        violations = [v for v in _scan_source_files() if "state.bandit_policy" in v]
         assert violations == [], "\n".join(violations)
 
     def test_no_meta_synthesis_imports(self) -> None:
         """No source file imports from state.meta_synthesis (backend-only)."""
-        violations = [
-            v for v in _scan_source_files() if "meta_synthesis" in v
-        ]
+        violations = [v for v in _scan_source_files() if "meta_synthesis" in v]
         assert violations == [], "\n".join(violations)
 
     def test_no_intelligence_files_in_source_tree(self) -> None:
@@ -103,9 +97,7 @@ class TestNoIntelligenceImports:
     def test_no_meta_tune_intelligence_imports(self) -> None:
         """The public package no longer ships a local meta_tune implementation."""
         meta_tune_path = _SRC_ROOT / "tools" / "meta_tune.py"
-        assert not meta_tune_path.exists(), (
-            f"Backend-only intelligence file still exists: {meta_tune_path}"
-        )
+        assert not meta_tune_path.exists(), f"Backend-only intelligence file still exists: {meta_tune_path}"
 
     def test_import_trw_mcp_succeeds(self) -> None:
         """import trw_mcp works after intelligence code removal."""

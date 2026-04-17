@@ -26,7 +26,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper factories
 # ---------------------------------------------------------------------------
@@ -179,7 +178,7 @@ def test_cursor_rules_mdc_cursor_ide_includes_appendix(tmp_path: Path) -> None:
 
     # C8: Verification Pass amplification
     assert "Verification Pass" in content
-    assert "trw_build_check(scope=\"full\")" in content
+    assert 'trw_build_check(scope="full")' in content
 
     # C7: Drift-recovery guidance
     assert "If the Agent Drifts" in content
@@ -209,9 +208,7 @@ def test_cursor_rules_mdc_force_overwriting_existing_still_reports_updated(
     rules_dir.mkdir(parents=True)
     (rules_dir / "trw-ceremony.mdc").write_text("original", encoding="utf-8")
 
-    result = generate_cursor_rules_mdc(
-        tmp_path, "replacement", client_id="cursor-ide", force=True
-    )
+    result = generate_cursor_rules_mdc(tmp_path, "replacement", client_id="cursor-ide", force=True)
     # File existed → update classification regardless of force
     assert ".cursor/rules/trw-ceremony.mdc" in result.get("updated", [])
     assert ".cursor/rules/trw-ceremony.mdc" not in result.get("created", [])
@@ -466,9 +463,11 @@ def test_smart_merge_cursor_json_preserves_user_hooks(tmp_path: Path) -> None:
 
     target = tmp_path / ".cursor" / "hooks.json"
     target.parent.mkdir(parents=True)
-    existing = _make_hooks_json({
-        "stop": [{"command": "user-custom-stop.sh", "description": "my stop hook"}],
-    })
+    existing = _make_hooks_json(
+        {
+            "stop": [{"command": "user-custom-stop.sh", "description": "my stop hook"}],
+        }
+    )
     target.write_text(json.dumps(existing), encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh", "description": "TRW"}]})
@@ -488,9 +487,11 @@ def test_smart_merge_cursor_json_replaces_prior_trw_entries(tmp_path: Path) -> N
 
     target = tmp_path / ".cursor" / "hooks.json"
     target.parent.mkdir(parents=True)
-    existing = _make_hooks_json({
-        "stop": [{"command": "trw-old-stop.sh", "description": "old TRW"}],
-    })
+    existing = _make_hooks_json(
+        {
+            "stop": [{"command": "trw-old-stop.sh", "description": "old TRW"}],
+        }
+    )
     target.write_text(json.dumps(existing), encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-new-stop.sh", "description": "new TRW"}]})
@@ -578,9 +579,7 @@ def test_generate_cursor_hooks_smart_merge_preserves_user(tmp_path: Path) -> Non
     data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
     commands = [h.get("command", "") for h in data["hooks"]]
     # User hook should survive the merge
-    assert any("user-stop" in cmd for cmd in commands), (
-        "User hook was lost during generate_cursor_hooks smart merge"
-    )
+    assert any("user-stop" in cmd for cmd in commands), "User hook was lost during generate_cursor_hooks smart merge"
 
 
 @pytest.mark.integration

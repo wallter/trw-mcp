@@ -10,7 +10,6 @@ FR05: trw_deliver self-reflection gate
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from trw_mcp.state._nudge_messages import (
     _build_done_next_then_status,
@@ -18,7 +17,6 @@ from trw_mcp.state._nudge_messages import (
     _context_reactive_message,
 )
 from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
-
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -102,9 +100,7 @@ class TestFR01ToolDescriptionCues:
             assert tool is not None, f"Tool {tool_name} not found"
             desc = tool.description or ""
             word_count = len(desc.split())
-            assert word_count <= 200, (
-                f"Tool {tool_name} description is {word_count} words (max 200)"
-            )
+            assert word_count <= 200, f"Tool {tool_name} description is {word_count} words (max 200)"
 
 
 # -------------------------------------------------------------------------
@@ -135,9 +131,7 @@ class TestFR02ServerInstructions:
         from trw_mcp.server._app import _DEFAULT_INSTRUCTIONS
 
         word_count = len(_DEFAULT_INSTRUCTIONS.split())
-        assert word_count <= 100, (
-            f"Instructions are {word_count} words (max 100)"
-        )
+        assert word_count <= 100, f"Instructions are {word_count} words (max 100)"
 
     def test_fr02_instructions_include_essential_tools(self) -> None:
         """AC08: Instructions mention the three essential tool calls."""
@@ -216,9 +210,7 @@ class TestFR03NudgeMessages:
                 word in msg_lower
                 for word in ("persist", "future", "session", "insight", "save", "approach", "compound")
             )
-            assert has_consequence, (
-                f"Message for {ctx.tool_name} lacks WHY pattern: {msg!r}"
-            )
+            assert has_consequence, f"Message for {ctx.tool_name} lacks WHY pattern: {msg!r}"
 
 
 # -------------------------------------------------------------------------
@@ -267,9 +259,7 @@ class TestFR04StatusLine:
             checkpoint_count=0,
         )
         line = _build_done_next_then_status_light(state)
-        assert len(line) <= 100, (
-            f"Light mode status line is {len(line)} chars (max 100): {line!r}"
-        )
+        assert len(line) <= 100, f"Light mode status line is {len(line)} chars (max 100): {line!r}"
 
     def test_fr04_full_mode_under_200_chars(self) -> None:
         """AC16: Full mode status line is under 200 characters."""
@@ -286,9 +276,7 @@ class TestFR04StatusLine:
         ]
         for state in states:
             line = _build_done_next_then_status(state)
-            assert len(line) <= 200, (
-                f"Full mode status line is {len(line)} chars (max 200): {line!r}"
-            )
+            assert len(line) <= 200, f"Full mode status line is {len(line)} chars (max 200): {line!r}"
 
     def test_fr04_all_complete_shows_only_done(self) -> None:
         """When all steps complete, only Done line appears."""

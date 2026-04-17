@@ -656,9 +656,7 @@ class TestCeremonyNudgeWiringRequirements:
             category="CORE",
             title="Nudge Wiring PRD",
         )
-        assert "ceremony_status" in result, (
-            "trw_prd_create did not inject ceremony_status — nudge wiring is broken"
-        )
+        assert "ceremony_status" in result, "trw_prd_create did not inject ceremony_status — nudge wiring is broken"
         assert isinstance(result["ceremony_status"], str)
 
     def test_trw_prd_validate_includes_ceremony_status(self, tmp_path: Path) -> None:
@@ -724,9 +722,7 @@ Matrix.
 
         tools = _get_tools()
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-        assert "ceremony_status" in result, (
-            "trw_prd_validate did not inject ceremony_status — nudge wiring is broken"
-        )
+        assert "ceremony_status" in result, "trw_prd_validate did not inject ceremony_status — nudge wiring is broken"
         assert isinstance(result["ceremony_status"], str)
 
 

@@ -25,6 +25,7 @@ def _text(block: ContentBlock) -> str:
     assert isinstance(block, TextContent)
     return block.text
 
+
 from trw_mcp.middleware.ceremony import (
     CeremonyMiddleware,
     is_session_active,
@@ -187,7 +188,10 @@ class TestCompactionGate:
         )
         with (
             patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True),
-            patch("trw_mcp.middleware.ceremony._clear_compaction_gate_safe", side_effect=lambda: (trw_dir / "context" / "pre_compact_state.json").unlink()),
+            patch(
+                "trw_mcp.middleware.ceremony._clear_compaction_gate_safe",
+                side_effect=lambda: (trw_dir / "context" / "pre_compact_state.json").unlink(),
+            ),
         ):
             out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
@@ -240,9 +244,7 @@ class TestCompactionGate:
     ) -> None:
         """After session_start, trw_checkpoint passes through normally."""
         start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
-        checkpoint_result = FakeToolResult(
-            content=[TextContent(type="text", text="checkpoint ok")]
-        )
+        checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         trw_dir = _seed_compaction_marker(tmp_path)
 
         call_count = 0
@@ -261,7 +263,10 @@ class TestCompactionGate:
         )
         with (
             patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True),
-            patch("trw_mcp.middleware.ceremony._clear_compaction_gate_safe", side_effect=lambda: (trw_dir / "context" / "pre_compact_state.json").unlink()),
+            patch(
+                "trw_mcp.middleware.ceremony._clear_compaction_gate_safe",
+                side_effect=lambda: (trw_dir / "context" / "pre_compact_state.json").unlink(),
+            ),
         ):
             await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
 
@@ -293,9 +298,7 @@ class TestCompactionGate:
             ],
             structured_content={"success": False, "errors": ["recall failed"]},
         )
-        checkpoint_result = FakeToolResult(
-            content=[TextContent(type="text", text="checkpoint ok")]
-        )
+        checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         call_names: list[str] = []
 
         async def call_next(ctx: Any) -> Any:
@@ -337,9 +340,7 @@ class TestCompactionGate:
             content=[TextContent(type="text", text='{"success": true, "errors": []}')],
             structured_content={"success": True, "errors": []},
         )
-        checkpoint_result = FakeToolResult(
-            content=[TextContent(type="text", text="checkpoint ok")]
-        )
+        checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         call_names: list[str] = []
 
         async def call_next(ctx: Any) -> Any:
@@ -379,9 +380,7 @@ class TestCompactionGate:
     ) -> None:
         """An already-started session must recover again after a new compaction event."""
         trw_dir = tmp_path / ".trw"
-        checkpoint_result = FakeToolResult(
-            content=[TextContent(type="text", text="checkpoint ok")]
-        )
+        checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         start_result = FakeToolResult(
             content=[TextContent(type="text", text='{"success": true, "errors": []}')],
             structured_content={"success": True, "errors": []},
@@ -430,9 +429,7 @@ class TestCompactionGate:
             content=[TextContent(type="text", text='{"success": true, "errors": []}')],
             structured_content={"success": True, "errors": []},
         )
-        checkpoint_result = FakeToolResult(
-            content=[TextContent(type="text", text="checkpoint ok")]
-        )
+        checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         call_names: list[str] = []
 
         async def call_next(ctx: Any) -> Any:
@@ -544,9 +541,7 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:
         """Non-trw_* tools (e.g. Read, Bash) should never be blocked by the gate."""
-        tool_result = FakeToolResult(
-            content=[TextContent(type="text", text="file contents")]
-        )
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="file contents")])
         call_count = 0
 
         async def call_next(_ctx: Any) -> Any:
@@ -629,9 +624,7 @@ class TestCompactionGate:
             )
             out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
-            assert _text(out.content[0]) == "ok", (
-                f"{tool_name} should pass through without blocking"
-            )
+            assert _text(out.content[0]) == "ok", f"{tool_name} should pass through without blocking"
 
     @pytest.mark.asyncio
     @pytest.mark.unit

@@ -314,13 +314,22 @@ def register_learning_tools(server: FastMCP) -> None:
             return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
         _valid_confidences = {"unverified", "low", "medium", "high", "verified"}
         if confidence is not None and confidence not in _valid_confidences:
-            return {"error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}", "status": "invalid"}
+            return {
+                "error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}",
+                "status": "invalid",
+            }
         _valid_tiers = {"critical", "high", "normal", "low", "protected", "permanent"}
         if protection_tier is not None and protection_tier not in _valid_tiers:
-            return {"error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}", "status": "invalid"}
+            return {
+                "error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}",
+                "status": "invalid",
+            }
         _valid_phases = {"", "RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"}
         if phase_origin is not None and phase_origin not in _valid_phases:
-            return {"error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}", "status": "invalid"}
+            return {
+                "error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}",
+                "status": "invalid",
+            }
         if nudge_line is not None and len(nudge_line) > 80:
             return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
         _valid_feedback = {"helpful", "unhelpful"}

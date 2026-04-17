@@ -41,11 +41,7 @@ def _is_empty(v: object) -> bool:
 def _compact(data: object) -> object:
     """Recursively round floats and strip null/empty values from dicts."""
     if isinstance(data, dict):
-        return {
-            k: _compact(v)
-            for k, v in data.items()
-            if not _is_empty(v)
-        }
+        return {k: _compact(v) for k, v in data.items() if not _is_empty(v)}
     if isinstance(data, list):
         return [_compact(item) for item in data]
     if isinstance(data, float):

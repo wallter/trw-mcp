@@ -42,6 +42,7 @@ def _validate_source_type(source_type: str) -> Literal["human", "agent", "tool",
         return "agent"
     return cast("Literal['human', 'agent', 'tool', 'consolidated']", source_type)
 
+
 @dataclass(slots=True)
 class LearningParams:
     """Bundle of per-entry fields passed to check_and_handle_dedup.
@@ -248,7 +249,10 @@ def check_and_handle_dedup(
                         if params.assertions:
                             entry_dict["assertions"] = params.assertions
                         merged_path = merge_entries(
-                            yaml_file, entry_dict, reader, writer,
+                            yaml_file,
+                            entry_dict,
+                            reader,
+                            writer,
                             max_merge_tags=config.max_consolidated_tags,
                         )
                         merged_yaml_path = merged_path if isinstance(merged_path, Path) else yaml_file
@@ -306,7 +310,8 @@ def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, obj
             recurrence=int(str(merged_entry.get("recurrence", 1))),
             merged_from=[str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
             assertions=[
-                dict(item) for item in cast("list[object]", merged_entry.get("assertions") or [])
+                dict(item)
+                for item in cast("list[object]", merged_entry.get("assertions") or [])
                 if isinstance(item, dict)
             ],
         )

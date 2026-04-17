@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -167,12 +166,12 @@ class TestDualSurface:
 
     def test_dual_surface_both_artifacts_exist(self, tmp_path: Path) -> None:
         """Both CLI and IDE artifacts present after dual-surface init."""
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
         from trw_mcp.bootstrap._cursor_cli import (
             generate_cursor_cli_agents_md,
             generate_cursor_cli_config,
             generate_cursor_cli_hooks,
         )
-        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
 
         # Simulate IDE surface writing mcp.json first
         mcp_result = generate_cursor_mcp_config(tmp_path)
@@ -196,9 +195,8 @@ class TestDualSurface:
         """Dual-surface hooks.json contains union of IDE and CLI events."""
         import json as _json
 
-        from trw_mcp.bootstrap._cursor import build_cursor_hook_config, smart_merge_cursor_json
+        from trw_mcp.bootstrap._cursor import build_cursor_hook_config
         from trw_mcp.bootstrap._cursor_cli import (
-            _CLI_HOOK_EVENTS,
             generate_cursor_cli_hooks,
         )
 
@@ -242,10 +240,9 @@ class TestDualSurface:
         the shared-step running twice bug that was absent from the earlier
         generator-level test.
         """
-        from trw_mcp.bootstrap._ide_targets import _update_cursor_artifacts
-
         # Force dual-surface detection by monkey-patching resolve_ide_targets
         from trw_mcp.bootstrap import _ide_targets as _targets_mod
+        from trw_mcp.bootstrap._ide_targets import _update_cursor_artifacts
 
         monkeypatch.setattr(
             _targets_mod,

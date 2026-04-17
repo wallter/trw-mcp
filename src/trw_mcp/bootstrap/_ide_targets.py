@@ -87,6 +87,7 @@ def _update_opencode_artifacts(
         install_opencode_commands,
         install_opencode_skills,
     )
+
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
     if "opencode" not in ide_targets:
         return
@@ -426,9 +427,7 @@ def _update_cursor_artifacts(
         mcp_result = generate_cursor_mcp_config(target_dir)
         _absorb_sub_result(result, mcp_result)
     except Exception as exc:  # justified: fail-open, cursor mcp update is best-effort
-        result.setdefault("warnings", []).append(
-            f".cursor/mcp.json update skipped: {type(exc).__name__}: {exc}"
-        )
+        result.setdefault("warnings", []).append(f".cursor/mcp.json update skipped: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------
     # cursor-ide specific steps
@@ -444,9 +443,7 @@ def _update_cursor_artifacts(
         # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
         try:
             trw_section = _extract_trw_section_content()
-            rules_result = generate_cursor_rules_mdc(
-                target_dir, trw_section, client_id="cursor-ide"
-            )
+            rules_result = generate_cursor_rules_mdc(target_dir, trw_section, client_id="cursor-ide")
             _absorb_sub_result(result, rules_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(
@@ -458,36 +455,28 @@ def _update_cursor_artifacts(
             sub_result = generate_cursor_ide_subagents(target_dir)
             _absorb_sub_result(result, sub_result)
         except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(
-                f".cursor/agents/ update skipped: {type(exc).__name__}: {exc}"
-            )
+            result.setdefault("warnings", []).append(f".cursor/agents/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR05: .cursor/commands/trw-*.md
         try:
             cmd_result = generate_cursor_ide_commands(target_dir)
             _absorb_sub_result(result, cmd_result)
         except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(
-                f".cursor/commands/ update skipped: {type(exc).__name__}: {exc}"
-            )
+            result.setdefault("warnings", []).append(f".cursor/commands/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR04: .cursor/skills/<name>/
         try:
             skills_result = generate_cursor_ide_skills(target_dir)
             _absorb_sub_result(result, skills_result)
         except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(
-                f".cursor/skills/ update skipped: {type(exc).__name__}: {exc}"
-            )
+            result.setdefault("warnings", []).append(f".cursor/skills/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR08: .cursor/hooks/ (8-event set) + hooks.json
         try:
             hooks_result = generate_cursor_ide_hooks(target_dir)
             _absorb_sub_result(result, hooks_result)
         except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(
-                f".cursor/hooks/ update skipped: {type(exc).__name__}: {exc}"
-            )
+            result.setdefault("warnings", []).append(f".cursor/hooks/ update skipped: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------
     # cursor-ide advisory: tool-ceiling awareness (PRD-CORE-136 NFR)
@@ -532,9 +521,7 @@ def _update_cursor_cli_artifacts(
         cli_result = generate_cursor_cli_config(target_dir)
         _absorb_sub_result(result, cli_result)
     except Exception as exc:  # justified: fail-open, cli.json update is best-effort
-        result.setdefault("warnings", []).append(
-            f".cursor/cli.json update skipped: {type(exc).__name__}: {exc}"
-        )
+        result.setdefault("warnings", []).append(f".cursor/cli.json update skipped: {type(exc).__name__}: {exc}")
 
     # FR04: AGENTS.md with TRW sentinel block
     try:
@@ -542,9 +529,7 @@ def _update_cursor_cli_artifacts(
         agents_result = generate_cursor_cli_agents_md(target_dir, trw_section)
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
-        result.setdefault("warnings", []).append(
-            f"AGENTS.md (cursor-cli) update skipped: {type(exc).__name__}: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) update skipped: {type(exc).__name__}: {exc}")
 
     # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
     try:
@@ -649,9 +634,7 @@ def _update_config_target_platforms(
             requested=ide_targets,
         )
     except (OSError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
-        result.setdefault("warnings", []).append(
-            f"target_platforms config update skipped: {type(exc).__name__}: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"target_platforms config update skipped: {type(exc).__name__}: {exc}")
         logger.warning(
             "config_target_platforms_update_failed",
             error_class=type(exc).__name__,

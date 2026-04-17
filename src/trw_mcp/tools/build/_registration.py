@@ -31,8 +31,7 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger(__name__)
 
 _BUILD_CHECK_USAGE = (
-    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, "
-    "mypy_clean=True, scope='full')"
+    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, mypy_clean=True, scope='full')"
 )
 
 
@@ -309,8 +308,6 @@ def _require_tests_passed(tests_passed: bool | None) -> bool:
     """Require explicit tests_passed reporting with a usage example."""
     if tests_passed is None:
         raise ValueError(
-            "tests_passed is required. "
-            "Report the outcome after running tests via Bash. "
-            f"Example: {_BUILD_CHECK_USAGE}"
+            f"tests_passed is required. Report the outcome after running tests via Bash. Example: {_BUILD_CHECK_USAGE}"
         )
     return tests_passed

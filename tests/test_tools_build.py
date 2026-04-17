@@ -137,7 +137,9 @@ class TestCacheBuildStatus:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py")
+@pytest.mark.skip(
+    reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py"
+)
 class TestRunBuildCheck:
     """Tests for run_build_check with mocked subprocess calls (OBSOLETE — PRD-CORE-098)."""
 

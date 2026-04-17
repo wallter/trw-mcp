@@ -199,10 +199,7 @@ class RunState(BaseModel):
     # PRD-CORE-141-FR10: Protected runs survive the stale-run sweep regardless of age
     protected: bool = Field(
         default=False,
-        description=(
-            "If True, this run is preserved by the stale-run sweep regardless of age "
-            "(PRD-CORE-141 FR10)."
-        ),
+        description=("If True, this run is preserved by the stale-run sweep regardless of age (PRD-CORE-141 FR10)."),
     )
 
 

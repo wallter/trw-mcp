@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -154,7 +153,10 @@ class TestDomainBoost:
 
         ctx = RecallContext(inferred_domains={"payments"})
         ranked = rank_by_utility(
-            [entry_match, entry_no], query_tokens=["payments"], lambda_weight=0.3, context=ctx,
+            [entry_match, entry_no],
+            query_tokens=["payments"],
+            lambda_weight=0.3,
+            context=ctx,
         )
 
         scores = {str(r["id"]): _score_of([r]) for r in ranked}
@@ -536,9 +538,9 @@ class TestTypeHalfLife:
 
     def test_pattern_decay_slower_than_workaround(self) -> None:
         """200-day-old pattern retains higher utility than same-age workaround."""
-        from trw_mcp.scoring._decay import _entry_utility
-
         from datetime import date, timedelta
+
+        from trw_mcp.scoring._decay import _entry_utility
 
         today = date(2026, 4, 1)
         created = (today - timedelta(days=200)).isoformat()
@@ -565,9 +567,9 @@ class TestTypeHalfLife:
 
     def test_convention_near_no_decay(self) -> None:
         """1000-day-old convention retains utility close to a fresh entry."""
-        from trw_mcp.scoring._decay import _entry_utility
-
         from datetime import date, timedelta
+
+        from trw_mcp.scoring._decay import _entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=1000)).isoformat()
@@ -596,9 +598,9 @@ class TestTypeHalfLife:
 
     def test_hypothesis_decays_fast(self) -> None:
         """30-day-old hypothesis has significantly lower utility than fresh one."""
-        from trw_mcp.scoring._decay import _entry_utility
-
         from datetime import date, timedelta
+
+        from trw_mcp.scoring._decay import _entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=30)).isoformat()
@@ -626,9 +628,9 @@ class TestTypeHalfLife:
 
     def test_incident_unverified_no_decay(self) -> None:
         """Unverified incident has near-zero decay (half_life=9999)."""
-        from trw_mcp.scoring._decay import _entry_utility
-
         from datetime import date, timedelta
+
+        from trw_mcp.scoring._decay import _entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=500)).isoformat()

@@ -111,7 +111,7 @@ class BackendSyncClient:
                 push_result = self._pusher.push_learnings(dirty)
                 if push_result.failed == 0:
                     push_seq = max((entry.sync_seq for entry in dirty), default=0)
-                    self._mark_synced(dirty[:push_result.pushed + push_result.skipped])
+                    self._mark_synced(dirty[: push_result.pushed + push_result.skipped])
                 else:
                     push_failed = True
                     self._coordinator.record_sync_failure(f"push failed: {push_result.failed} entries")
@@ -126,14 +126,10 @@ class BackendSyncClient:
                 if pending_outcomes:
                     outcome_result = self._pusher.push_outcomes([item.payload for item in pending_outcomes])
                     if outcome_result.failed == 0:
-                        self._coordinator.record_outcome_push_success(
-                            max(item.line_no for item in pending_outcomes)
-                        )
+                        self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
                     else:
                         push_failed = True
-                        self._coordinator.record_sync_failure(
-                            f"outcome push failed: {outcome_result.failed} events"
-                        )
+                        self._coordinator.record_sync_failure(f"outcome push failed: {outcome_result.failed} events")
 
             pulled = 0
             merged = 0
@@ -171,14 +167,16 @@ class BackendSyncClient:
                 merged = self._puller.merge_team_learnings(pull_result.team_learnings)
             pulled = team_learning_count
 
-            next_pull_seq = max([
-                pull_seq,
-                *[
-                    int(item.get("sync_seq", 0))
-                    for item in (pull_result.team_learnings or [])
-                    if isinstance(item, dict)
-                ],
-            ])
+            next_pull_seq = max(
+                [
+                    pull_seq,
+                    *[
+                        int(item.get("sync_seq", 0))
+                        for item in (pull_result.team_learnings or [])
+                        if isinstance(item, dict)
+                    ],
+                ]
+            )
             self._apply_sync_hints(pull_result.sync_hints)
             logger.info(
                 "sync_cycle_completed",
@@ -220,7 +218,11 @@ class BackendSyncClient:
         if delay > 0:
             delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
 
-        if sync_hints and sync_hints.get("significant_updates_available") and self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS:
+        if (
+            sync_hints
+            and sync_hints.get("significant_updates_available")
+            and self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS
+        ):
             self._last_applied_schedule_seconds = delay
             self._next_sleep_seconds = 0.0
             self._scheduled_interval_seconds = 0.0

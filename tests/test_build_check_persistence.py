@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.state._ceremony_progress_state import (
-    CeremonyState,
     mark_build_check,
     read_ceremony_state,
 )
@@ -26,6 +25,7 @@ def _invoke_build_check(tmp_project: Path, *, tests_passed: bool, mypy_clean: bo
     fn = extract_tool_fn(server, "trw_build_check")
 
     import trw_mcp.tools.build._registration as reg_mod
+
     # Force the tool to operate under the tmp_project .trw/ dir.
     original_resolve = reg_mod.resolve_trw_dir
     reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
@@ -86,9 +86,7 @@ def test_ceremony_state_backward_compat_no_ts_field(tmp_project: Path) -> None:
     assert state.last_build_check_ts is None
 
 
-def test_build_check_persist_failure_does_not_raise(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_check_persist_failure_does_not_raise(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If mark_build_check raises (e.g., read-only fs), tool still returns status."""
 
     def _boom(*args: object, **kwargs: object) -> None:

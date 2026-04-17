@@ -125,9 +125,7 @@ class ProtocolRenderer:
             "```",
             "",
         ]
-        lines.extend(
-            f"- **{name}**: {purpose}" for name, purpose in PHASE_DESCRIPTIONS
-        )
+        lines.extend(f"- **{name}**: {purpose}" for name, purpose in PHASE_DESCRIPTIONS)
         lines.append("")
         return "\n".join(lines) + "\n"
 
@@ -146,10 +144,7 @@ class ProtocolRenderer:
             "| Phase | Tool | When to Use | What It Does | Example |",
             "|-------|------|-------------|--------------|---------|",
         ]
-        lines.extend(
-            f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |"
-            for ct in CEREMONY_TOOLS
-        )
+        lines.extend(f"| {ct.phase} | `{ct.tool}` | {ct.when} | {ct.what} | `{ct.example}` |" for ct in CEREMONY_TOOLS)
         lines.append("")
         return "\n".join(lines) + "\n"
 

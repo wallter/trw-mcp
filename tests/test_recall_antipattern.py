@@ -71,9 +71,7 @@ def _patch_recall_deps(
 class TestAntipatternAlertSurfaces:
     """When query suggests model/system work AND learning has anti-pattern keyword, alert is prepended."""
 
-    def test_facade_keyword_with_model_query(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_facade_keyword_with_model_query(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         facade_learning = _make_learning("L001", "facade pattern found in adapter layer")
@@ -101,23 +99,18 @@ class TestAntipatternAlertSurfaces:
         )
 
         # The facade learning should have the alert prefix
-        facade_entries = [
-            e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))
-        ]
+        facade_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
         assert len(facade_entries) >= 1, f"Expected at least one alert entry, got {learnings}"
 
         # The normal learning should NOT have the alert prefix
         normal_entries = [
             e
             for e in learnings
-            if "pytest" in str(e.get("summary", ""))
-            and "ANTI-PATTERN ALERT" not in str(e.get("summary", ""))
+            if "pytest" in str(e.get("summary", "")) and "ANTI-PATTERN ALERT" not in str(e.get("summary", ""))
         ]
         assert len(normal_entries) >= 1
 
-    def test_wiring_gap_keyword_with_adapter_query(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wiring_gap_keyword_with_adapter_query(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         gap_learning = _make_learning("L003", "wiring gap in registry initialization")
@@ -141,9 +134,7 @@ class TestAntipatternAlertSurfaces:
             reader=reader,
         )
 
-        alert_entries = [
-            e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))
-        ]
+        alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
         assert len(alert_entries) >= 1
 
     def test_integration_gap_keyword_with_framework_query(
@@ -172,9 +163,7 @@ class TestAntipatternAlertSurfaces:
             reader=reader,
         )
 
-        alert_entries = [
-            e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))
-        ]
+        alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
         assert len(alert_entries) >= 1
 
 
@@ -186,9 +175,7 @@ class TestAntipatternAlertSurfaces:
 class TestAntipatternAlertSkipped:
     """When query does NOT suggest model/system work, no alert is added."""
 
-    def test_fix_typo_query_no_alert(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fix_typo_query_no_alert(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         facade_learning = _make_learning("L001", "facade pattern found in adapter layer")
@@ -212,14 +199,10 @@ class TestAntipatternAlertSkipped:
             reader=reader,
         )
 
-        alert_entries = [
-            e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))
-        ]
+        alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
         assert len(alert_entries) == 0
 
-    def test_wildcard_query_no_alert(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wildcard_query_no_alert(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         facade_learning = _make_learning("L001", "facade pattern found in adapter layer")
@@ -244,9 +227,7 @@ class TestAntipatternAlertSkipped:
         )
 
         # Wildcard queries are NOT focused, so anti-pattern check skips
-        alert_entries = [
-            e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))
-        ]
+        alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
         assert len(alert_entries) == 0
 
 
@@ -258,9 +239,7 @@ class TestAntipatternAlertSkipped:
 class TestAntipatternAlertFailOpen:
     """Anti-pattern alert must never raise -- fail-open returns unmodified results."""
 
-    def test_none_summary_does_not_raise(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_none_summary_does_not_raise(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         # Learning with None summary -- should not crash the alert scanner
@@ -287,9 +266,7 @@ class TestAntipatternAlertFailOpen:
         )
         assert isinstance(learnings, list)
 
-    def test_missing_id_field_does_not_raise(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_id_field_does_not_raise(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         bad_learning: dict[str, object] = {"summary": "facade pattern", "impact": 0.5}

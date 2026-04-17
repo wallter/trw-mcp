@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # P0-1: session_metrics persistence to run.yaml
 # ---------------------------------------------------------------------------
@@ -121,13 +120,16 @@ class TestCompositeOutcomeConfigWeights:
         mock_cfg.outcome_weight_velocity = 1.0
         mock_cfg.outcome_weight_learning_rate = 0.5
 
-        with patch(
-            "trw_mcp.models.config.get_config",
-            return_value=mock_cfg,
-        ), patch(
-            "trw_mcp.scoring._correlation.compute_composite_outcome",
-            wraps=None,
-        ) as mock_composite:
+        with (
+            patch(
+                "trw_mcp.models.config.get_config",
+                return_value=mock_cfg,
+            ),
+            patch(
+                "trw_mcp.scoring._correlation.compute_composite_outcome",
+                wraps=None,
+            ) as mock_composite,
+        ):
             mock_composite.return_value = 1.0
             _step_delivery_metrics(Path("/tmp/fake-trw"), None)
 

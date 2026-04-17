@@ -10,15 +10,11 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import stat
 import subprocess
 from pathlib import Path
 
-import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -355,11 +351,7 @@ class TestGenerateCursorIdeHooks:
         cursor_dir.mkdir(parents=True)
         user_hooks = {
             "version": 1,
-            "hooks": {
-                "stop": [
-                    {"command": ".cursor/hooks/my-own-stop.sh", "type": "command", "timeout": 5}
-                ]
-            },
+            "hooks": {"stop": [{"command": ".cursor/hooks/my-own-stop.sh", "type": "command", "timeout": 5}]},
         }
         (cursor_dir / "hooks.json").write_text(json.dumps(user_hooks, indent=2) + "\n", encoding="utf-8")
 
@@ -368,9 +360,7 @@ class TestGenerateCursorIdeHooks:
         hooks_data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
         stop_handlers = hooks_data["hooks"]["stop"]
         commands = [h["command"] for h in stop_handlers]
-        assert any("my-own-stop.sh" in cmd for cmd in commands), (
-            "User hook was removed"
-        )
+        assert any("my-own-stop.sh" in cmd for cmd in commands), "User hook was removed"
 
     def test_hook_scripts_installed_executable(self, tmp_path: Path) -> None:
         """.cursor/hooks/trw-*.sh scripts exist and are mode 0o755."""
@@ -403,9 +393,7 @@ class TestGenerateCursorIdeHooks:
                 capture_output=True,
                 text=True,
             )
-            assert proc.returncode == 0, (
-                f"bash -n failed on {script_name}: {proc.stderr}"
-            )
+            assert proc.returncode == 0, f"bash -n failed on {script_name}: {proc.stderr}"
 
     def test_hooks_event_commands_reference_correct_path(self, tmp_path: Path) -> None:
         """Each registered event handler command starts with .cursor/hooks/trw-."""
@@ -457,7 +445,7 @@ class TestFallbackTemplateBehavior:
         empty_dir.mkdir()
 
         class _FakeTraversable:
-            def joinpath(self, name: str) -> "_FakeTraversable":
+            def joinpath(self, name: str) -> _FakeTraversable:
                 return self
 
             def read_text(self, encoding: str = "utf-8") -> str:
@@ -480,7 +468,7 @@ class TestFallbackTemplateBehavior:
         from trw_mcp.bootstrap._cursor_ide import _TRW_COMMANDS, generate_cursor_ide_commands
 
         class _FakeTraversable:
-            def joinpath(self, name: str) -> "_FakeTraversable":
+            def joinpath(self, name: str) -> _FakeTraversable:
                 return self
 
             def read_text(self, encoding: str = "utf-8") -> str:

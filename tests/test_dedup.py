@@ -263,7 +263,9 @@ class TestCheckDuplicate:
         # This test verifies the tool-level integration skips the call
         assert result is not None  # check_duplicate itself doesn't check config
 
-    def test_skip_against_obsolete_entry(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
+    def test_skip_against_obsolete_entry(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
         """Obsolete entries with identical content trigger 'skip' — prevents re-learning loop."""
         entries_dir = tmp_path / "learnings" / "entries"
         entries_dir.mkdir(parents=True)

@@ -232,7 +232,9 @@ def test_assertion_penalties_still_work_with_context() -> None:
 
     # With penalty
     result_penalty = rank_by_utility(
-        [entry], [], 0.3,
+        [entry],
+        [],
+        0.3,
         assertion_penalties={"L-a": 0.9},
         context=ctx,
     )

@@ -107,9 +107,7 @@ class TestClaudeMdHashDetection:
 
             # CORE-093 FR05: Hash excludes learning content, so hash stays stable
             result2 = execute_claude_md_sync(**args)
-            assert result2["status"] == "unchanged", (
-                "CORE-093 FR05: hash should be stable across learning changes"
-            )
+            assert result2["status"] == "unchanged", "CORE-093 FR05: hash should be stable across learning changes"
 
     def test_unchanged_returns_hash_field(self, tmp_path: Path) -> None:
         """When status=unchanged, response includes hash field."""

@@ -1075,10 +1075,7 @@ class TestIntegration:
         )
 
         context_managers = [patch("trw_mcp.tools.review.find_active_run", return_value=run_dir)]
-        context_managers.extend(
-            patch(target, return_value=value)
-            for target, value in review_patches
-        )
+        context_managers.extend(patch(target, return_value=value) for target, value in review_patches)
 
         with context_managers[0]:
             if len(context_managers) == 1:

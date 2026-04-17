@@ -544,9 +544,7 @@ def _best_effort_semantic_check(
             ValidationFailure(
                 field="semantic_check",
                 rule=finding.check_id,
-                message=(
-                    f"[{finding.severity}] {finding.description} at {finding.file_path}:{finding.line_number}"
-                ),
+                message=(f"[{finding.severity}] {finding.description} at {finding.file_path}:{finding.line_number}"),
                 severity="warning",  # Always soft gate
             )
             for finding in check_result.findings[:10]

@@ -17,9 +17,7 @@ def _make_config() -> TRWConfig:
 class TestLearnCreatesAnchors:
     """Verify anchor generation is wired into execute_learn."""
 
-    def test_learn_creates_anchors_when_git_diff_returns_py_files(
-        self, tmp_path: Path
-    ) -> None:
+    def test_learn_creates_anchors_when_git_diff_returns_py_files(self, tmp_path: Path) -> None:
         """When git diff returns modified .py files, anchors are generated and passed to store."""
         from trw_mcp.tools._learn_impl import execute_learn
 
@@ -114,9 +112,7 @@ class TestLearnCreatesAnchors:
 
         sig = inspect.signature(execute_learn)
         # anchors must NOT be a parameter of execute_learn
-        assert "anchors" not in sig.parameters, (
-            "anchors should be auto-generated, not a caller-supplied parameter"
-        )
+        assert "anchors" not in sig.parameters, "anchors should be auto-generated, not a caller-supplied parameter"
 
     def test_learn_git_failure_still_records(self, tmp_path: Path) -> None:
         """If git subprocess fails, anchor generation is skipped but learn still records."""

@@ -35,23 +35,26 @@ def _seed_config(target_dir: Path, target_platforms: list[str], **extra: object)
 
 def _read_platforms(cfg_path: Path) -> list[str]:
     data = yaml.safe_load(cfg_path.read_text())
-    return cast(list[str], data["target_platforms"])
+    return cast("list[str]", data["target_platforms"])
 
 
 @pytest.mark.integration
 class TestAugmentationPreservesExistingPlatforms:
     """The user's existing list must NEVER be narrowed."""
 
-    def test_single_ide_override_does_not_narrow_multi_platform_list(
-        self, tmp_path: Path
-    ) -> None:
+    def test_single_ide_override_does_not_narrow_multi_platform_list(self, tmp_path: Path) -> None:
         """Pre-fix bug: --ide cursor-ide narrowed list to [cursor-ide]."""
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
         cfg = _seed_config(
             tmp_path,
             target_platforms=[
-                "claude-code", "cursor-ide", "opencode", "codex", "copilot", "gemini",
+                "claude-code",
+                "cursor-ide",
+                "opencode",
+                "codex",
+                "copilot",
+                "gemini",
             ],
         )
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
@@ -110,9 +113,7 @@ class TestAugmentationAddsNewIdes:
         cfg = _seed_config(tmp_path, target_platforms=["claude-code"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        _update_config_target_platforms(
-            tmp_path, ["cursor-ide", "cursor-cli", "gemini"], result
-        )
+        _update_config_target_platforms(tmp_path, ["cursor-ide", "cursor-cli", "gemini"], result)
 
         platforms = _read_platforms(cfg)
         assert platforms == ["claude-code", "cursor-ide", "cursor-cli", "gemini"]
@@ -138,15 +139,11 @@ class TestLegacyCursorMigration:
         assert "claude-code" in platforms
         assert str(cfg) in result["updated"]
 
-    def test_cursor_migration_dedupes_when_cursor_ide_already_present(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cursor_migration_dedupes_when_cursor_ide_already_present(self, tmp_path: Path) -> None:
         """If both `cursor` and `cursor-ide` exist, migration deduplicates."""
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
-        cfg = _seed_config(
-            tmp_path, target_platforms=["claude-code", "cursor", "cursor-ide"]
-        )
+        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "cursor", "cursor-ide"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
         _update_config_target_platforms(tmp_path, [], result)
@@ -266,9 +263,7 @@ from tests._structlog_capture import captured_structlog  # noqa: F401
 class TestObservability:
     """Structured logging emits the right events for monitoring."""
 
-    def test_augmentation_emits_info_log_with_added_field(
-        self, tmp_path: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_augmentation_emits_info_log_with_added_field(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """When new IDEs are added, structlog emits config_target_platforms_augmented."""
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
@@ -278,7 +273,8 @@ class TestObservability:
         _update_config_target_platforms(tmp_path, ["cursor-cli", "gemini"], result)
 
         info_logs = [
-            log_entry for log_entry in captured_structlog
+            log_entry
+            for log_entry in captured_structlog
             if log_entry.get("event") == "config_target_platforms_augmented"
         ]
         assert len(info_logs) == 1
@@ -289,9 +285,7 @@ class TestObservability:
         assert log["added"] == ["cursor-cli", "gemini"]
         assert log["requested"] == ["cursor-cli", "gemini"]
 
-    def test_no_change_emits_debug_unchanged_log(
-        self, tmp_path: Path, captured_structlog: list[dict]
-    ) -> None:
+    def test_no_change_emits_debug_unchanged_log(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """When merge is a no-op, structlog emits config_target_platforms_unchanged."""
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
@@ -301,7 +295,8 @@ class TestObservability:
         _update_config_target_platforms(tmp_path, ["cursor-ide"], result)
 
         unchanged_logs = [
-            log_entry for log_entry in captured_structlog
+            log_entry
+            for log_entry in captured_structlog
             if log_entry.get("event") == "config_target_platforms_unchanged"
         ]
         assert len(unchanged_logs) == 1

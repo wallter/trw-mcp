@@ -140,7 +140,9 @@ class TestCustomTestCommand:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py")
+@pytest.mark.skip(
+    reason="run_build_check removed in PRD-CORE-098 — replaced by result reporter API, see test_build_check_reporter.py"
+)
 class TestRunBuildCheck:
     """Tests for the top-level run_build_check function (OBSOLETE — PRD-CORE-098)."""
 
@@ -359,7 +361,9 @@ class TestCollectFailures:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="Patches run_build_check which was removed in PRD-CORE-098 — see test_build_check_reporter.py for new API tests")
+@pytest.mark.skip(
+    reason="Patches run_build_check which was removed in PRD-CORE-098 — see test_build_check_reporter.py for new API tests"
+)
 class TestTrwBuildCheckTool:
     """Tests for the trw_build_check MCP tool closure (OBSOLETE — PRD-CORE-098)."""
 

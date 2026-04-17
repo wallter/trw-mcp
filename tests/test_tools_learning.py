@@ -9,9 +9,10 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.models.memory import MemoryEntry
+from trw_memory.retrieval.token_budget import estimate_tokens
 
 from tests.conftest import get_tools_sync, make_test_server
-from trw_memory.models.memory import MemoryEntry
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import (
     compute_initial_q_value,
@@ -47,7 +48,6 @@ from trw_mcp.state.claude_md import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import search_patterns
-from trw_memory.retrieval.token_budget import estimate_tokens
 
 _CFG = TRWConfig()
 
@@ -80,8 +80,7 @@ def _write_analytics(root: Path, *, sessions_tracked: int, total_learnings: int)
     analytics_path = root / _CFG.trw_dir / _CFG.context_dir / "analytics.yaml"
     analytics_path.parent.mkdir(parents=True, exist_ok=True)
     analytics_path.write_text(
-        f"sessions_tracked: {sessions_tracked}\n"
-        f"total_learnings: {total_learnings}\n",
+        f"sessions_tracked: {sessions_tracked}\ntotal_learnings: {total_learnings}\n",
         encoding="utf-8",
     )
 
@@ -900,9 +899,7 @@ class TestProgressiveDisclosure:
         matches = re.findall(orphan_pattern, auto_gen)
         assert len(matches) == 0, f"Found orphan headers: {matches}"
 
-    def test_max_auto_lines_gate_raises_error(
-        self, tmp_path: Path, reader: FileStateReader
-    ) -> None:
+    def test_max_auto_lines_gate_raises_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """PRD-CORE-061-FR04: StateError raised when auto-gen exceeds limit."""
         from trw_mcp.clients.llm import LLMClient
         from trw_mcp.exceptions import StateError

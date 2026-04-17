@@ -26,7 +26,6 @@ from trw_mcp.bootstrap._gemini import (
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES, detect_ide, resolve_ide_targets
 from trw_mcp.models.config._profiles import _PROFILES, resolve_client_profile
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

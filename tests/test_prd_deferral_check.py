@@ -50,9 +50,7 @@ class TestDonePrdWithSprintDeferral:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-55.md"
         sprint_doc.write_text(
-            "# Sprint 55\n\n"
-            "- PRD-CORE-042: FR03 deferred to Phase 2\n"
-            "- PRD-CORE-043: complete\n",
+            "# Sprint 55\n\n- PRD-CORE-042: FR03 deferred to Phase 2\n- PRD-CORE-043: complete\n",
             encoding="utf-8",
         )
 
@@ -70,8 +68,7 @@ class TestDonePrdWithSprintDeferral:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-60.md"
         sprint_doc.write_text(
-            "# Sprint 60\n\n"
-            "PRD-FIX-010 FR02 explicitly NOT in scope for this sprint\n",
+            "# Sprint 60\n\nPRD-FIX-010 FR02 explicitly NOT in scope for this sprint\n",
             encoding="utf-8",
         )
 
@@ -87,8 +84,7 @@ class TestDonePrdWithSprintDeferral:
         archive_dir = project_tree / "docs" / "requirements-aare-f" / "archive" / "sprints"
         sprint_doc = archive_dir / "sprint-42.md"
         sprint_doc.write_text(
-            "# Sprint 42\n\n"
-            "| PRD-QUAL-015 | out of scope | moved to Phase 3 |\n",
+            "# Sprint 42\n\n| PRD-QUAL-015 | out of scope | moved to Phase 3 |\n",
             encoding="utf-8",
         )
 
@@ -116,8 +112,7 @@ class TestDonePrdWithoutDeferral:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-70.md"
         sprint_doc.write_text(
-            "# Sprint 70\n\n"
-            "- PRD-CORE-050: all FRs implemented and verified\n",
+            "# Sprint 70\n\n- PRD-CORE-050: all FRs implemented and verified\n",
             encoding="utf-8",
         )
 
@@ -133,9 +128,7 @@ class TestDonePrdWithoutDeferral:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-70.md"
         sprint_doc.write_text(
-            "# Sprint 70\n\n"
-            "- PRD-CORE-051: deferred to Phase 2\n"
-            "- PRD-CORE-050: complete\n",
+            "# Sprint 70\n\n- PRD-CORE-051: deferred to Phase 2\n- PRD-CORE-050: complete\n",
             encoding="utf-8",
         )
 
@@ -155,8 +148,7 @@ class TestDraftPrdSkipsDeferralCheck:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-55.md"
         sprint_doc.write_text(
-            "# Sprint 55\n\n"
-            "- PRD-CORE-042: deferred to Phase 2\n",
+            "# Sprint 55\n\n- PRD-CORE-042: deferred to Phase 2\n",
             encoding="utf-8",
         )
 
@@ -171,8 +163,7 @@ class TestDraftPrdSkipsDeferralCheck:
         sprint_dir = project_tree / "docs" / "requirements-aare-f" / "sprints"
         sprint_doc = sprint_dir / "sprint-55.md"
         sprint_doc.write_text(
-            "# Sprint 55\n\n"
-            "- PRD-CORE-042: deferred to Phase 2\n",
+            "# Sprint 55\n\n- PRD-CORE-042: deferred to Phase 2\n",
             encoding="utf-8",
         )
 

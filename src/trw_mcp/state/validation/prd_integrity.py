@@ -13,9 +13,7 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 
 logger = structlog.get_logger(__name__)
 
-BUILTIN_PRD_CATEGORIES: frozenset[str] = frozenset(
-    {"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH"}
-)
+BUILTIN_PRD_CATEGORIES: frozenset[str] = frozenset({"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH"})
 """Framework-generic PRD categories shipped with trw-mcp.
 
 Projects MAY extend this set via `.trw/config.yaml` field
@@ -278,9 +276,7 @@ def _scan_prd_snapshots(prds_dir: Path) -> list[_PrdSnapshot]:
 
 def _title_tokens(title: str) -> set[str]:
     tokens = {
-        token
-        for token in _TITLE_TOKEN_RE.findall(title.lower())
-        if len(token) > 2 and token not in _TITLE_STOPWORDS
+        token for token in _TITLE_TOKEN_RE.findall(title.lower()) if len(token) > 2 and token not in _TITLE_STOPWORDS
     }
     return tokens
 

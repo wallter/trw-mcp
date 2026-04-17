@@ -91,9 +91,7 @@ def compute_rework_rate(
                     rework_rate_git_timeout=True,
                 )
             except (OSError, ValueError):
-                logger.debug(
-                    "rework_rate_git_failed", file=file_path, exc_info=True
-                )
+                logger.debug("rework_rate_git_failed", file=file_path, exc_info=True)
 
     rate = rework_files / max(total, 1)
     return {

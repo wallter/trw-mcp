@@ -328,7 +328,9 @@ def test_user_prompt_submit_hook_uses_yaml_learning_ids_for_output_and_dedup(tmp
 
 def test_user_prompt_submit_hook_matches_wrapped_summary_text(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
-        project_root, _, entries_dir = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "wrapped-summary", hook_path)
+        project_root, _, entries_dir = _copy_hook_to_temp(
+            tmp_path / hook_path.parent.name / "wrapped-summary", hook_path
+        )
         (entries_dir / "wrapped-summary.yaml").write_text(
             'id: "L-wrapped"\n'
             "status: active\n"

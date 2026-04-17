@@ -240,8 +240,7 @@ class TestMigrateTrwContentFromAgentsMd:
 
         agents_path = tmp_project / "AGENTS.md"
         agents_path.write_text(
-            f"# User Section\n\n"
-            f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n## TRW\n- item\n{TRW_MARKER_END}\n",
+            f"# User Section\n\n{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n## TRW\n- item\n{TRW_MARKER_END}\n",
             encoding="utf-8",
         )
 
@@ -338,9 +337,7 @@ class TestSyncInstructionFileIfNeeded:
         """codex client with .codex/INSTRUCTIONS.md path → file is created."""
         from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
 
-        synced, path = _sync_instruction_file_if_needed(
-            ".codex/INSTRUCTIONS.md", tmp_project, "codex"
-        )
+        synced, path = _sync_instruction_file_if_needed(".codex/INSTRUCTIONS.md", tmp_project, "codex")
 
         assert synced is True
         assert path is not None
@@ -353,9 +350,7 @@ class TestSyncInstructionFileIfNeeded:
         """opencode client with .opencode/INSTRUCTIONS.md path → file is created (generic model)."""
         from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
 
-        synced, path = _sync_instruction_file_if_needed(
-            ".opencode/INSTRUCTIONS.md", tmp_project, "opencode"
-        )
+        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "opencode")
 
         assert synced is True
         assert path is not None
@@ -374,9 +369,7 @@ class TestSyncInstructionFileIfNeeded:
         opencode_json_path = tmp_project / "opencode.json"
         opencode_json_path.write_text(json.dumps({"model": "gpt-4o"}), encoding="utf-8")
 
-        synced, path = _sync_instruction_file_if_needed(
-            ".opencode/INSTRUCTIONS.md", tmp_project, "opencode"
-        )
+        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "opencode")
 
         assert synced is True
         instructions_file = tmp_project / ".opencode" / "INSTRUCTIONS.md"
@@ -389,9 +382,7 @@ class TestSyncInstructionFileIfNeeded:
         """auto client with .codex/ instruction_path → generates codex instructions."""
         from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
 
-        synced, path = _sync_instruction_file_if_needed(
-            ".codex/INSTRUCTIONS.md", tmp_project, "auto"
-        )
+        synced, path = _sync_instruction_file_if_needed(".codex/INSTRUCTIONS.md", tmp_project, "auto")
 
         assert synced is True
         assert (tmp_project / ".codex" / "INSTRUCTIONS.md").exists()
@@ -400,9 +391,7 @@ class TestSyncInstructionFileIfNeeded:
         """all client with .opencode/ instruction_path → generates opencode instructions."""
         from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
 
-        synced, path = _sync_instruction_file_if_needed(
-            ".opencode/INSTRUCTIONS.md", tmp_project, "all"
-        )
+        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "all")
 
         assert synced is True
         assert (tmp_project / ".opencode" / "INSTRUCTIONS.md").exists()
@@ -463,9 +452,7 @@ class TestSyncIncludesInstructionFile:
         from trw_mcp.state.claude_md._agents_md import _determine_write_targets
 
         config = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets(
-            "codex", config, tmp_project, "root"
-        )
+        write_claude, write_agents, instruction_path = _determine_write_targets("codex", config, tmp_project, "root")
 
         assert write_claude is False
         assert instruction_path == ".codex/INSTRUCTIONS.md"
@@ -475,9 +462,7 @@ class TestSyncIncludesInstructionFile:
         from trw_mcp.state.claude_md._agents_md import _determine_write_targets
 
         config = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets(
-            "opencode", config, tmp_project, "root"
-        )
+        write_claude, write_agents, instruction_path = _determine_write_targets("opencode", config, tmp_project, "root")
 
         assert write_claude is False
         assert instruction_path == ".opencode/INSTRUCTIONS.md"

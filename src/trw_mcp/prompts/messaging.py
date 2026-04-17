@@ -55,7 +55,7 @@ def _load_messages() -> dict[str, object]:
     return dict(data) if data else {}
 
 
-def render_tool_name(tool_name: str, profile: "ClientProfile | None" = None) -> str:
+def render_tool_name(tool_name: str, profile: ClientProfile | None = None) -> str:
     """Render a tool name with the profile's MCP namespace prefix (PRD-FIX-078).
 
     claude-code exposes MCP tools under ``mcp__{server}__{tool}``; other clients
@@ -79,7 +79,7 @@ def render_tool_name(tool_name: str, profile: "ClientProfile | None" = None) -> 
     return f"{profile.tool_namespace_prefix}{tool_name}"
 
 
-def _expand_tool_placeholders(text: str, profile: "ClientProfile | None") -> str:
+def _expand_tool_placeholders(text: str, profile: ClientProfile | None) -> str:
     """Substitute ``{tool:trw_X}`` placeholders with the rendered tool name.
 
     PRD-FIX-078 FR02 / NFR02 / NFR03:
@@ -109,7 +109,7 @@ def _expand_tool_placeholders(text: str, profile: "ClientProfile | None") -> str
 
 def get_message(
     key: str,
-    profile: "ClientProfile | None" = None,
+    profile: ClientProfile | None = None,
     **kwargs: object,
 ) -> str:
     """Get a message by key, with optional ``str.format()`` substitution.
@@ -141,7 +141,7 @@ def get_message(
     return raw
 
 
-def render_message(key: str, profile: "ClientProfile | None", **kwargs: object) -> str:
+def render_message(key: str, profile: ClientProfile | None, **kwargs: object) -> str:
     """Explicit profile-aware renderer (PRD-FIX-078 convenience wrapper)."""
     return get_message(key, profile=profile, **kwargs)
 

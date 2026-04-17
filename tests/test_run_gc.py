@@ -13,9 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-import structlog
 from structlog.testing import capture_logs
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,13 +142,9 @@ def test_sweep_preserves_pinned_run_regardless_of_age(tmp_path: Path) -> None:
 
     runs_root = tmp_path / "runs"
     now = time.time()
-    run_dir = _make_run(
-        runs_root, "task-a", "r1", events_age_hours=72.0, now=now
-    )
+    run_dir = _make_run(runs_root, "task-a", "r1", events_age_hours=72.0, now=now)
 
-    report = sweep_stale_runs(
-        runs_root, 48, 12, [run_dir], dry_run=False, _now=now
-    )
+    report = sweep_stale_runs(runs_root, 48, 12, [run_dir], dry_run=False, _now=now)
     assert report.runs_abandoned == 0
     assert report.runs_preserved_pinned == 1
     assert _read_status(run_dir) == "active"
@@ -215,9 +209,7 @@ def test_sweep_emits_near_stale_warning_in_grace_window(tmp_path: Path) -> None:
     )
 
     with capture_logs() as captured:
-        report = sweep_stale_runs(
-            runs_root, 48, 12, [], dry_run=False, _now=now
-        )
+        report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
 
     assert report.runs_abandoned == 0
     assert report.runs_in_grace_window == 1
@@ -257,14 +249,10 @@ def test_sweep_skips_malformed_run_yaml(tmp_path: Path) -> None:
     # One malformed run
     bad_run = runs_root / "task-a" / "r-bad"
     (bad_run / "meta").mkdir(parents=True)
-    (bad_run / "meta" / "run.yaml").write_text(
-        "this: is: not: valid: yaml: [unclosed\n", encoding="utf-8"
-    )
+    (bad_run / "meta" / "run.yaml").write_text("this: is: not: valid: yaml: [unclosed\n", encoding="utf-8")
 
     # One good stale run that SHOULD be abandoned — the sweep must continue past the bad entry.
-    good_run = _make_run(
-        runs_root, "task-a", "r-good", events_age_hours=72.0, now=now
-    )
+    good_run = _make_run(runs_root, "task-a", "r-good", events_age_hours=72.0, now=now)
 
     report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
     assert report.runs_skipped_malformed >= 1
@@ -292,9 +280,7 @@ def test_sweep_dry_run_does_not_mutate(tmp_path: Path) -> None:
 
     runs_root = tmp_path / "runs"
     now = time.time()
-    run_dir = _make_run(
-        runs_root, "task-a", "r1", events_age_hours=72.0, now=now
-    )
+    run_dir = _make_run(runs_root, "task-a", "r1", events_age_hours=72.0, now=now)
 
     report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=True, _now=now)
     assert report.runs_abandoned == 1
