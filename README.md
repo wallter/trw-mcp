@@ -7,7 +7,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
 [![Docs](https://img.shields.io/badge/docs-trwframework.com-blue)](https://trwframework.com/docs)
 
-> Every AI coding tool resets to zero. TRW is the one that doesn't.
+> Every AI coding tool resets to zero. TRW **preserves state across sessions via the `.trw/` directory** — session-start recall replays prior learnings at every new session.
 
 ## Part of TRW Framework
 
@@ -18,11 +18,11 @@ trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframewor
 
 ## What It Does
 
-trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant accumulates project-specific expertise instead of starting from scratch every time.
+trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in `.trw/` and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; iter-0..10 SWE-bench-single-shot measurements showed null (n=40/47). See [docs/eval/iter-notes/iter-11-prospector-analysis.md](https://github.com/wallter/trw-framework/blob/main/docs/eval/iter-notes/iter-11-prospector-analysis.md).*
 
 The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, CLAUDE.md auto-generation from high-impact learnings, and instruction-tool manifest validation that ensures agents only see tools they can actually call.
 
-**[Knowledge compounding](https://trwframework.com/docs) in practice**: 336 PRDs, 90 sprints, 9,200+ tests, 90% coverage. The dogfooding is the proof — this codebase was built by AI agents using TRW.
+**Dogfooding scale**: 336 PRDs, 90 sprints, 9,200+ tests, 90% coverage. This codebase was built by AI agents using TRW. *Scale proves the framework is usable at volume; whether it improves outcomes vs baseline is measured via the eval bench, not inferred from these counts.*
 
 ## Quick Start
 
