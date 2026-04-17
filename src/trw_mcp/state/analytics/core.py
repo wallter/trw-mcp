@@ -157,21 +157,18 @@ _AUDIT_FINDING_DOMAIN_HINTS: dict[str, list[str]] = {
     "traceability_gap": ["traceability"],
 }
 _PRD_CATEGORY_DOMAIN_HINTS: dict[str, list[str]] = {
+    # Framework-generic hints (ship with trw-mcp). Projects may extend
+    # their own categories via `.trw/config.yaml` without touching this
+    # dict — unknown categories simply yield no domain hint.
     "API": ["api"],
     "CORE": ["product"],
     "DATA": ["data"],
-    "DIST": ["cold-start", "knowledge-extraction", "git-history"],
-    "EVAL": ["testing", "evaluation"],
     "FIX": ["maintenance", "quality"],
-    "HPO": ["optimization", "meta-tune", "telemetry"],
     "INFRA": ["infrastructure", "operations"],
-    "INTENT": ["tool-contracts", "phase-exposure", "middleware"],
     "OPS": ["operations"],
     "PERF": ["performance"],
     "QUAL": ["testing", "quality"],
-    "SCALE": ["planning", "cognitive-scaling", "orchestration"],
     "SEC": ["security"],
-    "THRASH": ["trajectory", "observability", "stuck-detection"],
     "UX": ["ux"],
 }
 

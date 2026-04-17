@@ -13,15 +13,34 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 
 logger = structlog.get_logger(__name__)
 
-ALLOWED_PRD_CATEGORIES: frozenset[str] = frozenset(
-    {
-        # Established categories:
-        "CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH", "EVAL",
-        # Phase 5 agentic-HPO cluster categories (registered 2026-04-16
-        # per docs/requirements-aare-f/CLAUDE.md):
-        "INTENT", "SCALE", "THRASH", "HPO", "SEC", "DIST",
-    }
+BUILTIN_PRD_CATEGORIES: frozenset[str] = frozenset(
+    {"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH"}
 )
+"""Framework-generic PRD categories shipped with trw-mcp.
+
+Projects MAY extend this set via `.trw/config.yaml` field
+``extra_prd_categories: [CATEGORY, ...]``. The union of built-in + configured
+categories is available via :func:`allowed_prd_categories` for validation.
+"""
+
+
+def allowed_prd_categories() -> frozenset[str]:
+    """Return built-in + config-extended PRD categories.
+
+    Loads :class:`TRWConfig` lazily to avoid import-time side effects.
+    Projects using trw-mcp get BUILTIN_PRD_CATEGORIES by default; TRW's own
+    monorepo and other consumers may add project-specific categories (e.g.
+    INTENT, SCALE, HPO, DIST) by setting ``extra_prd_categories`` in
+    ``.trw/config.yaml``.
+    """
+    from trw_mcp.models.config import get_config
+
+    extras = getattr(get_config(), "extra_prd_categories", ()) or ()
+    return BUILTIN_PRD_CATEGORIES | frozenset(str(c).upper() for c in extras)
+
+
+# Backward-compatible alias for existing callers; prefer allowed_prd_categories().
+ALLOWED_PRD_CATEGORIES: frozenset[str] = BUILTIN_PRD_CATEGORIES
 
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 _TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
