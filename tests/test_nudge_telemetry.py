@@ -14,6 +14,7 @@ from pathlib import Path
 
 from trw_mcp.state._nudge_state import (
     CeremonyState,
+    record_nudge_shown,
     write_ceremony_state,
 )
 
@@ -137,6 +138,74 @@ class TestLogNudgeEvent:
             phase="IMPLEMENT",
             is_fallback=False,
         )
+
+
+# ===========================================================================
+# FR04 (root cause): record_nudge_shown emits to session-events.jsonl
+# ===========================================================================
+
+
+class TestRecordNudgeShownEmitsSessionEvent:
+    """FR04 root-cause wiring: record_nudge_shown appends nudge_shown to JSONL.
+
+    These tests verify the root-cause fix — record_nudge_shown is the
+    sole code path that runs when a nudge is shown to the agent, so a
+    side-effect on session-events.jsonl there is the production emission
+    point. Without this, eval-pipeline scorers only see the aggregate
+    ceremony-state.json snapshot.
+    """
+
+    def test_emits_nudge_shown_event(self, tmp_path: Path) -> None:
+        """record_nudge_shown appends a nudge_shown event to session-events.jsonl."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        record_nudge_shown(trw_dir, "L-wire-001", "IMPLEMENT", turn=3)
+
+        events = _read_events_jsonl(trw_dir / "context" / "session-events.jsonl")
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["event"] == "nudge_shown"
+        assert evt["learning_id"] == "L-wire-001"
+        assert evt["phase"] == "IMPLEMENT"
+        data = evt["data"]
+        assert isinstance(data, dict)
+        assert data["learning_id"] == "L-wire-001"
+        assert data["phase"] == "IMPLEMENT"
+        assert data["turn"] == 3
+        assert data["surface_type"] == "nudge"
+        assert "ts" in evt
+
+    def test_surface_type_propagates(self, tmp_path: Path) -> None:
+        """Non-default surface_type is recorded in the emitted event."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        record_nudge_shown(
+            trw_dir, "L-wire-002", "VALIDATE", turn=7, surface_type="phase_transition"
+        )
+
+        events = _read_events_jsonl(trw_dir / "context" / "session-events.jsonl")
+        assert events[0]["data"]["surface_type"] == "phase_transition"
+
+    def test_multiple_nudges_append(self, tmp_path: Path) -> None:
+        """Repeated record_nudge_shown calls append, do not overwrite."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        for i in range(3):
+            record_nudge_shown(trw_dir, f"L-{i:03d}", "IMPLEMENT", turn=i)
+
+        events = _read_events_jsonl(trw_dir / "context" / "session-events.jsonl")
+        assert len(events) == 3
+        learning_ids = [e["learning_id"] for e in events]
+        assert learning_ids == ["L-000", "L-001", "L-002"]
+
+    def test_ceremony_state_still_updated(self, tmp_path: Path) -> None:
+        """The existing ceremony-state.json update is preserved (no regression)."""
+        from trw_mcp.state._nudge_state import read_ceremony_state
+
+        trw_dir = _setup_trw_dir(tmp_path)
+        record_nudge_shown(trw_dir, "L-regress", "DELIVER", turn=9)
+
+        cs = read_ceremony_state(trw_dir)
+        assert "L-regress" in cs.nudge_history
+        assert "DELIVER" in cs.nudge_history["L-regress"]["phases_shown"]
+        assert cs.nudge_history["L-regress"]["last_shown_turn"] == 9
 
 
 # ===========================================================================

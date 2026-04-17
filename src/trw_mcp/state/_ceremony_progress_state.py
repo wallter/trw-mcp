@@ -263,7 +263,23 @@ def reset_nudge_count(trw_dir: Path, step: str) -> None:
 _NUDGE_HISTORY_CAP = 100
 
 
-def record_nudge_shown(trw_dir: Path, learning_id: str, phase: str, turn: int = 0) -> None:
+def record_nudge_shown(
+    trw_dir: Path,
+    learning_id: str,
+    phase: str,
+    turn: int = 0,
+    surface_type: str = "nudge",
+) -> None:
+    """Record a nudge impression.
+
+    PRD-QUAL-058-FR04: In addition to updating ceremony-state.json's nudge_history,
+    this function also appends a discrete ``nudge_shown`` event to
+    ``{trw_dir}/context/session-events.jsonl`` so the trw-eval pipeline's
+    pre_analyzers (JSONL path) and TraceAnalyzer can detect per-nudge activity.
+
+    Emission is best-effort: any failure in the session-event append is
+    suppressed so the primary ceremony-state update always completes.
+    """
     state = read_ceremony_state(trw_dir)
     if learning_id in state.nudge_history:
         entry = state.nudge_history[learning_id]
@@ -280,6 +296,54 @@ def record_nudge_shown(trw_dir: Path, learning_id: str, phase: str, turn: int = 
             last_shown_turn=turn,
         )
     write_ceremony_state(trw_dir, state)
+
+    # PRD-QUAL-058-FR04: Also emit a nudge_shown event to session-events.jsonl
+    # so the event-based eval pipeline (proximal_reward, TraceAnalyzer,
+    # pre_analyzers JSONL path) can detect per-nudge activity.
+    _emit_nudge_shown_event(
+        trw_dir,
+        learning_id=learning_id,
+        phase=phase,
+        turn=turn,
+        surface_type=surface_type,
+    )
+
+
+def _emit_nudge_shown_event(
+    trw_dir: Path,
+    *,
+    learning_id: str,
+    phase: str,
+    turn: int,
+    surface_type: str,
+) -> None:
+    """Append a nudge_shown event to session-events.jsonl.
+
+    Fail-open: swallow any I/O / serialization error silently. The ceremony
+    state update in the caller is the source-of-truth; this emission is an
+    additive observability signal for the eval pipeline.
+    """
+
+    try:
+        events_path = trw_dir / "context" / "session-events.jsonl"
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": "nudge_shown",
+            "learning_id": learning_id,
+            "phase": phase,
+            "data": {
+                "learning_id": learning_id,
+                "phase": phase,
+                "turn": turn,
+                "surface_type": surface_type,
+            },
+        }
+        with events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except (OSError, TypeError, ValueError):
+        # justified: fail-open — session event emission is best-effort
+        return
 
 
 def clear_nudge_history(trw_dir: Path) -> None:
