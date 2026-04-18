@@ -944,20 +944,26 @@ class TestValidatePrdQualityV2:
         assert any(f.field == "category" and "Unsupported PRD category" in f.message for f in result.failures)
 
     def test_v2_integrity_accepts_eval_category(self, tmp_path: Path) -> None:
-        """Integrity allowlist includes EVAL feature PRDs."""
+        """Integrity allowlist includes EVAL feature PRDs (config-extended, PRD-QUAL-066 FR-01)."""
+        from trw_mcp.models.config import TRWConfig, reload_config
+
         repo_file = tmp_path / "src" / "existing.py"
         repo_file.parent.mkdir(parents=True)
         repo_file.write_text("value = 1\n", encoding="utf-8")
 
-        result = validate_prd_quality_v2(
-            _build_integrity_prd(
-                prd_id="PRD-EVAL-005",
-                title="Eval category fixture",
-                category="EVAL",
-                path_ref="src/existing.py",
-            ),
-            project_root=str(tmp_path),
-        )
+        reload_config(TRWConfig(extra_prd_categories=["EVAL"]))
+        try:
+            result = validate_prd_quality_v2(
+                _build_integrity_prd(
+                    prd_id="PRD-EVAL-005",
+                    title="Eval category fixture",
+                    category="EVAL",
+                    path_ref="src/existing.py",
+                ),
+                project_root=str(tmp_path),
+            )
+        finally:
+            reload_config(None)
 
         assert not any(f.field == "category" for f in result.failures)
 
