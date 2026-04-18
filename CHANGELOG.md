@@ -2,11 +2,31 @@
 
 All notable changes to the TRW MCP server package.
 
-## [Unreleased]
+## [0.46.0] — 2026-04-18
 
 ### Changed
 
-- **Renamed MCP tool `trw_claude_md_sync` → `trw_instructions_sync`.** The tool writes the appropriate client instruction surface for whichever IDE is configured (CLAUDE.md for Claude Code, AGENTS.md for opencode / Codex, `.codex/INSTRUCTIONS.md` for Codex-CLI, etc.) — it is not CLAUDE.md-specific. The old name is retained as a deprecated alias that emits a warning and will be removed in a future release. Docs, skills, agents, and behavioral protocol directives all use the canonical name.
+- **Renamed MCP tool `trw_claude_md_sync` → `trw_instructions_sync`.** The
+  tool writes the appropriate client instruction surface for whichever IDE
+  is configured (`CLAUDE.md` for Claude Code, `AGENTS.md` for opencode /
+  Codex, `.codex/INSTRUCTIONS.md` for Codex-CLI, etc.) — it is not
+  CLAUDE.md-specific. The old name is retained as a deprecated alias that
+  emits a `logger.warning` on call and will be removed in a future
+  release. Docs, skills, agents, bundled client templates, and behavioral
+  protocol directives all use the canonical name.
+
+### Deprecated
+
+- **`trw_claude_md_sync`** — callers should migrate to
+  `trw_instructions_sync`. The alias is still registered for backward
+  compatibility but logs a deprecation warning on every invocation and
+  will be removed in a future release.
+
+### Migration
+
+- If your agent config, skill, or CI script calls `trw_claude_md_sync`,
+  replace it with `trw_instructions_sync`. Behavior is unchanged; only
+  the tool name differs.
 
 ## [0.45.2] — 2026-04-17
 
