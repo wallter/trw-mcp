@@ -8,17 +8,17 @@ import pytest
 from pydantic import ValidationError
 
 from trw_mcp.telemetry.event_base import (
-    CeremonyComplianceEvent,
     CeremonyEvent,
     ContractEvent,
+    HPOCeremonyComplianceEvent,
+    HPOSessionEndEvent,
+    HPOSessionStartEvent,
     HPOTelemetryEvent,
     LLMCallEvent,
     MCPSecurityEvent,
     MetaTuneEvent,
     ObserverEvent,
     PhaseExposureEvent,
-    SessionEndEvent,
-    SessionStartEvent,
     ThrashingEvent,
     ToolCallEvent,
 )
@@ -33,9 +33,9 @@ ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
     ThrashingEvent,
     LLMCallEvent,
     ToolCallEvent,
-    SessionStartEvent,
-    SessionEndEvent,
-    CeremonyComplianceEvent,
+    HPOSessionStartEvent,
+    HPOSessionEndEvent,
+    HPOCeremonyComplianceEvent,
 ]
 
 

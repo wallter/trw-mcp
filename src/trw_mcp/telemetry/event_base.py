@@ -129,22 +129,36 @@ class ToolCallEvent(HPOTelemetryEvent):
     emitter: str = "tool_call_timing"
 
 
-class SessionStartEvent(HPOTelemetryEvent):
-    """Emitted at ``trw_session_start``."""
+class HPOSessionStartEvent(HPOTelemetryEvent):
+    """Emitted at ``trw_session_start``.
+
+    Name-prefixed with ``HPO`` to avoid collision with the legacy
+    ``trw_mcp.telemetry.models.SessionStartEvent`` (CORE-031 anonymized
+    telemetry). Both classes coexist during Phase 1 parallel-emit; the
+    ``telemetry/__init__.py`` re-export keeps the legacy short name.
+    """
 
     event_type: str = "session_start"
     emitter: str = "session"
 
 
-class SessionEndEvent(HPOTelemetryEvent):
-    """Emitted at ``trw_deliver`` (session close)."""
+class HPOSessionEndEvent(HPOTelemetryEvent):
+    """Emitted at ``trw_deliver`` (session close).
+
+    Name-prefixed with ``HPO`` to avoid collision with legacy
+    ``trw_mcp.telemetry.models.SessionEndEvent`` (CORE-031).
+    """
 
     event_type: str = "session_end"
     emitter: str = "session"
 
 
-class CeremonyComplianceEvent(HPOTelemetryEvent):
-    """Ceremony-compliance scoring events (per-run rollup)."""
+class HPOCeremonyComplianceEvent(HPOTelemetryEvent):
+    """Ceremony-compliance scoring events (per-run rollup).
+
+    Name-prefixed with ``HPO`` to avoid collision with legacy
+    ``trw_mcp.telemetry.models.CeremonyComplianceEvent`` (CORE-031).
+    """
 
     event_type: str = "ceremony_compliance"
     emitter: str = "ceremony"
@@ -200,8 +214,8 @@ __all__ = [
     "ThrashingEvent",
     "LLMCallEvent",
     "ToolCallEvent",
-    "SessionStartEvent",
-    "SessionEndEvent",
-    "CeremonyComplianceEvent",
+    "HPOSessionStartEvent",
+    "HPOSessionEndEvent",
+    "HPOCeremonyComplianceEvent",
     "validate_parent_within_run",
 ]
