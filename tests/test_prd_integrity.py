@@ -130,6 +130,11 @@ def test_allowed_prd_categories_unions_extras(_config_with_extras: None) -> None
         "a/.../b.py",                 # middle ellipsis
         "foo/bar/...",                # trailing ellipsis
         ".../nested/.../deep.py",    # multiple ellipses
+        # PRD-EVAL-037 audit P2 follow-up: explicitly cover the 4+ dot
+        # edge cases. These would regress silently if the guard ever
+        # narrows to "exactly three dots" instead of "any ellipsis run".
+        "....",                       # four dots alone
+        ".../.../.../x.py",          # multiple triple-dot fragments
     ],
 )
 def test_normalize_repo_path_rejects_ellipsis_prefix(candidate: str) -> None:
