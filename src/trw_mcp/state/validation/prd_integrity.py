@@ -116,9 +116,108 @@ def run_prd_integrity_checks(
 
     failures.extend(_check_allowed_category(frontmatter))
     failures.extend(_check_repo_path_references(content, project_root))
+    failures.extend(_check_functionality_level_matches_status(frontmatter))
     warnings.extend(_check_duplicate_candidates(content, frontmatter, project_root, prds_relative_path))
 
     return failures, warnings
+
+
+_VALID_FUNCTIONALITY_LEVELS: frozenset[str] = frozenset({"stub", "partial", "live"})
+
+
+def _check_functionality_level_matches_status(
+    frontmatter: dict[str, object],
+) -> list[ValidationFailure]:
+    """Enforce FPI #7 (2026-04-18): status=implemented requires functionality_level=live.
+
+    See ``docs/requirements-aare-f/CLAUDE.md`` §Functionality-Level Frontmatter
+    and ``docs/research/agentic-hpo/DISTILLERY-DEFECT-LEDGER-2026-04-18.md`` §FPI #7.
+    """
+    status = str(frontmatter.get("status", "")).strip().lower()
+    level = str(frontmatter.get("functionality_level", "")).strip().lower()
+
+    # Not all statuses require the field (draft/review/archived are pre-implementation).
+    if status not in {"implemented", "partial", "stub"}:
+        return []
+
+    failures: list[ValidationFailure] = []
+
+    if not level:
+        failures.append(
+            ValidationFailure(
+                field="functionality_level",
+                rule="aaref_functionality_level_required",
+                message=(
+                    "PRD status is past-implementation (implemented/partial/stub) but "
+                    "functionality_level is unset. Per FPI #7 (2026-04-18), declare "
+                    "functionality_level: stub | partial | live + stubs[]. See "
+                    "DISTILLERY-DEFECT-LEDGER-2026-04-18.md §FPI #7."
+                ),
+                severity="error",
+            )
+        )
+        return failures
+
+    if level not in _VALID_FUNCTIONALITY_LEVELS:
+        allowed = ", ".join(sorted(_VALID_FUNCTIONALITY_LEVELS))
+        failures.append(
+            ValidationFailure(
+                field="functionality_level",
+                rule="aaref_functionality_level_valid_value",
+                message=f"Unsupported functionality_level {level!r}. Allowed: {allowed}.",
+                severity="error",
+            )
+        )
+        return failures
+
+    if status == "implemented" and level != "live":
+        failures.append(
+            ValidationFailure(
+                field="status",
+                rule="aaref_implemented_requires_live",
+                message=(
+                    f"PRD at status=implemented but functionality_level={level!r}. "
+                    "Per FPI #7: status=implemented requires functionality_level=live "
+                    "AND stubs[]==[]. Downgrade status to `partial` (or `stub`) OR "
+                    "land the remaining stubs. See DISTILLERY-DEFECT-LEDGER-2026-04-18.md "
+                    "§FPI #7 for precedent."
+                ),
+                severity="error",
+            )
+        )
+
+    # Also check that stubs[] is consistent with functionality_level.
+    stubs = frontmatter.get("stubs", [])
+    if level == "live" and stubs:
+        failures.append(
+            ValidationFailure(
+                field="stubs",
+                rule="aaref_live_implies_empty_stubs",
+                message=(
+                    "functionality_level=live but stubs[] is non-empty. A live PRD "
+                    "MUST have an empty stubs list (every path is real). Either downgrade "
+                    "to `partial` or close the remaining stubs."
+                ),
+                severity="error",
+            )
+        )
+
+    if level in {"stub", "partial"} and not stubs:
+        failures.append(
+            ValidationFailure(
+                field="stubs",
+                rule="aaref_non_live_requires_enumerated_stubs",
+                message=(
+                    f"functionality_level={level!r} but stubs[] is empty. Enumerate "
+                    "the non-live paths with id/location/activation_gate/upgraded_by "
+                    "so reviewers can audit what's left. See DISTILLERY-DEFECT-LEDGER-2026-04-18.md "
+                    "§Deferred-Scope Items for the exemplar."
+                ),
+                severity="error",
+            )
+        )
+
+    return failures
 
 
 def _check_allowed_category(frontmatter: dict[str, object]) -> list[ValidationFailure]:
