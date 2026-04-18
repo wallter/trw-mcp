@@ -1,0 +1,7 @@
+# Bundled profile config overlay: cursor-cli
+# Applied on top of the built-in ClientProfile in trw_mcp.models.config._profiles.
+# PRD-HPO-SAFE-001 NFR-7: meta_tune.enabled MUST ship as false in every
+# bundled profile for v1. Do not flip to true without reading §17.2 Q4.
+profile: cursor-cli
+meta_tune:
+  enabled: false

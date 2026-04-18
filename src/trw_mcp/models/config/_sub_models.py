@@ -160,6 +160,28 @@ class PathsConfig(BaseModel):
     source_package_path: str = "src"
 
 
+class MetaTuneConfig(BaseModel):
+    """Top-level kill switch + knobs for the meta-tune safety pipeline.
+
+    PRD-HPO-SAFE-001 FR-7 (kill switch) + NFR-7 (config safety): the
+    `enabled` flag defaults to False and MUST remain False in every
+    bundled profile for v1. When False, the meta-tune proposer short-
+    circuits on entry: zero candidates generated, zero sandbox runs
+    enqueued, one INFO-level structlog event emitted tagged
+    ``meta-tune-disabled``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Top-level kill switch for the meta-tune loop (FR-7). When False, "
+            "the proposer short-circuits and no candidates are generated."
+        ),
+    )
+
+
 class PhaseTimeCaps(BaseModel):
     """Phase time cap percentages -- ORC-level time tracking only.
 
