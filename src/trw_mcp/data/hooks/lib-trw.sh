@@ -84,9 +84,41 @@ find_active_run() {
   return 1
 }
 
+# _json_escape: Escape a string for safe interpolation between JSON quotes.
+# Handles backslash, double-quote, and the control characters that would
+# otherwise split a JSONL line (tab, carriage return, newline).
+# Prefers jq for full RFC 8259 correctness when available.
+#
+# Security audit 2026-04-18 H1: file paths and tool names flowing into
+# events.jsonl from Claude Code hooks are attacker-influenced on any repo
+# a user clones. A file named {"}.py corrupted the audit trail.
+#
+# Args: $1=raw_string
+# Prints: the escaped string, ready to slice between literal " " quotes.
+_json_escape() {
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$1" | jq -Rs '.' | sed 's/^"//;s/"$//'
+  else
+    # POSIX fallback. awk reads stdin line-by-line, joining with \n literal.
+    printf '%s' "$1" | awk '
+      {
+        gsub(/\\/, "\\\\")
+        gsub(/"/, "\\\"")
+        gsub(/\t/, "\\t")
+        gsub(/\r/, "\\r")
+        if (NR > 1) printf "\\n"
+        printf "%s", $0
+      }
+    '
+  fi
+}
+
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
 # Requires: date, printf. Uses jq if available, falls back to printf.
+# NOTE: $3 is spliced verbatim into the output — callers MUST escape any
+# value that comes from untrusted input using _json_escape() before
+# building the key:value pairs.
 append_event() {
   _events_path="$1"
   _event_type="$2"

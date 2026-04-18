@@ -76,9 +76,9 @@ All messages follow value-oriented framing (PRD-INFRA-012):
 ## Tests
 
 ```bash
-# Messaging tests
-.venv/bin/python -m pytest tests/test_prompts_messaging.py -v
+# Messaging tests (run from trw-mcp/)
+../.venv/bin/python -m pytest tests/test_prompts_messaging.py -v
 
 # Ceremony warning framing tests
-.venv/bin/python -m pytest tests/test_middleware_ceremony.py::TestCeremonyWarningText -v
+../.venv/bin/python -m pytest tests/test_middleware_ceremony.py::TestCeremonyWarningText -v
 ```
