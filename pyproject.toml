@@ -39,6 +39,12 @@ dependencies = [
 vectors = [
     "sqlite-vec>=0.1.0",
 ]
+meta-tune = [
+    # PRD-HPO-SAFE-001 sandbox hardening (Linux only). Optional — sandbox
+    # degrades gracefully when unavailable (subprocess + RLIMIT + timeout only).
+    "pyseccomp>=0.1.2; sys_platform == 'linux'",
+    "psutil>=5.9.0",
+]
 otel = [
     "opentelemetry-distro>=0.48b0",
     "opentelemetry-exporter-otlp>=1.27.0",

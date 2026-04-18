@@ -22,10 +22,13 @@ import structlog
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
+from pydantic import Field
+
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
     MemoryConfig,
+    MetaTuneConfig,
     OrchestrationConfig,
     PathsConfig,
     ScoringConfig,
@@ -47,6 +50,12 @@ class TRWConfig(_TRWConfigFields):
     Adds domain sub-config properties for type-narrowed access
     and helper methods for profile resolution.
     """
+
+    # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
+    # Nested sub-config (not projected from flat fields) because the meta-
+    # tune pipeline owns its own config surface distinct from ceremony/
+    # scoring/build settings. Kill switch defaults to False per NFR-7.
+    meta_tune: MetaTuneConfig = Field(default_factory=MetaTuneConfig)
 
     # -- Domain Sub-Config Properties (PRD-CORE-071-FR01) --
     # Type-narrowed access: ``config.build.build_check_enabled``
