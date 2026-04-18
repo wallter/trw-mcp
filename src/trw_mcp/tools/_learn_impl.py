@@ -35,6 +35,57 @@ from trw_mcp.tools._learning_helpers import (
 
 logger = structlog.get_logger(__name__)
 
+# Security audit 2026-04-18 H2: reject injection-shaped content at write time.
+# Mirrors trw-memory's _INJECTION_PATTERNS plus XML/role-override vectors. The
+# memory layer's own gate is bypassed on the trw_learn write path (memory_adapter
+# does not call prepare_entry_for_store), so filtering must happen here.
+import re  # noqa: E402
+
+_LEARN_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"ignore (?:all )?previous instructions", re.IGNORECASE),
+    re.compile(r"<script\b", re.IGNORECASE),
+    re.compile(r"javascript\s*:", re.IGNORECASE),
+    re.compile(r"rm\s+-rf\s+/", re.IGNORECASE),
+    re.compile(r"<instructions>", re.IGNORECASE),
+    re.compile(r"<system>", re.IGNORECASE),
+    re.compile(r"\[INST\]", re.IGNORECASE),
+    re.compile(r"\[\[AI:", re.IGNORECASE),
+)
+
+# Per-field caps: chosen to exceed p99 of real engineering notes while
+# preventing wall-of-text prompt-injection payloads.
+_MAX_SUMMARY_CHARS = 500
+_MAX_DETAIL_CHARS = 4000
+
+
+def _content_policy_reject(summary: str, detail: str) -> dict[str, object] | None:
+    """Return a rejection payload if content exceeds caps or matches an
+    injection pattern; None if the content is acceptable.
+
+    Security audit 2026-04-18 H2.
+    """
+    if len(summary) > _MAX_SUMMARY_CHARS:
+        return {
+            "status": "rejected",
+            "reason": "summary_too_long",
+            "message": f"summary exceeds {_MAX_SUMMARY_CHARS} chars (got {len(summary)})",
+        }
+    if len(detail) > _MAX_DETAIL_CHARS:
+        return {
+            "status": "rejected",
+            "reason": "detail_too_long",
+            "message": f"detail exceeds {_MAX_DETAIL_CHARS} chars (got {len(detail)})",
+        }
+    combined = f"{summary}\n{detail}"
+    for pattern in _LEARN_INJECTION_PATTERNS:
+        if pattern.search(combined):
+            return {
+                "status": "rejected",
+                "reason": "injection_pattern",
+                "message": f"content matched blocked injection pattern {pattern.pattern!r}",
+            }
+    return None
+
 
 def _handle_consolidation(
     learning_id: str,
@@ -180,6 +231,19 @@ def execute_learn(  # noqa: C901
             "reason": "noise_filter",
             "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
         }
+
+    # Security audit 2026-04-18 H2: content policy (length caps + injection
+    # patterns). Protects the stored-prompt-injection surface since recalled
+    # learnings are surfaced verbatim to future agents via trw_session_start,
+    # trw_recall, and the trw://learnings/summary resource.
+    _policy_reject = _content_policy_reject(summary, detail)
+    if _policy_reject is not None:
+        logger.warning(
+            "learn_content_policy_rejected",
+            reason=_policy_reject["reason"],
+            summary_preview=summary[:60],
+        )
+        return cast("LearnResultDict", _policy_reject)
 
     # PRD-QUAL-062: LLM-based Utility Scoring
     try:
