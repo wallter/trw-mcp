@@ -11,6 +11,6 @@ directives:
   - "`{tool:trw_init}(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work"
   - "`{tool:trw_checkpoint}(message)` saves your implementation progress — call it after each milestone so you can resume here if context compacts, instead of re-implementing from scratch"
   - "`{tool:trw_learn}(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes"
-  - "`{tool:trw_claude_md_sync}()` promotes your best learnings into CLAUDE.md — call it at delivery so the next session starts with your insights built in"
+  - "`{tool:trw_instructions_sync}()` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.) — call it at delivery so the next session starts with the latest protocol"
   - "For quick tasks without a run: `{tool:trw_recall}()` gives you relevant prior learnings at the start, `{tool:trw_learn}()` saves new ones for next time"
-  - "`{tool:trw_deliver}()` persists everything in one call (reflect + checkpoint + CLAUDE.md sync + index sync) — without it, your session's learnings are invisible to future agents"
+  - "`{tool:trw_deliver}()` persists everything in one call (reflect + checkpoint + instruction file sync + index sync) — without it, your session's learnings are invisible to future agents"

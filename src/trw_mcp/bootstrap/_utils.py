@@ -496,7 +496,7 @@ The framework covers: 6-phase execution model with exit criteria per phase, form
 - `trw_init(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work
 - `trw_checkpoint(message)` saves your implementation progress — call it after each milestone so you can resume here if context compacts, instead of re-implementing from scratch
 - `trw_learn(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes
-- `trw_claude_md_sync()` promotes your best learnings into CLAUDE.md — call it at delivery so the next session starts with your insights built in
+- `trw_instructions_sync()` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.) — call it at delivery so the next session starts with the latest protocol
 - For quick tasks without a run: `trw_recall()` gives you relevant prior learnings at the start, `trw_learn()` saves new ones for next time
 
 ## TRW Ceremony Tools (Auto-Generated)
@@ -518,7 +518,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | Any | `trw_learn` | On errors/discoveries — saves for future sessions |
 | Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
 | VALIDATE | `trw_build_check` | Before delivery — runs tests + type-check |
-| DELIVER | `trw_claude_md_sync` | At delivery — promotes learnings to CLAUDE.md |
+| DELIVER | `trw_instructions_sync` | At delivery — refreshes the client instruction file |
 | DELIVER | `trw_deliver` | At task completion — persists everything in one call |
 
 ### Example Flows

@@ -39,7 +39,7 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | PLAN | `trw_prd_validate` | Before implementation | PRD quality gate | `trw_prd_validate(prd_path='...')` |
 | VALIDATE | `trw_build_check` | After implementation -- runs pytest + mypy, verifies integration | Run pytest + mypy | `trw_build_check(scope='full')` |
 | REVIEW | `review diff` | After VALIDATE -- check quality (DRY/KISS/SOLID), fix gaps, record learnings | Review diff, fix incomplete integrations | `Read diff, fix gaps, trw_learn(summary='...')` |
-| DELIVER | `trw_claude_md_sync` | At delivery -- promotes learnings to CLAUDE.md | Promote learnings to CLAUDE.md | `trw_claude_md_sync()` |
+| DELIVER | `trw_instructions_sync` | At delivery -- refreshes the client instruction file | Refresh client instruction file (CLAUDE.md/AGENTS.md/etc.) | `trw_instructions_sync()` |
 | DELIVER | `trw_deliver` | At task completion -- persists everything in one call | reflect+sync+checkpoint+index | `trw_deliver()` |
 
 ## Example Flows

@@ -112,10 +112,10 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     ),
     CeremonyTool(
         "DELIVER",
-        "trw_claude_md_sync",
+        "trw_instructions_sync",
         "At delivery",
-        "Promotes high-impact learnings into CLAUDE.md so every future session starts with your best insights",
-        "trw_claude_md_sync()",
+        "Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights",
+        "trw_instructions_sync()",
     ),
     CeremonyTool(
         "DELIVER",

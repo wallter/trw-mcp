@@ -149,7 +149,7 @@ def test_trw_readme_converted_prose_references() -> None:
     # A sampling of converted prose references
     assert "{tool:trw_build_check}" in text
     assert "{tool:trw_session_start}" in text
-    assert "{tool:trw_claude_md_sync}" in text
+    assert "{tool:trw_instructions_sync}" in text
 
 
 # --- FR04: agent files -------------------------------------------------------

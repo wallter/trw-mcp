@@ -107,8 +107,8 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 
 ## Notes
 
-- Learnings with impact >= 0.7 are promoted to CLAUDE.md during `trw_claude_md_sync`
-- Resolved/obsolete learnings are excluded from CLAUDE.md promotion and recall results
+- `trw_instructions_sync` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.); learnings surface via `trw_session_start()` recall, not by promotion into the instruction file
+- Resolved/obsolete learnings are excluded from recall results
 - The learning memory is shared across all sessions — every entry costs attention
 - Prefer retiring stale learnings over letting them accumulate noise
 - Use `/trw-memory-audit` to review health and find candidates for retirement

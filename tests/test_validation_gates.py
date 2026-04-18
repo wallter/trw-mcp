@@ -1515,7 +1515,7 @@ class TestCheckPhaseExitDeliver:
         result = check_phase_exit(Phase.DELIVER, run_dir, config)
         sync_f = [f for f in result.failures if f.rule == "sync_required"]
         assert len(sync_f) == 1
-        assert "trw_claude_md_sync()" in sync_f[0].message
+        assert "trw_instructions_sync()" in sync_f[0].message
 
     def test_deliver_exit_no_sync_warning_with_sync_event(
         self,

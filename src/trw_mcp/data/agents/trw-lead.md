@@ -35,7 +35,7 @@ allowedTools:
   - mcp__trw__trw_learn
   - mcp__trw__trw_learn_update
   - mcp__trw__trw_recall
-  - mcp__trw__trw_claude_md_sync
+  - mcp__trw__trw_instructions_sync
   - mcp__trw__trw_build_check
   - mcp__trw__trw_prd_create
   - mcp__trw__trw_prd_validate

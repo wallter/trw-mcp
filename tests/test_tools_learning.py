@@ -104,13 +104,23 @@ class TestToolDocstrings:
             "improves recall precision. All other fields are auto-detected."
         ) in normalized_doc
 
-    def test_trw_claude_md_sync_docstring_matches_post_093_behavior(self) -> None:
+    def test_trw_instructions_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()
-        doc = tools["trw_claude_md_sync"].fn.__doc__ or ""
+        doc = tools["trw_instructions_sync"].fn.__doc__ or ""
 
-        assert "Sync TRW protocol and ceremony guidance into CLAUDE.md" in doc
-        assert "Learnings are not promoted into CLAUDE.md" in doc
-        assert "trw_session_start() recall instead" in doc
+        assert "Sync TRW protocol and ceremony guidance" in doc
+        assert "Learnings are not promoted into the instruction file" in doc
+        assert "trw_session_start()" in doc
+
+    def test_trw_claude_md_sync_alias_still_registered(self) -> None:
+        """The deprecated trw_claude_md_sync alias must remain registered for backward compat."""
+        tools = _get_tools()
+        assert "trw_claude_md_sync" in tools, (
+            "trw_claude_md_sync alias must remain for backward compatibility"
+        )
+        assert "trw_instructions_sync" in tools, (
+            "canonical name trw_instructions_sync must be registered"
+        )
 
 
 class TestTrwLearn:
@@ -2139,20 +2149,22 @@ class TestClaudeMdCollection:
 
 
 class TestToolDelegationIntact:
-    """Verify all 3 learning tool functions remain registered and callable."""
+    """Verify all learning tool functions remain registered and callable."""
 
     def test_all_learning_tools_registered(self) -> None:
-        """All 4 learning tools should be registered on a test server."""
+        """All learning tools (incl. deprecated alias) should be registered on a test server."""
         srv = make_test_server("learning")
         tool_names = set(get_tools_sync(srv).keys())
         expected = {
             "trw_learn",
             "trw_learn_update",
             "trw_recall",
+            "trw_instructions_sync",
+            # Deprecated alias retained for backward compat.
             "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
-        assert len(tool_names) == 4, f"Expected 4 tools, got {len(tool_names)}: {tool_names}"
+        assert len(tool_names) == 5, f"Expected 5 tools, got {len(tool_names)}: {tool_names}"
 
 
 class TestClaudeMdSyncAtomicWrite:

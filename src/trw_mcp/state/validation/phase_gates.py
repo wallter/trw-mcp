@@ -413,7 +413,7 @@ def _check_deliver_exit(
             ValidationFailure(
                 field="claude_md_sync",
                 rule="sync_required",
-                message="CLAUDE.md not synced — call trw_claude_md_sync() before DELIVER",
+                message="Instruction file not synced — call trw_instructions_sync() before DELIVER",
                 severity="warning",
             )
         )

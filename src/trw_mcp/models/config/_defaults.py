@@ -51,6 +51,8 @@ TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = ("trw_status",)
 TOOL_GROUP_ADMIN: tuple[str, ...] = (
     "trw_pre_compact_checkpoint",
     "trw_init",
+    "trw_instructions_sync",
+    # Deprecated alias for trw_instructions_sync; retained for backward compat.
     "trw_claude_md_sync",
     "trw_knowledge_sync",
     # PRD-CORE-141 FR07/FR08 — per-connection pin liveness + adoption.

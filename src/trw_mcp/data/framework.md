@@ -184,10 +184,10 @@ When `MCP_MODE: tool`, use these instead of manual equivalents. When `MCP_MODE: 
 | Tool | Phase | Required | What It Does |
 |------|-------|----------|--------------|
 | `trw_session_start()` | Start | MUST | Recall learnings + check run status |
-| `trw_deliver(run_path?)` | End | MUST | reflect → checkpoint → claude_md_sync → index_sync |
+| `trw_deliver(run_path?)` | End | MUST | reflect → checkpoint → instructions_sync → index_sync |
 | `trw_recall(query, min_impact?)` | Any | SHOULD | Search `.trw/learnings/` by keyword |
 | `trw_learn(summary, detail, impact?)` | Any | SHOULD | Record learning entry (0.0-1.0 impact) |
-| `trw_claude_md_sync(scope?)` | DELIVER | MUST | Promote learnings to CLAUDE.md |
+| `trw_instructions_sync(scope?)` | DELIVER | MUST | Refresh client instruction file (CLAUDE.md/AGENTS.md/etc.) |
 | `trw_init(task_name, prd_scope?)` | RESEARCH | MUST | Bootstrap run directory |
 | `trw_status(run_path?)` | Any | SHOULD | Run state, phase, confidence |
 | `trw_checkpoint(message?)` | Any | SHOULD | Atomic state snapshot (~10min) |
