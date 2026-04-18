@@ -72,6 +72,29 @@ _ROOT_FILENAMES = frozenset(
         "REVIEW.md",
     }
 )
+# PRD-QUAL-067: bare-filename resolver gate. Only tokens with these extensions
+# trigger the bounded-rglob resolver; other extensions fall through to the
+# legacy repo-root-anchored _path_exists contract. Strict subset of
+# _PATH_SUFFIXES — extensions agents most commonly cite by basename in PRDs.
+_KNOWN_SOURCE_SUFFIXES: frozenset[str] = frozenset(
+    {".py", ".ts", ".tsx", ".md", ".yaml", ".yml", ".json", ".sh", ".toml"}
+)
+# Directories excluded from bare-filename rglob so vendor trees, build outputs,
+# and run-artifact dumps don't inflate match counts or latency (NFR-02/NFR-04).
+_GLOB_EXCLUDE_DIRS: frozenset[str] = frozenset(
+    {
+        "node_modules",
+        ".venv",
+        "venv",
+        ".git",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        ".trw",  # runs/* artifacts — bare filenames like `score.json` live here
+    }
+)
 _TITLE_STOPWORDS = frozenset(
     {
         "a",
@@ -237,9 +260,100 @@ def _check_allowed_category(frontmatter: dict[str, object]) -> list[ValidationFa
     ]
 
 
+def _resolve_bare_filename(
+    project_root: Path,
+    rel_path: str,
+    cache: dict[str, tuple[bool, int]] | None = None,
+) -> tuple[bool, int]:
+    """PRD-QUAL-067 FR-01: bounded rglob resolver for `/`-less path tokens.
+
+    Returns ``(resolved_unambiguously, match_count)``.
+
+    The iterator short-circuits at match_count > 1 (we only distinguish 0 / 1 /
+    many). Results are memoized per-call via the optional ``cache`` dict because
+    PRDs frequently cite the same bare filename many times (PRD-EVAL-037 cites
+    ``score.json`` ~10x).
+
+    Note: case-sensitivity follows ``Path.rglob`` — case-sensitive on Linux,
+    insensitive on HFS+/APFS. CI runs on Linux and defines canonical behavior.
+    """
+    if cache is not None and rel_path in cache:
+        return cache[rel_path]
+
+    match_count = 0
+    try:
+        for p in project_root.rglob(rel_path):
+            try:
+                parts = p.relative_to(project_root).parts
+            except ValueError:
+                continue
+            if any(part in _GLOB_EXCLUDE_DIRS for part in parts):
+                continue
+            match_count += 1
+            if match_count > 1:
+                break
+    except OSError:
+        match_count = 0
+
+    result = (match_count == 1, match_count)
+    if cache is not None:
+        cache[rel_path] = result
+    return result
+
+
 def _check_repo_path_references(content: str, project_root: Path) -> list[ValidationFailure]:
     failures: list[ValidationFailure] = []
+    bare_cache: dict[str, tuple[bool, int]] = {}
     for ref in _extract_repo_path_refs(content):
+        # PRD-QUAL-067 FR-01/FR-05: for `/`-less tokens with a known source
+        # extension, fall through to the bounded-rglob resolver. Zero or
+        # multiple matches emit a warning (not error); exactly one match
+        # resolves silently. Directory-qualified paths keep legacy contract.
+        if "/" not in ref and Path(ref).suffix in _KNOWN_SOURCE_SUFFIXES:
+            resolved, count = _resolve_bare_filename(project_root, ref, cache=bare_cache)
+            if resolved:
+                logger.debug(
+                    "prd_integrity_bare_filename_resolved",
+                    raw=ref,
+                    match_count=count,
+                )
+                continue
+            if count > 1:
+                logger.debug(
+                    "prd_integrity_bare_filename_ambiguous",
+                    raw=ref,
+                    match_count=count,
+                )
+                failures.append(
+                    ValidationFailure(
+                        field="traceability",
+                        rule="repo_path_exists",
+                        message=(
+                            f"Bare filename `{ref}` has multiple matches ({count}+); "
+                            "disambiguate with a directory prefix."
+                        ),
+                        severity="warning",
+                    )
+                )
+            else:
+                logger.debug(
+                    "prd_integrity_bare_filename_unresolved",
+                    raw=ref,
+                    match_count=0,
+                )
+                failures.append(
+                    ValidationFailure(
+                        field="traceability",
+                        rule="repo_path_exists",
+                        message=(
+                            f"Bare filename `{ref}` has no match in repo; "
+                            "disambiguate with a directory prefix or verify the reference."
+                        ),
+                        severity="warning",
+                    )
+                )
+            continue
+
         if _path_exists(project_root, ref):
             continue
         failures.append(
