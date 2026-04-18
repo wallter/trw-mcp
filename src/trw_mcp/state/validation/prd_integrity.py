@@ -281,7 +281,14 @@ def _normalize_repo_path(raw: str) -> str | None:
     candidate = candidate.removeprefix("./")
     if candidate.startswith("/"):
         return None
-    if ".." in Path(candidate).parts:
+    parts = Path(candidate).parts
+    if ".." in parts:
+        return None
+    # Reject ellipsis-abbreviated path tokens (PRD-QUAL-066 FR-02). Authors often
+    # write `.../foo.py` as prose shorthand for "path prefix elided"; it is not
+    # a literal filesystem path. Skip rather than try to resolve.
+    if any(part.startswith("...") for part in parts):
+        logger.debug("prd_integrity_ellipsis_skip", raw=raw)
         return None
     return candidate if _looks_like_repo_path(candidate) else None
 
