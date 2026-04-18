@@ -7,22 +7,22 @@ This guide is for AI agents writing or modifying tests in the `trw-mcp/tests/` d
 ```bash
 # During implementation — run ONLY the file you changed:
 cd trw-mcp
-.venv/bin/python -m pytest tests/test_specific_file.py -v
+../.venv/bin/python -m pytest tests/test_specific_file.py -v
 
 # Run a single test:
-.venv/bin/python -m pytest tests/test_scoring.py::test_compute_score_positive -v
+../.venv/bin/python -m pytest tests/test_scoring.py::test_compute_score_positive -v
 
 # Unit tests only (fast):
-.venv/bin/python -m pytest tests/ -m unit -v
+../.venv/bin/python -m pytest tests/ -m unit -v
 
 # Skip slow tests:
-.venv/bin/python -m pytest tests/ -m "not slow" -v
+../.venv/bin/python -m pytest tests/ -m "not slow" -v
 
 # Parallel full suite (delivery only):
-.venv/bin/python -m pytest tests/ -n auto --dist worksteal -v
+../.venv/bin/python -m pytest tests/ -n auto --dist worksteal -v
 
 # Full suite with coverage (delivery only):
-.venv/bin/python -m pytest tests/ --cov=trw_mcp --cov-report=term-missing
+../.venv/bin/python -m pytest tests/ --cov=trw_mcp --cov-report=term-missing
 ```
 
 **NEVER run the full suite during implementation. It takes 8-15 minutes and blocks all other agents.**
