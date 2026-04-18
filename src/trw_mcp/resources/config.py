@@ -30,6 +30,37 @@ def _dump_yaml(data: dict[str, object]) -> str:
     return stream.getvalue()
 
 
+# Fields that must never appear in the `trw://framework/config` resource.
+# Security audit 2026-04-18 M2: this resource is readable by any MCP client
+# and used to leak `backend_api_key` (which is a plain str, so the field's
+# json_schema_extra={"secret": True} marker has no serialization effect).
+_SENSITIVE_FIELDS: frozenset[str] = frozenset({"backend_api_key", "platform_api_key"})
+_REDACTED = "***redacted***"
+
+
+def _is_sensitive_key(key: object) -> bool:
+    """Return True for keys whose names match sensitive-credential patterns.
+
+    Catches future config fields like ``openai_api_key``, ``slack_token``,
+    ``smtp_password``, and arbitrary caller-supplied override keys that
+    happen to carry credentials.
+    """
+    if not isinstance(key, str):
+        return False
+    if key in _SENSITIVE_FIELDS:
+        return True
+    lowered = key.lower()
+    return any(
+        lowered.endswith(suffix) or lowered == suffix.lstrip("_")
+        for suffix in ("_api_key", "_secret", "_token", "_password")
+    )
+
+
+def _redact_sensitive(data: dict[str, object]) -> dict[str, object]:
+    """Return a shallow copy with any sensitive keys redacted."""
+    return {k: (_REDACTED if _is_sensitive_key(k) and v else v) for k, v in data.items()}
+
+
 def register_config_resources(server: FastMCP) -> None:
     """Register config resource on the MCP server.
 
@@ -56,7 +87,9 @@ def register_config_resources(server: FastMCP) -> None:
             overrides = reader.read_yaml(config_path)
             result.update(overrides)
 
-        return _dump_yaml(result)
+        # Redact credentials AFTER merging overrides: callers occasionally
+        # paste keys into .trw/config.yaml, and those must not leak either.
+        return _dump_yaml(_redact_sensitive(result))
 
     @server.resource("trw://framework/versions")
     def get_framework_versions() -> str:
