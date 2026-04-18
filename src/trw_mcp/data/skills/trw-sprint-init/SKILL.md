@@ -146,6 +146,32 @@ Once PRDs are groomed and approved, proceed to implementation automatically:
 
 The user does not need to direct parallelism -- this is the default behavior after PRD approval.
 
+## Pre-Implementation FPI Checklist (2026-04-18)
+
+Before any PRD in this sprint moves to `status: implemented`, the sprint MUST meet the 11 Framework Process Improvements (FPIs) from
+[`docs/research/agentic-hpo/DISTILLERY-DEFECT-LEDGER-2026-04-18.md`](../../../docs/research/agentic-hpo/DISTILLERY-DEFECT-LEDGER-2026-04-18.md).
+The DIST-001/002/003/004 post-mortem found 15 defects + 12 hidden stubs that every unit test passed through — the FPIs prevent recurrence.
+
+### FPI Gating (all P0 — block `status: implemented`)
+
+| # | FPI | How to verify |
+|---|---|---|
+| 1 | Real-data integration test per cross-module FR | Each PRD's acceptance section names at least one integration test that exercises a real artifact (live git repo, live SQLite db, etc.) — not a synthetic fixture |
+| 2 | CLI `--format json` parses end-to-end | Test pipes stdout through `json.loads()` + schema-validates |
+| 3 | Detector FPR ceiling declared in NFR | Every `FR-5`-style pattern detector carries an explicit NFR: `false_positive_rate <= X%` on a non-X corpus |
+| 4 | Pipeline adapter contract codified as FR | When stage N feeds stage N+1, the data-flow contract (field names + types) is a first-class FR of BOTH stages |
+| 5 | Stderr/stdout discipline | New CLIs configure `structlog.PrintLoggerFactory(file=sys.stderr)` at import time — never interleave with stdout JSON |
+| 6 | Run-on-monorepo before `implemented` | Any CLI-facing code MUST be exercised end-to-end against THIS repo (real diffs, real conventions) and a human samples the output before the PRD flips status |
+| 7 | `functionality_level` + `stubs[]` frontmatter | Enforced by `trw_prd_validate` — see [`docs/requirements-aare-f/CLAUDE.md`](../../../docs/requirements-aare-f/CLAUDE.md) §Functionality-Level Frontmatter |
+| 8 | Dispatcher reachability tests | When a PRD declares N detector/extractor families, a regression test asserts the production dispatcher invokes all N |
+| 9 | Config-resolution E2E tests | A PRD config field gets a test exercising the full chain: source → CLI → orchestrator → actual request |
+| 10 | CLI live-path smoke test | Before `status: implemented` the CLI's subcommands are exercised against a real/dockerized backing service in CI |
+| 11 | Env-file cwd behaviour documented | Pydantic-settings `env_file` is cwd-relative — any PRD adding a config source documents OR implements upward search |
+
+### How to use during sprint-init
+
+Include this table verbatim (or by reference) in the sprint planning doc. When a track owner requests review / promotion to `status: implemented`, the reviewer walks the table and rejects the promotion on the first unmet row. This is the Wave-5 lesson from the distillery defect ledger: catching the gap at review is cheaper than discovering it in a real run.
+
 ## Notes
 
 - Sprint docs live in the `sprints/active/` subdirectory while active
