@@ -12,9 +12,28 @@ import argparse
 
 import structlog
 
+from typing import Any
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._app import mcp
+from trw_mcp.server._origin_check import OriginGuardMiddleware, origin_check_enabled
 from trw_mcp.server._proxy import ensure_http_server, run_stdio_proxy
+
+
+def _http_transport_kwargs() -> dict[str, Any]:
+    """Build transport_kwargs for FastMCP HTTP transports.
+
+    Adds the Origin-guard middleware to block cross-origin browser requests
+    against the loopback-bound MCP server. See ``_origin_check.py`` for the
+    threat model. No-op when ``TRW_MCP_DISABLE_ORIGIN_CHECK=1``.
+    """
+    if not origin_check_enabled():
+        return {}
+    # Late import: starlette is pulled in transitively by fastmcp, but only on
+    # HTTP paths — keep stdio launches free of the dependency probe.
+    from starlette.middleware import Middleware
+
+    return {"middleware": [Middleware(OriginGuardMiddleware)]}
 
 
 def resolve_and_run_transport(
@@ -59,7 +78,12 @@ def resolve_and_run_transport(
         else:
             # Pass host/port via transport_kwargs -- mcp.settings is deprecated
             # in FastMCP 2.14+ and silently ignored.
-            mcp.run(transport=transport, host=host, port=port)  # type: ignore[arg-type]
+            mcp.run(
+                transport=transport,  # type: ignore[arg-type]
+                host=host,
+                port=port,
+                **_http_transport_kwargs(),
+            )
 
     elif config.mcp_transport == "stdio":
         # Path 2: Default stdio -- unchanged behavior
