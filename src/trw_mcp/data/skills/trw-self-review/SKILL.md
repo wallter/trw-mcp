@@ -75,6 +75,31 @@ For each FR, verify:
 3. **Response body checked**: Test asserts on actual values (not just `assert result is not None`)
 4. **Spec-anchored**: Test docstring references the FR it validates
 
+### Step 5b: FPI Gate Check (added 2026-04-18 per ledger lesson)
+
+The 11 Framework Process Improvements from
+[`DISTILLERY-DEFECT-LEDGER-2026-04-18.md`](../../../docs/research/agentic-hpo/DISTILLERY-DEFECT-LEDGER-2026-04-18.md)
+are the catch-net for the class of defect that unit tests silently pass
+through. BEFORE requesting `/trw-audit`, walk these rows for every PRD
+in the sprint — any unchecked row is grounds for the auditor to refuse
+promotion to `status: implemented`.
+
+| # | Check | How to verify |
+|---|---|---|
+| 1 | Real-data integration test for every cross-module FR | Acceptance test hits a real artifact (live git repo, real SQLite db) — not a synthetic fixture |
+| 2 | CLI `--format json` parses | `python -m <cli> --format json \| python -c "import json,sys; json.loads(sys.stdin.read())"` returns 0 |
+| 3 | Detector FPR ceiling in an NFR | `grep -n "false_positive\|FPR" <PRD>.md` returns a numeric ceiling |
+| 4 | Pipeline adapter contract codified | Stage-N-output → Stage-N+1-input field contract is a first-class FR on BOTH stages |
+| 5 | Stderr/stdout discipline | `structlog.configure(...PrintLoggerFactory(file=sys.stderr))` at CLI import time |
+| 6 | Run-on-monorepo sampled | CLI exercised against THIS repo, a human sampled 5+ output records |
+| 7 | `functionality_level` + `stubs[]` frontmatter | `trw_prd_validate` passes with zero `aaref_*` failures |
+| 8 | Dispatcher reachability test | Every declared detector/extractor family has an explicit wiring test |
+| 9 | Config-resolution E2E test | Full chain source → CLI → orchestrator → request has an integration test |
+| 10 | CLI live-path smoke test | `TRW_<PRD>_LIVE=1` env-gated smoke test exists and passes |
+| 11 | Env-file cwd behaviour doc'd OR upward-search implemented | CLAUDE.md has an `env_file` gotcha OR `_resolve_env_file` helper present |
+
+Record the result table in the self-review report (Step 6). If 3+ rows fail, fix before requesting the adversarial audit.
+
 ### Step 6: Report
 
 Output a structured report:
