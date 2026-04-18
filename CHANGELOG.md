@@ -4,6 +4,10 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed MCP tool `trw_claude_md_sync` → `trw_instructions_sync`.** The tool writes the appropriate client instruction surface for whichever IDE is configured (CLAUDE.md for Claude Code, AGENTS.md for opencode / Codex, `.codex/INSTRUCTIONS.md` for Codex-CLI, etc.) — it is not CLAUDE.md-specific. The old name is retained as a deprecated alias that emits a warning and will be removed in a future release. Docs, skills, agents, and behavioral protocol directives all use the canonical name.
+
 ## [0.45.2] — 2026-04-17
 
 ### Changed

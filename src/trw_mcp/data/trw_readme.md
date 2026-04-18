@@ -252,7 +252,7 @@ Replace the placeholder sections in the generated `CLAUDE.md`:
 <!-- TRW auto-generated section below — don't edit between markers -->
 ```
 
-The section between `<!-- trw:start -->` and `<!-- trw:end -->` is auto-managed by `{tool:trw_claude_md_sync}`.
+The section between `<!-- trw:start -->` and `<!-- trw:end -->` is auto-managed by `{tool:trw_instructions_sync}`.
 
 ### Step 3: Start Claude Code
 
@@ -482,7 +482,7 @@ Writes structured JSON logs to `.trw/logs/trw-mcp-YYYY-MM-DD.jsonl`.
 | `trw_recall` | Before new work | Searches learnings by query, ranked by utility score |
 | `trw_learn` | On discovery/error | Records a learning entry with summary, detail, impact, tags |
 | `trw_learn_update` | Maintaining knowledge | Updates, resolves, or retires existing learning entries |
-| `trw_claude_md_sync` | At delivery | Promotes high-impact learnings (>=0.7) to CLAUDE.md |
+| `trw_instructions_sync` | At delivery | Refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.) with current TRW protocol |
 | `trw_knowledge_sync` | Periodic | Auto-generates topic documents from tag clusters in the learning store |
 
 ### Run Orchestration (3)
@@ -623,7 +623,7 @@ Learnings are ranked by a composite utility score:
 - **Ebbinghaus decay**: Knowledge that isn't accessed fades in relevance over time
 - **Manual impact**: Author-assigned importance (0.0-1.0)
 
-Learnings with impact >= 0.7 are promoted to `CLAUDE.md` by `{tool:trw_claude_md_sync}`.
+`{tool:trw_instructions_sync}` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.); learnings surface to the agent via `{tool:trw_session_start}` recall, not by promotion into the instruction file.
 
 ### What to record
 

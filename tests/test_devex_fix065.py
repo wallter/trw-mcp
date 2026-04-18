@@ -148,7 +148,7 @@ class TestToolDocstringSeeAlso:
         desc = tools["trw_deliver"].description or ""
         assert "See Also:" in desc
         assert "trw_checkpoint" in desc
-        assert "trw_claude_md_sync" in desc
+        assert "trw_instructions_sync" in desc
 
     def test_trw_prd_create_see_also(self) -> None:
         from tests.conftest import get_tools_sync, make_test_server

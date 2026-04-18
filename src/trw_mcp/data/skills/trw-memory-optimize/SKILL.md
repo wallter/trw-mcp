@@ -60,7 +60,7 @@ Or apply selectively using `trw_learn_update()` for individual entries.
 
 ### Step 5: Sync
 
-Call `trw_claude_md_sync()` to update CLAUDE.md with the optimized learning set.
+Call `trw_instructions_sync()` to refresh the client instruction file (CLAUDE.md / AGENTS.md / etc.) with the optimized learning set context.
 
 ### Step 6: Report
 
@@ -92,7 +92,7 @@ The optimal learning count scales with project complexity — do NOT use a fixed
 - NEVER delete learning YAML files — mark as `obsolete` status instead
 - ALWAYS present the plan and get user confirmation before any changes
 - ALWAYS preserve high-impact (>= 0.7) entries unless clearly outdated
-- ALWAYS run `trw_claude_md_sync` after changes to keep CLAUDE.md current
+- ALWAYS run `trw_instructions_sync` after changes to keep the client instruction file current
 - NEVER collapse all entries in a domain into a single compendium — maintain sub-topic granularity
 
 ## Assertion Verification Wave (PRD-CORE-086)

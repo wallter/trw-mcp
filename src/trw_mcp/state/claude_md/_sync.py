@@ -329,7 +329,7 @@ def execute_claude_md_sync(
 ) -> ClaudeMdSyncResultDict:
     """Execute the CLAUDE.md sync operation.
 
-    Core logic extracted from the ``trw_claude_md_sync`` tool to keep
+    Core logic extracted from the ``trw_instructions_sync`` tool to keep
     ``tools/learning.py`` under 400 lines (Sprint 12 GAP-FR-001).
 
     FR04 (PRD-FIX-053): Computes a SHA-256 hash of the sync inputs before

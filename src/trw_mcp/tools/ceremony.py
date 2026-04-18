@@ -630,7 +630,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             skip_reflect: Skip reflection step (e.g., if already reflected).
             skip_index_sync: Skip INDEX/ROADMAP sync step.
 
-        See Also: trw_checkpoint, trw_claude_md_sync
+        See Also: trw_checkpoint, trw_instructions_sync
         """
         config = get_config()
         reader = FileStateReader()
@@ -733,8 +733,8 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
         # Step 3: CLAUDE.md sync removed (PRD-CORE-093 FR06).
         # Learning promotion no longer rotates CLAUDE.md content, so the prompt
-        # cache stays stable across delivers. Explicit trw_claude_md_sync() or
-        # update_project() remain the only triggers for CLAUDE.md re-render.
+        # cache stays stable across delivers. Explicit trw_instructions_sync() or
+        # update_project() remain the only triggers for instruction-file re-render.
         results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
 
         critical_elapsed = round(time.monotonic() - t0, 2)

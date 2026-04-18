@@ -1,7 +1,7 @@
-"""TRW self-learning tools — learn, recall, claude_md_sync.
+"""TRW self-learning tools — learn, recall, instructions_sync.
 
 These 3 self-learning tools manage the .trw/ self-learning layer that makes
-Claude Code progressively more effective in a specific repository over time.
+AI coding agents progressively more effective in a specific repository over time.
 The ``anthropic`` SDK (optional [ai] dependency) provides LLM-augmented
 behavior for several tools (better summaries, relevance classification).
 
@@ -530,29 +530,60 @@ def register_learning_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     @log_tool_call
+    def trw_instructions_sync(
+        scope: str = "root",
+        target_dir: str | None = None,
+        client: str = "auto",
+    ) -> ClaudeMdSyncResultDict:
+        """Sync TRW protocol and ceremony guidance into the client's instruction file.
+
+        Renders behavioral protocol and ceremony guidance into the auto-generated
+        section of whichever client surface is configured for this repo:
+        ``CLAUDE.md`` for Claude Code, ``AGENTS.md`` for opencode / Codex, etc.
+        Learnings are not promoted into the instruction file; use
+        ``trw_session_start()`` recall instead (per PRD-CORE-093).
+
+        When ``client="auto"`` the detector inspects IDE config dirs
+        (``.claude/``, ``.opencode/``, ``.codex/``) and writes to whichever are
+        present. Pass an explicit client name to override.
+
+        Args:
+            scope: Sync scope — "root" for project instruction file, "sub" for module-level.
+            target_dir: Target directory for sub-instruction file generation.
+            client: Target client(s) to write instructions for.
+                "auto" (default) — detect via IDE config dirs;
+                "claude-code" — write CLAUDE.md only;
+                "opencode" — write AGENTS.md only;
+                "codex" — write .codex/INSTRUCTIONS.md only;
+                "all" — write every detected/known client surface.
+        """
+        config = get_config()
+        reader = FileStateReader()
+        llm = _create_llm_client()
+        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
+
+    @server.tool(name="trw_claude_md_sync", output_schema=None)
+    @log_tool_call
     def trw_claude_md_sync(
         scope: str = "root",
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync TRW protocol and ceremony guidance into CLAUDE.md.
+        """Deprecated alias for ``trw_instructions_sync``.
 
-        Renders behavioral protocol and ceremony guidance into the auto-generated
-        CLAUDE.md section. Learnings are not promoted into CLAUDE.md; use
-        trw_session_start() recall instead (per PRD-CORE-093).
-
-        Also writes AGENTS.md for opencode users (FR13) when detected or explicitly
-        requested via the ``client`` parameter.
-
-        Args:
-            scope: Sync scope — "root" for project CLAUDE.md, "sub" for module-level.
-            target_dir: Target directory for sub-CLAUDE.md generation.
-            client: Target client(s) to write instructions for.
-                "auto" (default) — detect via IDE config dirs (.claude/, .opencode/);
-                "claude-code" — write CLAUDE.md only;
-                "opencode" — write AGENTS.md only;
-                "all" — write both CLAUDE.md and AGENTS.md.
+        The canonical name is ``trw_instructions_sync`` because this tool now
+        writes the appropriate instruction file for the detected client
+        (CLAUDE.md, AGENTS.md, .codex/INSTRUCTIONS.md, etc.) — not only CLAUDE.md.
+        This alias is retained for backward compatibility and emits a
+        deprecation warning on every invocation. It will be removed in a future
+        release; update callers to ``trw_instructions_sync``.
         """
+        logger.warning(
+            "deprecated_tool_alias_used",
+            tool="trw_claude_md_sync",
+            canonical="trw_instructions_sync",
+            note="trw_claude_md_sync is deprecated; use trw_instructions_sync. Alias will be removed in a future release.",
+        )
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()

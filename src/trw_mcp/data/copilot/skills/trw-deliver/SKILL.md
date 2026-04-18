@@ -37,7 +37,7 @@ Run a complete delivery ceremony with pre-flight build verification and post-tea
 4. **Run delivery ceremony**: Call `trw_deliver()` which executes:
    - `trw_reflect` — extract learnings from session events
    - `trw_checkpoint` — atomic state snapshot
-   - `trw_claude_md_sync` — promote high-impact learnings to CLAUDE.md
+   - `trw_instructions_sync` — refresh the client instruction file (CLAUDE.md / AGENTS.md / etc.)
    - `trw_index_sync` — update INDEX.md and ROADMAP.md from PRD frontmatter
 
 5. **Report summary**:
