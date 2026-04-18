@@ -222,10 +222,11 @@ def _check_functionality_level_matches_status(
 
 def _check_allowed_category(frontmatter: dict[str, object]) -> list[ValidationFailure]:
     category = str(frontmatter.get("category", "")).upper().strip()
-    if not category or category in ALLOWED_PRD_CATEGORIES:
+    allowed_set = allowed_prd_categories()
+    if not category or category in allowed_set:
         return []
 
-    allowed = ", ".join(sorted(ALLOWED_PRD_CATEGORIES))
+    allowed = ", ".join(sorted(allowed_set))
     return [
         ValidationFailure(
             field="category",
