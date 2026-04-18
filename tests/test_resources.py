@@ -54,6 +54,41 @@ class TestConfigResource:
         result = resources["trw://framework/config"].fn()
         assert "custom_key" in result
 
+    def test_redacts_backend_api_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Security audit 2026-04-18 M2: backend_api_key must never appear
+        verbatim in the config resource payload, which is readable by any
+        connected MCP client."""
+        monkeypatch.setenv("TRW_BACKEND_API_KEY", "sk-live-super-secret-123")
+        resources = _get_resources()
+        result = resources["trw://framework/config"].fn()
+        assert "sk-live-super-secret-123" not in result
+        assert "***redacted***" in result
+
+    def test_redacts_sensitive_override_keys(self, tmp_path: Path) -> None:
+        """Overrides merged from .trw/config.yaml can contain credentials too —
+        redact any key matching *_api_key, *_secret, *_token, *_password."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        writer = FileStateWriter()
+        writer.write_yaml(
+            trw_dir / "config.yaml",
+            {
+                "openai_api_key": "sk-openai-leak-me",
+                "slack_token": "xoxb-leak-me",
+                "my_password": "hunter2",
+                "custom_key": "public-value",
+            },
+        )
+
+        resources = _get_resources()
+        result = resources["trw://framework/config"].fn()
+        assert "sk-openai-leak-me" not in result
+        assert "xoxb-leak-me" not in result
+        assert "hunter2" not in result
+        assert "public-value" in result  # non-sensitive key passes through
+
 
 class TestFrameworkVersionsResource:
     """Tests for trw://framework/versions resource."""
