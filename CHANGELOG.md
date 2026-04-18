@@ -2,6 +2,34 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.46.1] — 2026-04-18 — Sprint 96 readiness: HPO telemetry collision prevention
+
+### Fixed
+
+- **Runtime name-collision prevention in `telemetry/event_base.py`** — three
+  `HPOTelemetryEvent` subclasses (`SessionStartEvent`, `SessionEndEvent`,
+  `CeremonyComplianceEvent`) shipped in commit `b7b70c31d` silently shadowed
+  legacy CORE-031 classes of the same short names re-exported by
+  `trw_mcp.telemetry.__init__`. Anyone doing
+  `from trw_mcp.telemetry import SessionStartEvent` would bind to the legacy
+  class, not the new HPO version — a Phase-2 retrofit footgun that unit tests
+  could not catch. Renamed the three HPO subclasses with the `HPO` prefix
+  (`HPOSessionStartEvent`, `HPOSessionEndEvent`, `HPOCeremonyComplianceEvent`)
+  to match the base class convention. The legacy CORE-031 path is unchanged;
+  `telemetry/__init__.py` still re-exports the legacy classes. Other 9 subclasses
+  (`CeremonyEvent`, `ContractEvent`, `PhaseExposureEvent`, `ObserverEvent`,
+  `MCPSecurityEvent`, `MetaTuneEvent`, `ThrashingEvent`, `LLMCallEvent`,
+  `ToolCallEvent`) have no legacy collision and keep their short names. 22/22
+  existing `test_event_base.py` + `test_parent_event_id.py` tests pass post-rename.
+- **Sprint 96 Pre-Sprint Checklist marked READY** — all eight §9 items green
+  after 2026-04-17 grooming pass resolved the 3 previously-outstanding
+  maintainer-review items. Sprint status moved `PLANNED → READY`. PRD-HPO-MEAS-001
+  §5 FR-14 + §7 Naming Resolution + the execution plan synchronized with the
+  new class names.
+- **trw-memory pinned to `>=0.7.0,<1.0.0`** — required for the UTF-8 /
+  stale-handle / quarantine primitives that Sprint 96 telemetry consumers
+  rely on when any corruption event occurs mid-run.
+
 ## [0.46.0] — 2026-04-18
 
 ### Changed
