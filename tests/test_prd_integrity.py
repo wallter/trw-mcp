@@ -36,7 +36,6 @@ from trw_mcp.state.validation.prd_integrity import (
     run_prd_integrity_checks,
 )
 
-
 # --- Fixtures -----------------------------------------------------------------
 
 
