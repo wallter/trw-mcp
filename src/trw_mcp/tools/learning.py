@@ -280,6 +280,7 @@ def register_learning_tools(server: FastMCP) -> None:
         team_origin: str | None = None,
         protection_tier: str | None = None,
         feedback: str | None = None,
+        tags: list[str] | None = None,
     ) -> dict[str, str]:
         """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
 
@@ -303,6 +304,7 @@ def register_learning_tools(server: FastMCP) -> None:
             phase_affinity: Updated phase affinities.
             protection_tier: Updated protection tier.
             feedback: Signal whether this learning was helpful or unhelpful — "helpful" or "unhelpful". Affects recall ranking via feedback-aware decay (PRD-CORE-132).
+            tags: Replace the entry's tag set. Passing `[]` clears all tags. Callers are responsible for dedup/normalization.
         """
         config = get_config()
         writer = FileStateWriter()
@@ -335,6 +337,8 @@ def register_learning_tools(server: FastMCP) -> None:
         _valid_feedback = {"helpful", "unhelpful"}
         if feedback is not None and feedback not in _valid_feedback:
             return {"error": f"Invalid feedback '{feedback}'. Must be one of: {_valid_feedback}", "status": "invalid"}
+        if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) for t in tags)):
+            return {"error": "tags must be a list of strings", "status": "invalid"}
 
         # PRD-CORE-132 FR03: Increment feedback counter in backend
         if feedback is not None:
@@ -382,6 +386,7 @@ def register_learning_tools(server: FastMCP) -> None:
             phase_affinity=phase_affinity,
             team_origin=team_origin,
             protection_tier=protection_tier,
+            tags=tags,
         )
 
         # Dual-write: also update YAML backup for rollback safety
@@ -442,6 +447,8 @@ def register_learning_tools(server: FastMCP) -> None:
                         data["team_origin"] = team_origin
                     if protection_tier is not None:
                         data["protection_tier"] = protection_tier
+                    if tags is not None:
+                        data["tags"] = tags
                     writer.write_yaml(entry_path, data)
                     resync_learning_index(trw_dir)
             except (OSError, ValueError, TypeError):
