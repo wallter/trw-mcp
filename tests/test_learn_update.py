@@ -170,3 +170,66 @@ class TestLearnUpdateNewFields:
         exactly_80 = "x" * 80
         result = self._run_update(tmp_project, nudge_line=exactly_80)
         assert result.get("status") != "invalid", f"Got error: {result}"
+
+    def test_update_tags_list_accepted(self, tmp_project: Path) -> None:
+        """Updating tags to a list of strings is accepted."""
+        result = self._run_update(tmp_project, tags=["alpha", "beta", "gamma"])
+        assert result.get("status") != "invalid", f"Got error: {result}"
+
+    def test_update_tags_empty_list_clears_tags(self, tmp_project: Path) -> None:
+        """Passing tags=[] is accepted (clears all tags)."""
+        result = self._run_update(tmp_project, tags=[])
+        assert result.get("status") != "invalid", f"Got error: {result}"
+
+    def test_update_tags_non_list_rejected(self, tmp_project: Path) -> None:
+        """tags must be a list — a plain string is rejected."""
+        result = self._run_update(tmp_project, tags="not-a-list")
+        assert result.get("status") == "invalid"
+        assert "tags" in result.get("error", "").lower()
+
+    def test_update_tags_non_string_element_rejected(self, tmp_project: Path) -> None:
+        """tags entries must all be strings — mixed types are rejected."""
+        result = self._run_update(tmp_project, tags=["ok", 42, "also-ok"])
+        assert result.get("status") == "invalid"
+        assert "tags" in result.get("error", "").lower()
+
+    def test_update_tags_wired_through_adapter(self, tmp_project: Path) -> None:
+        """trw_learn_update passes tags kwarg through to adapter_update."""
+        import asyncio
+        from unittest.mock import patch as _patch
+
+        from fastmcp import FastMCP
+
+        from trw_mcp.tools.learning import register_learning_tools
+
+        server = FastMCP("test")
+        register_learning_tools(server)
+
+        async def _get_tool_fn() -> object:
+            tools = await server.list_tools()
+            for t in tools:
+                if t.name == "trw_learn_update":
+                    return t.fn
+            raise KeyError("trw_learn_update not found")
+
+        fn = asyncio.run(_get_tool_fn())
+
+        trw_dir = tmp_project / ".trw"
+        captured: dict[str, object] = {}
+
+        def _capture(_trw_dir: Path, **kwargs: object) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"learning_id": "L-test", "changes": "tags updated", "status": "updated"}
+
+        with (
+            _patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
+            _patch("trw_mcp.state.memory_adapter.get_backend", return_value=_make_mock_backend()),
+            _patch("trw_mcp.tools.learning.get_backend", return_value=_make_mock_backend()),
+            _patch("trw_mcp.tools.learning.adapter_update", side_effect=_capture),
+            _patch("trw_mcp.state.analytics.find_entry_by_id", return_value=None),
+            _patch("trw_mcp.state.analytics.resync_learning_index", return_value=None),
+        ):
+            result = fn(learning_id="L-test", tags=["foo", "bar"])
+
+        assert result.get("status") == "updated"
+        assert captured.get("tags") == ["foo", "bar"]

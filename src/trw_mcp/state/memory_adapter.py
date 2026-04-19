@@ -400,6 +400,7 @@ def update_learning(  # noqa: C901
     phase_affinity: list[str] | None = None,
     team_origin: str | None = None,
     protection_tier: str | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, str]:
     """Update a learning entry in SQLite.
 
@@ -475,6 +476,9 @@ def update_learning(  # noqa: C901
     if protection_tier is not None:
         fields["protection_tier"] = protection_tier
         changes.append(f"protection_tier\u2192{protection_tier}")
+    if tags is not None:
+        fields["tags"] = tags
+        changes.append("tags updated")
 
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}
