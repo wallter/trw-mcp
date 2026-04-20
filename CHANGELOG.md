@@ -2,6 +2,45 @@
 
 All notable changes to the TRW MCP server package.
 
+## [Unreleased]
+
+### Added
+
+- **2026-04-19 — `trw_learn_update` now accepts `tags`** (commit `3be0d65cd`).
+  The tool previously exposed summary/detail/impact/status/tags-resolution
+  but silently swallowed caller-provided tag edits, forcing operators to
+  open the SQLite store to correct tag drift. `tags` is now a first-class
+  update parameter with the same validation path as `trw_learn`.
+
+### Security
+
+Follow-ups to the 2026-04-18 monorepo security audit (learning L-ftMX)
+covering four of the eight HIGH findings attributed to trw-mcp.
+
+- **2026-04-19 — Origin-header guard on shared HTTP transport** (commit
+  `00fb9cb19`). The shared HTTP MCP server on `127.0.0.1:8100` previously
+  accepted any Origin, enabling a localhost confused-deputy path where a
+  malicious page in another browser tab could drive MCP calls. The
+  transport now rejects requests whose `Origin` header is not in the
+  allowlist (defaults to `http://127.0.0.1:*` / `http://localhost:*`).
+  Stdio per-instance transport is unaffected.
+- **2026-04-19 — Content-policy gate on `trw_learn` write path** (commit
+  `bedb84998`, H2 part 2/2). Prompt-injection payloads written via
+  `trw_learn` are now rejected at the server boundary before they reach
+  the backend, closing the chain that would have allowed a poisoned
+  learning to steer future `trw_recall` / `trw_session_start` results.
+  Pairs with trw-memory's tag-bypass fix (H2 part 1/2).
+- **2026-04-19 — `trw://framework/config` redacts credentials** (commit
+  `7bd5b7b27`, M2). The resource previously serialized the full `TRWConfig`
+  model, which can contain API keys and connection URLs when set via env.
+  All sensitive fields now come back as `***REDACTED***` in the rendered
+  resource; the underlying config is unchanged.
+- **2026-04-19 — Shell injection fix on `post-tool-event.sh`** (commit
+  `1175780dd`, H1). `file_path` and `tool_name` are JSON-escaped before
+  interpolation so a crafted path or tool name can no longer break out of
+  the shell quoting in the hook. Matches the `_json_escape()` pattern
+  already used elsewhere in bundled hooks.
+
 ## [0.46.1] — 2026-04-18 — Sprint 96 readiness: HPO telemetry collision prevention
 
 ### Fixed
