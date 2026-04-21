@@ -31,7 +31,7 @@ ruff check src/                                               # Lint
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 <!-- trw:start -->
 
-Your primary role is **orchestration** — delegate to focused agents for better outcomes than direct implementation. Focused subagents produce 3x fewer P0 defects because they get deeper context per task. Reserve self-implementation for trivial edits (≤3 lines, 1 file).
+Your primary role is **orchestration** — delegate to focused agents when a task benefits from its own context window. Focused subagents get deeper context per task than the parent session can hold; subagent results return with tighter scope and less distraction. Reserve self-implementation for trivial edits (≤3 lines, 1 file).
 
 **Your first action in every session must be `trw_session_start()`.**
 
