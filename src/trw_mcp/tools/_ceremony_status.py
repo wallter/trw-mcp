@@ -413,7 +413,44 @@ def append_ceremony_status(
         if not cfg.effective_nudge_enabled:
             return response
 
-        # 1. Select nudge pool via weighted random with cooldowns
+        # PRD-CORE-145 FR02: messenger branch. "minimal" routes through
+        # compute_nudge_minimal (compressed single-line format); "standard"
+        # continues to the pool-based dispatch below (pre-PRD behavior).
+        # Use get_config() here to read .trw/config.yaml overlay keys —
+        # the model_validate(trw_dir=...) path above does NOT load YAML
+        # (silent-no-op bug documented in
+        # docs/research/nudge-config-silent-no-op-2026-04-21.md).
+        try:
+            from trw_mcp.models.config._loader import get_config
+
+            cfg_yaml = get_config()
+            messenger = cfg_yaml.effective_nudge_messenger
+        except Exception:
+            logger.debug("nudge_messenger_resolve_failed_fallback_standard", exc_info=True)
+            messenger = "standard"
+
+        if messenger == "minimal":
+            try:
+                from trw_mcp.state.ceremony_nudge import compute_nudge_minimal
+
+                # The minimal messenger skips pool-based dispatch entirely —
+                # it produces a compressed single-line nudge focused on the
+                # highest-priority pending ceremony step. available_learnings
+                # is cosmetic here (only used when pending == "session_start")
+                # so pass 0 and let compute_nudge_minimal render its default.
+                minimal_content = compute_nudge_minimal(state, available_learnings=0)
+                if minimal_content:
+                    response["nudge_content"] = minimal_content
+                    logger.debug(
+                        "nudge_messenger_selected",
+                        messenger="minimal",
+                        content_chars=len(minimal_content),
+                    )
+            except Exception:  # justified: fail-open, never break ceremony status
+                logger.debug("minimal_messenger_failed", exc_info=True)
+            return response
+
+        # 1. Select nudge pool via weighted random with cooldowns (standard messenger)
         weights = cfg.client_profile.nudge_pool_weights
         cooldown_after = cfg.nudge_pool_cooldown_after
         cooldown_calls = cfg.nudge_pool_cooldown_calls
