@@ -1693,6 +1693,61 @@ def phase_install_packages(
             ui.step_fail(f"{mod} not importable after install")
             sys.exit(1)
 
+    # Post-install apparatus self-check (2026-04-21, iter-18-replication
+    # regression): verify the trw-mcp binary exists AND responds to a MCP
+    # initialize+tools/list handshake. A silent install failure that leaves
+    # the bin wrapper missing (or the MCP server crashing at startup) is
+    # exactly what broke iter-18 replication — every eval run proceeded
+    # without any trw_* tools registered, wasting 60 minutes of compute.
+    # This check adds ~1s to install time and fails loudly on the exact
+    # regression we just lived through.
+    if validated_target:
+        wrapper = Path(validated_target) / "bin" / "trw-mcp"
+        if not wrapper.is_file():
+            ui.step_fail(
+                f"trw-mcp binary missing at {wrapper} after install "
+                "(installer dependency resolution likely failed)"
+            )
+            sys.exit(1)
+        try:
+            # Minimal MCP round-trip: init, initialized, tools/list.
+            mcp_probe_input = (
+                '{"jsonrpc":"2.0","id":1,"method":"initialize",'
+                '"params":{"protocolVersion":"2024-11-05","capabilities":{},'
+                '"clientInfo":{"name":"installer-preflight","version":"1"}}}\n'
+                '{"jsonrpc":"2.0","method":"notifications/initialized"}\n'
+                '{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'
+            )
+            probe = subprocess.run(
+                [str(wrapper), "--transport", "stdio", "serve"],
+                input=mcp_probe_input,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env,
+            )
+            # Look for a non-trivial tools/list result — trw_session_start
+            # is the canonical smoke-test tool name; every trw-mcp version
+            # registers it. Absence of this string in stdout means tools did
+            # NOT register correctly even if the process exited cleanly.
+            if "trw_session_start" not in probe.stdout:
+                ui.step_fail(
+                    "trw-mcp binary started but failed to register tools "
+                    f"(no trw_session_start in stdout, stderr preview: "
+                    f"{probe.stderr[:200]!r})"
+                )
+                sys.exit(1)
+        except subprocess.TimeoutExpired:
+            ui.step_fail(
+                f"trw-mcp binary hung during MCP preflight probe "
+                f"(timed out waiting for tools/list response)"
+            )
+            sys.exit(1)
+        except (OSError, ValueError) as exc:
+            ui.step_fail(f"trw-mcp MCP preflight probe failed: {exc}")
+            sys.exit(1)
+        ui.info("MCP preflight: trw-mcp binary serves tools/list successfully")
+
 
 def phase_install_extras(
     ui: UI,
