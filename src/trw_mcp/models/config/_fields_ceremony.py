@@ -175,6 +175,12 @@ class _CeremonyFields:
     nudge_urgency_mode: Literal["adaptive", "always_low", "always_high", "off"] = "adaptive"
     nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_dedup_enabled: bool = True
+    # PRD-CORE-145 FR01: messenger variant — selects which content-generator
+    # strategy produces the nudge text. "standard" preserves pre-PRD pool-based
+    # dispatch. "minimal" routes through compute_nudge_minimal (compressed).
+    # Default None resolves to "standard" so behavior is byte-identical to
+    # pre-PRD until operators explicitly opt in.
+    nudge_messenger: Literal["standard", "minimal"] | None = None
 
     # -- Nudge pool tuning (PRD-CORE-129) --
     nudge_pool_weight_workflow: int = 40

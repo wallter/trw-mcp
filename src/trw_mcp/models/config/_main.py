@@ -179,6 +179,15 @@ class TRWConfig(_TRWConfigFields):
 
         return self.client_profile.nudge_enabled
 
+    @property
+    def effective_nudge_messenger(self) -> str:
+        """PRD-CORE-145 FR01: resolve messenger name (None → "standard").
+
+        Returns one of {"standard", "minimal"}. "standard" preserves the
+        pre-PRD pool-based dispatch. "minimal" routes through compute_nudge_minimal.
+        """
+        return self.nudge_messenger if self.nudge_messenger is not None else "standard"
+
     @cached_property
     def active_run_complexity(self) -> str | None:
         """Return the complexity_class of the active run if one exists."""
