@@ -341,6 +341,8 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
                 logger.debug("record_nudge_shown_failed", exc_info=True)
 
             try:
+                from trw_mcp.state._session_id import resolve_effective_session_id
+
                 log_surface_event(
                     trw_dir,
                     learning_id=learning_id,
@@ -350,6 +352,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
                     bandit_score=_cached_bandit_weight(selected_learning, bandit_params),
                     client_profile=client_profile_name,
                     model_family=model_family,
+                    session_id=resolve_effective_session_id(trw_dir),
                 )
             except Exception:  # justified: fail-open
                 logger.debug("surface_event_log_failed", exc_info=True)
