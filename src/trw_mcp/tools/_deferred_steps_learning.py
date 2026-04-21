@@ -391,4 +391,31 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         "delivery_metrics_computed",
         metrics=[k for k in result if k != "status"],
     )
+
+    # PRD-CORE-144 FR07: rollout telemetry — observable rollout of the
+    # session_id / exposure / learning_ids wiring.
+    try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
+
+        sid = resolve_effective_session_id(trw_dir)
+        exposure = result.get("learning_exposure")
+        if isinstance(exposure, dict):
+            pull_rate = float(exposure.get("recall_pull_rate", 0.0) or 0.0)
+            nudge_count = int(exposure.get("nudge_count", 0) or 0)
+            ids_obj = exposure.get("ids")
+            ids_count = len(ids_obj) if isinstance(ids_obj, list) else 0
+        else:
+            pull_rate = 0.0
+            nudge_count = 0
+            ids_count = 0
+        logger.info(
+            "delivery_exposure_telemetry",
+            session_id_populated=bool(sid),
+            recall_pull_rate=round(pull_rate, 4),
+            nudge_count=nudge_count,
+            learning_ids_count=ids_count,
+        )
+    except Exception:  # justified: fail-open, telemetry must not break deliver
+        logger.debug("delivery_exposure_telemetry_failed", exc_info=True)
+
     return result
