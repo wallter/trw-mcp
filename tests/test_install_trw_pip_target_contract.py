@@ -45,11 +45,24 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
         lambda python, package, label, ui, target_dir="": pip_calls.append((package, target_dir)) or True,
     )
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, **_kwargs):
+    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, input=None, **_kwargs):
         run_calls.append({"cmd": cmd, "env": dict(env or {})})
-        return SimpleNamespace(returncode=0)
+        # The 2026-04-21 MCP preflight probe passes capture_output=True and
+        # inspects stdout/stderr; return a response that contains
+        # trw_session_start so the probe gate passes.
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"trw_session_start"}]}}\n',
+            stderr="",
+        )
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    # The preflight probe runs the wrapper binary directly; in this test it
+    # resolves to a non-existent path (wrapper is written via Path.write_text
+    # but the subprocess would normally fork the wrapper script). Pre-create
+    # the wrapper file so the Path.is_file() gate passes.
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
 
     module.phase_install_packages(
         ui,
@@ -214,13 +227,28 @@ def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_alread
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtime_deps_are_missing(
+def test_pip_install_forces_no_deps_for_wheels_when_target_dir_set(
     installer_path: Path, monkeypatch
 ) -> None:
+    """After 2026-04-21 L-fovv apparatus-breakdown fix: --no-deps is ALWAYS
+    passed when target_dir is set for .whl packages. The old behavior (only
+    adding --no-deps when _wheel_runtime_dependencies_satisfied returned True)
+    was the root cause of iter-18-replication's 0% tool engagement — the
+    runtime deps check uses importlib_metadata which cannot inspect --target
+    directories, so sibling wheels installed to the same target are invisible
+    and pip falls back to PyPI resolution that fails for unpublished versions.
+
+    See test_install_trw_no_deps_regression.py for the canonical regression
+    test covering this contract; this test verifies the exact pip command
+    shape.
+    """
     module = _load_installer_module(installer_path)
     ui = MagicMock()
     calls: list[list[str]] = []
 
+    # Even when deps are "missing" according to importlib_metadata (which is
+    # the actual iter-18-replication failure mode), we must still force
+    # --no-deps because the installer bundles its deps into --target.
     monkeypatch.setattr(module, "_wheel_runtime_dependencies_satisfied", lambda wheel_path: False)
     monkeypatch.setattr(
         module.subprocess,
@@ -242,6 +270,7 @@ def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtim
             "install",
             "--upgrade",
             "--quiet",
+            "--no-deps",
             "--target",
             "/tmp/trw-pip",
             "/tmp/trw_mcp-0.41.1-py3-none-any.whl",
