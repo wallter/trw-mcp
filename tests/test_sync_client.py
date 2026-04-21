@@ -353,10 +353,20 @@ async def test_run_one_cycle_pushes_pending_outcomes_after_learning_sync(tmp_pat
     from trw_mcp.sync.client import BackendSyncClient
     from trw_mcp.sync.pull import PullResult
 
-    logs_dir = tmp_path / "logs"
-    logs_dir.mkdir()
-    (logs_dir / "recall_tracking.jsonl").write_text(
-        json.dumps({"learning_id": "L-outcome", "outcome": "positive", "timestamp": 123.0}) + "\n",
+    # PRD-CORE-144 FR05: pusher now reads delivered run.yaml files.
+    run_meta = tmp_path / "runs" / "task-1" / "run-outcome" / "meta"
+    run_meta.mkdir(parents=True)
+    (run_meta / "run.yaml").write_text(
+        (
+            "session_metrics:\n"
+            "  status: success\n"
+            "  rework_rate:\n"
+            "    rework_rate: 0.1\n"
+            "    total_files: 1\n"
+            "  learning_exposure:\n"
+            "    ids:\n"
+            "      - L-outcome\n"
+        ),
         encoding="utf-8",
     )
 
