@@ -341,14 +341,21 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         logger.debug("delivery_metric_proximal_signals_failed", exc_info=True)
         result["proximal_signals"] = []
 
-    # Learning exposure (recall pull rate from surface tracking)
+    # Learning exposure (recall pull rate from surface tracking).
+    # PRD-CORE-144 FR02/FR04: scope to the current session and capture ids.
     try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
         from trw_mcp.state.surface_tracking import compute_recall_pull_rate
 
-        pull_rate, nudge_count = compute_recall_pull_rate(trw_dir)
+        sid = resolve_effective_session_id(trw_dir)
+        pull_rate, nudge_count, learning_ids = compute_recall_pull_rate(
+            trw_dir,
+            session_id=sid,
+        )
         result["learning_exposure"] = {
             "recall_pull_rate": round(pull_rate, 4),
             "nudge_count": nudge_count,
+            "ids": learning_ids,
         }
     except Exception:  # justified: fail-open
         logger.debug("delivery_metric_learning_exposure_failed", exc_info=True)

@@ -175,39 +175,93 @@ def read_surface_events(trw_dir: Path, max_events: int = 500) -> list[SurfaceEve
 # ---------------------------------------------------------------------------
 
 
-def compute_recall_pull_rate(trw_dir: Path) -> tuple[float, int]:
+def compute_recall_pull_rate(
+    trw_dir: Path,
+    *,
+    session_id: str | None = None,
+) -> tuple[float, int, list[str]]:
     """Compute the fraction of nudged learnings that led to a trw_recall.
 
-    Scans surface_tracking.jsonl for nudge events, then checks if the
-    same learning_id appears in a subsequent recall event within the
-    same session.
+    PRD-CORE-144 FR02/FR04:
+    - When *session_id* is provided and non-empty, reads ALL events from
+      the log and filters to events matching that session. This fixes the
+      bug where the last-500-line tail missed every nudge for large logs.
+    - When *session_id* is None or empty, preserves legacy last-500 behavior
+      so callers that don't yet pass a session id are unaffected.
+    - Return tuple now includes the list of unique learning IDs observed
+      in the scoped event set (first-seen order preserved), needed by
+      FR04 session_metrics.learning_exposure.ids.
 
     Returns:
-        Tuple of (pull_rate: float 0.0-1.0, nudge_count: int).
-        Returns (0.0, 0) if no nudge events found.
+        Tuple of (pull_rate, nudge_count, learning_ids).
+        ``(0.0, 0, [])`` when no nudge events found.
     """
-    events = read_surface_events(trw_dir)
+    if session_id:
+        events = _read_all_surface_events_for_session(trw_dir, session_id)
+    else:
+        events = read_surface_events(trw_dir)
+
     if not events:
-        return 0.0, 0
+        return 0.0, 0, []
 
     nudge_ids: set[str] = set()
     recall_ids: set[str] = set()
+    ordered_ids: list[str] = []
+    seen: set[str] = set()
 
     for event in events:
         surface_type = event.get("surface_type", "")
         learning_id = event.get("learning_id", "")
         if not learning_id:
             continue
+        if learning_id not in seen:
+            seen.add(learning_id)
+            ordered_ids.append(learning_id)
         if surface_type == "nudge":
             nudge_ids.add(learning_id)
         elif surface_type == "recall":
             recall_ids.add(learning_id)
 
     if not nudge_ids:
-        return 0.0, 0
+        return 0.0, 0, ordered_ids
 
     pulled = nudge_ids & recall_ids
-    return len(pulled) / len(nudge_ids), len(nudge_ids)
+    return len(pulled) / len(nudge_ids), len(nudge_ids), ordered_ids
+
+
+def _read_all_surface_events_for_session(
+    trw_dir: Path,
+    session_id: str,
+    *,
+    hard_cap_lines: int = 100_000,
+) -> list[SurfaceEvent]:
+    """Scan the full surface log (up to a hard cap) and filter by session.
+
+    PRD-CORE-144 RISK-001: cap at 100K lines to bound IO for pathological
+    log growth. Rotation (_rotate_jsonl) runs on every append, so in
+    practice files stay well under this limit.
+    """
+    log_path = trw_dir / _LOG_DIR / _SURFACE_FILE
+    if not log_path.exists():
+        return []
+    try:
+        lines = log_path.read_text(encoding="utf-8").split("\n")
+        if len(lines) > hard_cap_lines:
+            lines = lines[-hard_cap_lines:]
+        matched: list[SurfaceEvent] = []
+        for line in lines:
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                ev: SurfaceEvent = json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if ev.get("session_id") == session_id:
+                matched.append(ev)
+        return matched
+    except Exception:  # justified: fail-open, read failure returns empty
+        return []
 
 
 class NudgeFatigueResult(TypedDict):
@@ -236,7 +290,7 @@ def check_nudge_fatigue(
     Fail-open: returns neutral results on any error.
     """
     try:
-        pull_rate, nudge_count = compute_recall_pull_rate(trw_dir)
+        pull_rate, nudge_count, _ = compute_recall_pull_rate(trw_dir)
 
         # Simple heuristic: if we have enough nudges and pull rate is low, warn
         # A more sophisticated version would track across sessions
