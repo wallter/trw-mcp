@@ -139,12 +139,25 @@ async def _build_sync_lifespan(_: FastMCP) -> AsyncIterator[None]:
     sync_task: asyncio.Task[None] | None = None
     config = _try_load_config()
     try:
-        if config is not None and config.backend_url and config.backend_api_key:
-            from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.sync.client import BackendSyncClient
+        if config is not None:
+            backend_url = config.resolved_backend_url
+            backend_api_key = config.resolved_backend_api_key
+            if backend_url and backend_api_key:
+                if config.backend_url and config.backend_api_key:
+                    source = "explicit"
+                elif config.backend_url or config.backend_api_key:
+                    source = "mixed"
+                else:
+                    source = "platform_fallback"
+                logger.info("sync_config_resolved", source=source, url=backend_url)
 
-            sync_client = BackendSyncClient(config=config, trw_dir=resolve_trw_dir())
-            sync_task = asyncio.create_task(sync_client.run_sync_loop())
+                from trw_mcp.state._paths import resolve_trw_dir
+                from trw_mcp.sync.client import BackendSyncClient
+
+                sync_client = BackendSyncClient(config=config, trw_dir=resolve_trw_dir())
+                sync_task = asyncio.create_task(sync_client.run_sync_loop())
+            else:
+                logger.info("sync_config_resolved", source="none")
         yield
     finally:
         if sync_task is not None:

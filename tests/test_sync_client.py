@@ -31,6 +31,10 @@ def _make_config(**overrides: object) -> SimpleNamespace:
         "framework_version": "v1",
     }
     base.update(overrides)
+    # Mirror TRWConfig.resolved_backend_* semantics for tests that stub config
+    # as SimpleNamespace. Production path uses real TRWConfig properties.
+    base.setdefault("resolved_backend_url", base.get("backend_url", ""))
+    base.setdefault("resolved_backend_api_key", base.get("backend_api_key", ""))
     return SimpleNamespace(**base)
 
 

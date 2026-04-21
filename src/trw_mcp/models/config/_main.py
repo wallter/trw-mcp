@@ -271,6 +271,34 @@ class TRWConfig(_TRWConfigFields):
         return resolve_client_profile(primary)
 
     @property
+    def resolved_backend_url(self) -> str:
+        """Backend URL with fallback to ``platform_urls`` when unset.
+
+        Returns ``backend_url`` if explicitly set (truthy); otherwise falls
+        back to the last element of ``platform_urls`` (convention: local
+        dev URLs are listed after production URLs in a multi-env config).
+        Returns ``""`` when neither source yields a URL.
+        """
+        if self.backend_url:
+            return self.backend_url
+        if self.platform_urls:
+            return self.platform_urls[-1]
+        return ""
+
+    @property
+    def resolved_backend_api_key(self) -> str:
+        """Backend API key with fallback to ``platform_api_key`` when unset.
+
+        Returns ``backend_api_key`` if explicitly set (truthy); otherwise
+        falls back to the secret value of ``platform_api_key``. Returns
+        ``""`` when neither source yields a key.
+        """
+        if self.backend_api_key:
+            return self.backend_api_key
+        platform_key = self.platform_api_key.get_secret_value() if self.platform_api_key else ""
+        return platform_key
+
+    @property
     def effective_platform_urls(self) -> list[str]:
         """Merged list of all configured platform URLs (deduped, non-empty)."""
         urls: list[str] = []

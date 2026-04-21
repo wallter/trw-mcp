@@ -39,16 +39,18 @@ class BackendSyncClient:
             trw_dir=trw_dir,
             sync_interval=config.sync_interval_seconds,
         )
+        resolved_url = config.resolved_backend_url
+        resolved_key = config.resolved_backend_api_key
         self._pusher = SyncPusher(
-            backend_url=config.backend_url,
-            api_key=config.backend_api_key,
+            backend_url=resolved_url,
+            api_key=resolved_key,
             batch_size=config.sync_push_batch_size,
             timeout=config.sync_push_timeout_seconds,
             client_id=self._client_id,
         )
         self._puller = SyncPuller(
-            backend_url=config.backend_url,
-            api_key=config.backend_api_key,
+            backend_url=resolved_url,
+            api_key=resolved_key,
             timeout=getattr(config, "sync_pull_timeout_seconds", 5.0),
             client_id=self._client_id,
             trw_dir=trw_dir,
@@ -91,7 +93,7 @@ class BackendSyncClient:
 
     async def _run_one_cycle(self, force: bool = False) -> None:
         """Execute one push+pull sync cycle."""
-        if not self._config.backend_url:
+        if not self._config.resolved_backend_url:
             return
 
         if not force and not self._coordinator.should_sync(sync_interval=self._scheduled_interval_seconds):
