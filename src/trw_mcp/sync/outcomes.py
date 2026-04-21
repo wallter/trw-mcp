@@ -123,8 +123,10 @@ def _extract_session_metrics(run_data: dict[str, Any]) -> dict[str, Any] | None:
         return metrics
     for key in ("meta", "summary"):
         nested = run_data.get(key)
-        if isinstance(nested, dict) and isinstance(nested.get("session_metrics"), dict):
-            return nested["session_metrics"]
+        if isinstance(nested, dict):
+            nested_metrics = nested.get("session_metrics")
+            if isinstance(nested_metrics, dict):
+                return dict(nested_metrics)
     return None
 
 
