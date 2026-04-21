@@ -21,7 +21,7 @@ import structlog
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
-from trw_mcp.sync.outcomes import load_pending_outcomes
+from trw_mcp.sync.outcomes import load_pending_outcomes, write_synced_marker
 from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -219,6 +219,20 @@ class BackendSyncClient:
                     )
             if pending_outcomes and any_target_succeeded:
                 self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
+                # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
+                # next pusher pass skips already-synced runs.
+                successful_labels = ",".join(
+                    lbl for lbl, rep in report.items() if rep.get("error") is None
+                )
+                for item in pending_outcomes:
+                    if item.run_dir is None or not item.sync_hash:
+                        continue
+                    write_synced_marker(
+                        item.run_dir,
+                        run_id=item.run_id,
+                        sync_hash=item.sync_hash,
+                        target_label=successful_labels or "unknown",
+                    )
 
             pulled = 0
             merged = 0
