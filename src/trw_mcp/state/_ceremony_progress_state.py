@@ -44,6 +44,11 @@ class CeremonyState:
     pool_nudge_counts: dict[str, int] = field(default_factory=dict)
     pool_ignore_counts: dict[str, int] = field(default_factory=dict)
     pool_cooldown_until: dict[str, int] = field(default_factory=dict)
+    # PRD-CORE-144 FR03: wall-clock timestamp (ISO-8601) when a pool entered
+    # cooldown. Used to force-expire pools that have been cooled longer than
+    # ``nudge_pool_cooldown_wall_clock_max_hours`` (default 24h). Missing
+    # keys are treated as "never cooled down" (NFR03).
+    pool_cooldown_set_at: dict[str, str] = field(default_factory=dict)
     tool_call_counter: int = 0
     last_nudge_pool: str = ""
 
@@ -121,6 +126,12 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
             return {}
         return {k: int(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, (int, float))}
 
+    def _dict_str_str(key: str) -> dict[str, str]:
+        raw = data.get(key, {})
+        if not isinstance(raw, dict):
+            return {}
+        return {k: str(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+
     nudge_raw = data.get("nudge_counts", {})
     nudge_counts = (
         {k: v for k, v in nudge_raw.items() if isinstance(k, str) and isinstance(v, int)}
@@ -147,6 +158,7 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         pool_nudge_counts=_dict_str_int("pool_nudge_counts"),
         pool_ignore_counts=_dict_str_int("pool_ignore_counts"),
         pool_cooldown_until=_dict_str_int("pool_cooldown_until"),
+        pool_cooldown_set_at=_dict_str_str("pool_cooldown_set_at"),
         tool_call_counter=_int("tool_call_counter"),
         last_nudge_pool=_str("last_nudge_pool", ""),
     )

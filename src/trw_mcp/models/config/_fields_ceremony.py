@@ -183,6 +183,14 @@ class _CeremonyFields:
     nudge_pool_weight_context: int = 10
     nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
     nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
+    # PRD-CORE-144 FR03: wall-clock cap on pool cooldown so the primary
+    # ("learnings") pool cannot remain indefinitely cooled out of rotation.
+    nudge_pool_cooldown_wall_clock_max_hours: int = Field(
+        default=24,
+        ge=1,
+        le=720,
+        description="Maximum wall-clock hours a nudge pool may remain in cooldown before forced re-engagement.",
+    )
 
     # -- Hook control (S9, PRD-CORE-125) --
 
