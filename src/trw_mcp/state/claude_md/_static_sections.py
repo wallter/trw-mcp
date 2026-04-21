@@ -131,8 +131,9 @@ def render_imperative_opener() -> str:
     analytics_claim = _format_learning_session_claim()
     return (
         "Your primary role is **orchestration** \u2014 delegate to focused agents "
-        "for better outcomes than direct implementation. Focused subagents produce "
-        "fewer defects because they get deeper context per task. Reserve "
+        "when a task benefits from its own context window. Focused subagents get "
+        "deeper context per task than the parent session can hold; subagent "
+        "results return with tighter scope and less distraction. Reserve "
         "self-implementation for trivial edits (\u22643 lines, 1 file).\n"
         "\n"
         "**Your first action in every session must be `trw_session_start()`.**\n"

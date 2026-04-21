@@ -103,8 +103,8 @@ If you catch yourself thinking any of these, stop and follow the process — the
 |---------|---------------|-------------|
 | "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint → context compacts → you re-implement from scratch |
 | "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings — zero knowledge transfer |
-| "I already know the codebase, I don't need trw_recall" | Prior learnings contain gotchas for exactly this area | Sprint 26 had 6 P0/P1 defects from agents who skipped recall |
-| "I can implement directly, delegation is overhead" | Subagent implementation has 3x fewer P0 defects than direct | Your focused context is valuable — subagents get deeper context per task |
+| "I already know the codebase, I don't need trw_recall" | Prior learnings contain gotchas for exactly this area | Agents who skip recall consistently re-discover known gotchas, spending avoidable time on solved problems |
+| "I can implement directly, delegation is overhead" | Focused subagents get deeper context per task than the parent session can hold | Your focused context is valuable — subagent results return with tighter scope and less distraction |
 | "The build check can wait until the end" | Late build failures cascade into multi-file rework | 2x rework when caught at DELIVER vs catching at VALIDATE |
 | "This refactor is small, I'll inline it" | Small inlined refactors break file ownership in teams | Creates merge conflicts and unreviewed code in teammate files |
 
