@@ -84,13 +84,16 @@ def _log_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> None:
     """Best-effort session-start surface logging with structured observability."""
 
     try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
         from trw_mcp.state.surface_tracking import log_surface_event
 
+        sid = resolve_effective_session_id(trw_dir)
         for learning_id in learning_ids:
             log_surface_event(
                 trw_dir,
                 learning_id=learning_id,
                 surface_type="session_start",
+                session_id=sid,
             )
     except (ImportError, OSError, RuntimeError, ValueError, TypeError):
         logger.warning(

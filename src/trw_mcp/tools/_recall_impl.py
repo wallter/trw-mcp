@@ -377,7 +377,10 @@ def _log_recall_surface_events(
         logger.debug("propensity_logging_failed", exc_info=True)
 
     try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
+
         phase = _detect_surface_phase()
+        sid = resolve_effective_session_id(trw_dir)
         for entry in ranked_learnings:
             lid = str(entry.get("id", ""))
             if lid:
@@ -387,6 +390,7 @@ def _log_recall_surface_events(
                     surface_type="recall",
                     phase=phase,
                     files_context=[],  # No file context in base recall; session_start path adds its own
+                    session_id=sid,
                 )
     except Exception:  # justified: fail-open, surface logging must not block recall
         logger.debug("surface_logging_failed", exc_info=True)
