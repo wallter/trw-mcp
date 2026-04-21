@@ -76,3 +76,12 @@ class _MemoryFields:
     learning_recall_enabled: bool | None = None
     learning_injection_preview_chars: int = Field(default=500, ge=50, le=2000)
     session_start_recall_enabled: bool | None = None
+
+    # -- Chain-mode recency bypass (L-fovv fix, 2026-04-21, iter-18 follow-up) --
+    # trw_session_start wildcard recall filters at min_impact=0.7 which excludes
+    # fresh low-impact learnings (trw_learn defaults to impact=0.5). In chain-mode
+    # this means link 2+ cannot see link 1's learnings. The bypass does a union
+    # recall: high-impact baseline (preserves current behavior) + fresh low-impact
+    # (surfaces per-project session context). Set days=0 to disable the bypass.
+    session_start_recent_bypass_days: int = Field(default=7, ge=0, le=365)
+    session_start_recent_bypass_min_impact: float = Field(default=0.3, ge=0.0, le=1.0)

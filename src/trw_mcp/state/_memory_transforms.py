@@ -54,6 +54,11 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
         "tags": tags,
         "impact": entry.importance,
         "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
+        # L-fovv fix (PRD-EVAL-044-follow-up, 2026-04-21): include created date in
+        # compact mode so callers (perform_session_recalls, etc.) can apply
+        # recency-based filtering without a second non-compact recall. ~10-byte
+        # token cost per entry; worth it to enable chain-mode recall.
+        "created": entry.created_at.date().isoformat() if entry.created_at else "",
     }
     if compact:
         return base

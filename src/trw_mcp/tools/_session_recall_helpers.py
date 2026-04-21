@@ -178,13 +178,48 @@ def perform_session_recalls(
                 learnings.append(entry)
         learnings = learnings[:effective_max]
     else:
-        learnings = adapter_recall(
+        baseline = adapter_recall(
             trw_dir,
             query="*",
             min_impact=0.7,
             max_results=effective_max,
             compact=True,
         )
+        # L-fovv fix: union the baseline (high-impact, for cross-session tribal
+        # knowledge) with fresh low-impact learnings (for chain-mode + per-
+        # project session context). trw_learn defaults new entries to
+        # impact=0.5, so without this bypass stateful-chain link 2+ recalls
+        # return 0 even when link 1 wrote useful lessons.
+        bypass_days = int(getattr(config, "session_start_recent_bypass_days", 0))
+        learnings = list(baseline)
+        if bypass_days > 0:
+            import datetime as _dt
+
+            bypass_min = float(
+                getattr(config, "session_start_recent_bypass_min_impact", 0.3)
+            )
+            cutoff = (
+                _dt.datetime.now(_dt.timezone.utc).date()
+                - _dt.timedelta(days=bypass_days)
+            ).isoformat()
+            fresh = adapter_recall(
+                trw_dir,
+                query="*",
+                min_impact=bypass_min,
+                max_results=effective_max * 2,
+                compact=True,
+            )
+            seen_ids = {str(e.get("id", "")) for e in baseline}
+            fresh_additions = [
+                e
+                for e in fresh
+                if str(e.get("created", "")) >= cutoff
+                and str(e.get("id", "")) not in seen_ids
+            ]
+            # Fresh entries are highest-priority context for the current session —
+            # surface them before the high-impact baseline.
+            learnings = fresh_additions + learnings
+            learnings = learnings[:effective_max]
 
     try:
         log_ranked_selections(
