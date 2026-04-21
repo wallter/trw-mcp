@@ -82,9 +82,12 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
     for call in run_calls:
         cmd = call["cmd"]
         if isinstance(cmd, list) and "pip" in cmd and "install" in cmd:
-            whl = next((str(a) for a in cmd if str(a).endswith(".whl")), None)
-            if whl is not None:
-                installed_wheels.append((whl, pip_target))
+            # 2026-04-21 L-8heG v2: phase_install_packages now invokes pip
+            # with BOTH wheels in a single command (--find-links). Count
+            # every .whl arg, not just the first.
+            for arg in cmd:
+                if str(arg).endswith(".whl"):
+                    installed_wheels.append((str(arg), pip_target))
     assert (str(memory_whl), pip_target) in installed_wheels
     assert (str(mcp_whl), pip_target) in installed_wheels
 
@@ -141,10 +144,23 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
         mcp_whl,
     )
 
-    assert pip_calls == [
-        (str(memory_whl), ""),
-        (str(mcp_whl), ""),
-    ]
+    # 2026-04-21 L-8heG v2: phase_install_packages now tries a combined
+    # pip invocation first, then falls back to sequential pip_install calls.
+    # The combined call shows up in run_calls; sequential calls (if any)
+    # show up in pip_calls. Assert the union installs BOTH wheels.
+    installed_wheels: list[str] = [p for p, _ in pip_calls]
+    for call in run_calls:
+        cmd = call["cmd"]
+        if isinstance(cmd, list) and "pip" in cmd and "install" in cmd:
+            for arg in cmd:
+                if str(arg).endswith(".whl"):
+                    installed_wheels.append(str(arg))
+    assert str(memory_whl) in installed_wheels, (
+        f"expected memory wheel install; got {installed_wheels}"
+    )
+    assert str(mcp_whl) in installed_wheels, (
+        f"expected mcp wheel install; got {installed_wheels}"
+    )
     assert not wrapper_path.exists()
     # Filter run_calls to just the import-verification calls.
     verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
@@ -227,28 +243,23 @@ def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_alread
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_pip_install_forces_no_deps_for_wheels_when_target_dir_set(
+def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtime_deps_are_missing(
     installer_path: Path, monkeypatch
 ) -> None:
-    """After 2026-04-21 L-fovv apparatus-breakdown fix: --no-deps is ALWAYS
-    passed when target_dir is set for .whl packages. The old behavior (only
-    adding --no-deps when _wheel_runtime_dependencies_satisfied returned True)
-    was the root cause of iter-18-replication's 0% tool engagement — the
-    runtime deps check uses importlib_metadata which cannot inspect --target
-    directories, so sibling wheels installed to the same target are invisible
-    and pip falls back to PyPI resolution that fails for unpublished versions.
-
-    See test_install_trw_no_deps_regression.py for the canonical regression
-    test covering this contract; this test verifies the exact pip command
-    shape.
+    """When the runtime dep check returns False (ambiguous), pip_install
+    must NOT force --no-deps — it must let pip's resolver fetch transitive
+    deps from PyPI normally. Forcing --no-deps here was the 2026-04-21
+    iter-18-replication-v2 regression: structlog was skipped and trw-mcp
+    crashed on import in container Python that lacked the dev env's
+    pre-installed deps. The correct fix lives in phase_install_packages:
+    install BOTH bundled wheels in one pip invocation with --find-links so
+    the resolver satisfies internal deps locally while fetching external
+    deps from PyPI. See test_phase_install_packages_uses_combined_find_links.
     """
     module = _load_installer_module(installer_path)
     ui = MagicMock()
     calls: list[list[str]] = []
 
-    # Even when deps are "missing" according to importlib_metadata (which is
-    # the actual iter-18-replication failure mode), we must still force
-    # --no-deps because the installer bundles its deps into --target.
     monkeypatch.setattr(module, "_wheel_runtime_dependencies_satisfied", lambda wheel_path: False)
     monkeypatch.setattr(
         module.subprocess,
@@ -270,7 +281,6 @@ def test_pip_install_forces_no_deps_for_wheels_when_target_dir_set(
             "install",
             "--upgrade",
             "--quiet",
-            "--no-deps",
             "--target",
             "/tmp/trw-pip",
             "/tmp/trw_mcp-0.41.1-py3-none-any.whl",

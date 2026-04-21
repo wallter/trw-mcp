@@ -829,20 +829,15 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     """
     base = [python, "-B", "-m", "pip", "install", "--upgrade", "--quiet"]
     if target_dir:
-        # When target_dir is set, dependency resolution via
-        # importlib_metadata.version() looks at the container's site-packages,
-        # NOT the target directory. If we installed a sibling wheel (e.g.
-        # trw-memory) to the same target just before this call, it's invisible
-        # to _wheel_runtime_dependencies_satisfied — pip then tries to resolve
-        # the dependency from PyPI and fails for versions not yet published.
-        # The installer bundles the complete dependency set; always use
-        # --no-deps when target_dir is set for .whl packages.
-        # (2026-04-21: this fix blocks the L-fovv-related iter-18 replication
-        # bug where trw_mcp 0.46.1 requires trw-memory>=0.7.0 which didn't
-        # exist on PyPI yet — causing zero tool registration in eval
-        # containers. See docs/eval/iter-notes/iter-18-replication-results.md
-        # and the preflight in trw-mcp/scripts/verify-installer.sh.)
-        if package.endswith(".whl"):
+        # 2026-04-21: restore the original behavior where pip's dep resolver
+        # runs against PyPI for external deps (structlog, pydantic, etc).
+        # An earlier attempt to force --no-deps unconditionally broke the
+        # transitive deps — trw-mcp wouldn't import because structlog was
+        # never installed. The correct fix lives in phase_install_packages:
+        # call pip ONCE with BOTH bundled wheels + --find-links so the
+        # resolver can satisfy trw-memory locally while still fetching
+        # external deps from PyPI.
+        if package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package)):
             base.append("--no-deps")
         base += ["--target", target_dir]
 
@@ -1620,23 +1615,49 @@ def phase_install_packages(
     ui.step_header(step, total, "Installing packages")
     validated_target = validate_pip_target(pip_target)
 
-    ui.start_spinner("Installing trw-memory...")
-    if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
-        ui.stop_spinner(False, "", "pip install failed for trw-memory")
-        ui.error("Try installing in a virtual environment:")
-        ui.error("  python3 -m venv .venv && source .venv/bin/activate")
-        ui.error("  python3 install-trw.py")
-        sys.exit(1)
-    ui.stop_spinner(True, "Installed trw-memory")
+    # 2026-04-21 L-8heG v2: install BOTH bundled wheels in one pip invocation
+    # with --find-links pointing at the wheel directory. This lets pip's
+    # resolver:
+    #   (a) satisfy the trw-mcp -> trw-memory internal dep from the bundled
+    #       wheel (even when the bundled version is ahead of PyPI), AND
+    #   (b) fetch external transitive deps (structlog, pydantic, ruamel-yaml,
+    #       pydantic-settings) from PyPI normally.
+    # Previous sequential approach broke on either side — installing
+    # trw-mcp alone caused pip to miss the locally-bundled trw-memory and
+    # fail on PyPI; forcing --no-deps solved that but then skipped external
+    # deps entirely, crashing trw-mcp on `import structlog` in the container.
+    wheel_dir = memory_whl.parent
+    combined_cmd = [
+        python, "-B", "-m", "pip", "install", "--upgrade", "--quiet",
+        "--find-links", str(wheel_dir),
+    ]
+    if validated_target:
+        combined_cmd += ["--target", validated_target]
+    combined_cmd += [str(memory_whl), str(mcp_whl)]
 
-    ui.start_spinner(f"Installing trw-mcp v{TRW_VERSION}...")
-    if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
-        ui.stop_spinner(False, "", "pip install failed for trw-mcp")
-        ui.error("Try installing in a virtual environment:")
-        ui.error("  python3 -m venv .venv && source .venv/bin/activate")
-        ui.error("  python3 install-trw.py")
-        sys.exit(1)
-    ui.stop_spinner(True, f"Installed trw-mcp v{TRW_VERSION}")
+    ui.start_spinner(f"Installing trw-memory + trw-mcp v{TRW_VERSION}...")
+    result = subprocess.run(combined_cmd, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        # Fall back to the sequential path so PEP 668 / environment-specific
+        # failures still get the --user and --break-system-packages escalation.
+        ui.stop_spinner(
+            False,
+            "",
+            f"combined install failed (rc={result.returncode}), trying sequential",
+        )
+        if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
+            ui.error("pip install failed for trw-memory")
+            ui.error("Try installing in a virtual environment:")
+            ui.error("  python3 -m venv .venv && source .venv/bin/activate")
+            ui.error("  python3 install-trw.py")
+            sys.exit(1)
+        if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
+            ui.error("pip install failed for trw-mcp")
+            ui.error("Try installing in a virtual environment:")
+            ui.error("  python3 -m venv .venv && source .venv/bin/activate")
+            ui.error("  python3 install-trw.py")
+            sys.exit(1)
+    ui.stop_spinner(True, f"Installed trw-memory + trw-mcp v{TRW_VERSION}")
 
     # Force-reinstall trw-memory from bundled wheel (defeats PyPI downgrade).
     # Rationale: trw-mcp's install triggers pip's dep resolver which reaches
