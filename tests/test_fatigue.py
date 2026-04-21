@@ -23,7 +23,7 @@ class TestRecallPullRate:
         log_surface_event(trw_dir, learning_id="L-0", surface_type="recall")
         log_surface_event(trw_dir, learning_id="L-2", surface_type="recall")
 
-        rate, count = compute_recall_pull_rate(trw_dir)
+        rate, count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 0.5  # 2/4
         assert count == 4
 
@@ -31,7 +31,7 @@ class TestRecallPullRate:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         log_surface_event(trw_dir, learning_id="L-0", surface_type="recall")
-        rate, count = compute_recall_pull_rate(trw_dir)
+        rate, count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 0.0
         assert count == 0
 
@@ -41,14 +41,14 @@ class TestRecallPullRate:
         for i in range(3):
             log_surface_event(trw_dir, learning_id=f"L-{i}", surface_type="nudge")
             log_surface_event(trw_dir, learning_id=f"L-{i}", surface_type="recall")
-        rate, _ = compute_recall_pull_rate(trw_dir)
+        rate, _count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 1.0
 
     def test_empty_dir_returns_zero(self, tmp_path: Path) -> None:
         """An empty trw_dir with no log file returns (0.0, 0)."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
-        rate, count = compute_recall_pull_rate(trw_dir)
+        rate, count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 0.0
         assert count == 0
 
@@ -61,7 +61,7 @@ class TestRecallPullRate:
         log_surface_event(trw_dir, learning_id="L-0", surface_type="nudge")
         log_surface_event(trw_dir, learning_id="L-0", surface_type="recall")
 
-        rate, count = compute_recall_pull_rate(trw_dir)
+        rate, count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 1.0  # 1 unique nudge ID, 1 recalled
         assert count == 1
 
@@ -73,7 +73,7 @@ class TestRecallPullRate:
         log_surface_event(trw_dir, learning_id="", surface_type="nudge")
         log_surface_event(trw_dir, learning_id="L-0", surface_type="recall")
 
-        rate, count = compute_recall_pull_rate(trw_dir)
+        rate, count, _ids = compute_recall_pull_rate(trw_dir)
         assert rate == 1.0  # Only L-0 counted
         assert count == 1
 
