@@ -271,32 +271,58 @@ class TRWConfig(_TRWConfigFields):
         return resolve_client_profile(primary)
 
     @property
-    def resolved_backend_url(self) -> str:
-        """Backend URL with fallback to ``platform_urls`` when unset.
+    def resolved_sync_targets(self) -> list[tuple[str, str]]:
+        """All configured (url, api_key) sync targets in push priority order.
 
-        Returns ``backend_url`` if explicitly set (truthy); otherwise falls
-        back to the last element of ``platform_urls`` (convention: local
-        dev URLs are listed after production URLs in a multi-env config).
-        Returns ``""`` when neither source yields a URL.
+        Ordering:
+          1. Explicit ``backend_url`` (if truthy) with ``backend_api_key`` or
+             ``platform_api_key`` as its key.
+          2. Every entry of ``platform_urls`` (in list order), each paired
+             with ``platform_api_key``.
+
+        Targets with empty url or empty api_key are dropped. Duplicate URLs
+        (case-insensitive normalized compare) collapse to the first occurrence
+        so the explicit override remains the winner for its slot.
         """
+        platform_key = self.platform_api_key.get_secret_value() if self.platform_api_key else ""
+        candidates: list[tuple[str, str]] = []
         if self.backend_url:
-            return self.backend_url
-        if self.platform_urls:
-            return self.platform_urls[-1]
-        return ""
+            explicit_key = self.backend_api_key or platform_key
+            candidates.append((self.backend_url, explicit_key))
+        for url in self.platform_urls:
+            candidates.append((url, platform_key))
+
+        seen: set[str] = set()
+        result: list[tuple[str, str]] = []
+        for url, key in candidates:
+            if not url or not key:
+                continue
+            normalized = url.rstrip("/").lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append((url, key))
+        return result
+
+    @property
+    def resolved_backend_url(self) -> str:
+        """First sync target's URL, for backward compatibility.
+
+        Prefer :attr:`resolved_sync_targets` in new code — this accessor
+        returns only the highest-priority target.
+        """
+        targets = self.resolved_sync_targets
+        return targets[0][0] if targets else ""
 
     @property
     def resolved_backend_api_key(self) -> str:
-        """Backend API key with fallback to ``platform_api_key`` when unset.
+        """First sync target's API key, for backward compatibility.
 
-        Returns ``backend_api_key`` if explicitly set (truthy); otherwise
-        falls back to the secret value of ``platform_api_key``. Returns
-        ``""`` when neither source yields a key.
+        Prefer :attr:`resolved_sync_targets` in new code — this accessor
+        returns only the highest-priority target.
         """
-        if self.backend_api_key:
-            return self.backend_api_key
-        platform_key = self.platform_api_key.get_secret_value() if self.platform_api_key else ""
-        return platform_key
+        targets = self.resolved_sync_targets
+        return targets[0][1] if targets else ""
 
     @property
     def effective_platform_urls(self) -> list[str]:
