@@ -829,7 +829,20 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     """
     base = [python, "-B", "-m", "pip", "install", "--upgrade", "--quiet"]
     if target_dir:
-        if package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package)):
+        # When target_dir is set, dependency resolution via
+        # importlib_metadata.version() looks at the container's site-packages,
+        # NOT the target directory. If we installed a sibling wheel (e.g.
+        # trw-memory) to the same target just before this call, it's invisible
+        # to _wheel_runtime_dependencies_satisfied — pip then tries to resolve
+        # the dependency from PyPI and fails for versions not yet published.
+        # The installer bundles the complete dependency set; always use
+        # --no-deps when target_dir is set for .whl packages.
+        # (2026-04-21: this fix blocks the L-fovv-related iter-18 replication
+        # bug where trw_mcp 0.46.1 requires trw-memory>=0.7.0 which didn't
+        # exist on PyPI yet — causing zero tool registration in eval
+        # containers. See docs/eval/iter-notes/iter-18-replication-results.md
+        # and the preflight in trw-mcp/scripts/verify-installer.sh.)
+        if package.endswith(".whl"):
             base.append("--no-deps")
         base += ["--target", target_dir]
 
