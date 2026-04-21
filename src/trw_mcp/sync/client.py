@@ -1,11 +1,20 @@
-"""BackendSyncClient — top-level orchestrator for bidirectional sync."""
+"""BackendSyncClient — top-level orchestrator for bidirectional sync.
+
+Targets are derived from :attr:`TRWConfig.resolved_sync_targets`, which fans
+out across every configured ``platform_urls`` entry. The legacy accessors
+:attr:`TRWConfig.resolved_backend_url` and :attr:`TRWConfig.resolved_backend_api_key`
+remain supported and return the first target for backward compatibility.
+"""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import structlog
 
@@ -28,8 +37,45 @@ _MAX_HINT_DELAY_SECONDS = 7200
 _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
 
 
+@dataclass(frozen=True)
+class SyncTarget:
+    """A single (url, api_key, label) fan-out destination."""
+
+    url: str
+    api_key: str
+    label: str
+
+
+def _label_for_url(url: str) -> str:
+    """Derive a hostname-style label for logs."""
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    host = parsed.hostname or url
+    return host
+
+
+def _build_targets(config: TRWConfig) -> list[SyncTarget]:
+    """Build the ordered fan-out list from config.
+
+    Uses :attr:`TRWConfig.resolved_sync_targets`. For legacy callers that
+    stub config without the new accessor, falls back to a single-target list
+    built from ``resolved_backend_url`` / ``resolved_backend_api_key``.
+    """
+    raw = getattr(config, "resolved_sync_targets", None)
+    if raw is None:
+        url = getattr(config, "resolved_backend_url", "") or ""
+        key = getattr(config, "resolved_backend_api_key", "") or ""
+        raw = [(url, key)] if url and key else []
+    return [SyncTarget(url=u, api_key=k, label=_label_for_url(u)) for u, k in raw]
+
+
 class BackendSyncClient:
-    """Orchestrates bidirectional push+pull sync."""
+    """Orchestrates bidirectional push+pull sync across all configured targets.
+
+    Reads :attr:`TRWConfig.resolved_sync_targets` for fan-out. The legacy
+    :attr:`TRWConfig.resolved_backend_url` and
+    :attr:`TRWConfig.resolved_backend_api_key` accessors still resolve to the
+    first target for backward compatibility with single-target consumers.
+    """
 
     def __init__(self, config: TRWConfig, trw_dir: Path) -> None:
         self._config = config
@@ -39,18 +85,37 @@ class BackendSyncClient:
             trw_dir=trw_dir,
             sync_interval=config.sync_interval_seconds,
         )
-        resolved_url = config.resolved_backend_url
-        resolved_key = config.resolved_backend_api_key
-        self._pusher = SyncPusher(
-            backend_url=resolved_url,
-            api_key=resolved_key,
+        self._targets: list[SyncTarget] = _build_targets(config)
+        logger.info(
+            "sync_targets_resolved",
+            count=len(self._targets),
+            targets=[t.label for t in self._targets],
+            client_id=self._client_id,
+        )
+        # Pushers and pullers are built per-target; cache a by-label map for reuse.
+        self._pushers: dict[str, SyncPusher] = {
+            t.label: SyncPusher(
+                backend_url=t.url,
+                api_key=t.api_key,
+                batch_size=config.sync_push_batch_size,
+                timeout=config.sync_push_timeout_seconds,
+                client_id=self._client_id,
+            )
+            for t in self._targets
+        }
+        # Primary puller uses the first target (intel pull is single-source for now).
+        primary_url = self._targets[0].url if self._targets else ""
+        primary_key = self._targets[0].api_key if self._targets else ""
+        self._pusher = self._pushers.get(self._targets[0].label) if self._targets else SyncPusher(
+            backend_url=primary_url,
+            api_key=primary_key,
             batch_size=config.sync_push_batch_size,
             timeout=config.sync_push_timeout_seconds,
             client_id=self._client_id,
         )
         self._puller = SyncPuller(
-            backend_url=resolved_url,
-            api_key=resolved_key,
+            backend_url=primary_url,
+            api_key=primary_key,
             timeout=getattr(config, "sync_pull_timeout_seconds", 5.0),
             client_id=self._client_id,
             trw_dir=trw_dir,
@@ -92,8 +157,13 @@ class BackendSyncClient:
             logger.warning("sync_trigger_error", client_id=self._client_id, exc_info=True)
 
     async def _run_one_cycle(self, force: bool = False) -> None:
-        """Execute one push+pull sync cycle."""
-        if not self._config.resolved_backend_url:
+        """Execute one push+pull sync cycle, fanning out pushes to every target."""
+        if not self._targets:
+            logger.debug(
+                "sync_cycle_skipped",
+                reason="no_targets",
+                client_id=self._client_id,
+            )
             return
 
         if not force and not self._coordinator.should_sync(sync_interval=self._scheduled_interval_seconds):
@@ -105,33 +175,50 @@ class BackendSyncClient:
                 return
 
             dirty = self._get_dirty_entries()
-            push_result = PushResult()
-            push_seq = 0
-            push_failed = False
             if dirty:
                 logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
-                push_result = self._pusher.push_learnings(dirty)
-                if push_result.failed == 0:
-                    push_seq = max((entry.sync_seq for entry in dirty), default=0)
-                    self._mark_synced(dirty[: push_result.pushed + push_result.skipped])
-                else:
-                    push_failed = True
-                    self._coordinator.record_sync_failure(f"push failed: {push_result.failed} entries")
             else:
                 logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
 
-            if not push_failed:
-                pending_outcomes = load_pending_outcomes(
-                    self._trw_dir,
-                    since_line=self._coordinator.get_last_outcome_line(),
-                )
-                if pending_outcomes:
-                    outcome_result = self._pusher.push_outcomes([item.payload for item in pending_outcomes])
-                    if outcome_result.failed == 0:
-                        self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
-                    else:
-                        push_failed = True
-                        self._coordinator.record_sync_failure(f"outcome push failed: {outcome_result.failed} events")
+            pending_outcomes = load_pending_outcomes(
+                self._trw_dir,
+                since_line=self._coordinator.get_last_outcome_line(),
+            )
+
+            report, push_result, any_target_succeeded = self._fanout_push(
+                dirty=dirty,
+                outcomes=[item.payload for item in pending_outcomes],
+            )
+            logger.info(
+                "sync_cycle_report",
+                client_id=self._client_id,
+                targets=len(self._targets),
+                successful=sum(1 for r in report.values() if r["error"] is None),
+                failed=sum(1 for r in report.values() if r["error"] is not None),
+                report=report,
+            )
+
+            push_failed = not any_target_succeeded and (bool(dirty) or bool(pending_outcomes))
+            push_seq = 0
+            if dirty and any_target_succeeded and push_result.failed == 0:
+                push_seq = max((entry.sync_seq for entry in dirty), default=0)
+                self._mark_synced(dirty[: push_result.pushed + push_result.skipped])
+            if push_failed:
+                # Preserve legacy single-target failure message format when possible.
+                if dirty and len(self._targets) == 1:
+                    primary_label = self._targets[0].label
+                    raw_failed = report.get(primary_label, {}).get("failed", len(dirty))
+                    failed_count = int(raw_failed) if isinstance(raw_failed, (int, float)) else len(dirty)
+                    if failed_count == 0:
+                        failed_count = len(dirty)
+                    # Legacy behaviour reported the backend-side failure count as entry count.
+                    self._coordinator.record_sync_failure(f"push failed: {failed_count} entries")
+                else:
+                    self._coordinator.record_sync_failure(
+                        f"all {len(self._targets)} targets failed"
+                    )
+            if pending_outcomes and any_target_succeeded:
+                self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
 
             pulled = 0
             merged = 0
@@ -200,6 +287,118 @@ class BackendSyncClient:
                     pull_seq=next_pull_seq,
                     pull_completed=True,
                 )
+
+    def _fanout_push(
+        self,
+        dirty: "list[MemoryEntry]",
+        outcomes: list[dict[str, object]],
+    ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
+        """Push dirty entries + outcomes to every target with per-target isolation.
+
+        Returns (report, aggregate_push_result, any_target_succeeded). Aggregate
+        result reflects the first successful target (sufficient for push_seq).
+        """
+        report: dict[str, dict[str, object]] = {}
+        aggregate: PushResult = PushResult()
+        any_success = False
+        for target in self._targets:
+            try:
+                result = self._push_to_target(target, dirty, outcomes)
+            except Exception as exc:  # justified: boundary, per-target failure is isolated
+                logger.warning(
+                    "sync_target_failed",
+                    client_id=self._client_id,
+                    label=target.label,
+                    target=target.label,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                    exc_info=True,
+                )
+                report[target.label] = {"pushed": 0, "skipped": 0, "failed": 1, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+                continue
+            report[target.label] = {
+                "pushed": result.pushed,
+                "skipped": result.skipped,
+                "failed": result.failed,
+                "error": None,
+            }
+            if result.failed == 0:
+                any_success = True
+                if aggregate.pushed == 0 and aggregate.skipped == 0:
+                    aggregate = result
+        return report, aggregate, any_success
+
+    def _push_to_target(
+        self,
+        target: SyncTarget,
+        dirty: "list[MemoryEntry]",
+        outcomes: list[dict[str, object]],
+    ) -> PushResult:
+        """Push learnings + outcomes to a single target. Raises on transport failure."""
+        started = perf_counter()
+        # Primary target uses the canonical self._pusher (tests patch this).
+        if self._targets and target.label == self._targets[0].label:
+            pusher = self._pusher
+        else:
+            pusher = self._pushers.get(target.label)
+        if pusher is None:
+            pusher = SyncPusher(
+                backend_url=target.url,
+                api_key=target.api_key,
+                batch_size=self._config.sync_push_batch_size,
+                timeout=self._config.sync_push_timeout_seconds,
+                client_id=self._client_id,
+            )
+            self._pushers[target.label] = pusher
+
+        total = PushResult()
+        if dirty:
+            logger.info(
+                "sync_target_push_start",
+                label=target.label,
+                kind="learnings",
+                client_id=self._client_id,
+            )
+            learning_result = pusher.push_learnings(dirty)
+            total = PushResult(
+                pushed=total.pushed + learning_result.pushed,
+                failed=total.failed + learning_result.failed,
+                skipped=total.skipped + learning_result.skipped,
+            )
+            logger.info(
+                "sync_target_push_complete",
+                label=target.label,
+                kind="learnings",
+                pushed=learning_result.pushed,
+                skipped=learning_result.skipped,
+                failed=learning_result.failed,
+                duration_ms=int((perf_counter() - started) * 1000),
+                client_id=self._client_id,
+            )
+        if outcomes:
+            logger.info(
+                "sync_target_push_start",
+                label=target.label,
+                kind="outcomes",
+                client_id=self._client_id,
+            )
+            outcome_result = pusher.push_outcomes(outcomes)
+            total = PushResult(
+                pushed=total.pushed + outcome_result.pushed,
+                failed=total.failed + outcome_result.failed,
+                skipped=total.skipped + outcome_result.skipped,
+            )
+            logger.info(
+                "sync_target_push_complete",
+                label=target.label,
+                kind="outcomes",
+                pushed=outcome_result.pushed,
+                skipped=outcome_result.skipped,
+                failed=outcome_result.failed,
+                duration_ms=int((perf_counter() - started) * 1000),
+                client_id=self._client_id,
+            )
+        return total
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:
         """Update the next poll schedule from backend hints."""

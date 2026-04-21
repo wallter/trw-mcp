@@ -4,8 +4,8 @@ Resolved accessors:
     TRWConfig.resolved_backend_url
     TRWConfig.resolved_backend_api_key
 
-Precedence: explicit backend_* wins; otherwise fall back to platform_urls[-1]
-and platform_api_key. When both groups are empty, returns "".
+Precedence: explicit backend_* wins; otherwise fall back to the first entry
+of platform_urls and platform_api_key. When both groups are empty, returns "".
 """
 
 from __future__ import annotations
@@ -21,16 +21,19 @@ class TestResolvedBackendUrl:
     def test_explicit_backend_url_beats_platform_urls(self) -> None:
         config = TRWConfig(
             backend_url="http://explicit.example:9000",
+            backend_api_key="explicit-key",
             platform_urls=["https://api.trwframework.com", "http://localhost:5002"],
+            platform_api_key=SecretStr("platform-key"),
         )
         assert config.resolved_backend_url == "http://explicit.example:9000"
 
-    def test_empty_backend_url_falls_back_to_last_platform_url(self) -> None:
+    def test_empty_backend_url_falls_back_to_first_platform_url(self) -> None:
         config = TRWConfig(
             backend_url="",
             platform_urls=["https://api.trwframework.com", "http://localhost:5002"],
+            platform_api_key=SecretStr("platform-key"),
         )
-        assert config.resolved_backend_url == "http://localhost:5002"
+        assert config.resolved_backend_url == "https://api.trwframework.com"
 
     def test_both_empty_returns_empty_string(self) -> None:
         config = TRWConfig(backend_url="", platform_urls=[])
@@ -40,6 +43,7 @@ class TestResolvedBackendUrl:
 class TestResolvedBackendApiKey:
     def test_explicit_backend_api_key_beats_platform_api_key(self) -> None:
         config = TRWConfig(
+            backend_url="http://explicit.example:9000",
             backend_api_key="explicit-key",
             platform_api_key=SecretStr("platform-key"),
         )
@@ -48,6 +52,7 @@ class TestResolvedBackendApiKey:
     def test_empty_backend_api_key_falls_back_to_platform_api_key(self) -> None:
         config = TRWConfig(
             backend_api_key="",
+            platform_urls=["https://api.trwframework.com"],
             platform_api_key=SecretStr("platform-key"),
         )
         assert config.resolved_backend_api_key == "platform-key"
