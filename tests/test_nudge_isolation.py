@@ -95,3 +95,48 @@ def test_nudge_selection_cache_based(tmp_path: Path) -> None:
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
     assert result["nudge_content"] == "Retry the failed queue workers before closing the run."
+
+
+def test_learning_injection_messenger_live_branch(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: learning_injection\n", encoding="utf-8")
+
+    with (
+        patch(
+            "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+            return_value=("Injected learning nudge", "L-test123", "foo.py"),
+        ),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert result["nudge_content"] == "Injected learning nudge"
+
+
+def test_learning_injection_messenger_dedups_and_records_impression(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: learning_injection\n", encoding="utf-8")
+
+    with patch(
+        "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+        return_value=("Injected learning nudge", "L-test123", "foo.py"),
+    ):
+        first = append_ceremony_status({"status": "ok"}, trw_dir)
+        second = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert first["nudge_content"] == "Injected learning nudge"
+    assert second["nudge_content"] != "Injected learning nudge"
+    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event":"nudge_shown"') == 1
+
+
+def test_append_ceremony_status_uses_workspace_config_not_global_singleton(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: minimal\n", encoding="utf-8")
+
+    with patch("trw_mcp.models.config._loader.get_config", side_effect=AssertionError("should not use global config")):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert isinstance(result.get("nudge_content"), str)

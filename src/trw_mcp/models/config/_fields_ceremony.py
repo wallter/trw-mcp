@@ -178,9 +178,11 @@ class _CeremonyFields:
     # PRD-CORE-145 FR01: messenger variant — selects which content-generator
     # strategy produces the nudge text. "standard" preserves pre-PRD pool-based
     # dispatch. "minimal" routes through compute_nudge_minimal (compressed).
+    # "learning_injection" surfaces task-relevant prior learnings via the
+    # ceremony-status nudge surface.
     # Default None resolves to "standard" so behavior is byte-identical to
     # pre-PRD until operators explicitly opt in.
-    nudge_messenger: Literal["standard", "minimal"] | None = None
+    nudge_messenger: Literal["standard", "minimal", "learning_injection"] | None = None
 
     # -- Nudge pool tuning (PRD-CORE-129) --
     nudge_pool_weight_workflow: int = 40

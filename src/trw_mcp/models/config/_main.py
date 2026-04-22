@@ -183,8 +183,10 @@ class TRWConfig(_TRWConfigFields):
     def effective_nudge_messenger(self) -> str:
         """PRD-CORE-145 FR01: resolve messenger name (None → "standard").
 
-        Returns one of {"standard", "minimal"}. "standard" preserves the
-        pre-PRD pool-based dispatch. "minimal" routes through compute_nudge_minimal.
+        Returns one of {"standard", "minimal", "learning_injection"}.
+        "standard" preserves the pre-PRD pool-based dispatch. "minimal"
+        routes through compute_nudge_minimal. "learning_injection" surfaces
+        task-relevant prior learnings via the ceremony-status nudge surface.
         """
         return self.nudge_messenger if self.nudge_messenger is not None else "standard"
 

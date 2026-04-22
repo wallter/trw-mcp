@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Protocol
 
 import structlog
@@ -12,6 +13,37 @@ from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 
 logger = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
+
+
+def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
+    """Load config.yaml from the active workspace instead of the global singleton."""
+
+    import os
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.persistence import FileStateReader
+
+    config_path = trw_dir / "config.yaml"
+    if not config_path.exists():
+        return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
+
+    try:
+        overrides = FileStateReader().read_yaml(config_path)
+        if not isinstance(overrides, dict):
+            return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
+        filtered = {
+            str(key): value
+            for key, value in overrides.items()
+            if value is not None and f"TRW_{str(key).upper()}" not in os.environ
+        }
+        filtered["trw_dir"] = str(trw_dir)
+        return TRWConfig(**filtered)  # type: ignore[arg-type]
+    except Exception:  # justified: fail-open, config read failure falls back to defaults
+        logger.debug("workspace_config_load_failed", config_path=str(config_path), exc_info=True)
+        return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
 
 
 class _ContextualSelector(Protocol):
@@ -384,11 +416,12 @@ def append_ceremony_status(
     Fail-open: if the state cannot be read, the original response is returned.
     """
     try:
-        from trw_mcp.models.config import TRWConfig
         from trw_mcp.state._ceremony_progress_state import (
             increment_tool_call_counter,
+            is_nudge_eligible,
             record_pool_ignore,
             record_pool_nudge,
+            record_nudge_shown,
         )
         from trw_mcp.state.ceremony_nudge import (
             _compute_urgency,
@@ -396,7 +429,10 @@ def append_ceremony_status(
             _highest_priority_pending_step,
             _select_nudge_message,
             _select_nudge_pool,
+            compute_nudge_minimal,
+            select_learning_injection_content,
         )
+        from trw_mcp.state.surface_tracking import log_surface_event
 
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
         state = read_ceremony_state(effective_dir)
@@ -409,30 +445,14 @@ def append_ceremony_status(
         except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
             logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
 
-        cfg = TRWConfig.model_validate({"trw_dir": str(effective_dir)})
+        cfg = _load_config_for_trw_dir(effective_dir)
         if not cfg.effective_nudge_enabled:
             return response
 
-        # PRD-CORE-145 FR02: messenger branch. "minimal" routes through
-        # compute_nudge_minimal (compressed single-line format); "standard"
-        # continues to the pool-based dispatch below (pre-PRD behavior).
-        # Use get_config() here to read .trw/config.yaml overlay keys —
-        # the model_validate(trw_dir=...) path above does NOT load YAML
-        # (silent-no-op bug documented in
-        # docs/research/nudge-config-silent-no-op-2026-04-21.md).
-        try:
-            from trw_mcp.models.config._loader import get_config
-
-            cfg_yaml = get_config()
-            messenger = cfg_yaml.effective_nudge_messenger
-        except Exception:
-            logger.debug("nudge_messenger_resolve_failed_fallback_standard", exc_info=True)
-            messenger = "standard"
+        messenger = cfg.effective_nudge_messenger
 
         if messenger == "minimal":
             try:
-                from trw_mcp.state.ceremony_nudge import compute_nudge_minimal
-
                 # The minimal messenger skips pool-based dispatch entirely —
                 # it produces a compressed single-line nudge focused on the
                 # highest-priority pending ceremony step. available_learnings
@@ -448,6 +468,53 @@ def append_ceremony_status(
                     )
             except Exception:  # justified: fail-open, never break ceremony status
                 logger.debug("minimal_messenger_failed", exc_info=True)
+            return response
+
+        if messenger == "learning_injection":
+            try:
+                injected_content, learning_id, target_file = select_learning_injection_content(
+                    state,
+                    effective_dir,
+                    skip_phase_duplicates=True,
+                )
+                if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
+                    injected_content = None
+                if injected_content:
+                    response["nudge_content"] = injected_content
+                    if learning_id:
+                        try:
+                            record_nudge_shown(effective_dir, learning_id, state.phase)
+                        except Exception:  # justified: fail-open
+                            logger.debug("record_nudge_shown_failed", exc_info=True)
+                        try:
+                            from trw_mcp.state._session_id import resolve_effective_session_id
+
+                            log_surface_event(
+                                effective_dir,
+                                learning_id=learning_id,
+                                surface_type="nudge",
+                                phase=state.phase,
+                                files_context=[target_file] if target_file else [],
+                                exploration=False,
+                                bandit_score=1.0,
+                                client_profile=str(getattr(cfg.client_profile, "client_id", "")),
+                                model_family=cfg.model_family or "generic",
+                                trw_version=cfg.framework_version,
+                                session_id=resolve_effective_session_id(effective_dir),
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.debug("surface_event_log_failed", exc_info=True)
+                    logger.debug(
+                        "nudge_messenger_selected",
+                        messenger="learning_injection",
+                        content_chars=len(injected_content),
+                    )
+                else:
+                    minimal_content = compute_nudge_minimal(state, available_learnings=0)
+                    if minimal_content:
+                        response["nudge_content"] = minimal_content
+            except Exception:  # justified: fail-open, never break ceremony status
+                logger.debug("learning_injection_messenger_failed", exc_info=True)
             return response
 
         # 1. Select nudge pool via weighted random with cooldowns (standard messenger)
