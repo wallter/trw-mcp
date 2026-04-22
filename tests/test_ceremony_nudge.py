@@ -21,6 +21,7 @@ from trw_mcp.state.ceremony_nudge import (
     _reversion_prompt,
     _select_nudge_message,
     compute_nudge,
+    compute_nudge_learning_injection,
     compute_nudge_minimal,
     increment_files_modified,
     increment_learnings,
@@ -933,6 +934,51 @@ class TestLocalModelScoping:
             )
             nudge = compute_nudge_minimal(state)
             assert "build" not in nudge.lower(), f"Minimal nudge mentions build for phase={phase}: {nudge}"
+
+    def test_learning_injection_nudge_renders_top_learning(self, tmp_path: Path) -> None:
+        """Learning-injection messenger renders a file-targeted learning summary."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(session_started=True, phase="implement")
+        recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
+
+        with (
+            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
+            ) as mock_recall,
+        ):
+            nudge = compute_nudge_learning_injection(state, trw)
+
+        assert "parsers.py" in nudge
+        assert "Preserve parser ordering" in nudge
+        assert "L-test123" in nudge
+        assert mock_recall.call_args is not None
+        assert mock_recall.call_args.args[0] == trw
+
+    def test_learning_injection_nudge_falls_back_without_file_context(self, tmp_path: Path) -> None:
+        """No modified-file context degrades to the minimal messenger."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(session_started=True, learnings_this_session=1)
+        recall_context = type("RecallContext", (), {"modified_files": []})()
+
+        with patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context):
+            nudge = compute_nudge_learning_injection(state, trw)
+
+        assert nudge == compute_nudge_minimal(state)
+
+    def test_learning_injection_nudge_failopen(self, tmp_path: Path) -> None:
+        """Learning-injection messenger never raises on recall failures."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(session_started=True)
+
+        with patch(
+            "trw_mcp.tools._recall_impl.build_recall_context",
+            side_effect=RuntimeError("boom"),
+        ):
+            nudge = compute_nudge_learning_injection(state, trw)
+
+        assert nudge == compute_nudge_minimal(state)
 
 
 # -------------------------------------------------------------------------

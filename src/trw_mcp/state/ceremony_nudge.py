@@ -7,6 +7,8 @@ nudge callers and re-exports the legacy APIs without owning live wiring.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 
 from trw_mcp.state._nudge_messages import (
@@ -231,3 +233,104 @@ def compute_nudge_minimal(state: CeremonyState, available_learnings: int = 0) ->
     except Exception:  # justified: fail-open -- minimal legacy nudge rendering must not break callers
         logger.debug("compute_nudge_minimal_failed", exc_info=True)
         return ""
+
+
+def compute_nudge_learning_injection(
+    state: CeremonyState,
+    trw_dir: Path,
+    context: NudgeContext | None = None,
+) -> str:
+    """Surface a task-relevant prior learning in the ceremony nudge slot."""
+
+    del context  # reserved for future context-aware refinements
+
+    try:
+        content, _, _ = select_learning_injection_content(state, trw_dir)
+        if content:
+            return content
+        return compute_nudge_minimal(state)
+    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
+        logger.debug("compute_nudge_learning_injection_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def select_learning_injection_content(
+    state: CeremonyState,
+    trw_dir: Path,
+    *,
+    skip_phase_duplicates: bool = False,
+) -> tuple[str | None, str | None, str | None]:
+    """Return rendered content, learning id, and target file for the injection branch."""
+
+    try:
+        from trw_mcp.state.learning_injection import infer_domain_tags
+        from trw_mcp.state.memory_adapter import recall_learnings
+        from trw_mcp.tools._recall_impl import build_recall_context
+
+        recall_context = build_recall_context(trw_dir, "*")
+        modified_files_raw = getattr(recall_context, "modified_files", []) if recall_context is not None else []
+        modified_files = [str(path).strip() for path in modified_files_raw if str(path).strip()]
+        if not modified_files:
+            return None, None, None
+
+        target_path = Path(modified_files[0])
+        target_label = target_path.name
+        query = " ".join(
+            part
+            for part in (
+                target_path.stem,
+                target_path.parent.name,
+            )
+            if part and part != "."
+        ).strip()
+        domain_tags = sorted(infer_domain_tags([target_path.as_posix()]))
+        attempts = (
+            (query or target_label, domain_tags or None),
+            ("*", domain_tags or None),
+            (query or target_label, None),
+        )
+
+        selected_learning: dict[str, object] | None = None
+        seen_ids: set[str] = set()
+
+        for attempt_query, attempt_tags in attempts:
+            learnings = recall_learnings(
+                trw_dir,
+                query=attempt_query,
+                tags=attempt_tags,
+                min_impact=0.5,
+                max_results=8,
+                compact=False,
+            )
+            for learning in learnings:
+                learning_id = str(learning.get("id", "")).strip()
+                summary = str(learning.get("summary", "")).strip()
+                if not learning_id or not summary or learning_id in seen_ids:
+                    continue
+                seen_ids.add(learning_id)
+                if skip_phase_duplicates and learning_id in state.nudge_history:
+                    phases_shown = state.nudge_history[learning_id].get("phases_shown", [])
+                    if state.phase in phases_shown:
+                        continue
+                selected_learning = learning
+                break
+            if selected_learning is not None:
+                break
+
+        if selected_learning is None:
+            return None, None, target_label
+
+        learning_id = str(selected_learning.get("id", "")).strip()
+        summary = str(selected_learning.get("summary", "")).strip()
+        clipped_summary = summary[:120] + ("..." if len(summary) > 120 else "")
+        status_line = _build_minimal_status_line(state)
+        message = (
+            f"{_MINIMAL_HEADER}\n"
+            f"{status_line}\n"
+            f"[!] Past learning on {target_label}: {clipped_summary}. Source: {learning_id}."
+        )
+        rendered = message if len(message) <= 400 else message[:397] + "..."
+        return rendered, learning_id, target_label
+    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
+        logger.debug("select_learning_injection_content_failed", exc_info=True)
+        return None, None, None
