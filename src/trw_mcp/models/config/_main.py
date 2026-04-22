@@ -183,14 +183,30 @@ class TRWConfig(_TRWConfigFields):
     def effective_nudge_messenger(self) -> str:
         """PRD-CORE-145 FR01: resolve messenger name (None → "standard").
 
-        Returns one of {"standard", "minimal", "learning_injection", "contextual"}.
+        Returns one of {"standard", "minimal", "learning_injection", "contextual",
+        "contextual_action"}.
         "standard" preserves the pre-PRD pool-based dispatch. "minimal"
         routes through compute_nudge_minimal. "learning_injection" surfaces
         task-relevant prior learnings via the ceremony-status nudge surface.
         "contextual" preserves the workflow scaffold while adding one
         phase-aware next-step instruction and an optional relevant caution.
+        "contextual_action" keeps the same next-step scaffold but omits the
+        caution line so evaluation can isolate caution-related cognitive load.
         """
         return self.nudge_messenger if self.nudge_messenger is not None else "standard"
+
+    @property
+    def effective_nudge_density(self) -> str | None:
+        """PRD-CORE-146 FR04: resolve nudge injection density.
+
+        Explicit TRWConfig.nudge_density wins; otherwise falls back to the
+        client profile's nudge_density. All built-in profiles default to
+        ``None`` today (no profile opts in) — this returns ``None`` in that
+        case, which nudge selection interprets as "use built-in cooldown".
+        """
+        if self.nudge_density is not None:
+            return self.nudge_density
+        return self.client_profile.nudge_density
 
     @cached_property
     def active_run_complexity(self) -> str | None:
