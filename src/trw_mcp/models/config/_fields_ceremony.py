@@ -181,10 +181,22 @@ class _CeremonyFields:
     # "learning_injection" surfaces task-relevant prior learnings via the
     # ceremony-status nudge surface. "contextual" preserves the workflow
     # scaffold but adds one phase-aware next-step instruction plus an optional
-    # task-relevant caution derived from recall context.
+    # task-relevant caution derived from recall context. "contextual_action"
+    # keeps the action-oriented scaffold but omits the caution line so evals
+    # can isolate whether the recalled warning itself is causing execution drag.
     # Default None resolves to "standard" so behavior is byte-identical to
     # pre-PRD until operators explicitly opt in.
-    nudge_messenger: Literal["standard", "minimal", "learning_injection", "contextual"] | None = None
+    nudge_messenger: Literal["standard", "minimal", "learning_injection", "contextual", "contextual_action"] | None = None
+
+    # PRD-CORE-146 FR04: nudge injection density lever. ``None`` defers to
+    # profile default (currently ``None`` for all profiles, resolving to
+    # "medium" behavior). Explicit "low" / "medium" / "high" biases nudge
+    # injection frequency and pool cooldown. Surface-isolation eval variants
+    # toggle this via config_overlay — see _variant._KNOWN_SURFACE_FLAGS.
+    nudge_density: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Nudge injection density: low=less frequent, high=more frequent; None defers to profile default.",
+    )
 
     # -- Nudge pool tuning (PRD-CORE-129) --
     nudge_pool_weight_workflow: int = 40

@@ -21,6 +21,7 @@ from trw_mcp.state.ceremony_nudge import (
     _reversion_prompt,
     _select_nudge_message,
     compute_nudge,
+    compute_nudge_contextual_action,
     compute_nudge_contextual,
     compute_nudge_learning_injection,
     compute_nudge_minimal,
@@ -1016,6 +1017,31 @@ class TestLocalModelScoping:
 
         assert "NEXT: trw_session_start()" in nudge
         assert "Watch-out" not in nudge
+
+    def test_contextual_action_nudge_omits_learning_caution(self, tmp_path: Path) -> None:
+        """Action-only contextual messenger keeps guidance while dropping the warning line."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(
+            session_started=True,
+            phase="implement",
+            files_modified_since_checkpoint=2,
+        )
+        recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
+
+        with (
+            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
+            ),
+        ):
+            nudge = compute_nudge_contextual_action(state, trw)
+
+        assert "NEXT: trw_checkpoint()" in nudge
+        assert "parsers.py" in nudge
+        assert "Watch-out" not in nudge
+        assert "Preserve parser ordering" not in nudge
+        assert "L-test123" not in nudge
 
 
 # -------------------------------------------------------------------------

@@ -368,9 +368,22 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
         learning_id = str(selected_learning.get("id", ""))
         if learning_id:
             try:
-                record_nudge_shown(trw_dir, learning_id, state.phase)
+                record_nudge_shown(trw_dir, learning_id, state.phase, turn=state.tool_call_counter)
             except Exception:  # justified: fail-open
                 logger.debug("record_nudge_shown_failed", exc_info=True)
+
+            try:
+                logger.info(
+                    "nudge_shown",
+                    pool="learnings",
+                    messenger="standard",
+                    learning_id=learning_id,
+                    phase=state.phase,
+                    client_id=client_profile_name,
+                    turn=state.tool_call_counter,
+                )
+            except Exception:  # justified: fail-open per NFR02
+                pass
 
             try:
                 from trw_mcp.state._session_id import resolve_effective_session_id
@@ -484,9 +497,21 @@ def append_ceremony_status(
                     response["nudge_content"] = injected_content
                     if learning_id:
                         try:
-                            record_nudge_shown(effective_dir, learning_id, state.phase)
+                            record_nudge_shown(effective_dir, learning_id, state.phase, turn=state.tool_call_counter)
                         except Exception:  # justified: fail-open
                             logger.debug("record_nudge_shown_failed", exc_info=True)
+                        try:
+                            logger.info(
+                                "nudge_shown",
+                                pool="learning_injection",
+                                messenger="learning_injection",
+                                learning_id=learning_id,
+                                phase=state.phase,
+                                client_id=str(getattr(cfg.client_profile, "client_id", "")),
+                                turn=state.tool_call_counter,
+                            )
+                        except Exception:  # justified: fail-open per NFR02
+                            pass
                         try:
                             from trw_mcp.state._session_id import resolve_effective_session_id
 
@@ -518,13 +543,15 @@ def append_ceremony_status(
                 logger.debug("learning_injection_messenger_failed", exc_info=True)
             return response
 
-        if messenger == "contextual":
+        if messenger in {"contextual", "contextual_action"}:
             try:
+                include_learning_caution = messenger == "contextual"
                 contextual_content, learning_id, target_file = select_contextual_nudge_content(
                     state,
                     effective_dir,
                     context=context,
                     skip_phase_duplicates=True,
+                    include_learning_caution=include_learning_caution,
                 )
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
                     contextual_content = None
@@ -532,9 +559,21 @@ def append_ceremony_status(
                     response["nudge_content"] = contextual_content
                     if learning_id:
                         try:
-                            record_nudge_shown(effective_dir, learning_id, state.phase)
+                            record_nudge_shown(effective_dir, learning_id, state.phase, turn=state.tool_call_counter)
                         except Exception:  # justified: fail-open
                             logger.debug("record_nudge_shown_failed", exc_info=True)
+                        try:
+                            logger.info(
+                                "nudge_shown",
+                                pool="context",
+                                messenger=messenger,
+                                learning_id=learning_id,
+                                phase=state.phase,
+                                client_id=str(getattr(cfg.client_profile, "client_id", "")),
+                                turn=state.tool_call_counter,
+                            )
+                        except Exception:  # justified: fail-open per NFR02
+                            pass
                         try:
                             from trw_mcp.state._session_id import resolve_effective_session_id
 
@@ -555,7 +594,7 @@ def append_ceremony_status(
                             logger.debug("surface_event_log_failed", exc_info=True)
                     logger.debug(
                         "nudge_messenger_selected",
-                        messenger="contextual",
+                        messenger=messenger,
                         content_chars=len(contextual_content),
                         has_learning=bool(learning_id),
                     )

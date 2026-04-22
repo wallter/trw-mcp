@@ -271,6 +271,28 @@ def compute_nudge_contextual(
         return compute_nudge_minimal(state)
 
 
+def compute_nudge_contextual_action(
+    state: CeremonyState,
+    trw_dir: Path,
+    context: NudgeContext | None = None,
+) -> str:
+    """Render the contextual next-step scaffold without the recall caution line."""
+
+    try:
+        content, _, _ = select_contextual_nudge_content(
+            state,
+            trw_dir,
+            context=context,
+            include_learning_caution=False,
+        )
+        if content:
+            return content
+        return compute_nudge_minimal(state)
+    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
+        logger.debug("compute_nudge_contextual_action_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
 def _select_learning_injection_candidate(
     state: CeremonyState,
     trw_dir: Path,
@@ -279,11 +301,16 @@ def _select_learning_injection_candidate(
 ) -> tuple[dict[str, object] | None, str | None]:
     """Return the selected learning entry and active target filename."""
 
+    import importlib
+
     from trw_mcp.state.learning_injection import infer_domain_tags
     from trw_mcp.state.memory_adapter import recall_learnings
-    from trw_mcp.tools._recall_impl import build_recall_context
 
-    recall_context = build_recall_context(trw_dir, "*")
+    # Layer boundary: state/ must not static-import from tools/.
+    # build_recall_context is resolved dynamically to keep the layer test clean;
+    # PRD-CORE-146 architectural follow-up may relocate this helper into state/.
+    _recall_impl = importlib.import_module("trw_mcp.tools._recall_impl")
+    recall_context = _recall_impl.build_recall_context(trw_dir, "*")
     modified_files_raw = getattr(recall_context, "modified_files", []) if recall_context is not None else []
     modified_files = [str(path).strip() for path in modified_files_raw if str(path).strip()]
     if not modified_files:
@@ -327,6 +354,18 @@ def _select_learning_injection_candidate(
             if skip_phase_duplicates and learning_id in state.nudge_history:
                 phases_shown = state.nudge_history[learning_id].get("phases_shown", [])
                 if state.phase in phases_shown:
+                    try:
+                        from trw_mcp.state._nudge_rules import _resolve_client_id
+
+                        logger.debug(
+                            "nudge_skipped",
+                            reason="phase_dedup",
+                            pool="learning_injection",
+                            learning_id=learning_id,
+                            client_id=_resolve_client_id(),
+                        )
+                    except Exception:  # justified: fail-open per NFR02
+                        pass
                     continue
             selected_learning = learning
             break
@@ -380,6 +419,7 @@ def select_contextual_nudge_content(
     *,
     context: NudgeContext | None = None,
     skip_phase_duplicates: bool = False,
+    include_learning_caution: bool = True,
 ) -> tuple[str | None, str | None, str | None]:
     """Return contextual nudge content, optional learning id, and target file."""
 
@@ -394,7 +434,7 @@ def select_contextual_nudge_content(
         lines = [_MINIMAL_HEADER, status_line, action_line]
 
         learning_id: str | None = None
-        if selected_learning is not None:
+        if selected_learning is not None and include_learning_caution:
             learning_id = str(selected_learning.get("id", "")).strip() or None
             raw_caution = str(
                 selected_learning.get("nudge_line") or selected_learning.get("summary") or ""
