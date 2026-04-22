@@ -131,6 +131,35 @@ def test_learning_injection_messenger_dedups_and_records_impression(tmp_path: Pa
     assert events.count('"event":"nudge_shown"') == 1
 
 
+def test_contextual_messenger_live_branch(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: contextual\n", encoding="utf-8")
+
+    with patch(
+        "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
+        return_value=("Contextual next-step nudge", None, "foo.py"),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert result["nudge_content"] == "Contextual next-step nudge"
+
+
+def test_contextual_messenger_records_impression_when_learning_is_shown(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: contextual\n", encoding="utf-8")
+
+    with patch(
+        "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
+        return_value=("Contextual next-step nudge", "L-test123", "foo.py"),
+    ):
+        append_ceremony_status({"status": "ok"}, trw_dir)
+
+    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event":"nudge_shown"') == 1
+
+
 def test_append_ceremony_status_uses_workspace_config_not_global_singleton(tmp_path: Path) -> None:
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)

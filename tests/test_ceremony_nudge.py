@@ -21,6 +21,7 @@ from trw_mcp.state.ceremony_nudge import (
     _reversion_prompt,
     _select_nudge_message,
     compute_nudge,
+    compute_nudge_contextual,
     compute_nudge_learning_injection,
     compute_nudge_minimal,
     increment_files_modified,
@@ -979,6 +980,42 @@ class TestLocalModelScoping:
             nudge = compute_nudge_learning_injection(state, trw)
 
         assert nudge == compute_nudge_minimal(state)
+
+    def test_contextual_nudge_guides_next_step_and_relevant_learning(self, tmp_path: Path) -> None:
+        """Contextual messenger keeps the next-step scaffold and adds one caution."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(
+            session_started=True,
+            phase="implement",
+            files_modified_since_checkpoint=2,
+        )
+        recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
+
+        with (
+            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
+            ),
+        ):
+            nudge = compute_nudge_contextual(state, trw)
+
+        assert "NEXT: trw_checkpoint()" in nudge
+        assert "parsers.py" in nudge
+        assert "Preserve parser ordering" in nudge
+        assert "L-test123" in nudge
+
+    def test_contextual_nudge_without_recall_still_guides_next_step(self, tmp_path: Path) -> None:
+        """Contextual messenger still emits an action line without recall context."""
+        trw = _trw_dir(tmp_path)
+        state = CeremonyState(session_started=False, phase="early")
+        recall_context = type("RecallContext", (), {"modified_files": []})()
+
+        with patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context):
+            nudge = compute_nudge_contextual(state, trw)
+
+        assert "NEXT: trw_session_start()" in nudge
+        assert "Watch-out" not in nudge
 
 
 # -------------------------------------------------------------------------

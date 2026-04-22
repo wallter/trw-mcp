@@ -430,6 +430,7 @@ def append_ceremony_status(
             _select_nudge_message,
             _select_nudge_pool,
             compute_nudge_minimal,
+            select_contextual_nudge_content,
             select_learning_injection_content,
         )
         from trw_mcp.state.surface_tracking import log_surface_event
@@ -515,6 +516,55 @@ def append_ceremony_status(
                         response["nudge_content"] = minimal_content
             except Exception:  # justified: fail-open, never break ceremony status
                 logger.debug("learning_injection_messenger_failed", exc_info=True)
+            return response
+
+        if messenger == "contextual":
+            try:
+                contextual_content, learning_id, target_file = select_contextual_nudge_content(
+                    state,
+                    effective_dir,
+                    context=context,
+                    skip_phase_duplicates=True,
+                )
+                if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
+                    contextual_content = None
+                if contextual_content:
+                    response["nudge_content"] = contextual_content
+                    if learning_id:
+                        try:
+                            record_nudge_shown(effective_dir, learning_id, state.phase)
+                        except Exception:  # justified: fail-open
+                            logger.debug("record_nudge_shown_failed", exc_info=True)
+                        try:
+                            from trw_mcp.state._session_id import resolve_effective_session_id
+
+                            log_surface_event(
+                                effective_dir,
+                                learning_id=learning_id,
+                                surface_type="nudge",
+                                phase=state.phase,
+                                files_context=[target_file] if target_file else [],
+                                exploration=False,
+                                bandit_score=1.0,
+                                client_profile=str(getattr(cfg.client_profile, "client_id", "")),
+                                model_family=cfg.model_family or "generic",
+                                trw_version=cfg.framework_version,
+                                session_id=resolve_effective_session_id(effective_dir),
+                            )
+                        except Exception:  # justified: fail-open
+                            logger.debug("surface_event_log_failed", exc_info=True)
+                    logger.debug(
+                        "nudge_messenger_selected",
+                        messenger="contextual",
+                        content_chars=len(contextual_content),
+                        has_learning=bool(learning_id),
+                    )
+                else:
+                    minimal_content = compute_nudge_minimal(state, available_learnings=0)
+                    if minimal_content:
+                        response["nudge_content"] = minimal_content
+            except Exception:  # justified: fail-open, never break ceremony status
+                logger.debug("contextual_messenger_failed", exc_info=True)
             return response
 
         # 1. Select nudge pool via weighted random with cooldowns (standard messenger)

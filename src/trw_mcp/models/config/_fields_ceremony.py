@@ -179,10 +179,12 @@ class _CeremonyFields:
     # strategy produces the nudge text. "standard" preserves pre-PRD pool-based
     # dispatch. "minimal" routes through compute_nudge_minimal (compressed).
     # "learning_injection" surfaces task-relevant prior learnings via the
-    # ceremony-status nudge surface.
+    # ceremony-status nudge surface. "contextual" preserves the workflow
+    # scaffold but adds one phase-aware next-step instruction plus an optional
+    # task-relevant caution derived from recall context.
     # Default None resolves to "standard" so behavior is byte-identical to
     # pre-PRD until operators explicitly opt in.
-    nudge_messenger: Literal["standard", "minimal", "learning_injection"] | None = None
+    nudge_messenger: Literal["standard", "minimal", "learning_injection", "contextual"] | None = None
 
     # -- Nudge pool tuning (PRD-CORE-129) --
     nudge_pool_weight_workflow: int = 40
