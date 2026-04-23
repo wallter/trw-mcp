@@ -150,6 +150,11 @@ class SessionStartResultDict(TypedDict, total=False):
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
     hint: str
+    # PRD-HPO-MEAS-001 FR-2: Resolved surface snapshot id for the session.
+    # Empty string during Phase 1 when artifact_registry stamping is
+    # unavailable or fails open. Every HPOTelemetryEvent emitted during the
+    # session is expected to carry this id (post Wave-2 wiring).
+    surface_snapshot_id: str
 
 
 class RunReportResultDict(TypedDict, total=False):
