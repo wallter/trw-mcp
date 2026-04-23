@@ -458,6 +458,35 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
             errors.append(f"status: {exc}")
             results["run"] = {"active_run": None, "status": "error"}
 
+        # Step 2c: Resolve surface snapshot + stamp run_surface_snapshot.yaml
+        # (PRD-HPO-MEAS-001 FR-1 / FR-2).
+        # - Always resolves the SurfaceRegistry so surface_snapshot_id is
+        #   available for downstream event emitters.
+        # - When a run_dir is pinned, writes the immutable
+        #   run_surface_snapshot.yaml frozen copy under <run_dir>/meta/.
+        # - Failure is non-fatal by design (fail-open) — the empty-string
+        #   Phase-1 default remains available on HPOTelemetryEvent.
+        surface_snapshot_id: str = ""
+        try:
+            from trw_mcp.telemetry.artifact_registry import resolve_surface_registry
+            from trw_mcp.telemetry.surface_manifest import stamp_session
+
+            registry = resolve_surface_registry()
+            surface_snapshot_id = registry.snapshot_id
+            if run_dir is not None:
+                meta_dir = run_dir / "meta"
+                stamp_session(meta_dir)
+            results["surface_snapshot_id"] = surface_snapshot_id
+            logger.debug(
+                "surface_snapshot_stamped",
+                snapshot_id=surface_snapshot_id,
+                run_dir=str(run_dir) if run_dir else "",
+                artifact_count=len(registry.artifacts),
+            )
+        except Exception:  # justified: fail-open, surface stamping must not block session start
+            logger.debug("surface_snapshot_stamp_failed", exc_info=True)
+            results["surface_snapshot_id"] = ""
+
         # Step 3: Log session_start event (FR01, PRD-CORE-031)
         try:
             step_log_session_event(run_dir, cast("dict[str, object]", results), query, is_focused)
