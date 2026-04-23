@@ -110,10 +110,6 @@ def _iter_tool_functions() -> list[tuple[str, str, str | None]]:
 # ---------------------------------------------------------------- FR01/FR06
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="content uplift in progress, PRD-QUAL-074",
-)
 def test_all_tools_have_use_when() -> None:
     """Every registered tool docstring contains 'Use when' (or allow-listed synonym)."""
     offenders: list[str] = []
@@ -152,10 +148,6 @@ def test_no_prescriptive_phrasing() -> None:
 # ---------------------------------------------------------------- FR10
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="content uplift in progress, PRD-QUAL-074",
-)
 def test_output_contract_named() -> None:
     """Tools in REQUIRED_OUTPUT_CONTRACT must state 'Output:' or 'Returns:' in docstring."""
     offenders: list[str] = []

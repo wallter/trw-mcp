@@ -118,10 +118,6 @@ def _has_use_when_near_top(body: list[str]) -> bool:
     return False
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="content uplift in progress, PRD-QUAL-074",
-)
 def test_public_skills_have_use_when() -> None:
     offenders: list[str] = []
     for name, path in _iter_public_skills():
