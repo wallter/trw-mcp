@@ -280,3 +280,77 @@ class TestAppendCeremonyNudgeDedup:
             result = append_ceremony_nudge(response.copy(), trw_dir=trw_dir)
 
         assert "ceremony_status" in result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-146-FR02: phase-crossing dedup regression
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseCrossingDedupRegression:
+    """PRD-CORE-146-FR02: dedup does not over-exclude on phase transition.
+
+    Regression guard for bug L-SgB1: if every nudge_history entry records
+    phases_shown=["deliver"] (because turn_first_shown=0 was a silent default
+    and the only phase ever recorded was the shipping phase), selecting a
+    nudge in a DIFFERENT phase must still return an eligible learning rather
+    than trivially excluding everything.
+    """
+
+    def test_phase_crossing_dedup_regression(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from trw_mcp.state.ceremony_nudge import _select_learning_injection_candidate
+
+        trw_dir = _setup_trw_dir(tmp_path)
+
+        # Pathological state: every prior nudge was recorded with
+        # phases_shown=["deliver"] (the bug).
+        state = CeremonyState(phase="research")
+        state.nudge_history["L-a"] = NudgeHistoryEntry(
+            phases_shown=["deliver"],
+            turn_first_shown=0,
+            last_shown_turn=0,
+        )
+        state.nudge_history["L-b"] = NudgeHistoryEntry(
+            phases_shown=["deliver"],
+            turn_first_shown=0,
+            last_shown_turn=0,
+        )
+        write_ceremony_state(trw_dir, state)
+
+        candidates = [
+            {"id": "L-a", "summary": "Alpha finding", "impact": 0.8},
+            {"id": "L-b", "summary": "Beta finding", "impact": 0.7},
+        ]
+
+        fake_ctx = SimpleNamespace(modified_files=["trw-mcp/src/trw_mcp/foo.py"])
+
+        with (
+            patch(
+                "trw_mcp.state.recall_context.build_recall_context",
+                return_value=fake_ctx,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                return_value=candidates,
+            ),
+            patch(
+                "trw_mcp.state.learning_injection.infer_domain_tags",
+                return_value=[],
+            ),
+        ):
+            selected, target_label = _select_learning_injection_candidate(
+                state,
+                trw_dir,
+                skip_phase_duplicates=True,
+            )
+
+        # Phase is "research" — "deliver" is NOT in current phase so dedup
+        # does NOT exclude. At least one candidate must survive.
+        assert selected is not None, (
+            "phase-crossing dedup over-excluded: all candidates had "
+            "phases_shown=['deliver'] and current phase is 'research'"
+        )
+        assert str(selected.get("id", "")) in {"L-a", "L-b"}
+        assert target_label == "foo.py"

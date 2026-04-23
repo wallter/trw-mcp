@@ -293,6 +293,146 @@ def compute_nudge_contextual_action(
         return compute_nudge_minimal(state)
 
 
+def _is_agent_in_distress(state: CeremonyState) -> bool:
+    """Detect if the agent is stalled, failing, or at start-of-session.
+
+    PRD-CORE-145/146: Distress is defined as:
+    1.  Startup: session_started is False.
+    2.  Stalled: >10 turns without a checkpoint (prevents loops).
+    3.  Failing: Last build check failed (needs correction).
+    """
+    stalled = (state.tool_call_counter - state.last_checkpoint_turn) > 10
+    repeated_failure = state.build_check_result == "failed"
+    startup = not state.session_started
+    return startup or stalled or repeated_failure
+
+
+def compute_nudge_contextual_distress(
+    state: CeremonyState,
+    trw_dir: Path,
+    context: NudgeContext | None = None,
+) -> str:
+    """Render rich contextual nudge only if the agent appears stalled or in distress.
+
+    Falls back to compute_nudge_minimal during 'Flow State' (non-distress).
+    """
+
+    try:
+        if _is_agent_in_distress(state):
+            return compute_nudge_contextual(state, trw_dir, context=context)
+
+        return compute_nudge_minimal(state)
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_contextual_distress_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def compute_nudge_silent_flow(
+    state: CeremonyState,
+    trw_dir: Path,
+    context: NudgeContext | None = None,
+) -> str:
+    """Render rich contextual nudge only if in distress; otherwise pure silence.
+
+    Iter-25 'Zero-Tax' variant for high-performing models. Eliminates token overhead
+    unless intervention is clinically necessary.
+    """
+
+    try:
+        if _is_agent_in_distress(state):
+            return compute_nudge_contextual(state, trw_dir, context=context)
+
+        return ""
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_silent_flow_failed", exc_info=True)
+        return ""
+
+
+def compute_nudge_stepback(
+    state: CeremonyState,
+    trw_dir: Path,
+    context: NudgeContext | None = None,
+) -> str:
+    """Render a 'Step-Back' rescue nudge if distress is detected.
+
+    Prompts the agent to hypothesize and identify core principles when stalled.
+    """
+
+    try:
+        if _is_agent_in_distress(state):
+            status = _build_minimal_status_line(state)
+            msg = (
+                f"{_MINIMAL_HEADER}\n{status}\n"
+                "\u26a0 STOP. Step back. Identify the core principle or problem category. "
+                "Form a hypothesis before your next tool call."
+            )
+            return msg
+
+        return compute_nudge_contextual(state, trw_dir, context=context)
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_stepback_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def compute_nudge_cod(state: CeremonyState) -> str:
+    """Render a 'Chain of Draft' (CoD) shorthand nudge."""
+
+    try:
+        status = _build_done_next_then_status_light(state)
+        return f"{_MINIMAL_HEADER}\n{status}"
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_cod_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def compute_nudge_anchor(state: CeremonyState, trw_dir: Path, context: NudgeContext | None = None) -> str:
+    """Render a nudge wrapped in high-signal XML tags to anchor attention."""
+
+    try:
+        content = compute_nudge_contextual(state, trw_dir, context=context)
+        return f"<TRW_SESSION_ANCHOR>\n{content}\n</TRW_SESSION_ANCHOR>"
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_anchor_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def compute_nudge_negative(state: CeremonyState) -> str:
+    """Render a nudge using negative constraints (anti-patterns)."""
+
+    try:
+        status = _build_minimal_status_line(state)
+        pending = _highest_priority_pending_step(state)
+
+        if pending == "session_start":
+            msg = "Do NOT proceed with edits until trw_session_start() is called."
+        elif pending == "checkpoint":
+            msg = "Do NOT risk context compaction; call trw_checkpoint() now."
+        elif pending == "build_check":
+            msg = "Do NOT deliver unverified code; run trw_build_check() first."
+        elif pending == "review":
+            msg = "Do NOT skip independent review; call trw_review() before delivery."
+        elif pending == "deliver":
+            msg = "Do NOT end this session without calling trw_deliver() to persist learnings."
+        else:
+            msg = "Do NOT violate ceremony requirements."
+
+        return f"{_MINIMAL_HEADER}\n{status}\n\u26a0 {msg}"
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_negative_failed", exc_info=True)
+        return compute_nudge_minimal(state)
+
+
+def compute_nudge_governance(state: CeremonyState, available_learnings: int = 0) -> str:
+    """Render a governance-only nudge (status line only, no prompt text)."""
+
+    try:
+        status_line = _build_minimal_status_line(state)
+        return f"{_MINIMAL_HEADER}\n{status_line}"
+    except Exception:  # justified: fail-open per NFR02
+        logger.debug("compute_nudge_governance_failed", exc_info=True)
+        return f"{_MINIMAL_HEADER}\n? start | ? deliver"
+
+
 def _select_learning_injection_candidate(
     state: CeremonyState,
     trw_dir: Path,
@@ -301,16 +441,14 @@ def _select_learning_injection_candidate(
 ) -> tuple[dict[str, object] | None, str | None]:
     """Return the selected learning entry and active target filename."""
 
-    import importlib
-
     from trw_mcp.state.learning_injection import infer_domain_tags
     from trw_mcp.state.memory_adapter import recall_learnings
+    from trw_mcp.state.recall_context import build_recall_context
 
-    # Layer boundary: state/ must not static-import from tools/.
-    # build_recall_context is resolved dynamically to keep the layer test clean;
-    # PRD-CORE-146 architectural follow-up may relocate this helper into state/.
-    _recall_impl = importlib.import_module("trw_mcp.tools._recall_impl")
-    recall_context = _recall_impl.build_recall_context(trw_dir, "*")
+    # PRD-CORE-146 follow-up: ``build_recall_context`` was relocated from
+    # ``tools/_recall_impl`` into ``state/recall_context`` so this caller no
+    # longer needs an importlib workaround to dodge the state→tools layer lint.
+    recall_context = build_recall_context(trw_dir, "*")
     modified_files_raw = getattr(recall_context, "modified_files", []) if recall_context is not None else []
     modified_files = [str(path).strip() for path in modified_files_raw if str(path).strip()]
     if not modified_files:

@@ -1,0 +1,3 @@
+{"event": "nudge_shown", "ts": "2026-04-22T17:10:00+00:00", "step": "checkpoint", "learning_ids": ["L-recall-001"], "phase": "implement", "turn": 7, "pool": "learnings", "messenger": "standard", "client_id": "claude-code"}
+{"event": "recall_issued", "ts": "2026-04-22T17:12:15+00:00", "learning_ids": ["L-recall-001"], "phase": "implement", "turn": 8, "query": "nudge system state", "client_id": "claude-code"}
+{"event": "nudge_shown", "ts": "2026-04-22T17:15:00+00:00", "step": "build_check", "learning_ids": ["L-recall-001", "L-recall-002"], "phase": "validate", "turn": 10, "pool": "ceremony", "messenger": "standard", "client_id": "claude-code"}

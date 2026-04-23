@@ -1,0 +1,2 @@
+{"event": "nudge_shown", "ts": "2026-04-22T16:10:00+00:00", "step": "checkpoint", "learning_ids": ["L-example1"], "phase": "implement", "turn": 4, "pool": "learnings", "messenger": "standard", "client_id": "claude-code"}
+{"event": "nudge_shown", "ts": "2026-04-22T16:14:00+00:00", "step": "build_check", "learning_ids": ["L-example2", "L-example1"], "phase": "implement", "turn": 6, "pool": "ceremony", "messenger": "standard", "client_id": "claude-code"}

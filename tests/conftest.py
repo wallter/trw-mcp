@@ -219,6 +219,8 @@ _SLOW_FILES: frozenset[str] = frozenset(
         "test_consolidation.py",
         "test_bootstrap.py",
         "test_bootstrap_branches.py",
+        # PRD-CORE-146-NFR01: 1000-iteration latency benchmark (~1-3s)
+        "test_nudge_performance.py",
     }
 )
 

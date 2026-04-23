@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import trw_mcp.state.ceremony_progress as ceremony_progress
+from trw_mcp.state._ceremony_progress_state import read_ceremony_state
 from trw_mcp.tools import (
     _ceremony_helpers,
     _learn_impl,
@@ -90,7 +91,7 @@ def test_nudge_selection_cache_based(tmp_path: Path) -> None:
 
     with (
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
-        patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+        patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
     ):
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
@@ -128,7 +129,8 @@ def test_learning_injection_messenger_dedups_and_records_impression(tmp_path: Pa
     assert first["nudge_content"] == "Injected learning nudge"
     assert second["nudge_content"] != "Injected learning nudge"
     events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
-    assert events.count('"event":"nudge_shown"') == 1
+    assert events.count('"event":"nudge_shown"') == 2
+    assert events.count('"learning_ids":["L-test123"]') == 1
 
 
 def test_contextual_messenger_live_branch(tmp_path: Path) -> None:
@@ -172,6 +174,63 @@ def test_contextual_action_messenger_live_branch(tmp_path: Path) -> None:
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
     assert result["nudge_content"] == "Contextual action-only nudge"
+
+
+def test_minimal_messenger_records_synthetic_impression_and_counts(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: minimal\n", encoding="utf-8")
+
+    result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert isinstance(result.get("nudge_content"), str)
+    state = read_ceremony_state(trw_dir)
+    assert state.nudge_counts.get("session_start") == 1
+    assert len(state.nudge_history) == 1
+    entry = next(iter(state.nudge_history.values()))
+    assert entry["turn_first_shown"] >= 1
+    assert entry["last_shown_turn"] >= entry["turn_first_shown"]
+    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event":"nudge_shown"') == 1
+
+
+def test_contextual_action_messenger_records_synthetic_impression_and_counts(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: contextual_action\n", encoding="utf-8")
+
+    with patch(
+        "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
+        return_value=("Contextual action-only nudge", None, "foo.py"),
+    ):
+        append_ceremony_status({"status": "ok"}, trw_dir)
+
+    state = read_ceremony_state(trw_dir)
+    assert state.nudge_counts.get("session_start") == 1
+    assert len(state.nudge_history) == 1
+    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event":"nudge_shown"') == 1
+
+
+def test_standard_workflow_pool_records_synthetic_impression_and_counts(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "config.yaml").write_text("nudge_enabled: true\n", encoding="utf-8")
+
+    with (
+        patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="workflow"),
+        patch("trw_mcp.tools._ceremony_status._has_cached_learning_weights", return_value=False),
+        patch("trw_mcp.state._nudge_content.load_pool_message", return_value="Workflow nudge"),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert result["nudge_content"] == "Workflow nudge"
+    state = read_ceremony_state(trw_dir)
+    assert state.nudge_counts.get("session_start") == 1
+    assert state.pool_nudge_counts.get("workflow") == 1
+    assert len(state.nudge_history) == 1
+    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"event":"nudge_shown"') == 1
 
 
 def test_append_ceremony_status_uses_workspace_config_not_global_singleton(tmp_path: Path) -> None:

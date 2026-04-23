@@ -1,0 +1,468 @@
+{
+  "_comment": "PRD-CORE-146 follow-up: high-turn / large-history edge case. 55 nudge_history entries (below _NUDGE_HISTORY_CAP=100 but meaningfully dense) and tool_call_counter=10000. Validates that consumers handle high-turn arithmetic and large history dicts without O(n^2) blowups or overflow.",
+  "session_started": true,
+  "checkpoint_count": 42,
+  "last_checkpoint_ts": "2026-04-22T20:00:00+00:00",
+  "files_modified_since_checkpoint": 7,
+  "build_check_result": "passed",
+  "last_build_check_ts": "2026-04-22T19:55:00+00:00",
+  "deliver_called": false,
+  "learnings_this_session": 55,
+  "nudge_counts": {
+    "session_start": 1,
+    "checkpoint": 42,
+    "build_check": 12,
+    "review": 4,
+    "deliver": 0
+  },
+  "phase": "implement",
+  "previous_phase": "validate",
+  "review_called": true,
+  "review_verdict": "acceptable",
+  "review_p0_count": 0,
+  "nudge_history": {
+    "L-high-001": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 110,
+      "last_shown_turn": 117
+    },
+    "L-high-002": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 120,
+      "last_shown_turn": 134
+    },
+    "L-high-003": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 130,
+      "last_shown_turn": 151
+    },
+    "L-high-004": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 140,
+      "last_shown_turn": 168
+    },
+    "L-high-005": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 150,
+      "last_shown_turn": 185
+    },
+    "L-high-006": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 160,
+      "last_shown_turn": 202
+    },
+    "L-high-007": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 170,
+      "last_shown_turn": 219
+    },
+    "L-high-008": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 180,
+      "last_shown_turn": 236
+    },
+    "L-high-009": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 190,
+      "last_shown_turn": 253
+    },
+    "L-high-010": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 200,
+      "last_shown_turn": 270
+    },
+    "L-high-011": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 210,
+      "last_shown_turn": 287
+    },
+    "L-high-012": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 220,
+      "last_shown_turn": 304
+    },
+    "L-high-013": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 230,
+      "last_shown_turn": 230
+    },
+    "L-high-014": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 240,
+      "last_shown_turn": 247
+    },
+    "L-high-015": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 250,
+      "last_shown_turn": 264
+    },
+    "L-high-016": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 260,
+      "last_shown_turn": 281
+    },
+    "L-high-017": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 270,
+      "last_shown_turn": 298
+    },
+    "L-high-018": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 280,
+      "last_shown_turn": 315
+    },
+    "L-high-019": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 290,
+      "last_shown_turn": 332
+    },
+    "L-high-020": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 300,
+      "last_shown_turn": 349
+    },
+    "L-high-021": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 310,
+      "last_shown_turn": 366
+    },
+    "L-high-022": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 320,
+      "last_shown_turn": 383
+    },
+    "L-high-023": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 330,
+      "last_shown_turn": 400
+    },
+    "L-high-024": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 340,
+      "last_shown_turn": 417
+    },
+    "L-high-025": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 350,
+      "last_shown_turn": 434
+    },
+    "L-high-026": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 360,
+      "last_shown_turn": 360
+    },
+    "L-high-027": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 370,
+      "last_shown_turn": 377
+    },
+    "L-high-028": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 380,
+      "last_shown_turn": 394
+    },
+    "L-high-029": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 390,
+      "last_shown_turn": 411
+    },
+    "L-high-030": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 400,
+      "last_shown_turn": 428
+    },
+    "L-high-031": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 410,
+      "last_shown_turn": 445
+    },
+    "L-high-032": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 420,
+      "last_shown_turn": 462
+    },
+    "L-high-033": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 430,
+      "last_shown_turn": 479
+    },
+    "L-high-034": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 440,
+      "last_shown_turn": 496
+    },
+    "L-high-035": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 450,
+      "last_shown_turn": 513
+    },
+    "L-high-036": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 460,
+      "last_shown_turn": 530
+    },
+    "L-high-037": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 470,
+      "last_shown_turn": 547
+    },
+    "L-high-038": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 480,
+      "last_shown_turn": 564
+    },
+    "L-high-039": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 490,
+      "last_shown_turn": 490
+    },
+    "L-high-040": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 500,
+      "last_shown_turn": 507
+    },
+    "L-high-041": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 510,
+      "last_shown_turn": 524
+    },
+    "L-high-042": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 520,
+      "last_shown_turn": 541
+    },
+    "L-high-043": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 530,
+      "last_shown_turn": 558
+    },
+    "L-high-044": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 540,
+      "last_shown_turn": 575
+    },
+    "L-high-045": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 550,
+      "last_shown_turn": 592
+    },
+    "L-high-046": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 560,
+      "last_shown_turn": 609
+    },
+    "L-high-047": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 570,
+      "last_shown_turn": 626
+    },
+    "L-high-048": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 580,
+      "last_shown_turn": 643
+    },
+    "L-high-049": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 590,
+      "last_shown_turn": 660
+    },
+    "L-high-050": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 600,
+      "last_shown_turn": 677
+    },
+    "L-high-051": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 610,
+      "last_shown_turn": 694
+    },
+    "L-high-052": {
+      "phases_shown": [
+        "research"
+      ],
+      "turn_first_shown": 620,
+      "last_shown_turn": 620
+    },
+    "L-high-053": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 630,
+      "last_shown_turn": 637
+    },
+    "L-high-054": {
+      "phases_shown": [
+        "research",
+        "implement"
+      ],
+      "turn_first_shown": 640,
+      "last_shown_turn": 654
+    },
+    "L-high-055": {
+      "phases_shown": [
+        "implement",
+        "validate"
+      ],
+      "turn_first_shown": 650,
+      "last_shown_turn": 671
+    }
+  },
+  "pool_nudge_counts": {
+    "workflow": 120,
+    "learnings": 85,
+    "ceremony": 60,
+    "context": 40
+  },
+  "pool_ignore_counts": {
+    "workflow": 5,
+    "learnings": 3,
+    "ceremony": 8,
+    "context": 2
+  },
+  "pool_cooldown_until": {},
+  "pool_cooldown_set_at": {},
+  "tool_call_counter": 10000,
+  "last_nudge_pool": "learnings"
+}

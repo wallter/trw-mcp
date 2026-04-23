@@ -6,6 +6,24 @@ from typing import Literal
 
 from pydantic import Field
 
+# PRD-CORE-145: Supported messenger strategies for ceremony nudges.
+# "contextual_distress": Shows rich nudge ONLY if stalled/failing (Iter-25 primary).
+# "silent_flow": Pure silence unless in distress; eliminates cognitive tax during flow.
+NudgeMessengerLiteral = Literal[
+    "standard",
+    "minimal",
+    "learning_injection",
+    "contextual",
+    "contextual_action",
+    "contextual_distress",
+    "silent_flow",
+    "cod",
+    "stepback",
+    "anchor",
+    "negative",
+    "governance",
+]
+
 
 class _CeremonyFields:
     """Ceremony domain mixin — mixed into _TRWConfigFields via MI."""
@@ -181,12 +199,13 @@ class _CeremonyFields:
     # "learning_injection" surfaces task-relevant prior learnings via the
     # ceremony-status nudge surface. "contextual" preserves the workflow
     # scaffold but adds one phase-aware next-step instruction plus an optional
-    # task-relevant caution derived from recall context. "contextual_action"
+    # "contextual_action"
     # keeps the action-oriented scaffold but omits the caution line so evals
     # can isolate whether the recalled warning itself is causing execution drag.
+    # "silent_flow" (Iter-25) is the zero-tax variant that only triggers on distress.
     # Default None resolves to "standard" so behavior is byte-identical to
     # pre-PRD until operators explicitly opt in.
-    nudge_messenger: Literal["standard", "minimal", "learning_injection", "contextual", "contextual_action"] | None = None
+    nudge_messenger: NudgeMessengerLiteral | None = None
 
     # PRD-CORE-146 FR04: nudge injection density lever. ``None`` defers to
     # profile default (currently ``None`` for all profiles, resolving to

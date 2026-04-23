@@ -103,6 +103,27 @@ def test_all_profiles_construct(client_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PRD-CORE-146 FR04: per-profile nudge_density defaults
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "client_id",
+    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "gemini", "aider"],
+)
+def test_nudge_density_profile_defaults(client_id: str) -> None:
+    """PRD-CORE-146 FR04: no built-in profile opts into a nudge_density today.
+
+    All profiles leave nudge_density=None so TRWConfig.effective_nudge_density
+    resolves to None (legacy cooldown behavior) unless an operator overrides.
+    This test locks that invariant so a future profile change is explicit.
+    """
+    profile = resolve_client_profile(client_id)
+    assert profile.nudge_density is None
+
+
+# ---------------------------------------------------------------------------
 # Test 2: CeremonyWeights sum=100 — valid construction
 # ---------------------------------------------------------------------------
 

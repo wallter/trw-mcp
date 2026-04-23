@@ -1,0 +1,53 @@
+{
+  "_comment": "Minimal valid ceremony-state.json example for the trw-mcp ↔ trw-mcp/trw-eval nudge contract. Consumed by trw-mcp/tests/test_nudge_schema_contract.py and trw-eval/tests/test_nudge_contract.py. Field names MUST NOT be renamed — see PRD-CORE-146 NFR03 and docs/documentation/nudge-eval-contract.md.",
+  "session_started": true,
+  "checkpoint_count": 3,
+  "last_checkpoint_ts": "2026-04-22T16:00:00+00:00",
+  "files_modified_since_checkpoint": 2,
+  "build_check_result": "passed",
+  "last_build_check_ts": "2026-04-22T16:15:00+00:00",
+  "deliver_called": false,
+  "learnings_this_session": 5,
+  "nudge_counts": {
+    "session_start": 1,
+    "checkpoint": 2,
+    "build_check": 1,
+    "review": 0,
+    "deliver": 0
+  },
+  "phase": "validate",
+  "previous_phase": "implement",
+  "review_called": false,
+  "review_verdict": null,
+  "review_p0_count": 0,
+  "nudge_history": {
+    "L-example1": {
+      "phases_shown": ["implement"],
+      "turn_first_shown": 4,
+      "last_shown_turn": 4
+    },
+    "L-example2": {
+      "phases_shown": ["implement", "validate"],
+      "turn_first_shown": 6,
+      "last_shown_turn": 11
+    }
+  },
+  "pool_nudge_counts": {
+    "workflow": 3,
+    "learnings": 2,
+    "ceremony": 1,
+    "context": 0
+  },
+  "pool_ignore_counts": {
+    "context": 1,
+    "ceremony": 0
+  },
+  "pool_cooldown_until": {
+    "ceremony": 18
+  },
+  "pool_cooldown_set_at": {
+    "ceremony": 12
+  },
+  "tool_call_counter": 15,
+  "last_nudge_pool": "workflow"
+}

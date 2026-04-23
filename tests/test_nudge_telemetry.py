@@ -284,3 +284,187 @@ class TestDeliverNudgeSummary:
 
         loaded = read_ceremony_state(trw_dir)
         assert loaded.nudge_counts == {"session_start": 5, "build_check": 2}
+
+
+# ===========================================================================
+# PRD-CORE-146 W2B FR06/FR07: structlog nudge_shown + nudge_skipped
+# ===========================================================================
+
+
+class TestStructlogNudgeTelemetry:
+    """FR06: structlog INFO nudge_shown; FR07: structlog DEBUG nudge_skipped."""
+
+    def test_nudge_shown_info_emitted_all_paths(self, tmp_path: Path) -> None:
+        """FR06: learning_injection messenger emits nudge_shown INFO with required fields.
+
+        Drives the learning_injection messenger path end-to-end through
+        append_ceremony_status and asserts the structlog INFO event is
+        captured with pool/messenger/learning_id/phase/client_id/turn.
+        """
+        import structlog
+
+        from trw_mcp.state._nudge_state import write_ceremony_state
+        from trw_mcp.tools._ceremony_status import append_ceremony_status
+
+        trw_dir = _setup_trw_dir(tmp_path)
+
+        # Pre-populate a ceremony state that forces the learning_injection
+        # messenger to fire on a real learning.
+        state = CeremonyState(session_started=True, phase="implement")
+        write_ceremony_state(trw_dir, state)
+
+        # Write workspace config selecting learning_injection messenger.
+        (trw_dir / "config.yaml").write_text(
+            "nudge_messenger: learning_injection\nnudge_enabled: true\n",
+            encoding="utf-8",
+        )
+
+        fake_recall_context = type(
+            "Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()}
+        )()
+        fake_learning = {
+            "id": "L-fr06-a",
+            "summary": "test learning summary for fr06",
+            "nudge_line": "fr06 nudge line",
+            "impact": 0.8,
+        }
+
+        import trw_mcp.state.ceremony_nudge as cn
+
+        monkey_build = cn.build_recall_context if hasattr(cn, "build_recall_context") else None
+        monkey_recall = cn.recall_learnings if hasattr(cn, "recall_learnings") else None
+
+        # Use direct attribute replacement (restored manually in finally).
+        from trw_mcp.tools import _recall_impl
+        from trw_mcp.state import memory_adapter, recall_context as _recall_ctx_mod
+
+        orig_build = _recall_impl.build_recall_context
+        orig_build_state = _recall_ctx_mod.build_recall_context
+        orig_recall = memory_adapter.recall_learnings
+
+        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
+        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
+        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]  # type: ignore[assignment]
+        try:
+            with structlog.testing.capture_logs() as captured:
+                append_ceremony_status({}, trw_dir=trw_dir)
+        finally:
+            _recall_impl.build_recall_context = orig_build  # type: ignore[assignment]
+            _recall_ctx_mod.build_recall_context = orig_build_state  # type: ignore[assignment]
+            memory_adapter.recall_learnings = orig_recall  # type: ignore[assignment]
+            _ = monkey_build, monkey_recall  # silence ruff
+
+        shown = [e for e in captured if e.get("event") == "nudge_shown"]
+        assert shown, f"no nudge_shown INFO captured; events={[e.get('event') for e in captured]}"
+        evt = shown[0]
+        for field_name in ("pool", "messenger", "learning_id", "phase", "client_id", "turn"):
+            assert field_name in evt, f"missing field {field_name} in {evt}"
+        assert evt["log_level"] == "info"
+        assert evt["learning_id"] == "L-fr06-a"
+
+    def test_nudge_shown_info_preserves_jsonl_event(self, tmp_path: Path) -> None:
+        """NFR03: the legacy JSONL nudge_shown event is still emitted.
+
+        record_nudge_shown writes to session-events.jsonl — that contract is
+        additive-only; the new structlog INFO must not replace it.
+        """
+        trw_dir = _setup_trw_dir(tmp_path)
+        record_nudge_shown(trw_dir, "L-additive-check", "implement", turn=5)
+
+        events_path = trw_dir / "context" / "session-events.jsonl"
+        events = _read_events_jsonl(events_path)
+        assert any(e.get("event") == "nudge_shown" for e in events), (
+            f"legacy JSONL nudge_shown missing; events={events}"
+        )
+
+    def test_nudge_skipped_pool_cooldown_reason(self, tmp_path: Path) -> None:
+        """FR07: pool_cooldown skip site emits nudge_skipped DEBUG event."""
+        import structlog
+
+        from trw_mcp.models.config._client_profile import NudgePoolWeights
+        from trw_mcp.state._nudge_rules import _select_nudge_pool
+
+        _ = tmp_path  # unused — pure in-memory test
+
+        state = CeremonyState(
+            session_started=True,
+            phase="implement",
+            tool_call_counter=1,
+            pool_cooldown_until={"workflow": 100, "learnings": 100, "ceremony": 100, "context": 100},
+        )
+        weights = NudgePoolWeights(workflow=25, learnings=25, ceremony=25, context=25)
+
+        with structlog.testing.capture_logs() as captured:
+            result = _select_nudge_pool(state, weights)
+
+        assert result is None  # all pools cooled down
+        skipped = [e for e in captured if e.get("event") == "nudge_skipped"]
+        assert skipped, f"no nudge_skipped captured; events={[e.get('event') for e in captured]}"
+        reasons = {e.get("reason") for e in skipped}
+        assert "pool_cooldown" in reasons
+        sample = next(e for e in skipped if e.get("reason") == "pool_cooldown")
+        assert sample["log_level"] == "debug"
+        for field_name in ("reason", "pool", "learning_id", "client_id"):
+            assert field_name in sample
+
+    def test_nudge_skipped_phase_dedup_reason(self, tmp_path: Path) -> None:
+        """FR07: phase_dedup skip path emits nudge_skipped DEBUG event."""
+        import structlog
+
+        from trw_mcp.state._ceremony_progress_state import NudgeHistoryEntry
+        from trw_mcp.state.ceremony_nudge import _select_learning_injection_candidate
+
+        trw_dir = _setup_trw_dir(tmp_path)
+
+        state = CeremonyState(
+            session_started=True,
+            phase="validate",
+            nudge_history={
+                "L-dedup-x": NudgeHistoryEntry(
+                    phases_shown=["validate"],
+                    turn_first_shown=1,
+                    last_shown_turn=1,
+                ),
+            },
+        )
+
+        fake_recall_context = type(
+            "Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()}
+        )()
+        fake_learning = {
+            "id": "L-dedup-x",
+            "summary": "already shown in validate phase",
+            "nudge_line": "skip me",
+        }
+
+        from trw_mcp.state import memory_adapter, recall_context as _recall_ctx_mod
+        from trw_mcp.tools import _recall_impl
+
+        orig_build = _recall_impl.build_recall_context
+        orig_build_state = _recall_ctx_mod.build_recall_context
+        orig_recall = memory_adapter.recall_learnings
+        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
+        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
+        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]  # type: ignore[assignment]
+        try:
+            with structlog.testing.capture_logs() as captured:
+                selected, _ = _select_learning_injection_candidate(
+                    state, trw_dir, skip_phase_duplicates=True
+                )
+        finally:
+            _recall_impl.build_recall_context = orig_build  # type: ignore[assignment]
+            _recall_ctx_mod.build_recall_context = orig_build_state  # type: ignore[assignment]
+            memory_adapter.recall_learnings = orig_recall  # type: ignore[assignment]
+
+        assert selected is None, "phase-shown learning must be filtered out"
+        skipped = [
+            e
+            for e in captured
+            if e.get("event") == "nudge_skipped" and e.get("reason") == "phase_dedup"
+        ]
+        assert skipped, f"no phase_dedup nudge_skipped captured; events={[e.get('event') for e in captured]}"
+        evt = skipped[0]
+        assert evt["log_level"] == "debug"
+        assert evt["learning_id"] == "L-dedup-x"
+        for field_name in ("reason", "pool", "learning_id", "client_id"):
+            assert field_name in evt

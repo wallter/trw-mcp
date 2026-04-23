@@ -278,7 +278,7 @@ class TestSurfaceLoggingFailOpen:
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
             patch(
-                "trw_mcp.tools._recall_impl.build_recall_context",
+                "trw_mcp.state.recall_context.build_recall_context",
                 side_effect=ImportError("context module missing"),
             ),
         ):

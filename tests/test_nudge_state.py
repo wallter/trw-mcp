@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.state._nudge_state import (
     _NUDGE_HISTORY_CAP,
     CeremonyState,
@@ -291,17 +293,56 @@ class TestRecordNudgeShown:
         assert entry["turn_first_shown"] == 1
         assert entry["last_shown_turn"] == 7
 
-    def test_default_turn_zero(self, tmp_path: Path) -> None:
-        """turn parameter defaults to 0."""
+    def test_turn_is_required(self, tmp_path: Path) -> None:
+        """PRD-CORE-146-FR01: ``turn`` has no default — callers must pass it.
+
+        The prior ``turn: int = 0`` default caused every recorded entry to
+        land at turn 0, which broke per-show accounting and phase-crossing
+        dedup analytics. Guard against regression.
+        """
         trw_dir = _setup_trw_dir(tmp_path)
         write_ceremony_state(trw_dir, CeremonyState())
 
-        record_nudge_shown(trw_dir, "L-default", "IMPLEMENT")
+        with pytest.raises(TypeError):
+            record_nudge_shown(trw_dir, "L-required", "IMPLEMENT")  # type: ignore[call-arg]
+
+    def test_per_show_turn_populated(self, tmp_path: Path) -> None:
+        """PRD-CORE-146-FR01: turn_first_shown / last_shown_turn reflect the turn arg."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        write_ceremony_state(trw_dir, CeremonyState())
+
+        record_nudge_shown(trw_dir, "L-xxx", "validate", turn=3)
 
         loaded = read_ceremony_state(trw_dir)
-        entry = loaded.nudge_history["L-default"]
-        assert entry["turn_first_shown"] == 0
-        assert entry["last_shown_turn"] == 0
+        entry = loaded.nudge_history["L-xxx"]
+        assert entry["turn_first_shown"] == 3
+        assert entry["last_shown_turn"] == 3
+        assert entry["phases_shown"] == ["validate"]
+
+    def test_subsequent_show_updates_last_turn(self, tmp_path: Path) -> None:
+        """PRD-CORE-146-FR01: first_shown is immutable; last_shown advances."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        write_ceremony_state(trw_dir, CeremonyState())
+
+        record_nudge_shown(trw_dir, "L-seq", "validate", turn=3)
+        record_nudge_shown(trw_dir, "L-seq", "validate", turn=7)
+
+        entry = read_ceremony_state(trw_dir).nudge_history["L-seq"]
+        assert entry["turn_first_shown"] == 3
+        assert entry["last_shown_turn"] == 7
+
+    def test_phase_crossing_appends(self, tmp_path: Path) -> None:
+        """PRD-CORE-146-FR01: new phase appends to phases_shown on re-show."""
+        trw_dir = _setup_trw_dir(tmp_path)
+        write_ceremony_state(trw_dir, CeremonyState())
+
+        record_nudge_shown(trw_dir, "L-cross2", "validate", turn=3)
+        record_nudge_shown(trw_dir, "L-cross2", "deliver", turn=7)
+
+        entry = read_ceremony_state(trw_dir).nudge_history["L-cross2"]
+        assert entry["phases_shown"] == ["validate", "deliver"]
+        assert entry["turn_first_shown"] == 3
+        assert entry["last_shown_turn"] == 7
 
 
 # ---------------------------------------------------------------------------

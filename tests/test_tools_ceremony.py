@@ -736,6 +736,47 @@ class TestDeliverPartialFailure:
         assert result["reflect"]["status"] == "skipped"
         assert result["success"] is True
 
+    def test_trw_deliver_marks_deliver_called_without_active_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression (L-ePWz): trw_deliver must flip deliver_called=True in
+        ceremony-state.json even when there is no active run. Otherwise
+        stop-ceremony.sh keeps firing "trw_deliver() has not been called yet"
+        reminders after a successful deliver.
+        """
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch(
+                "trw_mcp.tools.ceremony._do_instruction_sync",
+                return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
+                return_value={"status": "success", "index": {}, "roadmap": {}},
+            ),
+        ):
+            result = tools["trw_deliver"].fn(skip_reflect=True)
+
+        # checkpoint is skipped (no active run), but deliver itself is a success
+        assert result["checkpoint"]["status"] == "skipped"
+        assert result["checkpoint"]["reason"] == "no_active_run"
+
+        # The core assertion: deliver_called is persisted to disk regardless of active-run state
+        state_path = trw_dir / "context" / "ceremony-state.json"
+        assert state_path.exists(), "ceremony-state.json must exist after trw_deliver"
+        state_data = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state_data.get("deliver_called") is True, (
+            "deliver_called must be True after trw_deliver even without active run"
+        )
+
     def test_skip_index_sync_flag(
         self,
         tmp_path: Path,
