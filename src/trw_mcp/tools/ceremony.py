@@ -372,19 +372,31 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         ctx: Context | None = None,
         query: str = "",
     ) -> SessionStartResultDict:
-        """Load your prior learnings and any active run — gives you full context before writing code.
+        """Load prior learnings + any active run so you start with full context.
+
+        Use when:
+        - Starting a new session (first action, before reading code or editing).
+        - Resuming after context compaction and you need the pin and learnings reloaded.
+        - Switching onto an unfamiliar task and want a focused recall on the topic.
 
         Recalls high-impact learnings (patterns, gotchas, architecture decisions) and
-        checks for an active run (phase, progress, last checkpoint). Without this context,
-        you risk re-implementing solved problems or repeating mistakes from prior sessions.
+        checks for an active run (phase, progress, last checkpoint). Partial-failure
+        resilient: a failure in one sub-step does not block the others.
 
-        Partial-failure resilient: if recall fails, run status is still returned and vice versa.
+        Input:
+        - query: optional focus string. When set, performs a focused recall on your
+          topic AND a baseline high-impact recall, then merges + dedupes. Empty
+          string or "*" uses default wildcard behavior.
 
-        Args:
-            query: Search query for focused hybrid recall (keywords matched against
-                summaries/details). When provided, performs two recalls — one focused
-                on your query domain and one baseline high-impact — then merges and
-                deduplicates. Empty string or "*" uses default wildcard behavior.
+        Output: SessionStartResultDict with fields
+        {learnings: list, learnings_count: int, run: RunStatusDict,
+         auto_recalled?: list, embed_health: dict, assertion_health?: dict,
+         framework_reminder: str, errors: list, success: bool}.
+
+        Example:
+            trw_session_start(query="sqlite extension macos")
+            → {"learnings": [...], "learnings_count": 8,
+               "run": {"active_run": "/path/...", "phase": "IMPLEMENT"}, ...}
 
         See Also: trw_init, trw_recall
         """
@@ -641,23 +653,35 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
     ) -> DeliverResultDict:
-        """Persist your learnings and progress for future sessions — without this, your work is invisible to the next agent.
+        """Persist learnings and progress so future sessions inherit this session's work.
 
-        When to call: as your last action before the session ends. Before calling,
-        check: did you record at least one discovery with trw_learn()? If not,
-        record the root cause or approach that worked — even a one-line learning
-        helps the next agent avoid re-discovery.
+        Use when:
+        - Your session is about to end and you want discoveries to persist for future agents.
+        - A milestone is reached and you want to close out the current run directory.
 
-        Runs critical steps synchronously (reflect, checkpoint, CLAUDE.md sync),
-        then launches housekeeping steps in the background (consolidation, publish,
-        telemetry, tier sweep, etc.). Background steps are concurrency-safe — if
-        another deliver's background work is already running, it is skipped rather
-        than queued.
+        Before calling, check: did you record at least one discovery with
+        trw_learn? If not, add even a one-line root-cause learning so the next
+        agent avoids re-discovery.
 
-        Args:
-            run_path: Path to run directory (auto-detected if None).
-            skip_reflect: Skip reflection step (e.g., if already reflected).
-            skip_index_sync: Skip INDEX/ROADMAP sync step.
+        Runs reflect + checkpoint synchronously, then launches housekeeping
+        (consolidation, publish, telemetry, tier sweep) in the background.
+        Background work is concurrency-safe — overlapping batches are skipped
+        rather than queued.
+
+        Input:
+        - run_path: path to run directory (auto-detected if None).
+        - skip_reflect: skip reflection step (e.g., already reflected).
+        - skip_index_sync: skip INDEX/ROADMAP sync step.
+
+        Output: DeliverResultDict with fields
+        {run_path: str, reflect: dict, checkpoint: dict, deferred: str,
+         critical_steps_completed: int, deferred_steps: int, errors: list,
+         success: bool, learning_reflection?: str}.
+
+        Example:
+            trw_deliver()
+            → {"run_path": "/path/...", "critical_steps_completed": 2,
+               "deferred": "launched", "success": true}
 
         See Also: trw_checkpoint, trw_instructions_sync
         """
@@ -876,20 +900,25 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         ctx: Context | None = None,
         message: str = "",
     ) -> TrwHeartbeatResultDict:
-        """Refresh the caller's pin heartbeat + append a heartbeat event.
+        """Refresh the caller's pin heartbeat and append a heartbeat event.
+
+        Use when:
+        - A long-running campaign needs to keep its pin alive between work units.
+        - You want to probe whether the current run is stale enough to checkpoint.
 
         Rate-limit: if ``now - last_heartbeat_ts < 60s`` the call short-circuits
         (no events.jsonl append, no pin-store write) and returns
-        ``rate_limited=True`` so long-running campaigns can beat safely without
-        spamming the audit trail.  Rate-limit state is derived entirely from
-        ``pins.json::<pin_key>::last_heartbeat_ts`` — no separate in-memory
-        cache — so the 60s window survives server restart (PRD-CORE-141 FR07).
+        ``rate_limited=True`` so long-running loops don't spam the audit trail.
+        Rate-limit state lives in ``pins.json::<pin_key>::last_heartbeat_ts``
+        so the 60s window survives server restart.
 
-        Returns:
-            ``{run_id, last_heartbeat_ts, stale_after_ts, age_hours,
-            should_checkpoint, rate_limited}`` on the success path, or
-            ``{error, hint}`` on the missing-pin path (fresh session that
-            never called ``trw_init`` / ``trw_adopt_run``).
+        Input:
+        - message: optional context string logged alongside the heartbeat event.
+
+        Output: TrwHeartbeatResultDict — on success
+        {run_id, last_heartbeat_ts, stale_after_ts, age_hours, should_checkpoint,
+        rate_limited}; on missing-pin
+        {error: "no_active_pin", hint: "call trw_init or trw_adopt_run first"}.
         """
         pin_key = resolve_pin_key(ctx=ctx, explicit=None)
         raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
@@ -997,17 +1026,28 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
     ) -> TrwAdoptRunResultDict:
         """Transfer an existing run's pin to the caller's session.
 
-        Guards (PRD-CORE-141 FR08):
-          * Out-of-project ``run_path`` → ``StateError`` (no force override).
-          * Terminal status (``delivered``/``complete``/``failed``) → requires
-            ``force=True``.
-          * Live owner (heartbeat within ``pin_ttl_hours``) → requires
-            ``force=True``; adoption emits ``run_adopted_potential_writer_conflict``
-            WARN when displacing a live owner.
+        Use when:
+        - Resuming a run started by another session (fresh context, same task).
+        - Reclaiming a run whose previous owner went away without delivering.
 
-        On success the previous owner's pin entry is removed, the caller's
-        pin entry is upserted, a ``run_adopted`` event is appended to the
-        adopted run's events.jsonl, and a ``run_adopted`` INFO log fires.
+        Guards:
+        - Out-of-project run_path raises StateError (no force override).
+        - Terminal status (delivered/complete/failed) requires force=True.
+        - Live owner (heartbeat within pin_ttl_hours) requires force=True and
+          emits ``run_adopted_potential_writer_conflict`` WARN when displaced.
+
+        Input:
+        - run_path: absolute path to the run directory to adopt (required).
+        - force: override terminal-status and live-owner guards.
+
+        Output: TrwAdoptRunResultDict with fields
+        {adopted_run_id, previous_pin_key, from_pin_key, to_pin_key,
+        adopted_ts, from_owner_was_live, force_used}.
+
+        Example:
+            trw_adopt_run(run_path="/repo/.trw/runs/<task>/<id>")
+            → {"adopted_run_id": "<id>", "from_pin_key": "sess-a",
+               "to_pin_key": "sess-b", "force_used": false, ...}
         """
         if not run_path:
             raise StateError("run_path is required for trw_adopt_run")

@@ -185,31 +185,36 @@ def register_learning_tools(server: FastMCP) -> None:
         team_origin: str = "",
         protection_tier: str = "normal",
     ) -> LearnResultDict:
-        """Save a discovery so future agents do not repeat the same mistake.
+        """Persist a non-obvious discovery so future agents inherit the finding.
 
-        When to call: at the moment you find a root cause, durable pattern, or
-        gotcha — ideally before writing the fix so the why is still clear.
-        High-impact learnings surface via trw_session_start() and trw_recall().
+        Use when:
+        - You just found a root cause, gotcha, or durable pattern worth remembering.
+        - You validated an approach that changes how similar work should be done.
+        - You hit an architecture constraint that is not obvious from reading the code.
 
-        Only record learnings that:
-        1. prevent repeated mistakes
-        2. document non-obvious gotchas or architecture decisions
-        3. capture validated patterns that change workflow
-        4. preserve hard-to-rediscover knowledge
+        Skip for routine observations ("I read the file", "the test passed") —
+        those degrade recall quality.
 
-        Routine observations ("I read the file", "the test passed") degrade recall quality.
+        Input:
+        - summary: one-line headline (required).
+        - detail: the full finding with context, symptoms, and why-it-matters (required).
+        - tags: keywords used by trw_recall filtering (recommended).
+        - impact: 0.0-1.0; high values surface the entry more often.
+        - other fields (shard_id, source_*, client_profile, model_id,
+          consolidated_from, assertions, type, nudge_line, expires, confidence,
+          task_type, domain, phase_origin, phase_affinity, team_origin,
+          protection_tier): auto-detected when omitted.
 
-        Required:
-            summary, detail
-        Recommended:
-            tags, impact
-        Advanced (auto-detected if omitted):
-            shard_id, source_type, source_identity, client_profile, model_id,
-            consolidated_from, assertions, type, nudge_line, expires,
-            confidence, task_type, domain, phase_origin, phase_affinity,
-            team_origin, protection_tier.
+        Output: LearnResultDict with fields
+        {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
 
-        Most learnings need only summary and detail. Adding tags and impact improves recall precision. All other fields are auto-detected.
+        Example:
+            trw_learn(summary="CI flake on macOS sqlite_vec load",
+                      detail="macOS system Python lacks SQLITE_ENABLE_LOAD_EXTENSION; "
+                             "trap AttributeError not sqlite3.Error",
+                      tags=["macos","sqlite","flake"], impact=0.8)
+            → {"id": "L-abc12345", "status": "saved"}
+
         See Also: trw_recall, trw_learn_update
         """
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
@@ -282,11 +287,16 @@ def register_learning_tools(server: FastMCP) -> None:
         feedback: str | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, str]:
-        """Keep your knowledge base accurate — mark resolved issues, retire obsolete gotchas, or refine details.
+        """Update an existing learning — status, fields, or feedback signal.
 
-        Stale learnings waste attention budget. Use this to mark learnings as resolved
-        (issue was fixed) or obsolete (no longer applicable), or to refine the
-        detail/summary with better information discovered during implementation.
+        Use when:
+        - The issue a learning describes has been fixed (status="resolved").
+        - A pattern is no longer applicable (status="obsolete").
+        - Detail or summary can be sharpened now that root cause is clearer.
+        - You want to boost/demote an entry's recall ranking via feedback.
+
+        Output: dict with fields {status: "updated"|"not_found"|"invalid", error?: str,
+        field_updated?: str}.
 
         Args:
             learning_id: ID of the learning to update (e.g., "L-abc12345").
@@ -470,14 +480,24 @@ def register_learning_tools(server: FastMCP) -> None:
         ultra_compact: bool = False,
         topic: str | None = None,
     ) -> RecallResultDict:
-        """Retrieve prior learnings relevant to your current task — avoid re-discovering what is already known.
+        """Retrieve prior learnings relevant to your current task.
 
-        Searches the learning store by keyword, tags, and impact score. Results are
-        ranked by a combined relevance-utility score: relevance matches your query
-        against summaries, tags, and details; utility considers impact, recency
-        (type-aware decay), and learned outcomes. Context boosts prioritize learnings
-        matching your current domain, phase, and team. Use this before starting
-        work on an unfamiliar area to load existing project knowledge.
+        Use when:
+        - You are about to work in an unfamiliar area of the codebase.
+        - You suspect a bug has been seen before and want prior root-cause notes.
+        - You want a narrow tag/impact slice before spawning a subagent.
+
+        Results are ranked by combined relevance (query match on summary/tags/detail)
+        and utility (impact, type-aware recency decay, prior feedback). Context
+        boosts prioritize entries matching your current domain, phase, and team.
+
+        Output: RecallResultDict with fields
+        {learnings: list[{id, summary, detail?, tags, impact, ...}],
+         count: int, query: str, ceremony_hint?: str}.
+
+        Example:
+            trw_recall(query="sqlite extension load mac", min_impact=0.6)
+            → {"learnings": [{"id": "L-abc12345", "summary": "...", ...}], "count": 3}
 
         Args:
             query: Search query (keywords matched against summaries/details).
@@ -542,17 +562,25 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync TRW protocol and ceremony guidance into the client's instruction file.
+        """Sync TRW protocol + ceremony guidance into the client's instruction file.
+
+        Use when:
+        - Onboarding a new project and the instruction file (CLAUDE.md / AGENTS.md)
+          does not yet contain the TRW auto-generated section.
+        - You've changed the behavioral protocol template and need it re-rendered.
+        - You switch IDE clients and need the correct surface written.
 
         Renders behavioral protocol and ceremony guidance into the auto-generated
-        section of whichever client surface is configured for this repo:
-        ``CLAUDE.md`` for Claude Code, ``AGENTS.md`` for opencode / Codex, etc.
-        Learnings are not promoted into the instruction file; use
-        ``trw_session_start()`` recall instead (per PRD-CORE-093).
+        block of whichever client surface is present (``CLAUDE.md``, ``AGENTS.md``,
+        ``.codex/INSTRUCTIONS.md``). Learnings are NOT promoted into the instruction
+        file — trw_session_start recall handles that (PRD-CORE-093).
 
-        When ``client="auto"`` the detector inspects IDE config dirs
-        (``.claude/``, ``.opencode/``, ``.codex/``) and writes to whichever are
-        present. Pass an explicit client name to override.
+        Output: ClaudeMdSyncResultDict with fields
+        {status: "success"|"error", files_written: list[str], sections_synced: int}.
+
+        Example:
+            trw_instructions_sync(client="auto")
+            → {"status": "success", "files_written": ["CLAUDE.md"], "sections_synced": 1}
 
         Args:
             scope: Sync scope — "root" for project instruction file, "sub" for module-level.
@@ -578,12 +606,12 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> ClaudeMdSyncResultDict:
         """Deprecated alias for ``trw_instructions_sync``.
 
-        The canonical name is ``trw_instructions_sync`` because this tool now
-        writes the appropriate instruction file for the detected client
-        (CLAUDE.md, AGENTS.md, .codex/INSTRUCTIONS.md, etc.) — not only CLAUDE.md.
-        This alias is retained for backward compatibility and emits a
-        deprecation warning on every invocation. It will be removed in a future
-        release; update callers to ``trw_instructions_sync``.
+        Use when: maintaining backward compatibility with older callers; prefer
+        ``trw_instructions_sync`` in new code. This alias emits a deprecation
+        warning on every invocation and will be removed in a future release.
+
+        Output: same as trw_instructions_sync — ClaudeMdSyncResultDict with fields
+        {status, files_written, sections_synced}.
         """
         logger.warning(
             "deprecated_tool_alias_used",

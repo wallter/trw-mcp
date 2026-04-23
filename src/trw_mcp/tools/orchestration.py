@@ -99,11 +99,25 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
         protected: bool = False,
     ) -> dict[str, str]:
-        """Create your run directory so checkpoints and progress tracking work — required for structured tasks.
+        """Create a run directory and register it as the active run.
 
-        Bootstraps .trw/ directories, run.yaml, and events.jsonl. Without a run,
-        trw_checkpoint and trw_status have nowhere to write, and delivery cannot
-        track what you accomplished. Use this for any task beyond a quick fix.
+        Use when:
+        - Starting any task beyond a trivial one-file edit (PRDs, features, sprints).
+        - You need a place for checkpoints, events, and telemetry to land.
+        - You want trw_status / trw_deliver / trw_checkpoint to have a pinned run.
+
+        Bootstraps .trw/ directories, run.yaml, and events.jsonl. Without a
+        run, checkpoint/status/deliver have nowhere to write.
+
+        Output: dict with fields {run_id: str, run_path: str, phase: str,
+        task: str, status: "active"}.
+
+        Example:
+            trw_init(task_name="docstring-uplift",
+                     objective="Uplift MCP tool docstrings",
+                     prd_scope=["PRD-QUAL-074"])
+            → {"run_id": "20260423...-abcd", "run_path": "...",
+               "phase": "RESEARCH", "task": "docstring-uplift", "status": "active"}
 
         Args:
             task_name: Name of the task — becomes the directory name and appears in status reports.
@@ -354,14 +368,19 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         ctx: Context | None = None,
         run_path: str | None = None,
     ) -> TrwStatusDict:
-        """See your current phase, completed work, and what to do next — so you pick up where you left off instead of redoing work.
+        """Report the active run's phase, wave progress, shard state, and last activity.
 
-        Returns run state including phase, wave progress, shard status, confidence,
-        and framework version. Essential when resuming after a context compaction
-        or session restart.
+        Use when:
+        - Resuming after context compaction or a session restart.
+        - Deciding whether to checkpoint, advance phase, or re-delegate a wave.
 
-        Args:
-            run_path: Path to the run directory. Auto-detects if not provided.
+        Input:
+        - run_path: path to the run directory. Auto-detects from pin if None.
+
+        Output: TrwStatusDict with fields
+        {run_id, task, phase, status, confidence, framework, event_count,
+         reflection, waves?, wave_progress?, wave_status?, reversions,
+         last_activity_ts?, hours_since_activity?, stale_count}.
         """
         reader = FileStateReader()
         # PRD-CORE-141 FR03/FR05: ctx-aware resolve_run_path suppresses the
@@ -468,20 +487,25 @@ def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
         shard_id: str | None = None,
         wave_id: str | None = None,
     ) -> dict[str, str]:
-        """Save your implementation progress — if context compacts, you resume here instead of re-implementing from scratch.
+        """Append a progress snapshot so work survives context compaction.
 
-        When to call: after each working milestone (file saved, test passing, feature wired).
-        If your context compacts, you resume from your last checkpoint instead of starting over.
+        Use when:
+        - You just finished a milestone (file saved, test passing, feature wired).
+        - A shard or wave completed and you want attribution in the audit log.
+        - Context feels near-full and you want a safe resume point on disk.
 
-        Appends an atomic snapshot to checkpoints.jsonl with timestamp. The checkpoint
-        message becomes your resumption point: the next session reads it to understand
-        exactly where you left off and what to work on next.
+        Appends an atomic snapshot to checkpoints.jsonl with timestamp. The
+        message becomes your resumption point — future sessions read it to
+        understand where you left off and what to work on next.
 
-        Args:
-            run_path: Path to the run directory. Auto-detects if not provided.
-            message: Describe what you accomplished and what comes next — this becomes your resume point after compaction.
-            shard_id: Optional shard identifier for sub-agent attribution.
-            wave_id: Optional wave identifier for wave-aware progress tracking (PRD-INFRA-036).
+        Input:
+        - run_path: path to the run directory. Auto-detects when None.
+        - message: what you accomplished + what comes next (required for resume quality).
+        - shard_id: optional shard identifier for sub-agent attribution.
+        - wave_id: optional wave identifier for wave-aware progress tracking.
+
+        Output: dict with fields {status: "checkpointed"|"error", timestamp: str,
+        checkpoint_file: str, error?: str}.
         """
         # PRD-CORE-141 FR03: thread ctx into execute_checkpoint so the
         # underlying resolve_run_path call is ctx-aware.

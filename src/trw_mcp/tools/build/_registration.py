@@ -82,26 +82,29 @@ def register_build_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Record build/test results for ceremony tracking and delivery gates.
 
-        Run your tests via Bash first, then report results here. This tool
-        records the outcome for ceremony scoring, phase gates, and Q-learning
-        feedback. It does NOT execute subprocesses itself.
+        Use when:
+        - You just ran your test suite (via Bash) and need the outcome logged.
+        - You want the delivery gate to see the latest pass/fail + coverage.
+        - You want Q-learning feedback attached to a phase transition.
 
-        Args:
-            tests_passed: Whether all tests passed. Required — pass True or
-                False explicitly. Example: ``trw_build_check(tests_passed=True,
-                test_count=47, coverage_pct=92.3, mypy_clean=True,
-                scope='full')``.
-            test_count: Total number of tests that ran.
-            failure_count: Number of failed tests.
-            coverage_pct: Coverage percentage (0.0-100.0).
-            mypy_clean: Whether mypy type checking passed.
-            scope: Freeform label for what was checked — e.g. 'full', 'pytest',
-                'mypy', 'cargo test', 'npm test'. Used for event logging only.
-            failures: Optional list of failure descriptions (up to 10).
-            run_path: Optional run directory for event logging.
-            min_coverage: Optional minimum coverage percentage. If set and
-                coverage falls below this threshold, tests_passed is set to
-                False and a coverage_threshold_failed flag is added to the result.
+        This tool does NOT execute subprocesses — run tests via Bash first,
+        then call this with the results.
+
+        Input:
+        - tests_passed: True or False — required; no default guess.
+        - test_count: total tests that ran.
+        - failure_count: number that failed.
+        - coverage_pct: 0.0-100.0.
+        - mypy_clean: whether mypy type-checking passed.
+        - scope: label like ``full``, ``pytest``, ``mypy``, ``cargo test``.
+        - failures: optional list of up to 10 failure descriptions.
+        - run_path: optional run directory for event logging.
+        - min_coverage: when set, falls tests_passed to False if coverage_pct
+          is below the threshold (adds ``coverage_threshold_failed`` flag).
+
+        Output: dict with fields
+        {status, run_id?, outcome, tests_passed, coverage_pct, mypy_clean,
+         coverage_threshold_failed?, gate_effects: list[str]}.
         """
         reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()

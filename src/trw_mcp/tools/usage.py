@@ -65,17 +65,24 @@ def register_usage_tools(server: FastMCP) -> None:
         period: str = "all",
         group_by: str = "none",
     ) -> UsageReportResult:
-        """Track your LLM API spend — total tokens, costs, and breakdowns by model and caller.
+        """Aggregate LLM API usage — total tokens, cost estimates, per-model breakdown.
 
-        Reads .trw/logs/llm_usage.jsonl and aggregates token usage, cost estimates,
-        and call counts. Useful for understanding which operations consume the most
-        tokens and optimizing accordingly.
+        Use when:
+        - Diagnosing where token budget is being spent.
+        - Comparing cost between models or between agents.
+        - Reviewing a campaign's total spend before closing it.
 
-        Args:
-            period: Aggregation period — only "all" is supported currently.
-            group_by: Group results by field — "agent", "phase", "model",
-                "task", or "none" (default). When not "none", adds a
-                "grouped_by" breakdown dict to the response.
+        Reads ``.trw/logs/llm_usage.jsonl`` and aggregates token usage, cost
+        estimates, and call counts.
+
+        Input:
+        - period: currently "all" is the only supported value.
+        - group_by: one of {agent, phase, model, task, none}. Non-"none" values
+          add a ``grouped_by`` breakdown.
+
+        Output: UsageReportResult with fields
+        {period, log_path, total_calls, total_input_tokens, total_output_tokens,
+         total_cost_estimate_usd, by_model, by_caller, group_by?, grouped_by?}.
         """
         _VALID_GROUP_BY = {"agent", "phase", "model", "task", "none"}
         if group_by not in _VALID_GROUP_BY:
@@ -220,14 +227,17 @@ def register_usage_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_progressive_expand(group: str) -> ProgressiveExpandResult:
-        """Expand a capability group so its tools show full schemas.
+        """Expand a capability group so its tools reveal full input/output schemas.
 
-        When progressive disclosure is enabled, non-hot-set tools only show
-        compact capability cards. Call this to expand a whole group at once.
+        Use when:
+        - Progressive disclosure is on and you need every tool in a group at once
+          rather than a single cold tool.
 
-        Args:
-            group: Group name (ceremony, learning, orchestration,
-                requirements, build).
+        Input:
+        - group: one of {ceremony, learning, orchestration, requirements, build}.
+
+        Output: ProgressiveExpandResult with fields
+        {group: str, expanded_tools: list[str], already_expanded: list[str]}.
         """
         from trw_mcp.state.usage_profiler import TOOL_GROUPS
 
@@ -251,15 +261,19 @@ def register_usage_tools(server: FastMCP) -> None:
     def trw_trust_level(
         security_tags: list[str] | None = None,
     ) -> TrustLevelQueryResult:
-        """Query your project's trust tier — Crawl/Walk/Run graduated autonomy.
+        """Report the project's Crawl/Walk/Run trust tier and review posture.
 
-        Returns the current trust level based on accumulated successful sessions.
-        Optionally evaluates whether a change with the given security tags requires
-        human review.
+        Use when:
+        - You want to know the current graduated-autonomy tier before an action.
+        - You need to check whether a security-tagged change requires human review.
 
-        Args:
-            security_tags: Optional list of security tags (e.g. ["auth", "secrets"])
-                to evaluate review requirements for a specific change.
+        Input:
+        - security_tags: optional list (e.g. ["auth", "secrets"]) evaluated against
+          the current tier to compute a review verdict.
+
+        Output: TrustLevelQueryResult with fields
+        {tier, session_count, review_mode, review_sample_rate, locked, lock_reason,
+         review_required?, review_reason?}.
         """
         from trw_mcp.state.trust import requires_human_review, trust_level_calculate
 

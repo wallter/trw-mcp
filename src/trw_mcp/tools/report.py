@@ -51,14 +51,18 @@ def register_report_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
         run_path: str | None = None,
     ) -> RunReportResultDict:
-        """See what happened in a run — phase timing, event counts, learning yield, and build results.
+        """Aggregate a single run's phase timings, events, learnings, and build results.
 
-        Reads run.yaml, events.jsonl, checkpoints.jsonl, and build-status.yaml to
-        produce aggregated metrics. Use this to understand a completed run's outcomes
-        or to diagnose issues in an active run.
+        Use when:
+        - A run just completed and you want to understand what happened.
+        - You are diagnosing an active run (e.g., why a phase is stuck).
 
-        Args:
-            run_path: Path to the run directory. Auto-detects if not provided.
+        Input:
+        - run_path: path to the run directory. Auto-detects from pin when None.
+
+        Output: RunReportResultDict (Pydantic model_dump) with fields
+        {run_id, task, phase_timings, event_count, checkpoints, learnings_produced,
+         build_status, ceremony_score} plus {error, status: "failed"} on error.
         """
         try:
             # PRD-CORE-141 FR03/FR05: ctx-aware path resolution.
@@ -83,14 +87,19 @@ def register_report_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_analytics_report(since: str | None = None) -> AnalyticsReport:
-        """See trends across all runs — build pass rate, ceremony compliance, and whether process is improving.
+        """Aggregate trends across all runs — build pass rate, ceremony compliance, drift.
 
-        Scans all run directories, computes per-run ceremony scores (0-100), and
-        returns aggregate metrics with trend analysis. Use this to identify systemic
-        issues like declining test coverage or ceremony drift.
+        Use when:
+        - You want a sanity check on whether process quality is rising or falling.
+        - Investigating systemic issues (declining coverage, ceremony drift, flake).
 
-        Args:
-            since: Optional ISO date filter (YYYY-MM-DD). Only runs started on or after this date are included.
+        Input:
+        - since: optional ISO date filter (YYYY-MM-DD). Runs older than this are
+          excluded.
+
+        Output: AnalyticsReport with fields
+        {runs_scanned: int, build_pass_rate: float, avg_ceremony_score: float,
+         trend: dict, per_task_class: dict} plus {error, status} on error.
         """
         from trw_mcp.state.analytics.report import scan_all_runs
 

@@ -28,14 +28,20 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
     def trw_ceremony_status(
         task_class: str | None = None,
     ) -> CeremonyStatusResult:
-        """Check ceremony feedback status — proposals, escalations, and quality trends.
+        """Report ceremony feedback state — proposals, escalations, quality trends.
 
-        Shows per-task-class ceremony quality metrics. When conditions are met,
-        includes reduction proposals that require human approval.
+        Use when:
+        - You want to see per-task-class ceremony quality metrics.
+        - You need to know whether any reduction proposals are awaiting approval.
 
-        Args:
-            task_class: Optional task class to query (documentation, feature,
-                refactor, security, infrastructure). If None, returns all.
+        Input:
+        - task_class: optional filter (documentation, feature, refactor, security,
+          infrastructure). None returns every tracked class.
+
+        Output: CeremonyStatusResult with fields
+        {classes: list[{task_class, tier, pass_rate, sample_size}],
+         proposals: list[{proposal_id, task_class, from_tier, to_tier, reason}],
+         escalations: list[dict]}.
         """
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_feedback import get_ceremony_status
@@ -50,12 +56,15 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
     ) -> CeremonyApproveResult:
         """Approve a pending ceremony reduction proposal.
 
-        Ceremony reductions require explicit human approval. This tool
-        applies an approved proposal, changing the ceremony tier for the
-        specified task class.
+        Use when:
+        - A reviewer has seen a proposal in trw_ceremony_status and wants it applied.
 
-        Args:
-            proposal_id: The proposal ID from trw_ceremony_status output.
+        Input:
+        - proposal_id: the ID surfaced by trw_ceremony_status (required).
+
+        Output: CeremonyApproveResult with fields
+        {status: "approved"|"not_found"|"error", change_id?: str,
+         task_class?: str, from_tier?: str, to_tier?: str}.
         """
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_feedback import approve_proposal
@@ -68,13 +77,17 @@ def register_ceremony_feedback_tools(server: FastMCP) -> None:
     def trw_ceremony_revert(
         change_id: str,
     ) -> CeremonyRevertResult:
-        """Revert a ceremony tier change by change_id.
+        """Revert a ceremony tier change, restoring the prior tier.
 
-        Restores the prior ceremony tier for a task class. Takes effect
-        immediately within the current session.
+        Use when:
+        - A previously approved ceremony reduction needs to be rolled back.
 
-        Args:
-            change_id: The change ID from trw_ceremony_approve output.
+        Input:
+        - change_id: the change ID returned from trw_ceremony_approve (required).
+
+        Output: CeremonyRevertResult with fields
+        {status: "reverted"|"not_found"|"error", task_class?: str,
+         restored_tier?: str}.
         """
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_feedback import revert_change
