@@ -16,8 +16,10 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-# PRD-CORE-125-FR05: Hooks gating -- exit early when hooks are disabled.
-if [ "${TRW_HOOKS_ENABLED:-true}" = "false" ]; then
+# PRD-CORE-125-FR05 / PRD-CORE-149-FR05: Hooks gating -- exit early when
+# hooks are disabled. Honors both HOOKS_ENABLED (set by .trw/runtime/hook-env.sh
+# sourced via lib-trw.sh) and the legacy TRW_HOOKS_ENABLED env override.
+if [ "${HOOKS_ENABLED:-true}" = "false" ] || [ "${TRW_HOOKS_ENABLED:-true}" = "false" ]; then
   exit 0
 fi
 

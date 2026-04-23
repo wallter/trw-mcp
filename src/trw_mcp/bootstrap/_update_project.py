@@ -299,11 +299,33 @@ def _run_post_update_phases(
     _update_codex_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_copilot_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_gemini_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
+
+    # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
+    # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.
+    _rewrite_hook_env_for_primary_profile(target_dir, ide_targets)
+
     _write_manifest(target_dir, result, data_dir)
 
     if on_progress:
         on_progress("Phase", "Verifying installation...")
     _verify_installation(target_dir, result)
+
+
+def _rewrite_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[str]) -> None:
+    """PRD-CORE-149 FR04: refresh ``.trw/runtime/hook-env.sh`` on every sync.
+
+    Fail-open: hook-env rewrite never aborts an update.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    from ._file_ops import _write_hook_env_file
+
+    primary = ide_targets[0] if ide_targets else "claude-code"
+    try:
+        profile = resolve_client_profile(primary)
+        _write_hook_env_file(target_dir / ".trw", profile)
+    except Exception as exc:  # justified: fail-open
+        logger.warning("hook_env_rewrite_failed", error=str(exc), primary=primary)
 
 
 def update_project(
