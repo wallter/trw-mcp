@@ -33,6 +33,9 @@ _COST_RATES: dict[str, dict[str, float]] = {
     "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+    # PRD-QUAL-072-FR02: Opus 4.7 pricing mirrors 4.6 ($15 input / $75 output
+    # per 1M tokens — Anthropic kept pricing unchanged at 4.7 release).
+    "claude-opus-4-7": {"input": 15.00, "output": 75.00},
 }
 _DEFAULT_RATE: dict[str, float] = {"input": 3.00, "output": 15.00}
 
