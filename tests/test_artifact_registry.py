@@ -218,3 +218,68 @@ class TestResolveSurfaceRegistry:
         # component_rollup returns all 6 known categories even with no data
         rollup = reg.component_rollup()
         assert set(rollup.keys()) == {"agents", "skills", "hooks", "prompts", "surfaces", "config"}
+
+
+class TestRepoRootArtifactDiscovery:
+    """PRD-HPO-MEAS-001 FR-1: CLAUDE.md, FRAMEWORK.md, sub-CLAUDE.md coverage."""
+
+    @pytest.fixture
+    def _fake_repo(self, tmp_path: Path) -> Path:
+        """Build a repo-root-shaped fake with CLAUDE.md, .trw/frameworks/FRAMEWORK.md,
+        and a sub-CLAUDE.md under trw-mcp/src/trw_mcp/telemetry/."""
+        (tmp_path / "CLAUDE.md").write_text("# Root governing document")
+        (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
+        (tmp_path / ".trw" / "frameworks" / "FRAMEWORK.md").write_text("# Framework v24.6")
+        sub = tmp_path / "trw-mcp" / "src" / "trw_mcp" / "telemetry"
+        sub.mkdir(parents=True)
+        (sub / "CLAUDE.md").write_text("# Sub-CLAUDE telemetry scope")
+        return tmp_path
+
+    def test_repo_root_discovers_claude_md(self, _fake_repo: Path, tmp_path: Path) -> None:
+        empty_data = tmp_path / "empty-data"
+        empty_data.mkdir()
+        reg = SurfaceRegistry.build(data_root=empty_data, repo_root=_fake_repo)
+        ids = {a.surface_id for a in reg.artifacts}
+        assert "claude_md_root:CLAUDE.md" in ids
+
+    def test_repo_root_discovers_framework_md(self, _fake_repo: Path, tmp_path: Path) -> None:
+        empty_data = tmp_path / "empty-data"
+        empty_data.mkdir()
+        reg = SurfaceRegistry.build(data_root=empty_data, repo_root=_fake_repo)
+        ids = {a.surface_id for a in reg.artifacts}
+        assert "framework_md:.trw/frameworks/FRAMEWORK.md" in ids
+
+    def test_repo_root_discovers_sub_claude_md(self, _fake_repo: Path, tmp_path: Path) -> None:
+        empty_data = tmp_path / "empty-data"
+        empty_data.mkdir()
+        reg = SurfaceRegistry.build(data_root=empty_data, repo_root=_fake_repo)
+        ids = {a.surface_id for a in reg.artifacts}
+        sub_ids = {i for i in ids if i.startswith("sub_claude_md:")}
+        assert sub_ids, f"expected sub_claude_md: prefix; got {ids}"
+        # Verify the specific sub-CLAUDE we created is in there.
+        assert any("telemetry/CLAUDE.md" in i for i in sub_ids)
+
+    def test_claude_md_edit_changes_snapshot_id(
+        self, _fake_repo: Path, tmp_path: Path
+    ) -> None:
+        empty_data = tmp_path / "empty-data"
+        empty_data.mkdir()
+        fixed = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+        reg_a = SurfaceRegistry.build(
+            data_root=empty_data, repo_root=_fake_repo, now=fixed
+        )
+        (_fake_repo / "CLAUDE.md").write_text("# Root governing document — EDITED")
+        reg_b = SurfaceRegistry.build(
+            data_root=empty_data, repo_root=_fake_repo, now=fixed
+        )
+        assert reg_a.snapshot_id != reg_b.snapshot_id, (
+            "CLAUDE.md edit must change snapshot_id — otherwise prompt "
+            "ablation against outcome deltas is impossible (FR-1)"
+        )
+
+    def test_missing_repo_root_skips_cleanly(self, tmp_path: Path) -> None:
+        empty_data = tmp_path / "empty-data"
+        empty_data.mkdir()
+        reg = SurfaceRegistry.build(data_root=empty_data, repo_root=None)
+        assert reg.artifacts == ()
