@@ -492,3 +492,34 @@ class TestUsageReportGroupBy:
         tool_fn = _get_report_tool_fn()
         with pytest.raises(ValueError, match="group_by must be one of"):
             tool_fn(group_by="invalid_field")
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-072 FR02: Opus 4.7 pricing entry + 4.6 retained for backcompat
+# ---------------------------------------------------------------------------
+
+
+class TestOpus47Pricing:
+    """PRD-QUAL-072 FR02 — 4.7 present, 4.6 retained, pricing mirrors 4.6."""
+
+    def test_opus_47_pricing_present(self) -> None:
+        """FR02: claude-opus-4-7 key exists in the cost table."""
+        from trw_mcp.tools.usage import _COST_RATES
+
+        assert "claude-opus-4-7" in _COST_RATES
+        rates = _COST_RATES["claude-opus-4-7"]
+        assert rates["input"] == 15.00
+        assert rates["output"] == 75.00
+
+    def test_opus_46_pricing_retained(self) -> None:
+        """FR02: backward compat — legacy 4.6 key is not removed."""
+        from trw_mcp.tools.usage import _COST_RATES
+
+        assert "claude-opus-4-6" in _COST_RATES
+        assert _COST_RATES["claude-opus-4-6"]["input"] == 15.00
+        assert _COST_RATES["claude-opus-4-6"]["output"] == 75.00
+
+    def test_opus_47_cost_compute_roundtrips(self) -> None:
+        """FR02: _compute_cost resolves 4.7 without falling back to default."""
+        # 1M input + 1M output at $15 + $75 = $90 exactly
+        assert _compute_cost("claude-opus-4-7", 1_000_000, 1_000_000) == 90.0

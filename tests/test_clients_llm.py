@@ -219,3 +219,35 @@ class TestAsk:
         mock_response.content = [MagicMock(spec=[])]  # No attributes at all
         ac.messages.create = AsyncMock(return_value=mock_response)
         assert await _make_client(ac).ask("test") is None
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-072: Opus 4.7 migration — alias bump + backward compat (FR01, FR09)
+# ---------------------------------------------------------------------------
+
+
+class TestOpus47Migration:
+    """PRD-QUAL-072 FR01 + FR09 — opus alias resolves to 4.7; 4.6 still works."""
+
+    def test_opus_alias_resolves_to_47(self) -> None:
+        """FR01: short alias ``opus`` resolves to claude-opus-4-7."""
+        from trw_mcp.clients.llm import _MODEL_MAP
+
+        assert _MODEL_MAP["opus"] == "claude-opus-4-7"
+        assert _resolve_model("opus") == "claude-opus-4-7"
+
+    def test_sonnet_and_haiku_aliases_unchanged(self) -> None:
+        """FR01: sonnet/haiku aliases are NOT bumped by this PRD."""
+        from trw_mcp.clients.llm import _MODEL_MAP
+
+        assert _MODEL_MAP["sonnet"] == "claude-sonnet-4-6"
+        assert _MODEL_MAP["haiku"] == "claude-haiku-4-5-20251001"
+
+    def test_opus_46_explicit_id_still_resolves(self) -> None:
+        """FR09: explicit ``claude-opus-4-6`` passes through unchanged."""
+        assert _resolve_model("claude-opus-4-6") == "claude-opus-4-6"
+
+    def test_unknown_model_id_passes_through(self) -> None:
+        """FR09: arbitrary model strings pass through untouched."""
+        assert _resolve_model("claude-opus-4-7") == "claude-opus-4-7"
+        assert _resolve_model("some-future-model-5-0") == "some-future-model-5-0"
