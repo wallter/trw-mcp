@@ -4,6 +4,21 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Changed
+
+- **2026-04-23 — PRD-QUAL-072: Opus 4.7 migration.** The `opus` short
+  alias in `trw-mcp/src/trw_mcp/clients/llm.py` now resolves to
+  `claude-opus-4-7` (previously `claude-opus-4-6`). Explicit
+  `model: "claude-opus-4-6"` strings still pass through unchanged
+  (backward compat preserved — FR09). Added `claude-opus-4-7` pricing
+  entry to `_COST_RATES` in `tools/usage.py` mirroring 4.6 ($15 input /
+  $75 output per 1M). FRAMEWORK.md header bumped with 1M "lost in
+  middle" + tokenizer-overhead caveats cross-linking
+  `docs/documentation/prompting/OPUS-4-7-BEST-PRACTICES.md`. New
+  `tests/test_opus_47_lint.py` blocks reintroduction of the removed
+  Opus 4.7 sampling knobs (`budget_tokens`, `temperature`, `top_p`,
+  `top_k`) in any agent/skill frontmatter.
+
 ### Infrastructure
 
 - INFRA: new `make test-nudge-contract` gate validates trw-mcp ↔ trw-eval schema contract in one command.

@@ -128,7 +128,8 @@ class TestModelAliasResolution:
         assert _resolve_model("sonnet") == "claude-sonnet-4-6"
 
     def test_opus_alias(self) -> None:
-        assert _resolve_model("opus") == "claude-opus-4-6"
+        # PRD-QUAL-072 FR01: bumped from 4-6 to 4-7 (2026-04-23).
+        assert _resolve_model("opus") == "claude-opus-4-7"
 
     def test_custom_model_passthrough(self) -> None:
         assert _resolve_model("claude-custom-123") == "claude-custom-123"
@@ -193,7 +194,8 @@ class TestAsk:
         await client.ask("test", model="opus")
 
         call_kwargs = mock_async_client.messages.create.call_args[1]
-        assert call_kwargs["model"] == "claude-opus-4-6"
+        # PRD-QUAL-072 FR01: opus alias bumped to 4-7.
+        assert call_kwargs["model"] == "claude-opus-4-7"
 
     @pytest.mark.asyncio
     async def test_ask_returns_none_on_empty_content(self) -> None:
