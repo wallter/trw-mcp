@@ -10,14 +10,20 @@ from __future__ import annotations
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_paths, strip_pii
 from trw_mcp.telemetry.artifact_registry import (
     ComponentFingerprint,
+    SurfaceArtifact,
+    SurfaceRegistry,
     SurfaceSnapshot,
     clear_snapshot_cache,
+    resolve_surface_registry,
     resolve_surface_snapshot,
 )
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.event_base import (
+    EVENT_TYPE_REGISTRY,
     CeremonyEvent,
     ContractEvent,
+    DefaultResolutionError,
+    H1ObserveModeWarning,
     HPOCeremonyComplianceEvent,
     HPOSessionEndEvent,
     HPOSessionStartEvent,
@@ -29,6 +35,7 @@ from trw_mcp.telemetry.event_base import (
     PhaseExposureEvent,
     ThrashingEvent,
     ToolCallEvent,
+    emit_h1_observe_mode_warning,
     validate_parent_within_run,
 )
 from trw_mcp.telemetry.models import (
@@ -69,6 +76,9 @@ __all__ = [
     # HPO-MEAS-001 unified schema
     "CeremonyEvent",
     "ContractEvent",
+    "DefaultResolutionError",
+    "EVENT_TYPE_REGISTRY",
+    "H1ObserveModeWarning",
     "HPOCeremonyComplianceEvent",
     "HPOSessionEndEvent",
     "HPOSessionStartEvent",
@@ -80,13 +90,17 @@ __all__ = [
     "PhaseExposureEvent",
     "ThrashingEvent",
     "ToolCallEvent",
+    "emit_h1_observe_mode_warning",
     "validate_parent_within_run",
     # HPO-MEAS-001 surface identity
     "ComponentFingerprint",
+    "SurfaceArtifact",
+    "SurfaceRegistry",
     "SurfaceSnapshot",
     "clear_snapshot_cache",
+    "resolve_surface_registry",
     "resolve_surface_snapshot",
-    # HPO-MEAS-001 manifest
+    # HPO-MEAS-001 run snapshot
     "MANIFEST_FILENAME",
     "load_manifest",
     "snapshot_to_yaml",

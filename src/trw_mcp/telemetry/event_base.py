@@ -164,6 +164,103 @@ class HPOCeremonyComplianceEvent(HPOTelemetryEvent):
     emitter: str = "ceremony"
 
 
+class H1ObserveModeWarning(ObserverEvent):
+    """Fail-loud shim-fallback event for ``_emit_to_h1`` (PRD-HPO-MEAS-001 FR-9).
+
+    Until all 7 legacy emitters write through :class:`HPOTelemetryEvent`
+    directly, any call to the shim ``_emit_to_h1(event)`` — whether it
+    forwards successfully OR buffers to a fallback path — MUST emit exactly
+    one ``H1ObserveModeWarning`` at WARNING level. Plain
+    ``logger.warning(...)`` is insufficient — the signal MUST be a counted
+    telemetry event so analytics can answer "how many events are we
+    accumulating blind?" without log scraping.
+
+    Required ``payload`` keys (FR-9 §AC-1):
+        - ``emitter_name``: str — the legacy emitter that called the shim
+        - ``fallback_reason``: str — why the forward degraded
+        - ``buffered_event_count_since_start``: int
+        - ``activation_gate_blocked_reason``: str — typically
+          ``"h1_substrate_not_live"`` during Phase 1/Phase 2 rollout
+
+    Because :class:`HPOTelemetryEvent` is ``extra=forbid``, the payload
+    keys above live inside ``payload: dict[str, Any]`` rather than as
+    top-level attributes. See :func:`emit_h1_observe_mode_warning`.
+    """
+
+    event_type: str = "h1_observe_mode_warning"
+    emitter: str = "h1_shim"
+
+
+def emit_h1_observe_mode_warning(
+    *,
+    session_id: str,
+    run_id: str | None,
+    emitter_name: str,
+    fallback_reason: str,
+    buffered_event_count_since_start: int,
+    surface_snapshot_id: str = "",
+    activation_gate_blocked_reason: str = "h1_substrate_not_live",
+    parent_event_id: str | None = None,
+) -> H1ObserveModeWarning:
+    """Factory that builds an :class:`H1ObserveModeWarning` with the FR-9 payload shape.
+
+    Use this factory rather than constructing the event directly so the
+    required payload keys stay consistent across all shim call sites.
+    The returned event is NOT auto-published — callers route it through
+    their telemetry pipeline (Phase 2 retrofit wires this into
+    ``_emit_to_h1``).
+    """
+    return H1ObserveModeWarning(
+        session_id=session_id,
+        run_id=run_id,
+        surface_snapshot_id=surface_snapshot_id,
+        parent_event_id=parent_event_id,
+        payload={
+            "emitter_name": emitter_name,
+            "fallback_reason": fallback_reason,
+            "buffered_event_count_since_start": buffered_event_count_since_start,
+            "activation_gate_blocked_reason": activation_gate_blocked_reason,
+        },
+    )
+
+
+class DefaultResolutionError(RuntimeError):
+    """Raised when a Phase-1 default cannot be resolved to a real resource.
+
+    PRD-HPO-MEAS-001 NFR-12 mandates ``trw_session_start`` run a
+    default-resolution audit on first boot per package-install; any
+    unresolvable default (e.g. missing ``pricing.yaml``, unknown
+    compression algorithm, unavailable hash algorithm) MUST produce a
+    typed error with ``file:line + remediation``, BEFORE the session
+    writes any events. Fails at install-time or boot-time — never at
+    first-production-emission.
+
+    FR-13 enforces this is NOT caught silently; the audit boot gate at
+    ``meta_tune/boot_checks.py`` (Wave 2/3) re-raises after logging.
+    """
+
+
+#: Frozen registry of every :class:`HPOTelemetryEvent` subclass keyed by
+#: its ``event_type`` literal (PRD-HPO-MEAS-001 FR-13 §5). Any new
+#: subclass MUST be added here AND covered by
+#: ``tests/ci/test_event_type_registry_parity.py``.
+EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
+    CeremonyEvent.model_fields["event_type"].default: CeremonyEvent,
+    ContractEvent.model_fields["event_type"].default: ContractEvent,
+    PhaseExposureEvent.model_fields["event_type"].default: PhaseExposureEvent,
+    ObserverEvent.model_fields["event_type"].default: ObserverEvent,
+    MCPSecurityEvent.model_fields["event_type"].default: MCPSecurityEvent,
+    MetaTuneEvent.model_fields["event_type"].default: MetaTuneEvent,
+    ThrashingEvent.model_fields["event_type"].default: ThrashingEvent,
+    LLMCallEvent.model_fields["event_type"].default: LLMCallEvent,
+    ToolCallEvent.model_fields["event_type"].default: ToolCallEvent,
+    HPOSessionStartEvent.model_fields["event_type"].default: HPOSessionStartEvent,
+    HPOSessionEndEvent.model_fields["event_type"].default: HPOSessionEndEvent,
+    HPOCeremonyComplianceEvent.model_fields["event_type"].default: HPOCeremonyComplianceEvent,
+    H1ObserveModeWarning.model_fields["event_type"].default: H1ObserveModeWarning,
+}
+
+
 def validate_parent_within_run(
     events: list[HPOTelemetryEvent],
     *,
@@ -217,5 +314,9 @@ __all__ = [
     "HPOSessionStartEvent",
     "HPOSessionEndEvent",
     "HPOCeremonyComplianceEvent",
+    "H1ObserveModeWarning",
+    "DefaultResolutionError",
+    "EVENT_TYPE_REGISTRY",
+    "emit_h1_observe_mode_warning",
     "validate_parent_within_run",
 ]

@@ -1,19 +1,23 @@
-"""Surface Manifest — YAML serializer for SurfaceSnapshot (PRD-HPO-MEAS-001 S2).
+"""Run Surface Snapshot — YAML serializer for SurfaceRegistry (PRD-HPO-MEAS-001 FR-2).
 
-Stamps the resolved :class:`SurfaceSnapshot` to ``<run>/surface_manifest.yaml``
-once per ``trw_session_start``. Round-trips stable YAML so a later
-``trw_surface_diff`` tool (Wave 3) can compare two snapshots without
-re-walking the filesystem.
+Stamps the resolved :class:`SurfaceSnapshot` to
+``<run_dir>/run_surface_snapshot.yaml`` once per ``trw_session_start``
+(Wave 2 wiring). Round-trips stable YAML so the Wave 3 ``trw_surface_diff``
+tool can compare two snapshots without re-walking the filesystem.
 
 Design invariants:
 
-1. **Safe loader only.** Reads use ``yaml.safe_load`` per trw-memory + trw-mcp
-   security conventions. Writes use the compact non-flow style.
-2. **Atomic write.** Writes go to a ``.tmp`` sibling then ``os.replace`` so a
-   crash during write never leaves a half-serialized manifest behind.
+1. **Safe loader only.** Reads use ``yaml.safe_load`` per trw-memory +
+   trw-mcp security conventions. Writes use compact non-flow style.
+2. **Atomic write.** Writes go to a ``.tmp`` sibling then ``os.replace``
+   so a crash during write never leaves a half-serialized snapshot behind.
 3. **Schema-pinned.** :func:`load_manifest` validates through the
    :class:`SurfaceSnapshot` Pydantic model so drift in the on-disk shape
    fails loudly at read time.
+4. **Filename per PRD-FR-2.** The on-disk artifact is
+   ``run_surface_snapshot.yaml`` (not ``surface_manifest.yaml`` — the
+   latter is the in-package content-addressed canon per FR-1; the run
+   copy is the immutable frozen snapshot per FR-2).
 """
 
 from __future__ import annotations
@@ -28,43 +32,59 @@ import structlog
 import yaml
 
 from trw_mcp.telemetry.artifact_registry import (
-    ComponentFingerprint,
+    SurfaceArtifact,
     SurfaceSnapshot,
-    resolve_surface_snapshot,
+    resolve_surface_registry,
 )
 
 logger = structlog.get_logger(__name__)
 
-MANIFEST_FILENAME = "surface_manifest.yaml"
+#: Filename mandated by PRD-HPO-MEAS-001 FR-2 (``glob_exists:
+#: .trw/runs/*/meta/run_surface_snapshot.yaml``). Do not rename without
+#: a PRD update + migration note.
+MANIFEST_FILENAME = "run_surface_snapshot.yaml"
 
 
-def _component_to_dict(comp: ComponentFingerprint) -> dict[str, Any]:
+def _artifact_to_dict(a: SurfaceArtifact) -> dict[str, Any]:
     return {
-        "digest": comp.digest,
-        "file_count": comp.file_count,
-        "total_bytes": comp.total_bytes,
+        "surface_id": a.surface_id,
+        "content_hash": a.content_hash,
+        "version": a.version,
+        "discovered_at": a.discovered_at.isoformat(),
+        "source_path": a.source_path,
     }
 
 
-def _component_from_dict(payload: dict[str, Any]) -> ComponentFingerprint:
-    return ComponentFingerprint(
-        digest=str(payload.get("digest", "")),
-        file_count=int(payload.get("file_count", 0)),
-        total_bytes=int(payload.get("total_bytes", 0)),
+def _artifact_from_dict(payload: dict[str, Any]) -> SurfaceArtifact:
+    raw_ts = payload.get("discovered_at")
+    if isinstance(raw_ts, datetime):
+        discovered_at = raw_ts
+    elif isinstance(raw_ts, str):
+        discovered_at = datetime.fromisoformat(raw_ts)
+    else:
+        msg = f"artifact.discovered_at must be datetime or ISO string, got {type(raw_ts).__name__}"
+        raise ValueError(msg)
+    return SurfaceArtifact(
+        surface_id=str(payload["surface_id"]),
+        content_hash=str(payload["content_hash"]),
+        version=str(payload["version"]),
+        discovered_at=discovered_at,
+        source_path=str(payload["source_path"]),
     )
 
 
 def snapshot_to_yaml(snapshot: SurfaceSnapshot) -> str:
     """Serialize a :class:`SurfaceSnapshot` to a stable YAML string.
 
-    Keys are sorted alphabetically for diff-stability across runs.
+    Artifacts are sorted by ``(surface_id, source_path)`` for diff-stability.
     """
+    sorted_artifacts = sorted(snapshot.artifacts, key=lambda a: (a.surface_id, a.source_path))
     payload: dict[str, Any] = {
         "snapshot_id": snapshot.snapshot_id,
         "trw_mcp_version": snapshot.trw_mcp_version,
         "framework_version": snapshot.framework_version,
         "generated_at": snapshot.generated_at.isoformat(),
-        "components": {key: _component_to_dict(snapshot.components[key]) for key in sorted(snapshot.components)},
+        "artifacts": [_artifact_to_dict(a) for a in sorted_artifacts],
     }
     return yaml.safe_dump(payload, sort_keys=True, default_flow_style=False)
 
@@ -78,30 +98,28 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
     """
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
-        msg = f"surface_manifest payload must be a mapping, got {type(data).__name__}"
+        msg = f"run_surface_snapshot payload must be a mapping, got {type(data).__name__}"
         raise ValueError(msg)
 
-    components_raw = data.get("components", {})
-    if not isinstance(components_raw, dict):
-        msg = "surface_manifest.components must be a mapping"
+    artifacts_raw = data.get("artifacts", [])
+    if not isinstance(artifacts_raw, list):
+        msg = "run_surface_snapshot.artifacts must be a list"
         raise ValueError(msg)
 
-    components: dict[str, ComponentFingerprint] = {}
-    for key, value in components_raw.items():
-        if not isinstance(value, dict):
-            msg = f"surface_manifest.components[{key!r}] must be a mapping"
+    artifacts: list[SurfaceArtifact] = []
+    for idx, entry in enumerate(artifacts_raw):
+        if not isinstance(entry, dict):
+            msg = f"run_surface_snapshot.artifacts[{idx}] must be a mapping"
             raise ValueError(msg)
-        components[str(key)] = _component_from_dict(value)
+        artifacts.append(_artifact_from_dict(entry))
 
-    # PyYAML returns timezone-aware offsets as strings; SurfaceSnapshot
-    # is strict-typed, so parse explicitly.
-    generated_raw = data.get("generated_at")
-    if isinstance(generated_raw, datetime):
-        generated_at = generated_raw
-    elif isinstance(generated_raw, str):
-        generated_at = datetime.fromisoformat(generated_raw)
+    raw_generated = data.get("generated_at")
+    if isinstance(raw_generated, datetime):
+        generated_at = raw_generated
+    elif isinstance(raw_generated, str):
+        generated_at = datetime.fromisoformat(raw_generated)
     else:
-        msg = f"surface_manifest.generated_at must be a datetime or ISO string, got {type(generated_raw).__name__}"
+        msg = f"run_surface_snapshot.generated_at must be a datetime or ISO string, got {type(raw_generated).__name__}"
         raise ValueError(msg)
 
     return SurfaceSnapshot(
@@ -109,15 +127,15 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
         trw_mcp_version=str(data["trw_mcp_version"]),
         framework_version=str(data["framework_version"]),
         generated_at=generated_at,
-        components=components,
+        artifacts=tuple(artifacts),
     )
 
 
 def write_manifest(snapshot: SurfaceSnapshot, run_dir: Path) -> Path:
-    """Write a :class:`SurfaceSnapshot` to ``<run_dir>/surface_manifest.yaml``.
+    """Write a :class:`SurfaceSnapshot` to ``<run_dir>/run_surface_snapshot.yaml``.
 
     The write is atomic: content goes to a temp file in the same directory
-    then ``os.replace`` moves it into place. A pre-existing manifest is
+    then ``os.replace`` moves it into place. A pre-existing snapshot is
     overwritten — callers resolve idempotency at a higher layer (Wave 2
     ``trw_session_start`` check-before-write).
     """
@@ -125,9 +143,8 @@ def write_manifest(snapshot: SurfaceSnapshot, run_dir: Path) -> Path:
     target = run_dir / MANIFEST_FILENAME
     data = snapshot_to_yaml(snapshot)
 
-    # Use a temp file in the same directory so os.replace stays on one filesystem.
     fd, tmp_name = tempfile.mkstemp(
-        prefix=".surface_manifest.",
+        prefix=".run_surface_snapshot.",
         suffix=".yaml.tmp",
         dir=str(run_dir),
     )
@@ -145,19 +162,19 @@ def write_manifest(snapshot: SurfaceSnapshot, run_dir: Path) -> Path:
         raise
 
     logger.info(
-        "surface_manifest_written",
+        "run_surface_snapshot_written",
         run_dir=str(run_dir),
         snapshot_id=snapshot.snapshot_id,
+        artifact_count=len(snapshot.artifacts),
     )
     return target
 
 
 def load_manifest(run_dir: Path) -> SurfaceSnapshot | None:
-    """Load a manifest from ``<run_dir>/surface_manifest.yaml``.
+    """Load a snapshot from ``<run_dir>/run_surface_snapshot.yaml``.
 
-    Returns ``None`` when the manifest is missing. Raises
-    :class:`ValueError` on malformed content — the caller decides whether
-    to rewrite or fail.
+    Returns ``None`` when the file is missing. Raises
+    :class:`ValueError` on malformed content.
     """
     path = run_dir / MANIFEST_FILENAME
     if not path.exists():
@@ -167,31 +184,31 @@ def load_manifest(run_dir: Path) -> SurfaceSnapshot | None:
 
 
 def stamp_session(run_dir: Path, *, refresh: bool = False) -> SurfaceSnapshot:
-    """Resolve + write the surface manifest for a session.
+    """Resolve + write ``run_surface_snapshot.yaml`` for a session.
 
-    This is the canonical call site for ``trw_session_start`` (Wave 2
-    integration). It reads a resolved :class:`SurfaceSnapshot` via
-    :func:`resolve_surface_snapshot`, writes it to the run directory,
-    and returns the snapshot so the caller can stamp
-    ``surface_snapshot_id`` on session events.
+    Canonical call site for ``trw_session_start`` (Wave 2 integration).
+    Reads the resolved :class:`SurfaceRegistry` via
+    :func:`resolve_surface_registry`, serializes to a frozen snapshot,
+    writes it to the run directory, and returns the snapshot so the caller
+    can stamp ``surface_snapshot_id`` on session events.
 
     Args:
-        run_dir: Run directory (e.g.
-            ``.trw/runs/<task>/<run_id>/``). Will be created if missing.
+        run_dir: Run directory (``<task>/<run_id>/meta/`` by convention).
+            Will be created if missing.
         refresh: Force a fresh fingerprint computation — defaults to False
-            so repeated ``trw_session_start`` calls in the same process
-            share the cache.
+            so repeated ``trw_session_start`` calls share the cache.
     """
-    snapshot = resolve_surface_snapshot(refresh=refresh)
+    registry = resolve_surface_registry(refresh=refresh)
+    snapshot = registry.to_snapshot()
     write_manifest(snapshot, run_dir)
     return snapshot
 
 
 __all__ = [
     "MANIFEST_FILENAME",
-    "snapshot_to_yaml",
-    "yaml_to_snapshot",
-    "write_manifest",
     "load_manifest",
+    "snapshot_to_yaml",
     "stamp_session",
+    "write_manifest",
+    "yaml_to_snapshot",
 ]

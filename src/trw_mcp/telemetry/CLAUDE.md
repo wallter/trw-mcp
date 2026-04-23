@@ -36,9 +36,12 @@ exist specifically to avoid import-shadowing the legacy CORE-031 classes that
 - `parent_event_id` (FR-6) is **advisory**. `validate_parent_within_run`
   returns the dangling ids as a list — never raise.
 - `surface_snapshot_id` may be the empty string **only during Phase 1**
-  (PRD §9). Once `artifact_registry` lands, `session_start` resolves a
-  non-empty id and all new emissions carry it. Do not default to a
-  synthesized placeholder — let empty-string be the visible Phase-1 signal.
+  (PRD §9). `artifact_registry.SurfaceRegistry` + `surface_manifest.stamp_session`
+  have landed (commit 6592aeccb + Wave-1-audit refactor), but the
+  `trw_session_start` wiring is Wave 2 work. Once that wiring lands,
+  `session_start` resolves a non-empty id and all new emissions carry it.
+  Do not default to a synthesized placeholder — let empty-string be the
+  visible Phase-1 signal.
 - No `event=` kwarg in structlog calls; `event` is reserved. Use
   `action=` or a descriptive name.
 - Any new emitter subclass **must** be listed in `__all__` and in the

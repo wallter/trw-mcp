@@ -8,8 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from trw_mcp.telemetry.event_base import (
+    EVENT_TYPE_REGISTRY,
     CeremonyEvent,
     ContractEvent,
+    DefaultResolutionError,
+    H1ObserveModeWarning,
     HPOCeremonyComplianceEvent,
     HPOSessionEndEvent,
     HPOSessionStartEvent,
@@ -21,6 +24,7 @@ from trw_mcp.telemetry.event_base import (
     PhaseExposureEvent,
     ThrashingEvent,
     ToolCallEvent,
+    emit_h1_observe_mode_warning,
 )
 
 ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
@@ -36,6 +40,7 @@ ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
     HPOSessionStartEvent,
     HPOSessionEndEvent,
     HPOCeremonyComplianceEvent,
+    H1ObserveModeWarning,
 ]
 
 
@@ -147,3 +152,66 @@ def test_run_id_defaults_none_and_accepts_str() -> None:
     assert a.run_id is None
     b = HPOTelemetryEvent(session_id="s1", emitter="x", event_type="x", run_id="r42")
     assert b.run_id == "r42"
+
+
+# ---- PRD-HPO-MEAS-001 FR-9: H1ObserveModeWarning -------------------------
+
+
+def test_h1_observe_mode_warning_is_observer_subclass() -> None:
+    assert issubclass(H1ObserveModeWarning, ObserverEvent)
+    assert issubclass(H1ObserveModeWarning, HPOTelemetryEvent)
+
+
+def test_h1_observe_mode_warning_event_type() -> None:
+    ev = H1ObserveModeWarning(session_id="s1")
+    assert ev.event_type == "h1_observe_mode_warning"
+
+
+def test_emit_h1_observe_mode_warning_factory_populates_required_payload() -> None:
+    ev = emit_h1_observe_mode_warning(
+        session_id="s1",
+        run_id="r42",
+        emitter_name="ceremony",
+        fallback_reason="h1_substrate_not_live",
+        buffered_event_count_since_start=7,
+    )
+    assert isinstance(ev, H1ObserveModeWarning)
+    assert ev.session_id == "s1"
+    assert ev.run_id == "r42"
+    # FR-9 AC-1 required payload keys
+    assert ev.payload["emitter_name"] == "ceremony"
+    assert ev.payload["fallback_reason"] == "h1_substrate_not_live"
+    assert ev.payload["buffered_event_count_since_start"] == 7
+    assert ev.payload["activation_gate_blocked_reason"] == "h1_substrate_not_live"
+
+
+def test_emit_h1_observe_mode_warning_frozen() -> None:
+    ev = emit_h1_observe_mode_warning(
+        session_id="s1",
+        run_id=None,
+        emitter_name="ceremony",
+        fallback_reason="missing_consumer",
+        buffered_event_count_since_start=0,
+    )
+    with pytest.raises(ValidationError):
+        ev.session_id = "nope"  # type: ignore[misc]
+
+
+# ---- PRD-HPO-MEAS-001 FR-13: EVENT_TYPE_REGISTRY + DefaultResolutionError ---
+
+
+def test_event_type_registry_keys_match_all_subclasses() -> None:
+    expected = {cls(session_id="s1").event_type for cls in ALL_SUBCLASSES}
+    assert set(EVENT_TYPE_REGISTRY.keys()) == expected
+
+
+def test_event_type_registry_values_are_correct_classes() -> None:
+    for event_type, cls in EVENT_TYPE_REGISTRY.items():
+        inst = cls(session_id="s1")
+        assert inst.event_type == event_type, f"registry mismatch for {cls.__name__}"
+
+
+def test_default_resolution_error_is_runtime_error() -> None:
+    assert issubclass(DefaultResolutionError, RuntimeError)
+    with pytest.raises(DefaultResolutionError):
+        raise DefaultResolutionError("pricing.yaml missing")
