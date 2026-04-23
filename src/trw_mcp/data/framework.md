@@ -1,13 +1,15 @@
 v24.6_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
 Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven | Agent-Teams
-Version date: 2026-04-08 | Model: Opus 4.6
+Version date: 2026-04-23 | Model: Opus 4.7
+
+> **Opus 4.7 caveats** — see [`docs/documentation/prompting/OPUS-4-7-BEST-PRACTICES.md`](../../../../docs/documentation/prompting/OPUS-4-7-BEST-PRACTICES.md) for the full migration guide. Two agent-facing caveats to know upfront: (a) **tokenizer overhead** is ~1.00×–1.35× vs 4.6 (~35% worst case), so tight `max_tokens` budgets may silently truncate; (b) **1M "lost in middle" regression** — MRCR v2 at 1M dropped from 78.3% (4.6) to 32.2% (4.7), so prefer ≤256K for retrieval-critical work and anchor load-bearing data at the start or end of the window.
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v24.6_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
+**v24.6_TRW | Opus 4.7 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
 
 All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN.
 MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
@@ -447,7 +449,7 @@ All paths MUST be absolute (TASK_DIR or REPO_ROOT). Update CHANGELOG.md at DELIV
 
 ## MODEL
 
-Primary: **Opus 4.6**. Child shards (depth >=2), trivial subtasks: Haiku 4.5 / Sonnet 4.5.
+Primary: **Opus 4.7**. Child shards (depth >=2), trivial subtasks: Haiku 4.5 / Sonnet 4.5.
 Agents SHOULD act. Chat MUST remain minimal. Artifacts MUST be auditable.
 
 ---
