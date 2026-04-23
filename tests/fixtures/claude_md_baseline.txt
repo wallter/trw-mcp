@@ -1,0 +1,151 @@
+=== behavioral_protocol ===
+# TRW Behavioral Protocol
+
+## TRW Behavioral Protocol (Auto-Generated)
+
+| Tool | When | Why |
+|------|------|-----|
+| `trw_session_start()`<br><sub>e.g. `trw_session_start(query='task domain')`</sub> | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area |
+| `trw_learn(summary, detail)`<br><sub>e.g. `trw_learn(summary='...', impact=0.8)`</sub> | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows |
+| `trw_checkpoint(message)`<br><sub>e.g. `trw_checkpoint(message='...')`</sub> | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost |
+| `trw_deliver()` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch |
+
+Full tool lifecycle: `/trw-ceremony-guide`
+
+
+### Execution Phases
+
+```
+RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
+```
+
+- **RESEARCH**: Discover context, audit codebase, register findings
+- **PLAN**: Design implementation approach, identify dependencies
+- **IMPLEMENT**: Execute work with periodic checkpoints, shard self-review before completing
+- **VALIDATE**: Run trw_build_check, verify coverage, lead checks shard integration
+- **REVIEW**: Review diff for quality (DRY/KISS/SOLID), fix gaps, record learnings
+- **DELIVER**: Sync artifacts, checkpoint, close run
+
+
+### Tool Lifecycle
+
+| Phase | Tool | When to Use | What It Does | Example |
+|-------|------|-------------|--------------|---------|
+| Start | `trw_session_start` | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area | `trw_session_start(query='task domain')` |
+| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings without a full run | Surface discoveries from past sessions so you don't repeat solved problems | `trw_recall('auth patterns', min_impact=0.7)` |
+| Start | `trw_status` | When resuming — shows current phase, progress, and next steps | Pick up where you left off instead of redoing completed work | `trw_status()` |
+| RESEARCH | `trw_init` | New structured tasks — creates run directory for tracking | Enables checkpoints and progress tracking — without a run, your progress can't be saved | `trw_init(task_name='...')` |
+| Any | `trw_learn` | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows | `trw_learn(summary='...', impact=0.8)` |
+| Any | `trw_checkpoint` | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost | `trw_checkpoint(message='...')` |
+| PLAN | `trw_prd_create` | When defining requirements for a new feature or fix | Structured requirements prevent the ambiguity that causes 50% of implementation rework | `trw_prd_create(input_text='...')` |
+| PLAN | `trw_prd_validate` | Before implementation begins | Catches requirement gaps before they become code bugs — cheaper to fix in spec than in code | `trw_prd_validate(prd_path='...')` |
+| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(scope='full')` |
+| REVIEW | `review diff` | After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings | Independent review catches what self-review misses — implementers optimize for completion, reviewers for correctness | `Read diff, fix gaps, trw_learn(summary='...')` |
+| DELIVER | `trw_instructions_sync` | At delivery | Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights | `trw_instructions_sync()` |
+| DELIVER | `trw_deliver` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch | `trw_deliver()` |
+
+
+### Example Flows
+
+**Quick Task** (no run needed):
+```
+trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
+```
+
+**Full Run**:
+```
+trw_session_start -> trw_init(task_name, prd_scope)
+  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
+  -> trw_build_check(scope='full')           [VALIDATE]
+  -> review diff, fix gaps, trw_learn         [REVIEW]
+  -> trw_deliver()
+```
+
+
+### Framework Reference
+
+Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates, exit criteria, quality rubrics, and formation selection. Re-read after context compaction.
+
+
+### Session Boundaries
+
+Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
+
+
+=== ceremony_quick_ref ===
+## TRW Behavioral Protocol (Auto-Generated)
+
+| Tool | When | Why |
+|------|------|-----|
+| `trw_session_start()`<br><sub>e.g. `trw_session_start(query='task domain')`</sub> | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area |
+| `trw_learn(summary, detail)`<br><sub>e.g. `trw_learn(summary='...', impact=0.8)`</sub> | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows |
+| `trw_checkpoint(message)`<br><sub>e.g. `trw_checkpoint(message='...')`</sub> | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost |
+| `trw_deliver()` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch |
+
+Full tool lifecycle: `/trw-ceremony-guide`
+
+
+=== phase_descriptions ===
+### Execution Phases
+
+```
+RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
+```
+
+- **RESEARCH**: Discover context, audit codebase, register findings
+- **PLAN**: Design implementation approach, identify dependencies
+- **IMPLEMENT**: Execute work with periodic checkpoints, shard self-review before completing
+- **VALIDATE**: Run trw_build_check, verify coverage, lead checks shard integration
+- **REVIEW**: Review diff for quality (DRY/KISS/SOLID), fix gaps, record learnings
+- **DELIVER**: Sync artifacts, checkpoint, close run
+
+
+=== ceremony_table ===
+### Tool Lifecycle
+
+| Phase | Tool | When to Use | What It Does | Example |
+|-------|------|-------------|--------------|---------|
+| Start | `trw_session_start` | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area | `trw_session_start(query='task domain')` |
+| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings without a full run | Surface discoveries from past sessions so you don't repeat solved problems | `trw_recall('auth patterns', min_impact=0.7)` |
+| Start | `trw_status` | When resuming — shows current phase, progress, and next steps | Pick up where you left off instead of redoing completed work | `trw_status()` |
+| RESEARCH | `trw_init` | New structured tasks — creates run directory for tracking | Enables checkpoints and progress tracking — without a run, your progress can't be saved | `trw_init(task_name='...')` |
+| Any | `trw_learn` | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows | `trw_learn(summary='...', impact=0.8)` |
+| Any | `trw_checkpoint` | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost | `trw_checkpoint(message='...')` |
+| PLAN | `trw_prd_create` | When defining requirements for a new feature or fix | Structured requirements prevent the ambiguity that causes 50% of implementation rework | `trw_prd_create(input_text='...')` |
+| PLAN | `trw_prd_validate` | Before implementation begins | Catches requirement gaps before they become code bugs — cheaper to fix in spec than in code | `trw_prd_validate(prd_path='...')` |
+| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(scope='full')` |
+| REVIEW | `review diff` | After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings | Independent review catches what self-review misses — implementers optimize for completion, reviewers for correctness | `Read diff, fix gaps, trw_learn(summary='...')` |
+| DELIVER | `trw_instructions_sync` | At delivery | Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights | `trw_instructions_sync()` |
+| DELIVER | `trw_deliver` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch | `trw_deliver()` |
+
+
+=== ceremony_flows ===
+### Example Flows
+
+**Quick Task** (no run needed):
+```
+trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
+```
+
+**Full Run**:
+```
+trw_session_start -> trw_init(task_name, prd_scope)
+  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
+  -> trw_build_check(scope='full')           [VALIDATE]
+  -> review diff, fix gaps, trw_learn         [REVIEW]
+  -> trw_deliver()
+```
+
+
+=== framework_reference ===
+### Framework Reference
+
+Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates, exit criteria, quality rubrics, and formation selection. Re-read after context compaction.
+
+
+=== closing_reminder ===
+### Session Boundaries
+
+Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
+
+
