@@ -8,6 +8,7 @@ taxonomy with frozen, validated Pydantic models.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -192,6 +193,25 @@ class ClientProfile(BaseModel):
     # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to
     # ``"mcp__trw__"`` for claude-code; bare names for all other clients.
     tool_namespace_prefix: str = ""
+
+    @property
+    def config_dir(self) -> str:
+        """PRD-CORE-149 FR06: client config directory.
+
+        Defaults to the parent directory of ``write_targets.instruction_path``
+        (e.g., ``.claude`` for ``.claude/INSTRUCTIONS.md``). Returns ``.trw``
+        when no instruction path is configured -- the TRW state directory is
+        the universal fallback.
+        """
+        path = self.write_targets.instruction_path
+        if not path:
+            return ".trw"
+        parent = PurePosixPath(path).parent
+        # PurePosixPath("AGENTS.md").parent == PurePosixPath("."); map to .trw
+        parent_str = str(parent)
+        if parent_str in (".", ""):
+            return ".trw"
+        return parent_str
 
     @field_validator("tool_namespace_prefix")
     @classmethod
