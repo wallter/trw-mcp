@@ -46,6 +46,19 @@ def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
         return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
 
 
+def _synthetic_nudge_learning_id(
+    *,
+    messenger: str,
+    pool: str,
+    step: str,
+) -> str:
+    """Return a stable synthetic ID for non-learning nudge emissions."""
+
+    normalized_messenger = messenger.replace("_", "-")
+    normalized_pool = pool.replace("_", "-")
+    return f"SYS-nudge-{normalized_messenger}-{normalized_pool}-{step}"
+
+
 class _ContextualSelector(Protocol):
     """Protocol for optional contextual candidate selection."""
 
@@ -430,6 +443,7 @@ def append_ceremony_status(
     """
     try:
         from trw_mcp.state._ceremony_progress_state import (
+            increment_nudge_count,
             increment_tool_call_counter,
             is_nudge_eligible,
             record_pool_ignore,
@@ -464,6 +478,46 @@ def append_ceremony_status(
             return response
 
         messenger = cfg.effective_nudge_messenger
+        client_id = str(getattr(cfg.client_profile, "client_id", ""))
+
+        def _pending_nudge_step() -> str:
+            return _highest_priority_pending_step(state) or "session_start"
+
+        def _record_emitted_nudge(
+            *,
+            messenger_name: str,
+            pool_name: str,
+            learning_id: str | None,
+        ) -> str:
+            step = _pending_nudge_step()
+            try:
+                increment_nudge_count(effective_dir, step)
+            except Exception:  # justified: fail-open, count tracking must not block response decoration
+                logger.debug("increment_nudge_count_failed", exc_info=True)
+
+            effective_learning_id = learning_id or _synthetic_nudge_learning_id(
+                messenger=messenger_name,
+                pool=pool_name,
+                step=step,
+            )
+            try:
+                record_nudge_shown(effective_dir, effective_learning_id, state.phase, turn=state.tool_call_counter)
+            except Exception:  # justified: fail-open
+                logger.debug("record_nudge_shown_failed", exc_info=True)
+
+            try:
+                logger.info(
+                    "nudge_shown",
+                    pool=pool_name,
+                    messenger=messenger_name,
+                    learning_id=effective_learning_id,
+                    phase=state.phase,
+                    client_id=client_id,
+                    turn=state.tool_call_counter,
+                )
+            except Exception:  # justified: fail-open per NFR02
+                pass
+            return effective_learning_id
 
         if messenger == "minimal":
             try:
@@ -480,6 +534,11 @@ def append_ceremony_status(
                         messenger="minimal",
                         content_chars=len(minimal_content),
                     )
+                    _record_emitted_nudge(
+                        messenger_name="minimal",
+                        pool_name="minimal",
+                        learning_id=None,
+                    )
             except Exception:  # justified: fail-open, never break ceremony status
                 logger.debug("minimal_messenger_failed", exc_info=True)
             return response
@@ -492,26 +551,25 @@ def append_ceremony_status(
                     skip_phase_duplicates=True,
                 )
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
+                    try:
+                        logger.debug(
+                            "nudge_skipped",
+                            reason="phase_dedup",
+                            pool="learning_injection",
+                            learning_id=learning_id,
+                            client_id=str(getattr(cfg.client_profile, "client_id", "")),
+                        )
+                    except Exception:  # justified: fail-open per NFR02
+                        pass
                     injected_content = None
                 if injected_content:
                     response["nudge_content"] = injected_content
+                    effective_learning_id = _record_emitted_nudge(
+                        messenger_name="learning_injection",
+                        pool_name="learning_injection",
+                        learning_id=learning_id,
+                    )
                     if learning_id:
-                        try:
-                            record_nudge_shown(effective_dir, learning_id, state.phase, turn=state.tool_call_counter)
-                        except Exception:  # justified: fail-open
-                            logger.debug("record_nudge_shown_failed", exc_info=True)
-                        try:
-                            logger.info(
-                                "nudge_shown",
-                                pool="learning_injection",
-                                messenger="learning_injection",
-                                learning_id=learning_id,
-                                phase=state.phase,
-                                client_id=str(getattr(cfg.client_profile, "client_id", "")),
-                                turn=state.tool_call_counter,
-                            )
-                        except Exception:  # justified: fail-open per NFR02
-                            pass
                         try:
                             from trw_mcp.state._session_id import resolve_effective_session_id
 
@@ -523,13 +581,15 @@ def append_ceremony_status(
                                 files_context=[target_file] if target_file else [],
                                 exploration=False,
                                 bandit_score=1.0,
-                                client_profile=str(getattr(cfg.client_profile, "client_id", "")),
+                                client_profile=client_id,
                                 model_family=cfg.model_family or "generic",
                                 trw_version=cfg.framework_version,
                                 session_id=resolve_effective_session_id(effective_dir),
                             )
                         except Exception:  # justified: fail-open
                             logger.debug("surface_event_log_failed", exc_info=True)
+                    else:
+                        _ = effective_learning_id
                     logger.debug(
                         "nudge_messenger_selected",
                         messenger="learning_injection",
@@ -539,41 +599,100 @@ def append_ceremony_status(
                     minimal_content = compute_nudge_minimal(state, available_learnings=0)
                     if minimal_content:
                         response["nudge_content"] = minimal_content
+                        _record_emitted_nudge(
+                            messenger_name="learning_injection",
+                            pool_name="minimal",
+                            learning_id=None,
+                        )
             except Exception:  # justified: fail-open, never break ceremony status
                 logger.debug("learning_injection_messenger_failed", exc_info=True)
             return response
 
-        if messenger in {"contextual", "contextual_action"}:
+        if messenger in {
+            "contextual",
+            "contextual_action",
+            "contextual_distress",
+            "silent_flow",
+            "stepback",
+            "anchor",
+            "cod",
+            "negative",
+            "governance",
+        }:
             try:
-                include_learning_caution = messenger == "contextual"
-                contextual_content, learning_id, target_file = select_contextual_nudge_content(
-                    state,
-                    effective_dir,
-                    context=context,
-                    skip_phase_duplicates=True,
-                    include_learning_caution=include_learning_caution,
-                )
+                if messenger == "contextual_distress":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_contextual_distress
+
+                    contentual_content = compute_nudge_contextual_distress(state, effective_dir, context=context)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "silent_flow":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_silent_flow
+
+                    contentual_content = compute_nudge_silent_flow(state, effective_dir, context=context)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "stepback":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_stepback
+
+                    contentual_content = compute_nudge_stepback(state, effective_dir, context=context)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "anchor":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_anchor
+
+                    contentual_content = compute_nudge_anchor(state, effective_dir, context=context)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "cod":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_cod
+
+                    contentual_content = compute_nudge_cod(state)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "negative":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_negative
+
+                    contentual_content = compute_nudge_negative(state)
+                    learning_id = None
+                    target_file = None
+                elif messenger == "governance":
+                    from trw_mcp.state.ceremony_nudge import compute_nudge_governance
+
+                    contentual_content = compute_nudge_governance(state)
+                    learning_id = None
+                    target_file = None
+                else:
+                    include_learning_caution = messenger == "contextual"
+                    contentual_content, learning_id, target_file = select_contextual_nudge_content(
+                        state,
+                        effective_dir,
+                        context=context,
+                        skip_phase_duplicates=True,
+                        include_learning_caution=include_learning_caution,
+                    )
+
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
-                    contextual_content = None
-                if contextual_content:
-                    response["nudge_content"] = contextual_content
+                    try:
+                        logger.debug(
+                            "nudge_skipped",
+                            reason="phase_dedup",
+                            pool="contextual",
+                            learning_id=learning_id,
+                            client_id=str(getattr(cfg.client_profile, "client_id", "")),
+                        )
+                    except Exception:  # justified: fail-open per NFR02
+                        pass
+                    contentual_content = None
+
+                if contentual_content:
+                    response["nudge_content"] = contentual_content
+                    _record_emitted_nudge(
+                        messenger_name=messenger,
+                        pool_name="context",
+                        learning_id=learning_id,
+                    )
                     if learning_id:
-                        try:
-                            record_nudge_shown(effective_dir, learning_id, state.phase, turn=state.tool_call_counter)
-                        except Exception:  # justified: fail-open
-                            logger.debug("record_nudge_shown_failed", exc_info=True)
-                        try:
-                            logger.info(
-                                "nudge_shown",
-                                pool="context",
-                                messenger=messenger,
-                                learning_id=learning_id,
-                                phase=state.phase,
-                                client_id=str(getattr(cfg.client_profile, "client_id", "")),
-                                turn=state.tool_call_counter,
-                            )
-                        except Exception:  # justified: fail-open per NFR02
-                            pass
                         try:
                             from trw_mcp.state._session_id import resolve_effective_session_id
 
@@ -585,7 +704,7 @@ def append_ceremony_status(
                                 files_context=[target_file] if target_file else [],
                                 exploration=False,
                                 bandit_score=1.0,
-                                client_profile=str(getattr(cfg.client_profile, "client_id", "")),
+                                client_profile=client_id,
                                 model_family=cfg.model_family or "generic",
                                 trw_version=cfg.framework_version,
                                 session_id=resolve_effective_session_id(effective_dir),
@@ -595,15 +714,68 @@ def append_ceremony_status(
                     logger.debug(
                         "nudge_messenger_selected",
                         messenger=messenger,
-                        content_chars=len(contextual_content),
+                        content_chars=len(contentual_content),
                         has_learning=bool(learning_id),
                     )
                 else:
                     minimal_content = compute_nudge_minimal(state, available_learnings=0)
                     if minimal_content:
                         response["nudge_content"] = minimal_content
+                        _record_emitted_nudge(
+                            messenger_name=messenger,
+                            pool_name="minimal",
+                            learning_id=None,
+                        )
             except Exception:  # justified: fail-open, never break ceremony status
                 logger.debug("contextual_messenger_failed", exc_info=True)
+            return response
+
+        if messenger == "governance":
+            try:
+                from trw_mcp.state.ceremony_nudge import compute_nudge_governance
+
+                gov_content = compute_nudge_governance(state)
+                if gov_content:
+                    response["nudge_content"] = gov_content
+                    _record_emitted_nudge(
+                        messenger_name="governance",
+                        pool_name="governance",
+                        learning_id=None,
+                    )
+            except Exception:  # justified: fail-open per NFR02
+                logger.debug("governance_messenger_failed", exc_info=True)
+            return response
+
+        if messenger == "cod":
+            try:
+                from trw_mcp.state.ceremony_nudge import compute_nudge_cod
+
+                cod_content = compute_nudge_cod(state)
+                if cod_content:
+                    response["nudge_content"] = cod_content
+                    _record_emitted_nudge(
+                        messenger_name="cod",
+                        pool_name="cod",
+                        learning_id=None,
+                    )
+            except Exception:  # justified: fail-open per NFR02
+                logger.debug("cod_messenger_failed", exc_info=True)
+            return response
+
+        if messenger == "negative":
+            try:
+                from trw_mcp.state.ceremony_nudge import compute_nudge_negative
+
+                neg_content = compute_nudge_negative(state)
+                if neg_content:
+                    response["nudge_content"] = neg_content
+                    _record_emitted_nudge(
+                        messenger_name="negative",
+                        pool_name="negative",
+                        learning_id=None,
+                    )
+            except Exception:  # justified: fail-open per NFR02
+                logger.debug("negative_messenger_failed", exc_info=True)
             return response
 
         # 1. Select nudge pool via weighted random with cooldowns (standard messenger)
@@ -647,6 +819,17 @@ def append_ceremony_status(
         # 3. Apply nudge content and update state
         if nudge_content:
             response["nudge_content"] = nudge_content
+            if pool == "learnings":
+                try:
+                    increment_nudge_count(effective_dir, _pending_nudge_step())
+                except Exception:  # justified: fail-open, count tracking must not block response decoration
+                    logger.debug("increment_nudge_count_failed", exc_info=True)
+            else:
+                _record_emitted_nudge(
+                    messenger_name="standard",
+                    pool_name=pool,
+                    learning_id=None,
+                )
             record_pool_nudge(effective_dir, pool)
         else:
             # If a pool was selected but failed to produce content, record as ignore

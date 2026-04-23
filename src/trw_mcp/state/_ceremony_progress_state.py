@@ -29,6 +29,7 @@ class CeremonyState:
     session_started: bool = False
     checkpoint_count: int = 0
     last_checkpoint_ts: str | None = None
+    last_checkpoint_turn: int = 0
     files_modified_since_checkpoint: int = 0
     build_check_result: str | None = None
     last_build_check_ts: str | None = None
@@ -143,6 +144,7 @@ def _from_dict(data: dict[str, object]) -> CeremonyState:
         session_started=_bool("session_started"),
         checkpoint_count=_int("checkpoint_count"),
         last_checkpoint_ts=_opt_str("last_checkpoint_ts"),
+        last_checkpoint_turn=_int("last_checkpoint_turn"),
         files_modified_since_checkpoint=_int("files_modified_since_checkpoint"),
         build_check_result=_opt_str("build_check_result"),
         last_build_check_ts=_opt_str("last_build_check_ts"),
@@ -215,6 +217,7 @@ def mark_checkpoint(trw_dir: Path) -> None:
     state = read_ceremony_state(trw_dir)
     state.checkpoint_count += 1
     state.last_checkpoint_ts = datetime.now(timezone.utc).isoformat()
+    state.last_checkpoint_turn = state.tool_call_counter
     state.files_modified_since_checkpoint = 0
     write_ceremony_state(trw_dir, state)
 
@@ -279,10 +282,16 @@ def record_nudge_shown(
     trw_dir: Path,
     learning_id: str,
     phase: str,
-    turn: int = 0,
+    turn: int,
     surface_type: str = "nudge",
 ) -> None:
     """Record a nudge impression.
+
+    PRD-CORE-146-FR01: ``turn`` is REQUIRED (no default). Callers MUST pass
+    ``CeremonyState.tool_call_counter`` at the moment of emission. A silent
+    default of 0 previously caused every recorded entry to carry
+    ``turn_first_shown=0`` / ``last_shown_turn=0``, which interacts
+    pathologically with phase-crossing dedup and per-show accounting.
 
     PRD-QUAL-058-FR04: In addition to updating ceremony-state.json's nudge_history,
     this function also appends a discrete ``nudge_shown`` event to
@@ -339,9 +348,16 @@ def _emit_nudge_shown_event(
     try:
         events_path = trw_dir / "context" / "session-events.jsonl"
         events_path.parent.mkdir(parents=True, exist_ok=True)
+        # PRD-CORE-146 NFR03: canonical contract fields consumed by trw-eval
+        # pre_analyzers (scoring/analysis/nudge/pre_analyzers.py) — ``step`` and
+        # ``learning_ids`` (plural list form). The ``data.*`` block and the
+        # legacy singular ``learning_id`` / ``phase`` keys are preserved for
+        # backward compatibility with test_proximal_reward and TraceAnalyzer.
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "event": "nudge_shown",
+            "step": phase,
+            "learning_ids": [learning_id],
             "learning_id": learning_id,
             "phase": phase,
             "data": {

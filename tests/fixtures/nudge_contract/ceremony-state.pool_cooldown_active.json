@@ -1,0 +1,50 @@
+{
+  "_comment": "PRD-CORE-146 follow-up: pool-cooldown active edge case. Exercises the pool-selection cooldown path — two pools are in active cooldown (until tool_call > cooldown_until), with non-zero ignore counts indicating the cap-escalation path has been tripped.",
+  "session_started": true,
+  "checkpoint_count": 5,
+  "last_checkpoint_ts": "2026-04-22T17:00:00+00:00",
+  "files_modified_since_checkpoint": 1,
+  "build_check_result": "passed",
+  "last_build_check_ts": "2026-04-22T17:05:00+00:00",
+  "deliver_called": false,
+  "learnings_this_session": 8,
+  "nudge_counts": {
+    "session_start": 1,
+    "checkpoint": 5,
+    "build_check": 2,
+    "review": 1,
+    "deliver": 0
+  },
+  "phase": "implement",
+  "previous_phase": "plan",
+  "review_called": false,
+  "review_verdict": null,
+  "review_p0_count": 0,
+  "nudge_history": {
+    "L-cool-001": {
+      "phases_shown": ["implement"],
+      "turn_first_shown": 50,
+      "last_shown_turn": 50
+    }
+  },
+  "pool_nudge_counts": {
+    "workflow": 12,
+    "learnings": 8,
+    "ceremony": 15,
+    "context": 3
+  },
+  "pool_ignore_counts": {
+    "ceremony": 10,
+    "workflow": 5
+  },
+  "pool_cooldown_until": {
+    "ceremony": 9999,
+    "workflow": 8000
+  },
+  "pool_cooldown_set_at": {
+    "ceremony": 9998,
+    "workflow": 7999
+  },
+  "tool_call_counter": 55,
+  "last_nudge_pool": "learnings"
+}

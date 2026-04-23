@@ -658,6 +658,37 @@ def test_render_agent_teams_enabled_by_default(monkeypatch: pytest.MonkeyPatch) 
 # ---------------------------------------------------------------------------
 # Helpers for FR10 tests
 # ---------------------------------------------------------------------------
+# effective_nudge_density (PRD-CORE-146 FR04)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_nudge_density_default_is_none() -> None:
+    """Default config + claude-code profile -> None (no profile opts in today)."""
+    cfg = TRWConfig()
+    assert cfg.nudge_density is None
+    assert cfg.client_profile.nudge_density is None
+    assert cfg.effective_nudge_density is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("density", ["low", "medium", "high"])
+def test_nudge_density_explicit_override_wins(density: str) -> None:
+    """Explicit TRWConfig.nudge_density overrides profile default."""
+    cfg = TRWConfig(nudge_density=density)
+    assert cfg.effective_nudge_density == density
+
+
+@pytest.mark.unit
+def test_nudge_density_none_override_falls_back_to_profile() -> None:
+    """None TRWConfig override + opencode profile (also None) -> stays None."""
+    cfg = TRWConfig(target_platforms=["opencode"])
+    assert cfg.nudge_density is None
+    assert cfg.client_profile.nudge_density is None
+    assert cfg.effective_nudge_density is None
+
+
+# ---------------------------------------------------------------------------
 
 
 class _MockConfigWithProfile:

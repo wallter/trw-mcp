@@ -21,6 +21,21 @@ from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-ex
 logger = structlog.get_logger(__name__)
 _RNG = random.SystemRandom()
 
+
+def _resolve_client_id() -> str:
+    """Best-effort resolution of the active client_profile.client_id.
+
+    Fail-open: returns "" when config cannot be loaded. Used for FR07 skip
+    telemetry (PRD-CORE-146 W2B) so `nudge_skipped` events carry the same
+    client_id field as `nudge_shown` for correlation.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        return str(getattr(get_config().client_profile, "client_id", "") or "")
+    except Exception:  # justified: fail-open per NFR02
+        return ""
+
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 #
 # PRD-CORE-120-FR04: Rationale for each phase's ceremony step selection.
@@ -301,7 +316,22 @@ def apply_pool_cooldown(
     if cooldown_after > 0 and ignores >= cooldown_after:
         import datetime as _dt
 
-        state.pool_cooldown_until[pool] = state.tool_call_counter + cooldown_calls
+        # PRD-CORE-146 FR04: nudge_density lever biases cooldown duration.
+        # "low" => longer cooldown (fewer nudges), "high" => shorter cooldown
+        # (more nudges). None / "medium" preserves legacy behavior.
+        effective_cooldown = cooldown_calls
+        try:
+            from trw_mcp.models.config import get_config
+
+            density = getattr(get_config(), "effective_nudge_density", None)
+            if density == "low":
+                effective_cooldown = int(cooldown_calls * 2)
+            elif density == "high":
+                effective_cooldown = max(1, int(cooldown_calls // 2))
+        except Exception:  # justified: fail-open — density is a bias, not a gate
+            logger.debug("nudge_density_resolve_failed", exc_info=True)
+
+        state.pool_cooldown_until[pool] = state.tool_call_counter + effective_cooldown
         state.pool_cooldown_set_at[pool] = _dt.datetime.now(_dt.timezone.utc).isoformat()
         state.pool_ignore_counts[pool] = 0
         return True
@@ -344,6 +374,16 @@ def _select_nudge_pool(
                 reason="cooldown",
                 until=state.pool_cooldown_until.get(pool, 0),
             )
+            try:
+                logger.debug(
+                    "nudge_skipped",
+                    reason="pool_cooldown",
+                    pool=pool,
+                    learning_id="",
+                    client_id=_resolve_client_id(),
+                )
+            except Exception:  # justified: fail-open per NFR02
+                pass
             continue
         eligible[pool] = weight
 

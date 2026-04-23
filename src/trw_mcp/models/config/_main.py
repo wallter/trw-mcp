@@ -38,6 +38,9 @@ from trw_mcp.models.config._sub_models import (
 )
 
 if TYPE_CHECKING:
+    from typing import Literal
+
+    from trw_mcp.models.config._fields_ceremony import NudgeMessengerLiteral
     from trw_mcp.models.config._surface_config import SurfaceConfig
 
 _SubT = TypeVar("_SubT")
@@ -50,6 +53,18 @@ class TRWConfig(_TRWConfigFields):
     Adds domain sub-config properties for type-narrowed access
     and helper methods for profile resolution.
     """
+
+    # -- Static-analyzer-only field re-declarations (PRD-CORE-146 follow-up) --
+    # ``_CeremonyFields`` is a plain-class mixin (not a BaseModel) so Pydantic's
+    # metaclass picks up its annotations via MRO at runtime, but Pyright's
+    # static analysis cannot see them on the composed ``TRWConfig`` type.
+    # Declaring these under ``if TYPE_CHECKING:`` gives Pyright visibility
+    # without triggering Pydantic v2's field-shadow ``UserWarning`` at import
+    # time (and without changing the runtime field set).
+    if TYPE_CHECKING:
+        nudge_enabled: bool | None = None
+        nudge_messenger: NudgeMessengerLiteral | None = None
+        nudge_density: Literal["low", "medium", "high"] | None = None
 
     # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
     # Nested sub-config (not projected from flat fields) because the meta-

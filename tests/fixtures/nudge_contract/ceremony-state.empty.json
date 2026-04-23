@@ -1,0 +1,35 @@
+{
+  "_comment": "PRD-CORE-146 follow-up: fresh-install edge case — valid schema with no nudge activity. Exercises the defaults path (counts all zero, empty history, no cooldowns).",
+  "session_started": true,
+  "checkpoint_count": 0,
+  "last_checkpoint_ts": null,
+  "files_modified_since_checkpoint": 0,
+  "build_check_result": null,
+  "last_build_check_ts": null,
+  "deliver_called": false,
+  "learnings_this_session": 0,
+  "nudge_counts": {
+    "session_start": 0,
+    "checkpoint": 0,
+    "build_check": 0,
+    "review": 0,
+    "deliver": 0
+  },
+  "phase": "research",
+  "previous_phase": null,
+  "review_called": false,
+  "review_verdict": null,
+  "review_p0_count": 0,
+  "nudge_history": {},
+  "pool_nudge_counts": {
+    "workflow": 0,
+    "learnings": 0,
+    "ceremony": 0,
+    "context": 0
+  },
+  "pool_ignore_counts": {},
+  "pool_cooldown_until": {},
+  "pool_cooldown_set_at": {},
+  "tool_call_counter": 0,
+  "last_nudge_pool": null
+}

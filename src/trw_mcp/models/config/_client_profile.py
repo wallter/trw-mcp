@@ -178,6 +178,10 @@ class ClientProfile(BaseModel):
 
     # -- Surface control flags (PRD-CORE-125) --
     nudge_enabled: bool = True
+    # PRD-CORE-146 FR04: per-profile nudge density default. ``None`` leaves
+    # density unset so TRWConfig.effective_nudge_density falls back through
+    # to the module default. No profile opts in by default today.
+    nudge_density: Literal["low", "medium", "high"] | None = None
     tool_exposure_mode: Literal["all", "core", "minimal", "standard", "custom"] = "all"
     learning_recall_enabled: bool = True
     mcp_instructions_enabled: bool = True

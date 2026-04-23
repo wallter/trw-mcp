@@ -1,0 +1,3 @@
+{"ts": "2026-04-22T16:10:00+00:00", "surface_type": "nudge", "learning_id": "L-example1", "phase": "implement", "turn": 4, "bandit_score": 0.72, "exploration": false}
+{"ts": "2026-04-22T16:12:30+00:00", "surface_type": "recall", "learning_id": "L-example1", "phase": "implement", "turn": 5, "query": "nudge system state"}
+{"ts": "2026-04-22T16:14:00+00:00", "surface_type": "nudge", "learning_id": "L-example2", "phase": "implement", "turn": 6, "bandit_score": 0.81, "exploration": true}

@@ -4,7 +4,68 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Infrastructure
+
+- INFRA: new `make test-nudge-contract` gate validates trw-mcp ↔ trw-eval schema contract in one command.
+
+### Fixed
+
+- **2026-04-22 — PRD-CORE-146: L-SgB1 `nudge_history` per-show turn tracking.**
+  `record_nudge_shown(turn=...)` is now a required keyword; the three
+  call sites in `tools/_ceremony_status.py` (lines 371, 487, 535) pass
+  `state.tool_call_counter`. Previously the default-to-0 path caused
+  every `nudge_history` entry to land with `turn_first_shown=0,
+  last_shown_turn=0, phases_shown=["deliver"]`, degenerating
+  phase-crossing dedup. BREAKING only for callers that invoked
+  `record_nudge_shown` without an explicit `turn` kwarg — internal API.
+- **2026-04-22 — PRD-CORE-146 (bonus): layer-boundary violation at
+  `state/ceremony_nudge.py:284`** — a pre-existing `state → tools`
+  static import. Resolved via `importlib.import_module`;
+  `test_state_does_not_import_tools` is now green.
+
 ### Added
+
+- **2026-04-22 — PRD-CORE-146: structured nudge event emission.**
+  - `nudge_shown` INFO events are now emitted from all three messenger
+    dispatch paths with fields `{pool, messenger, learning_id, phase,
+    client_id, turn}`. The existing JSONL `nudge_shown` event at
+    `.trw/context/session-events.jsonl` is preserved additively: legacy
+    `phase` / `learning_id` fields are kept alongside the canonical
+    `step` / `learning_ids[]` fields for back-compat with trw-eval
+    `test_proximal_reward` and `TraceAnalyzer`.
+  - `nudge_skipped` DEBUG events from `_nudge_rules.py` (pool_cooldown)
+    and `state/ceremony_nudge.py` (phase_dedup) with enumerated reasons.
+- **2026-04-22 — PRD-CORE-146: `nudge_density` config field** with the
+  standard effective_* resolution pattern (profile override → config).
+  Consumed in `_nudge_rules.py::apply_pool_cooldown`: `low` doubles the
+  pool cooldown, `high` halves it, `None` / `medium` preserves legacy
+  behavior. Surfaced to trw-eval overlays (see trw-eval 0.7.2).
+- **2026-04-22 — PRD-CORE-146: shared cross-package fixtures** at
+  `tests/fixtures/nudge_contract/`:
+  - `ceremony-state.example.json` — authoritative `nudge_history` /
+    `nudge_counts` / pool cooldown shape.
+  - `surface_tracking.example.jsonl` — authoritative `surface_type ∈
+    {"nudge","recall"}` row shape.
+  - `nudge_shown.example.jsonl` — authoritative session event shape
+    (canonical + legacy fields together).
+  These are consumed by both trw-mcp contract tests and by trw-eval's
+  `test_nudge_contract.py` via a conftest-resolved absolute path.
+- **2026-04-22 — PRD-CORE-146: new tests**
+  `test_nudge_schema_contract.py`, `test_nudge_per_profile.py`
+  (parameterized over all 8 client profiles),
+  `test_nudge_hook_integration.py`.
+
+### Docs
+
+- **2026-04-22 — PRD-CORE-146: rewrote `docs/documentation/nudge-system.md`**
+  against the as-built nudge engine (previous version described a
+  design that no longer matched the code).
+- **2026-04-22 — PRD-CORE-146: per-profile nudge matrix** added to
+  `docs/CLIENT-PROFILES.md`.
+- **2026-04-22 — PRD-CORE-146: new cross-package contract doc**
+  `docs/documentation/nudge-eval-contract.md` pins the trw-mcp ↔
+  trw-eval schema surface (fields, config flags, fixture location,
+  versioning rules).
 
 - **2026-04-19 — `trw_learn_update` now accepts `tags`** (commit `3be0d65cd`).
   The tool previously exposed summary/detail/impact/status/tags-resolution

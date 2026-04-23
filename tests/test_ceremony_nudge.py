@@ -944,7 +944,7 @@ class TestLocalModelScoping:
         recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
 
         with (
-            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
             patch(
                 "trw_mcp.state.memory_adapter.recall_learnings",
                 return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
@@ -964,7 +964,7 @@ class TestLocalModelScoping:
         state = CeremonyState(session_started=True, learnings_this_session=1)
         recall_context = type("RecallContext", (), {"modified_files": []})()
 
-        with patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context):
+        with patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context):
             nudge = compute_nudge_learning_injection(state, trw)
 
         assert nudge == compute_nudge_minimal(state)
@@ -975,7 +975,7 @@ class TestLocalModelScoping:
         state = CeremonyState(session_started=True)
 
         with patch(
-            "trw_mcp.tools._recall_impl.build_recall_context",
+            "trw_mcp.state.recall_context.build_recall_context",
             side_effect=RuntimeError("boom"),
         ):
             nudge = compute_nudge_learning_injection(state, trw)
@@ -993,7 +993,7 @@ class TestLocalModelScoping:
         recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
 
         with (
-            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
             patch(
                 "trw_mcp.state.memory_adapter.recall_learnings",
                 return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
@@ -1012,7 +1012,7 @@ class TestLocalModelScoping:
         state = CeremonyState(session_started=False, phase="early")
         recall_context = type("RecallContext", (), {"modified_files": []})()
 
-        with patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context):
+        with patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context):
             nudge = compute_nudge_contextual(state, trw)
 
         assert "NEXT: trw_session_start()" in nudge
@@ -1029,7 +1029,7 @@ class TestLocalModelScoping:
         recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
 
         with (
-            patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=recall_context),
+            patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
             patch(
                 "trw_mcp.state.memory_adapter.recall_learnings",
                 return_value=[{"id": "L-test123", "summary": "Preserve parser ordering when normalizing tokens"}],
