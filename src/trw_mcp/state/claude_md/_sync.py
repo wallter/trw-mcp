@@ -319,182 +319,29 @@ def generate_review_md(
     }
 
 
+# PRD-CORE-149-FR11: ``execute_claude_md_sync`` moved to
+# ``_profile_dispatcher.py`` so the per-profile routing logic lives next to
+# the dispatch helper. Re-exported here to preserve the legacy import path
+# used by ``tools/learning.py`` and assorted tests.
+from trw_mcp.state.claude_md._profile_dispatcher import (
+    dispatch_for_profile as _dispatch_for_profile,
+)
+
+
 def execute_claude_md_sync(
     scope: str,
     target_dir: str | None,
     config: TRWConfig,
     reader: FileStateReader,
-    llm: LLMClient,
+    llm: "LLMClient",
     client: str = "auto",
 ) -> ClaudeMdSyncResultDict:
-    """Execute the CLAUDE.md sync operation.
-
-    Core logic extracted from the ``trw_instructions_sync`` tool to keep
-    ``tools/learning.py`` under 400 lines (Sprint 12 GAP-FR-001).
-
-    FR04 (PRD-FIX-053): Computes a SHA-256 hash of the sync inputs before
-    rendering. If the hash matches the stored hash, returns immediately with
-    ``{"status": "unchanged"}`` without re-rendering the full CLAUDE.md.
-
-    Args:
-        scope: Sync scope -- "root" or "sub".
-        target_dir: Target directory for sub-CLAUDE.md generation.
-        config: TRW configuration.
-        reader: File state reader.
-        llm: LLM client instance.
-        client: Target client(s) to write instructions for.
-            "auto" (default) -- detect via IDE config dirs;
-            "claude-code" -- write CLAUDE.md only;
-            "opencode" -- write AGENTS.md only;
-            "all" -- write both CLAUDE.md and AGENTS.md.
-
-    Returns:
-        Result dictionary with sync metadata.
-    """
-    import trw_mcp.state.claude_md as _pkg
-    from trw_mcp.state.analytics import update_analytics_sync
-
-    trw_dir = _pkg.resolve_trw_dir()
-    project_root = _pkg.resolve_project_root()
-
-    # PRD-CORE-093 FR05: Hash excludes learning content — only package version
-    # determines whether CLAUDE.md needs re-rendering. This keeps the prompt
-    # cache stable across trw_deliver calls.
-    if scope != "sub":
-        current_hash = _compute_sync_hash()
-        stored_hash = _read_stored_hash(trw_dir)
-        if stored_hash is not None and stored_hash == current_hash:
-            decision = _determine_write_target_decision(client, config, project_root, scope)
-            instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
-                project_root,
-                decision.instruction_targets,
-            )
-            logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
-            logger.info(
-                "claude_md_sync_skip",
-                reason="no_changes",
-            )
-            target = project_root / "CLAUDE.md"
-            agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
-                decision.write_agents,
-                config,
-                project_root,
-                trw_dir,
-                client=client,
-                recall_fn=recall_learnings,
-            )
-            try:
-                review_result = generate_review_md(trw_dir, repo_root=project_root)
-            except Exception:  # justified: fail-open — REVIEW.md generation must not block cache-hit return
-                logger.warning("review_md_generation_failed_cache_hit", exc_info=True)
-                review_result = _review_md_failed_result("generation failed")
-            return _build_sync_result(
-                path=str(target),
-                scope=scope,
-                status="unchanged",
-                total_lines=0,
-                agents_md_synced=agents_md_synced,
-                agents_md_path=agents_md_path,
-                instruction_file_synced=instruction_file_synced,
-                instruction_file_path=instruction_file_path,
-                instruction_file_paths=instruction_file_paths,
-                review_md=review_result,
-                hash_value=current_hash,
-            )
-
-    template = load_claude_md_template(trw_dir)
-
-    # PRD-CORE-093 FR01/FR02: CLAUDE.md is the "always-on" prompt (loads every
-    # message). Keep it compact — only the session_start trigger, ceremony quick
-    # ref, memory routing, and closing reminder. Learning promotion removed;
-    # full protocol delivered by session-start hook once per session event.
-    tpl_context: dict[str, str] = {
-        "imperative_opener": render_imperative_opener(),
-        "ceremony_quick_ref": render_ceremony_quick_ref(),
-        "memory_harmonization": render_memory_harmonization(),
-        "shared_learnings": render_shared_learnings(),
-        "closing_reminder": render_closing_reminder(),
-    }
-
-    trw_section = render_template(template, tpl_context)
-
-    # PRD-CORE-061-FR04: Enforce max_auto_lines gate before writing
-    auto_gen_lines = trw_section.count("\n")
-    if auto_gen_lines > config.max_auto_lines:
-        msg = (
-            f"Auto-gen section is {auto_gen_lines} lines, "
-            f"exceeds max_auto_lines={config.max_auto_lines}. "
-            f"Refactor rendering before syncing."
-        )
-        raise StateError(msg)
-
-    if scope == "sub" and target_dir:
-        target = Path(target_dir).resolve() / "CLAUDE.md"
-        max_lines = config.sub_claude_md_max_lines
-    else:
-        target = project_root / "CLAUDE.md"
-        max_lines = config.claude_md_max_lines
-
-    decision = _determine_write_target_decision(client, config, project_root, scope)
-    write_claude = decision.write_claude
-    write_agents = decision.write_agents
-
-    total_lines = 0
-    if write_claude:
-        total_lines = merge_trw_section(target, trw_section, max_lines)
-
-    update_analytics_sync(trw_dir)
-
-    instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
-        project_root,
-        decision.instruction_targets,
-    )
-
-    agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
-        write_agents,
-        config,
-        project_root,
-        trw_dir,
-        client=client,
-        recall_fn=recall_learnings,
-    )
-
-    # Store hash after successful render (root scope only).
-    if scope != "sub":
-        rendered_hash = _compute_sync_hash()
-        _write_stored_hash(trw_dir, rendered_hash)
-
-    # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
-    review_md_result: ReviewMdResultDict
-    try:
-        review_md_result = generate_review_md(trw_dir, repo_root=project_root)
-    except Exception:  # justified: fail-open — REVIEW.md failure must not block CLAUDE.md sync
-        logger.warning("review_md_generation_failed", exc_info=True)
-        review_md_result = _review_md_failed_result("generation failed")
-
-    logger.info(
-        "claude_md_sync_ok",
+    """Thin facade over ``dispatch_for_profile`` — see that function for docs."""
+    return _dispatch_for_profile(
         scope=scope,
-        path=str(target),
+        target_dir=target_dir,
+        config=config,
+        reader=reader,
+        llm=llm,
         client=client,
-        write_claude=write_claude,
-        write_agents=write_agents,
-    )
-    logger.debug(
-        "claude_md_sync_detail",
-        total_lines=total_lines,
-        agents_md_path=agents_md_path if agents_md_synced else None,
-        instruction_file_paths=instruction_file_paths,
-    )
-    return _build_sync_result(
-        path=str(target),
-        scope=scope,
-        status="synced",
-        total_lines=total_lines,
-        agents_md_synced=agents_md_synced,
-        agents_md_path=agents_md_path,
-        instruction_file_synced=instruction_file_synced,
-        instruction_file_path=instruction_file_path,
-        instruction_file_paths=instruction_file_paths,
-        review_md=review_md_result,
     )
