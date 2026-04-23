@@ -10,6 +10,7 @@ All functions receive pre-computed state/urgency/context as arguments.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -17,6 +18,76 @@ logger = structlog.get_logger(__name__)
 
 from trw_mcp.state._nudge_state import _STEPS as _STEPS
 from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName, _step_complete
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config._client_profile import ClientProfile
+
+
+# ---------------------------------------------------------------------------
+# Profile-aware template substitution (PRD-CORE-149 FR02, FR03, FR12)
+# ---------------------------------------------------------------------------
+
+
+def format_nudge(template: str, profile: "ClientProfile | None") -> str:
+    """Substitute profile-derived placeholders into a nudge template.
+
+    PRD-CORE-149 FR02/FR03: supports ``{client_display_name}`` and
+    ``{client_config_dir}`` placeholders so nudge prose can adapt to any
+    registered client without hardcoding the claude-code identifiers.
+
+    PRD-CORE-149 FR12: when ``profile`` is ``None`` or lacks a required field
+    (empty ``display_name`` / unresolvable ``config_dir``), the formatter falls
+    back to the safest identifier available (``profile.client_id`` for display
+    name; ``.trw`` for config dir) and emits ``structlog.warn('profile.fallback')``
+    rather than raising.
+
+    If the template contains no substitution braces, the original string is
+    returned unchanged -- making this a zero-cost wrap for already-literal
+    messages.
+    """
+    # Fast path: no placeholders -> nothing to substitute (covers every current
+    # message in this module post-2026-03 cleanup -- see PRD-CORE-149 §FR02).
+    if "{client_display_name}" not in template and "{client_config_dir}" not in template:
+        return template
+
+    display_name = ""
+    config_dir = ""
+    client_id = "<unknown>"
+    if profile is not None:
+        client_id = profile.client_id
+        display_name = profile.display_name or ""
+        try:
+            config_dir = profile.config_dir
+        except Exception:  # justified: FR12 fallback — any attr/property failure falls back
+            config_dir = ""
+
+    missing: list[str] = []
+    if not display_name:
+        display_name = client_id
+        missing.append("display_name")
+    if not config_dir:
+        config_dir = ".trw"
+        missing.append("config_dir")
+
+    if missing:
+        logger.warning(
+            "profile.fallback",
+            missing_field=",".join(missing),
+            client_id=client_id,
+        )
+
+    try:
+        return template.format(
+            client_display_name=display_name,
+            client_config_dir=config_dir,
+        )
+    except (KeyError, IndexError):
+        logger.warning(
+            "profile.fallback",
+            missing_field="format_error",
+            client_id=client_id,
+        )
+        return template
 
 # ---------------------------------------------------------------------------
 # Constants
