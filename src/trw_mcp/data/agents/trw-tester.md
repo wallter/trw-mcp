@@ -1,10 +1,13 @@
 ---
 name: trw-tester
 description: >
-  Test specialist for Agent Teams. Writes comprehensive tests verifying
-  PRD acceptance criteria, targets >=90% diff coverage, parametrizes
-  edge cases. Use as a teammate for testing tasks.
+  Test specialist for Agent Teams. Use when a sprint task needs
+  comprehensive tests written — verifies PRD acceptance criteria, targets
+  >=90% diff coverage, parametrizes edge cases, writes both unit and
+  integration tests. Not for production-code implementation (use
+  trw-implementer) or ad-hoc debugging.
 model: sonnet
+effort: medium
 maxTurns: 100
 memory: project
 allowedTools:

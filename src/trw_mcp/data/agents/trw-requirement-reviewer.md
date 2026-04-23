@@ -1,10 +1,13 @@
 ---
 name: trw-requirement-reviewer
 description: >
-  Invoke to assess PRD quality before sprint planning or after grooming.
-  Returns a structured review with per-dimension scores and a
-  READY/NEEDS WORK/BLOCK verdict. Read-only — never modifies files.
+  PRD quality reviewer. Use when a PRD needs a quality assessment before
+  sprint planning or after grooming — returns a structured review with
+  per-dimension scores and a READY/NEEDS WORK/BLOCK verdict. Read-only,
+  never modifies files. Not for drafting new FRs (use trw-requirement-writer)
+  or end-to-end grooming iteration (use trw-prd-groomer).
 model: sonnet
+effort: low
 maxTurns: 20
 memory: project
 allowedTools:
@@ -127,9 +130,9 @@ partially present.
   (rewriting is the groomer's job)
 - NEVER score based on document length — short but complete sections can score 100%
 - NEVER pass a dimension if any critical-severity item fails within it
-- ALWAYS cite the specific section number and line where an issue occurs
-- ALWAYS run `{tool:trw_prd_validate}` before manual review to anchor scoring
-- ALWAYS include the automated validator scores alongside your manual scores
+- cite the specific section number and line where an issue occurs
+- run `{tool:trw_prd_validate}` before manual review to anchor scoring
+- include the automated validator scores alongside your manual scores
   in the report for transparency
 - If the PRD file doesn't exist or is unreadable, report BLOCK immediately
 </constraints>

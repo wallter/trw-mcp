@@ -385,9 +385,19 @@ class TestAgentDefinitions:
 
     @staticmethod
     def _assert_variants_include_snippets(variant_paths: dict[str, Path], required_snippets: list[str]) -> None:
-        """Assert every variant contains each required snippet."""
+        """Assert every variant contains each required snippet.
+
+        PRD-QUAL-073 FR10 (Route B): bundled agent files carry ``{tool:trw_X}``
+        placeholders; ``.claude/agents/`` copies are the expanded form. This
+        helper expands markers before snippet matching so contract tests pass
+        against both variants.
+        """
+        import re as _re
+
+        _marker_re = _re.compile(r"\{tool:(trw_\w+)\}")
         for variant_name, path in variant_paths.items():
-            content = path.read_text(encoding="utf-8")
+            raw = path.read_text(encoding="utf-8")
+            content = _marker_re.sub(lambda m: m.group(1), raw)
             for snippet in required_snippets:
                 assert snippet in content, f"{variant_name} {path.name} missing snippet: {snippet}"
 
@@ -433,7 +443,10 @@ class TestAgentDefinitions:
         required_snippets: list[str],
     ) -> None:
         """Bundled audit agents expose the legacy taxonomy compatibility contract."""
-        bundled_content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        import re as _re
+
+        raw = (agents_dir / agent_name).read_text(encoding="utf-8")
+        bundled_content = _re.sub(r"\{tool:(trw_\w+)\}", lambda m: m.group(1), raw)
         for snippet in required_snippets:
             assert snippet in bundled_content
 
@@ -444,11 +457,23 @@ class TestAgentDefinitions:
         root_agents_dir: Path,
         agent_name: str,
     ) -> None:
-        """Bundled audit prompts stay byte-for-byte aligned with root prompt sources."""
-        bundled_content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        """Bundled and .claude/ variants align after marker expansion (PRD-QUAL-073 FR10, Route B).
+
+        Bundled is the source of truth and carries ``{tool:trw_X}`` placeholders
+        so it renders correctly across client profiles. ``.claude/agents/`` is
+        the dev-repo-local marker-expanded copy (bare ``trw_X`` tool names).
+        The two must match byte-for-byte after expanding the bundled markers.
+        """
+        import re as _re
+
+        bundled_raw = (agents_dir / agent_name).read_text(encoding="utf-8")
+        bundled_expanded = _re.sub(r"\{tool:(trw_\w+)\}", lambda m: m.group(1), bundled_raw)
         root_content = (root_agents_dir / agent_name).read_text(encoding="utf-8")
 
-        assert bundled_content == root_content
+        assert bundled_expanded == root_content, (
+            f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
+            "expansion. Run scripts/sync-agents.py to regenerate."
+        )
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
     def test_audit_agent_variants_include_finding_taxonomy_contract(

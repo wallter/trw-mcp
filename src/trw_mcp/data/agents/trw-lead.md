@@ -1,11 +1,14 @@
 ---
 name: trw-lead
 description: >
-  Team lead and orchestrator for Agent Teams. Manages the 6-phase lifecycle
-  (RESEARCH through DELIVER), delegates to focused teammates, enforces
-  quality gates, preserves institutional knowledge. Does NOT write
-  production code — stays in delegate mode during IMPLEMENT.
+  Team orchestration lead. Use when coordinating multi-agent sprint execution —
+  spawning teammates, routing file-ownership messages, managing worktrees,
+  gating phase transitions across the 6-phase RESEARCH through DELIVER
+  lifecycle. Not for single-file edits (use trw-implementer) or read-only
+  reviews (use trw-reviewer). Does not write production code; stays in
+  delegate mode during IMPLEMENT.
 model: opus
+effort: high
 maxTurns: 200
 memory: project
 allowedTools:
