@@ -284,11 +284,17 @@ def register_checkpoint_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_pre_compact_checkpoint(ctx: Context | None = None) -> PreCompactResultDict:
-        """Create a safety checkpoint before context compaction (PRD-CORE-053).
+        """Capture a safety checkpoint before the context window compacts.
 
-        Called by the PreCompact hook to preserve state before the LLM
-        context window compacts. Best-effort: failures return status but
-        do not raise.
+        Use when:
+        - Invoked by the PreCompact hook on imminent context compaction.
+        - You suspect compaction is near and want a clean resume point on disk.
+
+        Best-effort: sub-step failures populate ``status`` but do not raise.
+
+        Output: PreCompactResultDict with fields
+        {status: "written"|"skipped"|"error", reason?: str,
+         checkpoint_path?: str, instructions_path?: str, compact_state_path?: str}.
         """
         cfg = get_config()
         if not cfg.auto_checkpoint_pre_compact:

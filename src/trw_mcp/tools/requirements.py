@@ -119,22 +119,33 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         sequence: int = 1,
         risk_level: str = "",
     ) -> PrdCreateResultDict:
-        """Turn a feature request into a structured PRD --- ensures requirements are traceable, testable, and complete.
+        """Generate an AARE-F compliant PRD from a feature description.
 
-        When to call: before writing code, to define what needs to change. Even a
-        2-sentence requirements doc catches wrong assumptions before they become wrong code.
+        Use when:
+        - You have a feature request or requirements and need a structured PRD.
+        - You want auto-incremented PRD ID, YAML frontmatter, and catalogue sync.
 
-        Generates an AARE-F compliant PRD with YAML frontmatter, 12 standard sections,
-        confidence scores, and traceability links. Auto-increments the PRD ID from
-        the existing catalogue and updates INDEX.md after creation.
+        Produces 12 standard sections, confidence scores, and traceability links.
+        Updates INDEX.md/ROADMAP.md when ``index_auto_sync_on_status_change`` is on.
 
-        Args:
-            input_text: Feature request, requirements, or description --- becomes the Problem Statement and Background.
-            category: PRD category. Built-in set: CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX. Projects may extend via `.trw/config.yaml` `extra_prd_categories: [...]` (the union of built-in + configured is accepted).
-            priority: Priority level (P0, P1, P2, P3). Determines base confidence scores.
-            title: PRD title. Auto-generated from input if not provided.
-            sequence: Sequence number for PRD ID. Auto-increments from existing PRDs when default (1).
-            risk_level: Optional risk level (critical, high, medium, low). Scales validation strictness.
+        Input:
+        - input_text: feature request or description (becomes Problem Statement + Background).
+        - category: one of CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX (plus any
+          values added to ``.trw/config.yaml::extra_prd_categories``).
+        - priority: P0, P1, P2, or P3 — drives base confidence scores.
+        - title: auto-generated from input_text when empty.
+        - sequence: auto-increments from existing catalogue when default (1).
+        - risk_level: optional critical|high|medium|low — scales validation strictness.
+
+        Output: PrdCreateResultDict with fields
+        {prd_id: str, title: str, category: str, priority: str, output_path: str,
+         content: str, sections_generated: int, index_synced: bool}.
+
+        Example:
+            trw_prd_create(input_text="Add rate limiting to public API",
+                           category="CORE", priority="P1")
+            → {"prd_id": "PRD-CORE-001", "output_path": "docs/requirements-aare-f/prds/PRD-CORE-001.md",
+               "sections_generated": 12, "index_synced": true, ...}
 
         See Also: trw_prd_validate
         """
@@ -296,15 +307,27 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         ctx: Context | None = None,
         prd_path: str = "",
     ) -> ValidateResultDict:
-        """Check your PRD quality before implementation --- catches ambiguity, missing sections, and weak requirements early.
+        """Score a PRD against the V2 validation suite before implementation.
 
-        Runs the full V2 validation suite: structure compliance, content quality,
-        AARE-F compliance, and ambiguity analysis. Returns a total score (0-100),
-        quality tier, grade, and actionable improvement suggestions. Catching
-        issues here prevents rework during implementation.
+        Use when:
+        - A PRD just landed and you need a READY / NEEDS-WORK verdict before coding.
+        - You want ambiguity / completeness / traceability gates checked in one call.
 
-        Args:
-            prd_path: Path to the PRD markdown file to validate.
+        Runs structure compliance, content quality, AARE-F compliance, and
+        ambiguity analysis. Catches issues here that would otherwise cause rework.
+
+        Input:
+        - prd_path: path to the PRD markdown file (required).
+
+        Output: ValidateResultDict with fields
+        {total_score: int (0-100), tier: str, grade: str,
+         gate_pass: bool, ambiguity_rate: float, completeness: float,
+         traceability_coverage: float, suggestions: list[str]}.
+
+        Example:
+            trw_prd_validate(prd_path="docs/requirements-aare-f/prds/PRD-QUAL-074.md")
+            → {"total_score": 87, "tier": "PRODUCTION", "grade": "A",
+               "gate_pass": true, "suggestions": []}
         """
         # prd_path has an empty default so FastMCP can inject ctx as the first
         # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.

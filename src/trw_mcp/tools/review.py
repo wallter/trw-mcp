@@ -89,23 +89,34 @@ def _register_review_tool(server: FastMCP) -> None:
         reviewer_findings: list[dict[str, object]] | None = None,
         prd_ids: list[str] | None = None,
     ) -> dict[str, object]:
-        """Review code quality and produce structured findings artifact (PRD-QUAL-022).
+        """Compute a structured code-review verdict and persist a review.yaml artifact.
 
-        Accepts a list of findings (category, severity, description) and computes
-        a verdict (pass/warn/block). Writes review.yaml artifact to the run directory.
+        Use when:
+        - Gating a PR or delivery and you need a pass/warn/block verdict with receipts.
+        - You have pre-collected findings from a reviewer subagent (auto mode).
+        - You want to detect spec-vs-code drift between a PRD and git diff (reconcile).
 
         Modes:
-        - manual: findings=[...] provided directly (backward compatible)
-        - auto: multi-reviewer analysis with confidence filtering (QUAL-027)
-        - cross_model: routes diff to external model family (QUAL-026)
-        - reconcile: compare PRD FRs against git diff to detect spec drift
+        - manual: caller passes ``findings=[...]`` directly (backward compatible).
+        - auto: multi-reviewer analysis with confidence filtering.
+        - cross_model: route diff to an external model family.
+        - reconcile: compare PRD FRs against git diff.
 
-        Args:
-            findings: List of dicts with category, severity, description keys.
-            run_path: Explicit run path. Auto-detected if None.
-            mode: Review mode — 'manual', 'auto', 'cross_model', or 'reconcile'. Auto-detected.
-            reviewer_findings: Pre-collected findings from subagent layer (QUAL-027).
-            prd_ids: Explicit PRD IDs for persisted review modes; reconcile mode auto-discovers if None.
+        Input:
+        - findings: list[{category, severity, description}] — triggers manual mode.
+        - run_path: explicit run directory; auto-detected when None.
+        - mode: explicit mode override; auto-detected when None.
+        - reviewer_findings: pre-collected findings from subagent layer (auto).
+        - prd_ids: explicit PRD IDs; reconcile mode auto-discovers when None.
+
+        Output: dict with fields
+        {verdict: "pass"|"warn"|"block", findings_count: int, categories: dict,
+         review_path: str, run_id: str, mode: str}.
+
+        Example:
+            trw_review(findings=[{"category":"security","severity":"high","description":"..."}])
+            → {"verdict": "block", "findings_count": 1, "review_path": ".../review.yaml",
+               "mode": "manual"}
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode

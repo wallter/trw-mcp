@@ -29,14 +29,22 @@ def register_knowledge_tools(server: FastMCP) -> None:
     def trw_knowledge_sync(
         dry_run: bool = False,
     ) -> KnowledgeSyncResultDict:
-        """Auto-generate topic documents from tag clusters in the learning store.
+        """Cluster learnings by tag co-occurrence and emit per-topic Markdown docs.
 
-        Clusters learnings by Jaccard similarity on tag co-occurrence and
-        writes one Markdown document per cluster to .trw/knowledge/. Use
-        dry_run=True to check entry count vs threshold without side effects.
+        Use when:
+        - The learning store has grown enough that browsing by topic beats keyword recall.
+        - You want to produce shareable Markdown summaries for the team.
+        - You want to dry-run threshold checks without writing files.
 
-        Args:
-            dry_run: When True, report threshold status without writing files.
+        Clusters learnings by Jaccard similarity on tag sets and writes one
+        document per cluster to ``.trw/knowledge/``.
+
+        Input:
+        - dry_run: report threshold status without writing files.
+
+        Output: KnowledgeSyncResultDict with fields
+        {topics_generated: int, entries_clustered: int, threshold_met: bool,
+         elapsed_seconds: float, status: str}.
         """
         config = get_config()
         trw_dir = resolve_trw_dir()
