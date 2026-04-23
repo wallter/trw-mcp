@@ -159,10 +159,17 @@ def step_log_session_event(
     writer = FileStateWriter()
     events = FileEventLogger(writer)
 
+    # PRD-HPO-MEAS-001 FR-2: the session's own bootstrap event must carry
+    # the resolved surface_snapshot_id. The id is resolved upstream at
+    # ceremony.py Step 2c and threaded in via results["surface_snapshot_id"].
+    # During Phase 1 the value may be empty-string (fail-open on stamping
+    # failure) — we still write the key so parsers can assert presence
+    # rather than existence-or-not.
     event_data: dict[str, object] = {
         "learnings_recalled": int(str(results.get("learnings_count", 0))),
         "run_detected": run_dir is not None,
         "query": query if is_focused else "*",
+        "surface_snapshot_id": str(results.get("surface_snapshot_id", "")),
     }
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
@@ -187,11 +194,13 @@ def step_telemetry_startup(
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_installation_id
     from trw_mcp.telemetry.client import TelemetryClient
+    from trw_mcp.telemetry.event_base import HPOSessionStartEvent
     from trw_mcp.telemetry.models import SessionStartEvent
 
     config = get_config()
     inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
+    # Legacy CORE-031 event — continues through Phase 1 parallel-emit.
     tel_client.record_event(
         SessionStartEvent(
             installation_id=inst_id,
@@ -200,6 +209,32 @@ def step_telemetry_startup(
             run_id=str(run_dir.name) if run_dir else None,
         )
     )
+    # PRD-HPO-MEAS-001 FR-2/FR-3: parallel-emit the unified-schema
+    # HPOSessionStartEvent carrying the resolved surface_snapshot_id so
+    # the session's own bootstrap event satisfies "every event carries it".
+    # Construction only — publishing pipeline integration lands in Wave 2b.
+    snapshot_id = str(results.get("surface_snapshot_id", ""))
+    try:
+        _hpo_session_event = HPOSessionStartEvent(
+            session_id=inst_id,
+            run_id=str(run_dir.name) if run_dir else None,
+            surface_snapshot_id=snapshot_id,
+            payload={
+                "learnings_loaded": int(str(results.get("learnings_count", 0))),
+                "framework_version": config.framework_version,
+            },
+        )
+        # Light-touch observability: emit as a structlog line until the
+        # Phase 2 emitter retrofit wires a real event-writer for HPO
+        # subclasses (Wave 2b).
+        logger.info(
+            "hpo_session_start_event_constructed",
+            event_id=_hpo_session_event.event_id,
+            surface_snapshot_id=snapshot_id,
+            run_id=_hpo_session_event.run_id,
+        )
+    except Exception:  # justified: fail-open, HPO schema drift must not block session start
+        logger.warning("hpo_session_start_event_failed", exc_info=True)
     tel_client.flush()
     # Start the unified telemetry pipeline (periodic background flush
     # replaces the old fire-and-forget BatchSender thread).

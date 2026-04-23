@@ -49,10 +49,9 @@ _FRAMEWORK_VERSION_FALLBACK = "unknown"
 _PACKAGE_NAME = "trw-mcp"
 _DATA_PACKAGE = "trw_mcp.data"
 
-#: Component categories mapped to (relative path, glob patterns). Each
-#: matching file becomes a :class:`SurfaceArtifact`; the category becomes
-#: the artifact's ``surface_id`` prefix. Keep stable — H4 meta-tune groups
-#: candidates by these keys.
+#: Bundled-data component categories (rooted at ``trw_mcp.data/``).
+#: Mapped to (category, subdir, glob patterns). Keep stable — H4 meta-tune
+#: groups candidates by these keys.
 _COMPONENTS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("agents", "agents", ("**/*.md",)),
     ("skills", "skills", ("**/*.md", "**/*.yaml")),
@@ -60,6 +59,26 @@ _COMPONENTS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("prompts", "prompts", ("**/*.py", "**/*.md")),
     ("surfaces", "surfaces", ("**/*",)),
     ("config", "", ("behavioral_protocol.yaml", "semantic_checks.yaml", "settings.json")),
+)
+
+#: Repo-root governing artifacts (PRD-HPO-MEAS-001 FR-1): root CLAUDE.md,
+#: FRAMEWORK.md, and any sub-CLAUDE.md files discovered under the repo
+#: tree. These are the primary governing documents every agent reads; a
+#: surface-identity registry that misses them cannot correlate prompt
+#: changes with outcome deltas.
+_REPO_ROOT_ARTIFACTS: Final[tuple[tuple[str, str], ...]] = (
+    ("claude_md_root", "CLAUDE.md"),
+    ("framework_md", ".trw/frameworks/FRAMEWORK.md"),
+)
+
+#: Glob patterns (relative to repo root) for sub-CLAUDE.md discovery.
+#: Scoped to package source trees to bound walk depth and skip vendor dirs.
+_SUB_CLAUDE_GLOBS: Final[tuple[str, ...]] = (
+    "trw-mcp/src/**/CLAUDE.md",
+    "trw-mcp/tests/CLAUDE.md",
+    "trw-memory/src/**/CLAUDE.md",
+    "trw-distill/trw_distill/**/CLAUDE.md",
+    "docs/**/CLAUDE.md",
 )
 
 
@@ -222,6 +241,76 @@ def _artifacts_snapshot_id(artifacts: Iterable[SurfaceArtifact], *, trw_mcp_vers
     return h.hexdigest()
 
 
+def _resolve_repo_root() -> Path | None:
+    """Resolve the monorepo root by walking up from the package directory.
+
+    Returns the first parent containing both ``CLAUDE.md`` and a ``.trw``
+    directory, or ``None`` if no match. This is best-effort — callers are
+    expected to pass an explicit ``repo_root`` when running outside the
+    repository (PyPI install, Docker distribution).
+    """
+    try:
+        data_root = _resolve_data_root()
+    except Exception:  # justified: boundary, any import failure in _resolve_data_root is already logged
+        return None
+    if data_root is None:
+        return None
+    # Walk up from trw_mcp/data/ looking for a CLAUDE.md + .trw/ pair.
+    for parent in [data_root, *data_root.parents]:
+        if (parent / "CLAUDE.md").is_file() and (parent / ".trw").is_dir():
+            return parent
+    return None
+
+
+def _discover_repo_artifacts(
+    repo_root: Path | None, *, version: str, now: datetime
+) -> list[SurfaceArtifact]:
+    """Discover repo-root governing artifacts (CLAUDE.md, FRAMEWORK.md, sub-CLAUDE.md)."""
+    if repo_root is None or not repo_root.exists():
+        return []
+    out: list[SurfaceArtifact] = []
+
+    # Root-level named artifacts.
+    for category, rel in _REPO_ROOT_ARTIFACTS:
+        candidate = repo_root / rel
+        if candidate.is_file():
+            digest, _ = _hash_file(candidate)
+            out.append(
+                SurfaceArtifact(
+                    surface_id=f"{category}:{rel}",
+                    content_hash=digest,
+                    version=version,
+                    discovered_at=now,
+                    source_path=rel,
+                )
+            )
+
+    # Sub-CLAUDE.md discovery (bounded by explicit glob set so we don't
+    # walk node_modules / venvs / .git).
+    seen: set[Path] = set()
+    for pat in _SUB_CLAUDE_GLOBS:
+        for hit in repo_root.glob(pat):
+            if hit.is_file():
+                seen.add(hit.resolve())
+    for f in sorted(seen, key=lambda p: p.as_posix()):
+        digest, _ = _hash_file(f)
+        try:
+            rel_path = f.relative_to(repo_root).as_posix()
+        except ValueError:
+            rel_path = f.as_posix()
+        out.append(
+            SurfaceArtifact(
+                surface_id=f"sub_claude_md:{rel_path}",
+                content_hash=digest,
+                version=version,
+                discovered_at=now,
+                source_path=rel_path,
+            )
+        )
+
+    return out
+
+
 def _discover_artifacts(data_root: Path | None, *, version: str, now: datetime) -> list[SurfaceArtifact]:
     """Walk the bundled data directory and record one ``SurfaceArtifact`` per file."""
     if data_root is None or not data_root.exists():
@@ -276,23 +365,37 @@ class SurfaceRegistry(BaseModel):
         cls,
         *,
         data_root: Path | None = None,
+        repo_root: Path | None = None,
         now: datetime | None = None,
     ) -> SurfaceRegistry:
         """Walk the bundled surface and materialize one record per governing artifact.
+
+        FR-1 artifact coverage:
+            - Bundled ``trw_mcp.data/`` contents (agents, skills, hooks,
+              prompts, surfaces, config) — resolved from ``data_root``.
+            - Repo-root governing documents: root ``CLAUDE.md``,
+              ``FRAMEWORK.md``, and sub-``CLAUDE.md`` files under the
+              package source trees — resolved from ``repo_root``.
 
         Args:
             data_root: Override the bundled data root (tests pass a tmp
                 directory). When None, resolves ``trw_mcp.data`` via
                 importlib.resources.
+            repo_root: Override the monorepo root. When None, walks up from
+                the resolved data root looking for a ``CLAUDE.md`` +
+                ``.trw/`` pair. May be None in PyPI-only installs — then
+                repo-root artifacts are simply skipped.
             now: Override the discovered_at timestamp (tests use this for
                 reproducible snapshots).
         """
-        resolved_root = data_root if data_root is not None else _resolve_data_root()
+        resolved_data_root = data_root if data_root is not None else _resolve_data_root()
+        resolved_repo_root = repo_root if repo_root is not None else _resolve_repo_root()
         pkg_ver = _package_version()
         fw_ver = _framework_version()
         ts = now or datetime.now(tz=timezone.utc)
 
-        artifacts = _discover_artifacts(resolved_root, version=pkg_ver, now=ts)
+        artifacts = _discover_artifacts(resolved_data_root, version=pkg_ver, now=ts)
+        artifacts.extend(_discover_repo_artifacts(resolved_repo_root, version=pkg_ver, now=ts))
 
         return cls(
             trw_mcp_version=pkg_ver,

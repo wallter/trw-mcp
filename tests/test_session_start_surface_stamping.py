@@ -46,34 +46,52 @@ def test_session_start_populates_surface_snapshot_id(tmp_project: Path) -> None:
 
 def test_session_start_writes_run_surface_snapshot_when_run_pinned(
     tmp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With an active run pinned, ``run_surface_snapshot.yaml`` is on disk."""
-    server = make_test_server("ceremony", "checkpoint")
-    tools = {"start": extract_tool_fn(server, "trw_session_start")}
+    """With an active run pinned, ``run_surface_snapshot.yaml`` is on disk.
 
-    # Create a run first via trw_init pattern — simulate by calling
-    # session_start inside a tmp project that already has .trw/ skeleton.
-    # The tmp_project fixture provides .trw/ structure; we need a run dir.
+    Forces the pin path by monkeypatching ``_find_active_run_compat`` so
+    the disk assertion always fires — addresses audit finding F-04.
+    """
     run_root = tmp_project / ".trw" / "runs" / "test-task" / "20260423T000000Z-deadbeef"
     (run_root / "meta").mkdir(parents=True, exist_ok=True)
     (run_root / "meta" / "run.yaml").write_text(
         "task: test-task\nphase: research\nstatus: active\n"
     )
+    (run_root / "meta" / "events.jsonl").touch()
 
-    # Point the active run pin at our synthetic dir via env var used by
-    # _build_call_context → pin resolution. If the test harness doesn't
-    # pin, the fail-open path still writes a non-empty surface_snapshot_id
-    # to the result dict (primary assertion) and skips disk-write.
-    result = tools["start"]()
+    # Stub the run discovery + pin so Step 2c of trw_session_start always
+    # has a real run_dir to stamp. We cannot rely on real pinning in the
+    # test harness because it depends on ctx.session_id state.
+    import trw_mcp.tools.ceremony as ceremony_mod
+
+    monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
+    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    monkeypatch.setattr(
+        ceremony_mod,
+        "_get_run_status",
+        lambda rd: {
+            "active_run": rd.name,
+            "status": "active",
+            "task_name": "test-task",
+            "phase": "research",
+        },
+    )
+
+    server = make_test_server("ceremony", "checkpoint")
+    session_start = extract_tool_fn(server, "trw_session_start")
+    result = session_start()
+
+    # Primary assertion — surface_snapshot_id present in result dict.
     assert "surface_snapshot_id" in result
 
-    # Best-effort: if run was pinned, the snapshot file exists.
+    # Unconditional disk assertion — with the stubs above, Step 2c MUST
+    # have called stamp_session(run_root / "meta").
     manifest = run_root / "meta" / "run_surface_snapshot.yaml"
-    if result.get("run", {}).get("active_run"):
-        assert manifest.exists(), "pinned run should have run_surface_snapshot.yaml"
-        body = manifest.read_text()
-        assert "snapshot_id:" in body
-        assert "artifacts:" in body
+    assert manifest.exists(), f"pinned run should have run_surface_snapshot.yaml at {manifest}"
+    body = manifest.read_text()
+    assert "snapshot_id:" in body
+    assert "artifacts:" in body
 
 
 def test_session_start_fail_open_returns_empty_string_not_missing() -> None:
