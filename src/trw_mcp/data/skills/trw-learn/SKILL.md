@@ -11,6 +11,8 @@ argument-hint: "[\"summary\" | resolve L-id [reason] | obsolete L-id [reason]]"
 
 # Learn Skill
 
+Use when: you want to record, retire, or reflect on session learnings via a single slash command.
+
 Manage TRW's learning memory. Three modes:
 
 - **Record**: `/trw-learn "summary"` — record a new high-value learning

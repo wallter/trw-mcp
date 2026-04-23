@@ -53,7 +53,37 @@ def _is_public(fm: dict[str, str]) -> bool:
     return val in {"true", "yes", "1"}
 
 
+def _public_skill_names_from_inventory() -> set[str] | None:
+    """Return the set of public skill names from build/inventory.json, or None.
+
+    The inventory is the canonical PRD-QUAL-074 public-skill registry: it
+    filters to skills with ``user_invocable=True``. When the inventory is
+    missing (fresh checkout), fall back to the frontmatter-scan set.
+    """
+    import json
+
+    inv = _REPO_ROOT / "build" / "inventory.json"
+    if not inv.is_file():
+        return None
+    try:
+        data = json.loads(inv.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    names: set[str] = set()
+    for sk in data.get("skills", []):
+        if sk.get("user_invocable") is True and isinstance(sk.get("name"), str):
+            names.add(sk["name"])
+    return names or None
+
+
 def _iter_public_skills() -> list[tuple[str, Path]]:
+    """Return (skill_name, SKILL.md path) for every public skill in inventory.
+
+    When build/inventory.json exists, only its ``user_invocable: true`` set
+    is enforced. Otherwise, fall back to frontmatter scanning (kept for
+    fresh checkouts pre-``make inventory``).
+    """
+    inventory = _public_skill_names_from_inventory()
     out: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for base in _SKILL_DIRS:
@@ -65,6 +95,10 @@ def _iter_public_skills() -> list[tuple[str, Path]]:
             if key in seen:
                 continue
             seen.add(key)
+            if inventory is not None:
+                if name in inventory:
+                    out.append((name, skill_md))
+                continue
             fm, _body = _parse_frontmatter_and_body(skill_md)
             if _is_public(fm):
                 out.append((name, skill_md))

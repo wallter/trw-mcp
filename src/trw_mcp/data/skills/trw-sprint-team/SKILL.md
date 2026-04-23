@@ -11,6 +11,8 @@ argument-hint: "[sprint-doc-path]"
 
 # Sprint Team Automation Skill
 
+Use when: a sprint plan exists and you want Agent Teams bootstrapped end-to-end (playbooks + team creation + teammate spawn).
+
 Automate Agent Teams setup from a sprint plan. This skill reads the sprint document, analyzes PRD scope and complexity, proposes a team structure with file ownership, gets user approval, generates playbooks via `/trw-team-playbook`, creates the team, spawns teammates, and assigns tasks. This is the highest-leverage sprint automation — turning 30 minutes of manual team setup into a single command.
 
 ## Path Discovery

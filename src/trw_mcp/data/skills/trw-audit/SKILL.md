@@ -13,6 +13,8 @@ argument-hint: "[PRD-ID or file path]"
 
 # Adversarial Spec-vs-Code Audit Skill
 
+Use when: a PRD has been implemented and must be adversarially checked against its acceptance criteria before merge.
+
 Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review (use `/trw-review-pr` for that). This audit answers one question: **does the code do what the PRD says it should?**
 
 ## Implementation-Readiness Guardrails

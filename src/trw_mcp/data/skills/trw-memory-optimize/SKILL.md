@@ -9,6 +9,8 @@ user-invocable: true
 
 # Memory Optimization Skill
 
+Use when: learning memory has grown stale and you want an interactive prune / consolidate pass (confirms before deleting).
+
 Optimize the TRW self-learning layer by pruning low-value entries, consolidating duplicates, and rebalancing tags. Interactive — always confirms before making destructive changes.
 
 ## Workflow

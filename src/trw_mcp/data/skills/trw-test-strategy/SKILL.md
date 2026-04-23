@@ -13,6 +13,8 @@ argument-hint: "[module or 'all']"
 
 # Test Strategy Audit Skill
 
+Use when: entering IMPLEMENT phase and you need to identify untested modules, coverage gaps, and test priorities.
+
 Audit test coverage and strategy for the project codebase. Identifies untested modules, coverage gaps, and suggests targeted test improvements.
 
 ## Workflow

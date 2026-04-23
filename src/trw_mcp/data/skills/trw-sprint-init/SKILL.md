@@ -11,6 +11,8 @@ argument-hint: "[sprint name]"
 
 # Sprint Initialization Skill
 
+Use when: starting a new sprint and you need to select draft PRDs, create the sprint doc, and bootstrap the run directory.
+
 Initialize a new sprint by selecting PRDs, creating a sprint planning document, and bootstrapping the TRW run directory.
 
 ## Path Discovery

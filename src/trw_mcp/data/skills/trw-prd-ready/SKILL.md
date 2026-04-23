@@ -10,6 +10,8 @@ argument-hint: "[feature description or PRD-ID]"
 
 # PRD Ready — Full Lifecycle Skill
 
+Use when: the user gives you a feature idea or existing PRD ID and wants sprint-ready status in one step.
+
 Take a requirement from idea to sprint-ready execution plan in a single invocation. This skill orchestrates the entire PRD pipeline so users never need to remember which steps come next.
 
 ## Implementation-Readiness Guardrails

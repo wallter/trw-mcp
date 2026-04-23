@@ -10,6 +10,8 @@ argument-hint: "[sprint-doc-path or structured args]"
 
 # Team Playbook Generation Skill
 
+Use when: you need per-teammate playbooks and a file_ownership.yaml generated from a sprint document.
+
 Generate structured artifacts for Agent Teams: file ownership maps, interface contracts, and per-teammate playbooks. These artifacts prevent the #1 Agent Teams failure mode (file conflicts) and ensure consistent teammate coordination from sprint context through teammate spawn.
 
 ## Path Discovery

@@ -10,6 +10,8 @@ argument-hint: ""
 
 # TRW Ceremony Guide
 
+Use when: you are unsure which MCP tool the current phase expects (e.g., session_start vs checkpoint vs deliver).
+
 Complete reference for TRW lifecycle tools, execution phases, and workflow patterns.
 
 ## Execution Phases

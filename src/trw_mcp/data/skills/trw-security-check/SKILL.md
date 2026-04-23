@@ -13,6 +13,8 @@ argument-hint: "[module or 'all']"
 
 # Security Audit Skill
 
+Use when: you want an OWASP-focused read-only audit of trw-mcp (command injection, YAML, path traversal, secrets).
+
 Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is read-only — it identifies vulnerabilities but does not modify code.
 
 ## Workflow

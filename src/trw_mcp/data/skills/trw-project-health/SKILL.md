@@ -10,6 +10,8 @@ argument-hint: "[optional project path]"
 
 # Project Health Skill
 
+Use when: you want a full TRW health snapshot (tool usage, ceremony compliance, hook enforcement, active runs) for the current project.
+
 Generate a comprehensive TRW health report for a project, covering tool usage, ceremony compliance, hook enforcement, learnings, and active issues.
 
 ## Path Resolution
