@@ -11,6 +11,8 @@ argument-hint: "[optional message hint]"
 
 # Convention-Enforced Commit Skill
 
+Use when: you have staged changes that need a conventional, scoped commit message and a verification run before push.
+
 Create a git commit following TRW project conventions: `type(scope): message` format with `WHY:` rationale, PRD-ID linking, and Co-Authored-By trailer.
 
 ## Workflow

@@ -11,6 +11,8 @@ argument-hint: "[email type or description]"
 
 # email-template
 
+Use when: you need a marketing or transactional email drafted against TRW brand voice and an established component template.
+
 Generate production-ready, branded HTML email templates for the TRW platform. Templates use Jinja2 with table-based layout for maximum email client compatibility.
 
 ## Workflow

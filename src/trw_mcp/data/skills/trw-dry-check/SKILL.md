@@ -12,6 +12,8 @@ argument-hint: "[file-patterns...]"
 
 # /trw-dry-check
 
+Use when: you want a read-only scan for duplicated code blocks and extraction candidates.
+
 Scan files for duplicated code blocks that violate DRY principles.
 
 ## Usage

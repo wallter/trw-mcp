@@ -11,6 +11,8 @@ user-invocable: true
 
 # Memory Audit Skill
 
+Use when: you need a read-only summary of learning-memory health (tag distribution, staleness, duplicates).
+
 Analyze the health of TRW's self-learning memory layer and provide actionable recommendations. This skill is read-only — it never modifies learning entries.
 
 ## Workflow

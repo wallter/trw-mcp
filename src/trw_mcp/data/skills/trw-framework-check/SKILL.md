@@ -12,6 +12,8 @@ user-invocable: true
 
 # Framework Compliance Check Skill
 
+Use when: a session has finished and you need to confirm phase gates, active run health, and ceremony adherence before closing.
+
 Check the current state of TRW framework compliance including ceremony adherence, phase gate status, learning layer health, and active run state.
 
 ## Workflow

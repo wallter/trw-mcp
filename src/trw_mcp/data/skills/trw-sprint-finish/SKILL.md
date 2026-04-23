@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 # Sprint Completion Skill
 
+Use when: an active sprint is done and you want deliverables validated, PRD statuses updated, and delivery ceremony run.
+
 Complete an active sprint by validating deliverables, running the build gate, archiving the sprint document, and executing the full delivery ceremony.
 
 ## Path Discovery

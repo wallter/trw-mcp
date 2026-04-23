@@ -11,6 +11,8 @@ argument-hint: "[feature description]"
 
 # PRD Creation + Full Pipeline
 
+Use when: starting from a feature description and you want a fresh PRD created AND groomed / reviewed / exec-planned in one go.
+
 Create a new PRD from a feature description, then automatically run it through the full readiness pipeline (groom → review → execution plan).
 
 ## Phase 1: Create

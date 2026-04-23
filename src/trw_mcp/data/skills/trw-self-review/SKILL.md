@@ -10,6 +10,8 @@ argument-hint: "[PRD-ID]"
 
 # Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)
 
+Use when: you just finished an implementation and want to catch 60%+ of audit findings before requesting the adversarial audit.
+
 Run this checklist BEFORE requesting formal adversarial audit (`/trw-audit`). This catches 60%+ of typical audit findings at zero adversarial cost.
 
 ## Why This Exists

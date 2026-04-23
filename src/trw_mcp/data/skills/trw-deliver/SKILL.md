@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 # Enhanced Delivery Skill
 
+Use when: a session is about to end and you want findings, artifacts, and ceremony deliverables emitted to disk.
+
 Run a complete delivery ceremony with pre-flight build verification and post-team learning synthesis. This ensures the codebase is clean and that any duplicate or conflicting learnings from teammate agents are consolidated before delivery artifacts are generated.
 
 ## Workflow
