@@ -4,6 +4,27 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
+# PRD-CORE-149 FR04/FR05: source the per-profile hook-env file if present.
+# Exposes HOOKS_ENABLED, NUDGE_ENABLED, TRW_CLIENT_DISPLAY_NAME,
+# TRW_CLIENT_CONFIG_DIR. Absent file = all flags default to true (backward
+# compat with pre-FR04 installs).
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "${CLAUDE_PROJECT_DIR}/.trw/runtime/hook-env.sh" ]; then
+  . "${CLAUDE_PROJECT_DIR}/.trw/runtime/hook-env.sh" 2>/dev/null || true
+elif [ -f ".trw/runtime/hook-env.sh" ]; then
+  . ".trw/runtime/hook-env.sh" 2>/dev/null || true
+fi
+
+# trw_nudges_enabled: echoes 'true' when the nudge-pool is active for this
+# profile. Gate nudge-producing code blocks in downstream hooks on this
+# helper so light-mode profiles (opencode, codex, aider) emit silence.
+trw_nudges_enabled() {
+  if [ "${NUDGE_ENABLED:-true}" = "false" ]; then
+    printf 'false'
+  else
+    printf 'true'
+  fi
+}
+
 # get_repo_root: Resolve the project root portably.
 # Priority: $CLAUDE_PROJECT_DIR (set by Claude Code) > git > $PWD fallback.
 # All hooks MUST use this function instead of hardcoded paths.

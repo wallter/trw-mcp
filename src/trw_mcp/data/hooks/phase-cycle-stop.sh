@@ -14,6 +14,12 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
+# PRD-CORE-149 FR05: light-mode profiles (HOOKS_ENABLED=false) short-circuit
+# the entire hook with a no-op exit. The env file is sourced inside lib-trw.sh.
+if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
+  exit 0
+fi
+
 init_hook_timer
 
 # FR07: Read stdin payload for transcript_path (must happen before any stdin-consuming command)

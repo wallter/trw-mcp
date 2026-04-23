@@ -14,6 +14,11 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
+# PRD-CORE-149 FR05: honor HOOKS_ENABLED=false (light-mode profiles).
+if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
+  exit 0
+fi
+
 init_hook_timer
 
 # Read stdin payload

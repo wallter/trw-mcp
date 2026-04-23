@@ -575,6 +575,26 @@ def _generate_root_files(
     _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress)
 
 
+def _write_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[str]) -> None:
+    """PRD-CORE-149 FR04: resolve the primary profile and emit hook-env.sh.
+
+    Picks the first target from ``ide_targets`` as primary and falls back to
+    ``claude-code`` when no targets resolved. Fail-open: any error is logged
+    and swallowed so bootstrap never aborts because of hook-env propagation.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    from ._file_ops import _write_hook_env_file
+
+    primary = ide_targets[0] if ide_targets else "claude-code"
+    try:
+        profile = resolve_client_profile(primary)
+        trw_dir = target_dir / ".trw"
+        _write_hook_env_file(trw_dir, profile)
+    except Exception as exc:  # justified: fail-open, hook-env is best-effort
+        logger.warning("hook_env_write_failed", error=str(exc), primary=primary)
+
+
 def init_project(
     target_dir: Path,
     *,
@@ -673,6 +693,11 @@ def init_project(
     # 7f. Gemini CLI artifacts
     if "gemini" in ide_targets:
         _install_gemini_artifacts(target_dir, force=force, result=result)
+
+    # 7g. PRD-CORE-149 FR04: write .trw/runtime/hook-env.sh so hook scripts
+    # can honor per-profile hooks_enabled / nudge_enabled without re-reading
+    # config on every fire.
+    _write_hook_env_for_primary_profile(target_dir, ide_targets)
 
     # 8. Write managed-artifacts manifest
     _write_manifest(target_dir, result)
