@@ -223,7 +223,9 @@ class PromotionGate:
         decision: GateDecision,
     ) -> GateDecision:
         try:
-            MetaTuneEvent(
+            from trw_mcp.telemetry.unified_events import emit as _emit_unified
+
+            event = MetaTuneEvent(
                 session_id=proposal.proposal_id,
                 payload={
                     "action": "promotion_gate_evaluate",
@@ -234,6 +236,10 @@ class PromotionGate:
                     "surface_classification_result": proposal.surface_classification,
                 },
             )
+            # PRD-HPO-SAFE-001 telemetry dispatch — emit via unified writer.
+            # fallback_dir=None leaves emission best-effort when no run is
+            # pinned; the audit log is the authoritative record either way.
+            _emit_unified(event, run_dir=None, fallback_dir=None)
         except Exception:  # justified: telemetry_best_effort, gate must not raise
             logger.warning(
                 "promotion_gate_telemetry_failed",

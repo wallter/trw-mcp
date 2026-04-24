@@ -26,7 +26,12 @@ logger = structlog.get_logger(__name__)
 
 # Module-level constants so tests can monkeypatch them.
 _REQUIRED_HASH_ALGO: str = "sha256"
-_REQUIRED_COMPRESSION: str = "zstd"
+#: Required compression algorithm. Default ``gzip`` is stdlib-always-available;
+#: ``zstd`` is a preferred upgrade but is gated on the optional ``zstandard``
+#: package — setting this to ``"zstd"`` requires ``pip install zstandard``.
+#: Auditor WARN-5 (2026-04-23) flagged that the prior always-true membership
+#: check hid the missing-dependency failure mode.
+_REQUIRED_COMPRESSION: str = "gzip"
 _SUPPORTED_COMPRESSION: frozenset[str] = frozenset({"zstd", "gzip", "lz4", "none"})
 
 
@@ -60,7 +65,28 @@ def _hash_algo_available(name: str) -> bool:
 
 
 def _compression_supported(name: str) -> bool:
-    return name in _SUPPORTED_COMPRESSION
+    """Verify the compression algorithm is BOTH declared + runtime-importable.
+
+    Previously this function only checked static membership, which made it a
+    no-op that never caught a real missing dependency (auditor WARN-5).
+    Now it additionally attempts an import so missing optional packages
+    (zstd/lz4) surface at boot rather than at first-compress call.
+    """
+    if name not in _SUPPORTED_COMPRESSION:
+        return False
+    # gzip + "none" are always available (stdlib + trivial). zstd / lz4
+    # are optional C-extension packages and must be runtime-checked.
+    if name in {"gzip", "none"}:
+        return True
+    import importlib
+
+    for candidate in (name, f"{name}andard") if name == "zstd" else (name,):
+        try:
+            importlib.import_module(candidate)
+            return True
+        except ImportError:
+            continue
+    return False
 
 
 def audit_defaults() -> dict[str, Any]:
