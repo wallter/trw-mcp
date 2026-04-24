@@ -182,7 +182,9 @@ def detect_eval_gaming(
     verdict = EvalGamingVerdict(rejected=rejected, flags=tuple(flags))
 
     try:
-        MetaTuneEvent(
+        from trw_mcp.telemetry.unified_events import emit as _emit_unified
+
+        event = MetaTuneEvent(
             session_id="eval_gaming_detector",
             payload={
                 "action": "eval_gaming_detect",
@@ -191,6 +193,7 @@ def detect_eval_gaming(
                 "rejected": verdict.rejected,
             },
         )
+        _emit_unified(event, run_dir=None, fallback_dir=None)
     except Exception:  # justified: telemetry_best_effort, detector must never raise
         logger.warning(
             "eval_gaming_telemetry_failed",

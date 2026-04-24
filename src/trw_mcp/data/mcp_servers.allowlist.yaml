@@ -40,6 +40,9 @@ servers:
       - trw_prd_create
       - trw_prd_validate
       - trw_mcp_security_status
+      # PRD-HPO-MEAS-001 FR-7 + FR-8 (Wave 2c)
+      - trw_query_events
+      - trw_surface_diff
 
   - name: filesystem
     url_or_command: "npx -y @modelcontextprotocol/server-filesystem"
