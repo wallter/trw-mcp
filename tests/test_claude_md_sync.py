@@ -416,6 +416,29 @@ class TestOpencodeParity:
             "If change is intentional, regenerate opencode_agents_md_baseline.sha256."
         )
 
+    def test_opencode_agents_md_has_no_claude_code_literal(self, tmp_path: Path) -> None:
+        """PRD-CORE-149 FR08 acceptance: the written AGENTS.md must not carry
+        any literal 'Claude Code' string.
+
+        This is the sync-pipeline end-to-end check the parity SHA alone cannot
+        provide — a baseline captured with the literal present would freeze
+        the bug into the fixture. Grepping the written file directly closes
+        the profile-awareness regression surface at the actual sync output,
+        not just the renderer.
+        """
+        (tmp_path / ".opencode").mkdir()
+        _run_sync(tmp_path, client="opencode")
+
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists(), "opencode sync must produce AGENTS.md"
+
+        content = agents_md.read_text(encoding="utf-8")
+        assert "Claude Code" not in content, (
+            "opencode AGENTS.md contains a literal 'Claude Code' string — "
+            "profile-awareness regression. Every nudge/protocol template "
+            "must use {client_display_name} substitution (PRD-CORE-149 FR02)."
+        )
+
 
 # ---------------------------------------------------------------------------
 # PRD-QUAL-075 US-002 acceptance: canonical-edit-propagates.
