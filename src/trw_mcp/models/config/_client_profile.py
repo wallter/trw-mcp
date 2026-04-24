@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from trw_mcp.models.run import Phase
 
@@ -194,6 +194,7 @@ class ClientProfile(BaseModel):
     # ``"mcp__trw__"`` for claude-code; bare names for all other clients.
     tool_namespace_prefix: str = ""
 
+    @computed_field  # type: ignore[prop-decorator]  # Pydantic v2 supports @computed_field on @property; the decorator-order lint is a known Pyright limitation.
     @property
     def config_dir(self) -> str:
         """PRD-CORE-149 FR06: client config directory.
@@ -202,6 +203,11 @@ class ClientProfile(BaseModel):
         (e.g., ``.claude`` for ``.claude/INSTRUCTIONS.md``). Returns ``.trw``
         when no instruction path is configured -- the TRW state directory is
         the universal fallback.
+
+        Exposed as a Pydantic v2 ``@computed_field`` so it appears in
+        ``model_dump()`` output and is recognized by static type checkers as
+        an attribute of ``ClientProfile`` (resolves the Pyright false-positive
+        on ``_nudge_messages.py`` accessing ``profile.config_dir``).
         """
         path = self.write_targets.instruction_path
         if not path:
