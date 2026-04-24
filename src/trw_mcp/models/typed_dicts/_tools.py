@@ -155,6 +155,10 @@ class SessionStartResultDict(TypedDict, total=False):
     # unavailable or fails open. Every HPOTelemetryEvent emitted during the
     # session is expected to carry this id (post Wave-2 wiring).
     surface_snapshot_id: str
+    # PRD-HPO-MEAS-001 NFR-12: Boot-audit failures surfaced to the caller.
+    # Absent on success; populated with ``{key, expected, actual, remediation}``
+    # entries when any Phase-1 default cannot be resolved.
+    boot_audit_failures: list[dict[str, str]]
 
 
 class RunReportResultDict(TypedDict, total=False):

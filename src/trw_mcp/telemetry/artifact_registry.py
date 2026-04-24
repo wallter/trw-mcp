@@ -361,6 +361,52 @@ class SurfaceRegistry(BaseModel):
     artifacts: tuple[SurfaceArtifact, ...] = Field(default_factory=tuple)
 
     @classmethod
+    def build_and_emit(
+        cls,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        run_dir: Path | None = None,
+        fallback_dir: Path | None = None,
+        data_root: Path | None = None,
+        repo_root: Path | None = None,
+        now: datetime | None = None,
+    ) -> SurfaceRegistry:
+        """Build the registry AND emit one ``SurfaceRegistered`` event per artifact.
+
+        PRD-HPO-MEAS-001 FR-10 AC-8: every newly-discovered artifact
+        produces a ``SurfaceRegistered`` event so cross-session analytics
+        can answer "when did this CLAUDE.md first appear in the manifest?"
+        without re-walking disk.
+
+        Emission is fail-open: any writer failure is logged and skipped;
+        the registry itself is always returned.
+        """
+        registry = cls.build(data_root=data_root, repo_root=repo_root, now=now)
+        try:
+            from trw_mcp.telemetry.event_base import SurfaceRegistered
+            from trw_mcp.telemetry.unified_events import emit as _emit
+
+            snapshot_id = registry.snapshot_id
+            for art in registry.artifacts:
+                category = art.surface_id.split(":", 1)[0] if ":" in art.surface_id else "unknown"
+                event = SurfaceRegistered(
+                    session_id=session_id,
+                    run_id=run_id,
+                    surface_snapshot_id=snapshot_id,
+                    payload={
+                        "surface_id": art.surface_id,
+                        "content_hash": art.content_hash,
+                        "source_path": art.source_path,
+                        "category": category,
+                    },
+                )
+                _emit(event, run_dir=run_dir, fallback_dir=fallback_dir)
+        except Exception:  # justified: fail-open, event emission must not break registry resolution
+            logger.debug("surface_registered_emit_failed", exc_info=True)
+        return registry
+
+    @classmethod
     def build(
         cls,
         *,

@@ -31,6 +31,7 @@ from trw_mcp.telemetry.event_base import (
     MetaTuneEvent,
     ObserverEvent,
     PhaseExposureEvent,
+    SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
     emit_h1_observe_mode_warning,
@@ -107,6 +108,15 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
         fallback_reason="h1_substrate_not_live",
         buffered_event_count_since_start=5,
         surface_snapshot_id="snap_a",
+    ),
+    "surface_registered": SurfaceRegistered(
+        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        payload={
+            "surface_id": "agents:trw-implementer.md",
+            "content_hash": "ff" * 32,
+            "source_path": "agents/trw-implementer.md",
+            "category": "agents",
+        },
     ),
 }
 
