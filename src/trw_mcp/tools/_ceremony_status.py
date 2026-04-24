@@ -811,7 +811,12 @@ def append_ceremony_status(
                 except ImportError:
                     pass
                 if not nudge_content:
-                    nudge_content = _select_nudge_message(pending, state, available_learnings=0)
+                    # PRD-CORE-149 FR03: pass active profile so client-identity
+                    # placeholders ({client_display_name}/{client_config_dir})
+                    # substitute correctly for opencode/cursor/aider users.
+                    nudge_content = _select_nudge_message(
+                        pending, state, available_learnings=0, profile=cfg.client_profile
+                    )
         elif pool == "context" and context:
             urgency = _compute_urgency(state, _highest_priority_pending_step(state) or "session_start")
             nudge_content = _context_reactive_message(context, state, urgency=urgency)
