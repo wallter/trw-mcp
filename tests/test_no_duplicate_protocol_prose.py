@@ -13,9 +13,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-pytestmark = pytest.mark.unit
+# Integration tier: reads real repository markdown files and uses tmp_path
+# for the negative lint check. Per .claude/rules/testing.md, tmp_path and
+# real-file I/O classify as integration — no unit marker applied.
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
