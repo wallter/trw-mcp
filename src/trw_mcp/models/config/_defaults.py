@@ -47,7 +47,14 @@ TOOL_GROUP_QUALITY: tuple[str, ...] = (
     "trw_prd_create",
     "trw_prd_validate",
 )
-TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = ("trw_status",)
+TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
+    "trw_status",
+    # PRD-HPO-MEAS-001 FR-7 + FR-8: unified event query + surface diff
+    "trw_query_events",
+    "trw_surface_diff",
+    # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
+    "trw_mcp_security_status",
+)
 TOOL_GROUP_ADMIN: tuple[str, ...] = (
     "trw_pre_compact_checkpoint",
     "trw_init",
