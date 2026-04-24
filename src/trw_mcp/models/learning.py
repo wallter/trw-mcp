@@ -234,7 +234,7 @@ class LearningEntry(BaseModel):
     )
     source_identity: str = Field(
         default="",
-        description="Name of the source (e.g., 'Tyler', 'claude-opus-4-6').",
+        description="Name of the source (e.g., 'Tyler', 'claude-opus-4-7').",
     )
 
     # PRD-CORE-099: Client & model provenance auto-detection
@@ -244,7 +244,7 @@ class LearningEntry(BaseModel):
     )
     model_id: str = Field(
         default="",
-        description="AI model that created this entry (e.g., 'claude-opus-4-6').",
+        description="AI model that created this entry (e.g., 'claude-opus-4-7').",
     )
     assertions: list[dict[str, object]] = Field(
         default_factory=list,

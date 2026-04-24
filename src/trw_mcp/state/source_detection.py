@@ -110,7 +110,7 @@ def _parse_opencode_model(cwd: str | Path | None = None) -> str:
 def detect_model_id(*, cwd: str | Path | None = None) -> str:
     """Detect the AI model ID from environment variables or config files.
 
-    Returns a model identifier string (e.g., ``"claude-opus-4-6"``) or
+    Returns a model identifier string (e.g., ``"claude-opus-4-7"``) or
     ``""`` when detection fails.
     """
     # Phase 1: env var check
