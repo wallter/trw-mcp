@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import yaml
 
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.telemetry.surface_manifest import MANIFEST_FILENAME
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 logger = structlog.get_logger(__name__)
 
@@ -209,7 +212,46 @@ def surface_diff(
     }
 
 
+def register_query_tools(server: FastMCP) -> None:
+    """Register ``trw_query_events`` and ``trw_surface_diff`` MCP tools.
+
+    FR-7 and FR-8 MCP tool registration. The two internal query helpers
+    are wrapped as ``@server.tool()`` callables so they are visible to
+    every registered client (claude-code, opencode, cursor, etc.).
+    """
+
+    @server.tool(output_schema=None)
+    def trw_query_events(
+        session_id: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a merged cross-emitter event view for a session.
+
+        Args:
+            session_id: When provided, restrict results to events whose
+                ``session_id`` matches. Pass ``None`` for cross-session
+                trend queries.
+            filters: Optional extra equality filters. Supported keys:
+                ``run_id``, ``event_type``, ``emitter``.
+        """
+        return query_events(session_id=session_id, filters=filters)
+
+    @server.tool(output_schema=None)
+    def trw_surface_diff(
+        snapshot_id_a: str,
+        snapshot_id_b: str,
+    ) -> dict[str, Any]:
+        """Structured diff between two surface snapshots.
+
+        Returns ``{added, removed, changed}`` lists of ``surface_id``
+        strings. ``changed`` entries appear in both snapshots with
+        different ``content_hash`` values.
+        """
+        return surface_diff(snapshot_id_a=snapshot_id_a, snapshot_id_b=snapshot_id_b)
+
+
 __all__ = [
     "query_events",
+    "register_query_tools",
     "surface_diff",
 ]
