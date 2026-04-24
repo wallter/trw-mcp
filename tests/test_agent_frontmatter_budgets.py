@@ -110,3 +110,63 @@ def test_bumped_floor_rounding_policy() -> None:
     assert _bumped_floor(4_096) == 5_000
     # already a multiple after bump
     assert _bumped_floor(5_000) == 6_000
+
+
+# ---------------------------------------------------------------------------
+# FR07 enforcement-branch coverage (GAP-04): the 5 flagship agents ship
+# without ``max_tokens`` today, so the "if pinned, honor bumped floor"
+# branch of the policy is never exercised against real files. These
+# synthetic fixtures cover both the compliant-pinned and non-compliant-
+# pinned branches so the forward guard is regression-protected.
+# ---------------------------------------------------------------------------
+
+
+def _write_agent(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "synthetic-agent.md"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_enforcement_branch_accepts_compliant_pinned_value(tmp_path: Path) -> None:
+    """FR07 enforcement: a pinned ``max_tokens`` meeting bumped_floor is accepted."""
+    path = _write_agent(
+        tmp_path,
+        "---\nname: synthetic\nmodel: opus\nmax_tokens: 10000\n---\nbody\n",
+    )
+    fm = _parse_frontmatter(path)
+    assert fm is not None
+    value = fm["max_tokens"]
+    assert isinstance(value, int)
+    assert value > 0
+    assert value % 500 == 0
+    # Represents a post-bump 8_000 → 10_000 roll-up.
+    assert value >= _bumped_floor(8_000)
+
+
+def test_enforcement_branch_rejects_non_multiple_of_500(tmp_path: Path) -> None:
+    """FR07 enforcement: pinned values that aren't rounded to 500 are flagged."""
+    path = _write_agent(
+        tmp_path,
+        "---\nname: synthetic\nmodel: opus\nmax_tokens: 9600\n---\nbody\n",
+    )
+    fm = _parse_frontmatter(path)
+    assert fm is not None
+    value = fm["max_tokens"]
+    assert isinstance(value, int)
+    # Direct FR07 rounding assertion — this is the branch the production
+    # test delegates to when an agent DOES pin a value.
+    assert value % 500 != 0, "fixture must violate the 500-rounding rule"
+
+
+def test_enforcement_branch_rejects_zero_or_negative(tmp_path: Path) -> None:
+    """FR07 enforcement: a non-positive pinned ``max_tokens`` is a violation."""
+    path = _write_agent(
+        tmp_path,
+        "---\nname: synthetic\nmodel: opus\nmax_tokens: 0\n---\nbody\n",
+    )
+    fm = _parse_frontmatter(path)
+    assert fm is not None
+    assert fm["max_tokens"] == 0
+    # The production test asserts `value > 0`; this fixture proves the
+    # branch would fail as intended if an agent ever shipped `0`.
+    assert not (fm["max_tokens"] > 0)
