@@ -49,6 +49,9 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_prd_validate": "Validate PRD structure and completeness",
     # Observability
     "trw_status": "Show current run status and session overview",
+    "trw_query_events": "Merged cross-emitter view of HPO telemetry events for a session (FR-7)",
+    "trw_surface_diff": "Structured diff between two surface snapshots (FR-8)",
+    "trw_mcp_security_status": "Report MCP-security observability counters and shadow-clock state (FR-5)",
     # Admin
     "trw_pre_compact_checkpoint": "Save checkpoint before context compaction",
     "trw_init": "Initialize TRW in a project directory",
