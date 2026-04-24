@@ -241,6 +241,8 @@ def migrate_run(
                     session_id=row["session_id"],
                     run_id=row.get("run_id"),
                     ts=parsed_ts,
+                    emitter=str(row.get("emitter", cls.model_fields["emitter"].default or "")),
+                    event_type=str(row["event_type"]),
                     surface_snapshot_id=row.get("surface_snapshot_id", ""),
                     parent_event_id=row.get("parent_event_id"),
                     payload=row.get("payload", {}),
