@@ -93,6 +93,58 @@ def _try_init_observation_masking(config: TRWConfig) -> object | None:
         return None
 
 
+def _try_init_mcp_security(config: TRWConfig) -> object | None:
+    """Try to initialize MCPSecurityMiddleware (PRD-INFRA-SEC-001 FR-6/FR-9).
+
+    v1 is observe-mode: the middleware instantiates the signed registry,
+    the capability-scope filter, and the 3-week shadow anomaly detector.
+    It never blocks tool calls — it emits ``MCPSecurityEvent`` telemetry
+    through the unified events writer. Returns None on failure (fail-open).
+    """
+    try:
+        from trw_mcp.middleware.mcp_security import MCPSecurityMiddleware
+        from trw_mcp.security.anomaly_detector import (
+            AnomalyDetector,
+            AnomalyDetectorConfig,
+        )
+        from trw_mcp.security.mcp_registry import MCPAllowlist, load_allowlist
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        trw_dir = resolve_trw_dir()
+        default_allowlist = (
+            Path(__file__).resolve().parent.parent / "data" / "mcp_servers.allowlist.yaml"
+        )
+        overlay = trw_dir / "mcp_servers.local.yaml"
+        try:
+            allowlist = load_allowlist(default_allowlist, overlay)
+        except (OSError, ValueError):  # justified: fail-open, allowlist load failure falls back to empty (observe-mode)
+            logger.warning(
+                "mcp_security_allowlist_load_failed",
+                path=str(default_allowlist),
+                outcome="fallback_empty",
+            )
+            allowlist = MCPAllowlist(servers=[])
+        det = AnomalyDetector(
+            config=AnomalyDetectorConfig(
+                shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
+            ),
+            run_dir=None,
+            fallback_dir=trw_dir / config.context_dir
+            if hasattr(config, "context_dir")
+            else trw_dir,
+        )
+        return MCPSecurityMiddleware(
+            allowlist=allowlist,
+            scopes={},
+            anomaly_detector=det,
+            run_dir=None,
+            fallback_dir=trw_dir,
+        )
+    except Exception:  # justified: fail-open, security layer is observe-mode and must not crash server startup
+        logger.warning("middleware_init_failed", component="MCPSecurityMiddleware")
+        return None
+
+
 def _try_init_response_optimizer() -> object | None:
     """Try to initialize ResponseOptimizerMiddleware. Returns None on failure."""
     try:
@@ -129,6 +181,15 @@ def _build_middleware() -> list[object]:
         )
         if mw is not None
     )
+
+    # PRD-INFRA-SEC-001 FR-6/FR-9: the MCP security middleware is instantiated
+    # at startup so the anomaly detector's shadow clock is written and the
+    # signed registry loaded. It is held on the module-level ``_mcp_security``
+    # attribute for use by the transport dispatch path (stdio/HTTP/SSE), NOT
+    # added to the FastMCP middleware chain (FastMCP expects a specific ASGI
+    # protocol which this observe-mode layer does not implement).
+    global _mcp_security
+    _mcp_security = _try_init_mcp_security(config)
 
     return middleware
 
@@ -205,6 +266,10 @@ def configure_logging_compat(*, debug: bool, config: TRWConfig) -> None:
     )
 
 
-# ── Module-level singleton (backward compat) ─────────────────────────
+# ── Module-level singletons ─────────────────────────────────────────
+# _mcp_security holds the MCPSecurityMiddleware instance (PRD-INFRA-SEC-001
+# FR-6/FR-9) when startup succeeds; it is None otherwise (observe-mode
+# fail-open). Transports consult this for per-dispatch security events.
+_mcp_security: object | None = None
 mcp = create_app()
 _middleware_list: list[object] = list(mcp.middleware)  # backward compat for _tools.py
