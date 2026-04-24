@@ -282,6 +282,10 @@ class DeliverResultDict(TypedDict, total=False):
     # PRD-INFRA-068 (C3): Memory health dashboard — surfaced here so clients
     # can report health when deliver is a session's last action.
     memory_health: dict[str, object]
+    # PRD-HPO-MEAS-001 FR-5: CLEAR 5-dimensional score for the closed
+    # session. Populated when load_and_score_run produces a record.
+    # Shape matches ``ClearScore.model_dump(mode="json")``.
+    clear_score: dict[str, object]
 
 
 class ToolEventDataDict(TypedDict, total=False):

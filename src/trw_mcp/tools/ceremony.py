@@ -804,6 +804,40 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         except Exception:  # justified: fail-open — integrity probe must not block deliver
             logger.debug("deliver_integrity_check_failed", exc_info=True)
 
+        # Step 3c: PRD-HPO-MEAS-001 FR-5 — compute + persist CLEAR score
+        # for this session. One record per closed session; failure is
+        # fail-open so the scorer never blocks deliver completion.
+        if resolved_run is not None:
+            try:
+                from trw_mcp.scoring.clear import load_and_score_run
+
+                session_id_for_clear = str(resolved_run.name)
+                clear_score = load_and_score_run(
+                    session_id_for_clear, resolved_run
+                )
+                if clear_score is not None:
+                    import json as _clear_json
+
+                    clear_path = resolved_run / "meta" / "session_clear_score.json"
+                    clear_path.write_text(
+                        _clear_json.dumps(clear_score.model_dump(mode="json"), indent=2),
+                        encoding="utf-8",
+                    )
+                    results["clear_score"] = cast(
+                        "dict[str, object]", clear_score.model_dump(mode="json")
+                    )
+                    logger.info(
+                        "clear_score_persisted",
+                        session_id=session_id_for_clear,
+                        cost=clear_score.cost,
+                        latency=clear_score.latency,
+                        efficacy=clear_score.efficacy,
+                        assurance=clear_score.assurance,
+                        reliability=clear_score.reliability,
+                    )
+            except Exception:  # justified: fail-open — CLEAR scoring must not block deliver
+                logger.debug("clear_score_step_failed", exc_info=True)
+
         # -- DEFERRED PATH (background thread) --
         # Housekeeping, analytics, publishing, and telemetry — these don't
         # affect the next session's startup and can run after we return.

@@ -225,9 +225,76 @@ def compute(
     return score
 
 
+def load_and_score_run(
+    session_id: str,
+    run_dir: object,
+    *,
+    ceremony_compliance_score: float | None = None,
+) -> ClearScore | None:
+    """Load a run's unified events from disk and compute a :class:`ClearScore`.
+
+    Wave 2c carry-forward wiring: called from ``trw_deliver`` (ceremony.py)
+    on session close so every delivered run produces exactly one
+    ``session_clear_score.json`` artifact per FR-5's "one record per closed
+    session" AC.
+
+    Args:
+        session_id: canonical session id stamped on events.
+        run_dir: ``<task>/<run_id>/`` directory (``Path`` or str). The
+            events file is resolved as ``<run_dir>/meta/events-*.jsonl``.
+        ceremony_compliance_score: optional pre-computed ceremony rollup
+            to override the success-ratio fallback in the efficacy dim.
+
+    Returns:
+        A :class:`ClearScore` or ``None`` when no events can be loaded
+        (no run_dir, no meta, no events files).
+    """
+    from pathlib import Path as _Path
+
+    from trw_mcp.telemetry.event_base import EVENT_TYPE_REGISTRY, ObserverEvent
+
+    run_path = _Path(str(run_dir)) if run_dir is not None else None
+    if run_path is None:
+        return None
+    meta = run_path / "meta"
+    if not meta.is_dir():
+        return None
+
+    import json as _json
+
+    events: list[HPOTelemetryEvent] = []
+    for events_file in sorted(meta.glob("events-*.jsonl")):
+        try:
+            raw = events_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = _json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            et = str(record.get("event_type", ""))
+            cls = EVENT_TYPE_REGISTRY.get(et, ObserverEvent)
+            try:
+                ev = cls.model_validate(record)
+            except Exception:  # justified: scan-resilience, drift between schema + persisted rows
+                continue
+            events.append(ev)
+
+    if not events:
+        return None
+    return compute(session_id, events, ceremony_compliance_score=ceremony_compliance_score)
+
+
 __all__ = [
     "ClearScore",
     "DEFAULT_COST_P95_USD",
     "DEFAULT_LATENCY_P95_MS",
     "compute",
+    "load_and_score_run",
 ]
