@@ -480,6 +480,83 @@ class FileEventLogger:
         self._writer.append_jsonl(events_path, record)
         logger.debug("event_logged", event_type=event_type, path=str(events_path))
 
+        # PRD-HPO-MEAS-001 FR-3/FR-10: Phase 2 parallel-emit. Every legacy
+        # event also lands in the unified events-YYYY-MM-DD.jsonl file so
+        # trw_query_events returns a merged cross-emitter view. Fail-open
+        # so unified-file failures never break the legacy write path.
+        try:
+            self._parallel_emit_unified(events_path, event_type, data)
+        except Exception:  # justified: fail-open, Phase 2 retrofit must not block legacy emitters
+            logger.debug("unified_parallel_emit_failed", event_type=event_type, exc_info=True)
+
+    def _parallel_emit_unified(
+        self,
+        events_path: Path,
+        event_type: str,
+        data: dict[str, object],
+    ) -> None:
+        """Phase 2 retrofit — emit a HPOTelemetryEvent shape alongside the legacy row.
+
+        Mapping from legacy ``event_type`` to HPOTelemetryEvent subclass
+        follows the v1_to_unified migration dictionary. Events whose path
+        is under ``<run>/meta/`` produce ``<run>/meta/events-<date>.jsonl``
+        siblings; events under the context/session-events fallback write
+        to a same-dir dated file.
+        """
+        # Lazy imports to avoid a persistence ↔ telemetry cycle at module load.
+        from trw_mcp.migration.v1_to_unified import _LEGACY_EVENT_TYPE_MAP
+        from trw_mcp.telemetry.event_base import EVENT_TYPE_REGISTRY, ObserverEvent
+        from trw_mcp.telemetry.unified_events import resolve_unified_events_path
+
+        unified_type = _LEGACY_EVENT_TYPE_MAP.get(event_type, "observer")
+        cls = EVENT_TYPE_REGISTRY.get(unified_type, ObserverEvent)
+
+        # Carve reserved vs payload keys exactly like the migration tool.
+        reserved = {"event", "ts", "session_id", "run_id"}
+        payload: dict[str, object] = {k: v for k, v in data.items() if k not in reserved}
+        payload.setdefault("legacy_event", event_type)
+
+        session_id_raw = data.get("session_id")
+        run_id_raw = data.get("run_id")
+
+        try:
+            event = cls(
+                session_id=str(session_id_raw) if session_id_raw is not None else "",
+                run_id=str(run_id_raw) if run_id_raw is not None else None,
+                emitter=str(cls.model_fields["emitter"].default or unified_type),
+                event_type=unified_type,
+                surface_snapshot_id=str(data.get("surface_snapshot_id", "")),
+                parent_event_id=str(data.get("parent_event_id", "")) or None,
+                payload=payload,
+            )
+        except Exception:  # justified: fail-open, subclass constraints may reject legacy shapes
+            logger.debug("unified_event_build_failed", event_type=event_type, exc_info=True)
+            return
+
+        # Resolve target path under the same meta/ dir as the legacy
+        # file, or the file's parent when there is no meta dir.
+        parent = events_path.parent
+        if parent.name == "meta":
+            target = resolve_unified_events_path(run_dir=parent.parent)
+        else:
+            target = resolve_unified_events_path(run_dir=None, fallback_dir=parent)
+        if target is None:
+            return
+
+        # Serialize via Pydantic model_dump_json for schema fidelity.
+        import json
+
+        try:
+            record = json.loads(event.model_dump_json())
+        except Exception:  # justified: fail-open, serialization edge cases
+            logger.debug("unified_event_serialize_failed", event_type=event_type, exc_info=True)
+            return
+        try:
+            self._writer.append_jsonl(target, record)
+        except OSError:  # justified: fail-open, disk errors must not break legacy path
+            logger.debug("unified_event_write_failed", target=str(target), exc_info=True)
+            return
+
 
 def model_to_dict(model: BaseModel) -> dict[str, object]:
     """Convert a Pydantic model to a plain dict suitable for YAML serialization.
