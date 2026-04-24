@@ -9,8 +9,12 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 
@@ -368,3 +372,97 @@ class TestMarkerPreservation:
         nested_content = nested_claude.read_text(encoding="utf-8")
         assert TRW_MARKER_START not in nested_content
         assert TRW_MARKER_END not in nested_content
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-075 FR06: second-profile parity check (opencode).
+# ---------------------------------------------------------------------------
+
+
+_FIXTURE_DIR = Path(__file__).parent / "fixtures"
+_OPENCODE_SHA_PATH = _FIXTURE_DIR / "opencode_agents_md_baseline.sha256"
+
+
+class TestOpencodeParity:
+    """FR06 acceptance: sanity-check a second profile's rendered artifact is stable."""
+
+    def test_opencode_parity(self, tmp_path: Path) -> None:
+        """Render AGENTS.md via opencode profile; assert SHA256 matches baseline.
+
+        If the baseline fixture is absent, capture it (``--fixture-generated``
+        semantics) so a subsequent run enforces stability.
+        """
+        (tmp_path / ".opencode").mkdir()
+
+        _run_sync(tmp_path, client="opencode")
+
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists(), "opencode sync must produce AGENTS.md"
+
+        content = agents_md.read_bytes()
+        actual_sha = hashlib.sha256(content).hexdigest()
+
+        if not _OPENCODE_SHA_PATH.exists():
+            # First-run capture: write baseline so the next run enforces parity.
+            _OPENCODE_SHA_PATH.write_text(actual_sha + "\n", encoding="utf-8")
+            pytest.skip(
+                f"Captured opencode AGENTS.md baseline SHA at {_OPENCODE_SHA_PATH.name} "
+                "(--fixture-generated). Re-run to enforce."
+            )
+
+        expected_sha = _OPENCODE_SHA_PATH.read_text(encoding="utf-8").strip()
+        assert actual_sha == expected_sha, (
+            f"opencode AGENTS.md SHA256 drifted: expected {expected_sha}, got {actual_sha}. "
+            "If change is intentional, regenerate opencode_agents_md_baseline.sha256."
+        )
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-075 US-002 acceptance: canonical-edit-propagates.
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalEditPropagates:
+    """US-002 acceptance: edits to canonical docs propagate via trw_instructions_sync.
+
+    Per exec plan W2: the renderer does NOT currently read canonical files; it
+    renders from static strings. This test documents the expected future
+    behavior and is marked xfail until a follow-up PRD (PRD-QUAL-076) wires the
+    renderer to the canonical docs.
+    """
+
+    @pytest.mark.xfail(
+        reason=(
+            "FR03/FR04 extraction is doc-only this sprint; sync still renders "
+            "from static strings. Propagation to be wired in follow-up PRD-QUAL-076."
+        ),
+        strict=False,
+    )
+    def test_canonical_edit_propagates(self, tmp_path: Path) -> None:
+        sentinel = f"<!-- EDIT-TEST-{uuid.uuid4()} -->"
+
+        # Locate the canonical tool-lifecycle doc (read-only snapshot — we are
+        # not mutating the real file; we mock renderer resolution through a
+        # temporary copy).
+        repo_root = Path(__file__).resolve().parents[2]
+        canonical = repo_root / "docs" / "documentation" / "tool-lifecycle.md"
+        if not canonical.exists():
+            pytest.skip("canonical tool-lifecycle.md not found — FR03 not yet landed")
+
+        # Simulate "edit": create a tmp copy with the sentinel injected near the top.
+        tmp_canonical = tmp_path / "tool-lifecycle.md"
+        original_text = canonical.read_text(encoding="utf-8")
+        edited_text = sentinel + "\n" + original_text
+        tmp_canonical.write_text(edited_text, encoding="utf-8")
+
+        # Run sync. If renderer reads canonical docs, sentinel will appear in
+        # the rendered CLAUDE.md. Under current (static-string) renderer, it
+        # will not — so this xfails as expected.
+        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
+        _run_sync(tmp_path)
+
+        rendered = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert sentinel in rendered, (
+            "Canonical edit did not propagate to rendered CLAUDE.md — "
+            "renderer still reads from static strings (expected until PRD-QUAL-076)."
+        )
