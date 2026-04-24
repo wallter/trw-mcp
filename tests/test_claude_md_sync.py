@@ -318,3 +318,53 @@ class TestInstructionsSync:
 
         sig = inspect.signature(tool.fn)
         assert "client" in sig.parameters, "trw_claude_md_sync must accept a 'client' parameter"
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-075 FR11: marker preservation and sync target scope.
+# ---------------------------------------------------------------------------
+
+
+class TestMarkerPreservation:
+    """FR11: trw:start / trw:end markers must survive a sync cycle."""
+
+    def test_markers_preserved_after_sync(self, tmp_path: Path) -> None:
+        """Running sync twice is idempotent — markers remain exactly once."""
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text("# Project\n\nUser prose.\n", encoding="utf-8")
+
+        _run_sync(tmp_path)
+        first = claude_md.read_text(encoding="utf-8")
+        assert first.count(TRW_MARKER_START) == 1
+        assert first.count(TRW_MARKER_END) == 1
+
+        _run_sync(tmp_path)
+        second = claude_md.read_text(encoding="utf-8")
+        assert second.count(TRW_MARKER_START) == 1, "sync duplicated the start marker"
+        assert second.count(TRW_MARKER_END) == 1, "sync duplicated the end marker"
+        # User content preserved.
+        assert "User prose." in second
+
+    def test_sync_does_not_recreate_markers_in_trw_mcp_claude_md(self, tmp_path: Path) -> None:
+        """FR05/FR11: sync operates on the project root CLAUDE.md only — it must
+        not rewrite the package-local ``trw-mcp/CLAUDE.md`` which now lives
+        without trw markers and instead points at the canonical docs.
+        """
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text("# Project\n", encoding="utf-8")
+
+        # Simulate the package-local file under a nested path — sync should
+        # not touch it because its target is the root-level CLAUDE.md.
+        nested = tmp_path / "trw-mcp"
+        nested.mkdir()
+        nested_claude = nested / "CLAUDE.md"
+        nested_claude.write_text("# trw-mcp\n\nNo markers here.\n", encoding="utf-8")
+
+        _run_sync(tmp_path)
+
+        # Root got markers.
+        assert TRW_MARKER_START in claude_md.read_text(encoding="utf-8")
+        # Nested did not.
+        nested_content = nested_claude.read_text(encoding="utf-8")
+        assert TRW_MARKER_START not in nested_content
+        assert TRW_MARKER_END not in nested_content
