@@ -212,10 +212,12 @@ def step_telemetry_startup(
     # PRD-HPO-MEAS-001 FR-2/FR-3: parallel-emit the unified-schema
     # HPOSessionStartEvent carrying the resolved surface_snapshot_id so
     # the session's own bootstrap event satisfies "every event carries it".
-    # Construction only — publishing pipeline integration lands in Wave 2b.
+    # Wave 2b: wired through UnifiedEventWriter to events-YYYY-MM-DD.jsonl.
     snapshot_id = str(results.get("surface_snapshot_id", ""))
     try:
-        _hpo_session_event = HPOSessionStartEvent(
+        from trw_mcp.telemetry.unified_events import emit as emit_unified
+
+        hpo_session_event = HPOSessionStartEvent(
             session_id=inst_id,
             run_id=str(run_dir.name) if run_dir else None,
             surface_snapshot_id=snapshot_id,
@@ -224,14 +226,12 @@ def step_telemetry_startup(
                 "framework_version": config.framework_version,
             },
         )
-        # Light-touch observability: emit as a structlog line until the
-        # Phase 2 emitter retrofit wires a real event-writer for HPO
-        # subclasses (Wave 2b).
-        logger.info(
-            "hpo_session_start_event_constructed",
-            event_id=_hpo_session_event.event_id,
-            surface_snapshot_id=snapshot_id,
-            run_id=_hpo_session_event.run_id,
+        trw_dir_path = _resolve_trw_dir_compat()
+        context_dir = trw_dir_path / config.context_dir
+        emit_unified(
+            hpo_session_event,
+            run_dir=run_dir,
+            fallback_dir=context_dir if context_dir.exists() else None,
         )
     except Exception:  # justified: fail-open, HPO schema drift must not block session start
         logger.warning("hpo_session_start_event_failed", exc_info=True)

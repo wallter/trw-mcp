@@ -57,6 +57,17 @@ from trw_mcp.telemetry.surface_manifest import (
     write_manifest,
     yaml_to_snapshot,
 )
+from trw_mcp.telemetry.tool_call_timing import (
+    build_tool_call_event,
+    clear_pricing_cache,
+    wrap_tool,
+)
+from trw_mcp.telemetry.unified_events import (
+    UnifiedEventWriter,
+    emit as emit_unified,
+    get_default_writer,
+    resolve_unified_events_path,
+)
 
 __all__ = [
     # CORE-031 legacy
@@ -107,4 +118,12 @@ __all__ = [
     "stamp_session",
     "write_manifest",
     "yaml_to_snapshot",
+    # HPO-MEAS-001 unified writer + FR-4 timing middleware
+    "UnifiedEventWriter",
+    "build_tool_call_event",
+    "clear_pricing_cache",
+    "emit_unified",
+    "get_default_writer",
+    "resolve_unified_events_path",
+    "wrap_tool",
 ]

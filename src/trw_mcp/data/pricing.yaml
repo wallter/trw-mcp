@@ -1,0 +1,36 @@
+# Token pricing table — PRD-HPO-MEAS-001 FR-4 + FR-13 §3.
+#
+# The pricing_version string is stamped on every ToolCallEvent so cost
+# estimates remain reproducible across pricing-table edits. Bump
+# `version` when any model's rates change so historical cost reports
+# know which table was in effect.
+#
+# Rates are USD per 1K tokens, matching Anthropic's public pricing page.
+
+version: "2026-04-23"
+
+models:
+  claude-opus-4-7:
+    input_per_1k: 0.015
+    output_per_1k: 0.075
+    cache_write_per_1k: 0.01875
+    cache_read_per_1k: 0.0015
+
+  claude-sonnet-4-6:
+    input_per_1k: 0.003
+    output_per_1k: 0.015
+    cache_write_per_1k: 0.00375
+    cache_read_per_1k: 0.0003
+
+  claude-haiku-4-5:
+    input_per_1k: 0.0008
+    output_per_1k: 0.004
+    cache_write_per_1k: 0.001
+    cache_read_per_1k: 0.00008
+
+# Tool calls do not consume model tokens directly, but they are rolled
+# up into session-level CLEAR cost when the surrounding LLM call carries
+# its own token counts. When neither is available, estimates default to 0.
+defaults:
+  unknown_model_input_per_1k: 0.0
+  unknown_model_output_per_1k: 0.0
