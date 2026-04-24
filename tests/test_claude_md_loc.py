@@ -14,13 +14,17 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.unit
+# Integration tier: this module reads real repository files (CLAUDE.md,
+# trw-mcp/CLAUDE.md, docs/CLIENT-PROFILES.md) and uses tmp_path for the
+# negative lint check. Per .claude/rules/testing.md, tmp_path and real-file
+# I/O mark tests as integration — no unit marker applied.
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ROOT_CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
 _TRW_MCP_CLAUDE_MD = _REPO_ROOT / "trw-mcp" / "CLAUDE.md"
 _OPENCODE_INSTRUCTIONS = _REPO_ROOT / ".opencode" / "INSTRUCTIONS.md"
 _PROFILES_DIR = _REPO_ROOT / "trw-mcp" / "data" / "profiles"
+_CLIENT_PROFILES_DOC = _REPO_ROOT / "docs" / "CLIENT-PROFILES.md"
 
 
 def _line_count(path: Path) -> int:
@@ -58,6 +62,21 @@ def test_profile_count_current() -> None:
     assert "Five built-in profiles" not in content, (
         "CLAUDE.md still says 'Five built-in profiles'. Update to match the "
         "current profile registry count."
+    )
+
+
+def test_client_profiles_doc_no_stale_count() -> None:
+    """FR12: docs/CLIENT-PROFILES.md must not carry the stale 'Five built-in profiles' phrase.
+
+    The FR12 acceptance criterion explicitly names CLIENT-PROFILES.md as the target
+    surface — adding this test closes the gap where test_profile_count_current
+    only covered root CLAUDE.md.
+    """
+    assert _CLIENT_PROFILES_DOC.exists(), f"missing {_CLIENT_PROFILES_DOC}"
+    content = _CLIENT_PROFILES_DOC.read_text(encoding="utf-8")
+    assert "Five built-in profiles" not in content, (
+        "docs/CLIENT-PROFILES.md still says 'Five built-in profiles'. "
+        "Update to match the current profile registry count."
     )
 
 
