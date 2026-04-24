@@ -98,7 +98,9 @@ def _register_tools() -> None:
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.mcp_security_status import register_mcp_security_status
     from trw_mcp.tools.orchestration import register_orchestration_tools
+    from trw_mcp.tools.query_tools import register_query_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
 
@@ -110,6 +112,10 @@ def _register_tools() -> None:
     register_orchestration_tools(mcp)
     register_requirements_tools(mcp)
     register_review_tools(mcp)
+    # PRD-HPO-MEAS-001 FR-7 + FR-8: cross-session event query + surface diff
+    register_query_tools(mcp)
+    # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
+    register_mcp_security_status(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)
