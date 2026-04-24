@@ -220,6 +220,10 @@ def register_query_tools(server: FastMCP) -> None:
     every registered client (claude-code, opencode, cursor, etc.).
     """
 
+    # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96 carry-forward
+    # a): deferred import to avoid circular dep with trw_mcp.server._app.
+    from trw_mcp.server._security_hook import consult_mcp_security
+
     @server.tool(output_schema=None)
     def trw_query_events(
         session_id: str | None = None,
@@ -234,6 +238,12 @@ def register_query_tools(server: FastMCP) -> None:
             filters: Optional extra equality filters. Supported keys:
                 ``run_id``, ``event_type``, ``emitter``.
         """
+        consult_mcp_security(
+            "trw_query_events",
+            {"session_id": session_id, "filters": filters},
+            session_id or "",
+            None,
+        )
         return query_events(session_id=session_id, filters=filters)
 
     @server.tool(output_schema=None)
@@ -247,6 +257,12 @@ def register_query_tools(server: FastMCP) -> None:
         strings. ``changed`` entries appear in both snapshots with
         different ``content_hash`` values.
         """
+        consult_mcp_security(
+            "trw_surface_diff",
+            {"snapshot_id_a": snapshot_id_a, "snapshot_id_b": snapshot_id_b},
+            "",
+            None,
+        )
         return surface_diff(snapshot_id_a=snapshot_id_a, snapshot_id_b=snapshot_id_b)
 
 

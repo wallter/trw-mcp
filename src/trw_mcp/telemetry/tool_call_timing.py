@@ -159,6 +159,8 @@ def wrap_tool(
     session_id_resolver: Callable[[], str] | None = None,
     run_dir_resolver: Callable[[], Path | None] | None = None,
     fallback_dir_resolver: Callable[[], Path | None] | None = None,
+    security_consult: Callable[[str, dict[str, Any] | None, str, str | None], None]
+    | None = None,
 ) -> Callable[..., Any]:
     """Return a wrapped copy of ``fn`` that emits a :class:`ToolCallEvent` per call.
 
@@ -207,6 +209,20 @@ def wrap_tool(
                     outcome=outcome,
                     error_class=error_class,
                 )
+                # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96
+                # carry-forward a): fires AFTER event construction but
+                # BEFORE unified emit so any security telemetry side-effect
+                # lands in the same run directory. Fail-open — the helper
+                # swallows exceptions internally.
+                if security_consult is not None:
+                    try:
+                        security_consult(recorded_name, None, session_id, None)
+                    except Exception:  # justified: fail-open, consult must not block emit
+                        logger.debug(
+                            "tool_call_security_consult_failed",
+                            tool=recorded_name,
+                            exc_info=True,
+                        )
                 # FR-4 dispatch: emit to the unified events file under
                 # the active run (or the fallback dir). Fail-open.
                 try:
