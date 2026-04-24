@@ -1,0 +1,85 @@
+# TRW MCP Server Canonical Allowlist (PRD-INFRA-SEC-001 FR-1 / FR-8)
+#
+# This file is the Tier-1 canonical allowlist shipped with every trw-mcp
+# release. It enumerates the MCP servers TRW maintainers vouch for.
+#
+# Trust levels:
+#   verified  — TRW-maintainer-signed (Tier 1)
+#   operator  — operator-overlay-signed (Tier 2, lives in .trw/mcp_servers.local.yaml)
+#   unsigned  — requires --allow-unsigned at startup; produces audit-log records.
+#
+# Signature fields are observe-mode stubs in v1 (PRD §8 Phase 1). Real Ed25519
+# signing lands in Sprint 97+ once the 3-week shadow window closes and thresholds
+# are calibrated. Do NOT treat signature-present as "trusted" in v1 — the
+# verify_signature() function returns True unconditionally and logs its decision.
+#
+# Editing rules: see trw-mcp/src/trw_mcp/security/CLAUDE.md §Editing Rules.
+
+version: 1
+signing_algorithm: ed25519
+signed_by: "trw-maintainer"
+# Canonical public-key fingerprint (stub for v1 — real key lands Sprint 97+).
+canonical_public_key_fingerprint: "sha256:PLACEHOLDER_TRW_MAINTAINER_KEY_2026"
+
+servers:
+  - name: trw
+    url_or_command: "trw-mcp"
+    signer: "trw-maintainer"
+    # v1 observe-mode: signature is a placeholder. Sprint 97 replaces with
+    # real Ed25519 signature over the canonical entry bytes.
+    signature: "stub:v1-observe-mode"
+    trust_level: verified
+    capabilities:
+      - trw_session_start
+      - trw_learn
+      - trw_recall
+      - trw_checkpoint
+      - trw_deliver
+      - trw_build_check
+      - trw_init
+      - trw_prd_create
+      - trw_prd_validate
+      - trw_mcp_security_status
+
+  - name: filesystem
+    url_or_command: "npx -y @modelcontextprotocol/server-filesystem"
+    signer: "trw-maintainer"
+    signature: "stub:v1-observe-mode"
+    trust_level: verified
+    capabilities:
+      - read_file
+      - write_file
+      - list_directory
+      - search_files
+
+  - name: git
+    url_or_command: "uvx mcp-server-git"
+    signer: "trw-maintainer"
+    signature: "stub:v1-observe-mode"
+    trust_level: verified
+    capabilities:
+      - git_status
+      - git_diff
+      - git_log
+      - git_show
+
+  - name: github
+    url_or_command: "npx -y @modelcontextprotocol/server-github"
+    signer: "trw-maintainer"
+    signature: "stub:v1-observe-mode"
+    trust_level: verified
+    capabilities:
+      - create_issue
+      - get_issue
+      - list_issues
+      - create_pull_request
+      - get_pull_request
+
+# Sample signature block (observe-mode; real signature Sprint 97+).
+# Algorithm: ed25519 over the SHA-256 of the canonicalized (sorted-keys,
+# stable separators) 'servers' list above. Verification is stubbed in v1.
+signature_block:
+  algorithm: ed25519
+  signed_at: "2026-04-23T00:00:00Z"
+  signer_fingerprint: "sha256:PLACEHOLDER_TRW_MAINTAINER_KEY_2026"
+  signature: "stub:v1-observe-mode-0000000000000000000000000000000000000000000000000000000000000000"
