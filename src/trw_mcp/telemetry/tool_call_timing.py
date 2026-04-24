@@ -157,6 +157,8 @@ def wrap_tool(
     *,
     tool_name: str | None = None,
     session_id_resolver: Callable[[], str] | None = None,
+    run_dir_resolver: Callable[[], Path | None] | None = None,
+    fallback_dir_resolver: Callable[[], Path | None] | None = None,
 ) -> Callable[..., Any]:
     """Return a wrapped copy of ``fn`` that emits a :class:`ToolCallEvent` per call.
 
@@ -165,6 +167,14 @@ def wrap_tool(
         tool_name: Override the recorded tool name (defaults to ``fn.__name__``).
         session_id_resolver: Callable returning the current session_id at
             invocation time. When None, emissions carry ``session_id=""``.
+        run_dir_resolver: Callable returning the active run directory
+            (``<task>/<run_id>/``) so the event lands in that run's
+            ``events-YYYY-MM-DD.jsonl``. When None or returns None, the
+            fallback directory is used.
+        fallback_dir_resolver: Callable returning a fallback directory
+            (typically ``<trw_dir>/<context_dir>/``) when no run is
+            pinned. When both resolvers return None, the event is still
+            constructed for test observability but not written.
     """
     recorded_name: str = tool_name or str(getattr(fn, "__name__", "unknown_tool"))
 
@@ -197,7 +207,27 @@ def wrap_tool(
                     outcome=outcome,
                     error_class=error_class,
                 )
-                _ = event  # constructed for future emission; pipeline wire is Wave 2c
+                # FR-4 dispatch: emit to the unified events file under
+                # the active run (or the fallback dir). Fail-open.
+                try:
+                    from trw_mcp.telemetry.unified_events import emit as _emit_unified
+
+                    run_dir: Path | None = None
+                    fallback_dir: Path | None = None
+                    if run_dir_resolver is not None:
+                        try:
+                            run_dir = run_dir_resolver()
+                        except Exception:  # justified: fail-open
+                            run_dir = None
+                    if fallback_dir_resolver is not None:
+                        try:
+                            fallback_dir = fallback_dir_resolver()
+                        except Exception:  # justified: fail-open
+                            fallback_dir = None
+                    _emit_unified(event, run_dir=run_dir, fallback_dir=fallback_dir)
+                except Exception:  # justified: fail-open, emit path must not block tool
+                    logger.debug("tool_call_event_emit_failed", tool=recorded_name, exc_info=True)
+
                 logger.debug(
                     "tool_call_event_constructed",
                     tool=recorded_name,
