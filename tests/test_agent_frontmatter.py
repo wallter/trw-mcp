@@ -121,13 +121,22 @@ def test_no_prescriptive_line_starts(agent_path: Path) -> None:
 
 
 def test_auditors_reference_shared_doc() -> None:
-    """FR06: both auditor files cite ``audit-framework.md`` in the first 60 lines."""
+    """FR06: both auditor files cite ``audit-framework.md`` in the first 30 body lines.
+
+    PRD FR06 acceptance: the ``Read docs/documentation/audit-framework.md`` directive
+    must land in the first 30 body lines (i.e. post-frontmatter). We measure by
+    extracting the body via ``_agent_body`` and checking the first 30 lines of it —
+    not the first N lines of the raw file, which would conflate frontmatter length
+    with body position and let the reference silently drift.
+    """
     for name in ("trw-auditor.md", "trw-adversarial-auditor.md"):
         path = AGENTS_DIR / name
         assert path.exists(), f"missing {name}"
-        first_60 = "\n".join(path.read_text(encoding="utf-8").splitlines()[:60])
-        assert "audit-framework.md" in first_60, (
-            f"{name}: does not reference audit-framework.md in first 60 lines"
+        body = _agent_body(path)
+        first_30_body = "\n".join(body.splitlines()[:30])
+        assert "audit-framework.md" in first_30_body, (
+            f"{name}: does not reference audit-framework.md in first 30 body lines "
+            "(per PRD-QUAL-073 FR06 acceptance)"
         )
 
 
