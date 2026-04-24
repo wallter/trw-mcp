@@ -164,6 +164,26 @@ class HPOCeremonyComplianceEvent(HPOTelemetryEvent):
     emitter: str = "ceremony"
 
 
+class SurfaceRegistered(HPOTelemetryEvent):
+    """Surface-artifact discovery event (PRD-HPO-MEAS-001 FR-10 AC-8).
+
+    Emitted once per newly-discovered governing artifact at
+    ``SurfaceRegistry.build()`` call time. Lets cross-session analytics
+    answer "when did this CLAUDE.md / FRAMEWORK.md / agent prompt first
+    appear in the surface manifest?" without re-walking disk.
+
+    Required ``payload`` keys:
+        - ``surface_id``: str — canonical ``<category>:<relpath>``
+        - ``content_hash``: str — sha256 hex of artifact contents
+        - ``source_path``: str — repo-relative POSIX path
+        - ``category``: str — agents / skills / hooks / prompts / config /
+          surfaces / claude_md_root / framework_md / sub_claude_md
+    """
+
+    event_type: str = "surface_registered"
+    emitter: str = "artifact_registry"
+
+
 class H1ObserveModeWarning(ObserverEvent):
     """Fail-loud shim-fallback event for ``_emit_to_h1`` (PRD-HPO-MEAS-001 FR-9).
 
@@ -258,6 +278,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
     HPOSessionEndEvent.model_fields["event_type"].default: HPOSessionEndEvent,
     HPOCeremonyComplianceEvent.model_fields["event_type"].default: HPOCeremonyComplianceEvent,
     H1ObserveModeWarning.model_fields["event_type"].default: H1ObserveModeWarning,
+    SurfaceRegistered.model_fields["event_type"].default: SurfaceRegistered,
 }
 
 
@@ -315,6 +336,7 @@ __all__ = [
     "HPOSessionEndEvent",
     "HPOCeremonyComplianceEvent",
     "H1ObserveModeWarning",
+    "SurfaceRegistered",
     "DefaultResolutionError",
     "EVENT_TYPE_REGISTRY",
     "emit_h1_observe_mode_warning",

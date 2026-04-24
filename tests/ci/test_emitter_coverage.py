@@ -117,6 +117,7 @@ class TestEventTypeLiteralsAreStable:
             "session_end",
             "ceremony_compliance",
             "h1_observe_mode_warning",
+            "surface_registered",
         }
     )
 

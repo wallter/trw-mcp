@@ -17,6 +17,11 @@ from trw_mcp.telemetry.artifact_registry import (
     resolve_surface_registry,
     resolve_surface_snapshot,
 )
+from trw_mcp.telemetry.boot_audit import (
+    ResolutionFailure,
+    check_defaults,
+    run_boot_audit,
+)
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.event_base import (
     EVENT_TYPE_REGISTRY,
@@ -33,6 +38,7 @@ from trw_mcp.telemetry.event_base import (
     MetaTuneEvent,
     ObserverEvent,
     PhaseExposureEvent,
+    SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
     emit_h1_observe_mode_warning,
@@ -99,10 +105,15 @@ __all__ = [
     "MetaTuneEvent",
     "ObserverEvent",
     "PhaseExposureEvent",
+    "SurfaceRegistered",
     "ThrashingEvent",
     "ToolCallEvent",
     "emit_h1_observe_mode_warning",
     "validate_parent_within_run",
+    # HPO-MEAS-001 NFR-12 boot audit
+    "ResolutionFailure",
+    "check_defaults",
+    "run_boot_audit",
     # HPO-MEAS-001 surface identity
     "ComponentFingerprint",
     "SurfaceArtifact",
