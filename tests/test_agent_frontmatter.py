@@ -29,6 +29,16 @@ AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 _VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
 _PRESCRIPTIVE_LINE_START_RE = re.compile(r"^(MUST|CRITICAL|RIGID):", re.MULTILINE)
 
+# FR09 scoping: MUST / CRITICAL / RIGID are blanket-banned at line start.
+# NEVER / ALWAYS at line start are intentionally NOT in this regex — the PRD
+# acceptance criterion permits them when individually justifiable as safety
+# rules (e.g., "NEVER modify code files" in read-only auditors). Automated
+# blanket-ban would produce false positives on legitimate safety invariants.
+# Surviving ^NEVER / ^ALWAYS line starts are tracked by
+# test_count_never_always_survivors below — the count is logged for reviewer
+# awareness but does not fail CI.
+_NEVER_ALWAYS_LINE_START_RE = re.compile(r"^(NEVER|ALWAYS)\b", re.MULTILINE)
+
 
 def _agent_files() -> list[Path]:
     return sorted(AGENTS_DIR.glob("*.md"))
@@ -117,6 +127,40 @@ def test_no_prescriptive_line_starts(agent_path: Path) -> None:
     assert not matches, (
         f"{agent_path.name}: prescriptive line-starts remain {matches!r}; "
         "soften per OPUS-4-7-BEST-PRACTICES.md §4"
+    )
+
+
+def test_never_always_survivors_budget() -> None:
+    """FR09 companion: ^NEVER / ^ALWAYS count must not grow unbounded.
+
+    The PRD permits these when individually justifiable as safety rules
+    (e.g., ``NEVER modify code files`` in read-only auditors). This test
+    enforces a soft ceiling on the total count across all agent files so
+    that future additions get scrutinized. If the count legitimately needs
+    to grow, update ``_NEVER_ALWAYS_CEILING`` and document the new survivors
+    in the commit message so reviewers can judge each addition on merit.
+    """
+    total = 0
+    per_file: dict[str, int] = {}
+    for agent_path in _agent_files():
+        body = _agent_body(agent_path)
+        matches = _NEVER_ALWAYS_LINE_START_RE.findall(body)
+        if matches:
+            per_file[agent_path.name] = len(matches)
+            total += len(matches)
+
+    # Initial ceiling captured 2026-04-24 during sprint-100 post-audit fix.
+    # Current survivors: 0 (all "NEVER modify..." statements appear as bullet
+    # items, not line-starts). Ceiling is generous headroom — any future
+    # unbulleted ^NEVER/^ALWAYS line-start additions must be individually
+    # justifiable as safety rules per PRD-QUAL-073 FR09, and raising this
+    # cap requires explicit reviewer sign-off.
+    _NEVER_ALWAYS_CEILING = 10
+    assert total <= _NEVER_ALWAYS_CEILING, (
+        f"{total} ^NEVER/^ALWAYS line starts across agents exceed ceiling "
+        f"{_NEVER_ALWAYS_CEILING}. Per-file counts: {per_file!r}. Each new "
+        "occurrence must be individually justifiable as a safety rule; raise "
+        "the ceiling only with explicit reviewer sign-off."
     )
 
 

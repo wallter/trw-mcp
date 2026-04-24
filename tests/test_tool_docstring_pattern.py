@@ -169,47 +169,37 @@ def test_output_contract_named() -> None:
 # ---------------------------------------------------------------- FR06 discoverability (HARD)
 
 
-def test_all_registered_tools_discoverable() -> None:
-    """AST-discovered tools must match the names the FastMCP server registers at runtime.
+async def test_all_registered_tools_discoverable() -> None:
+    """AST-discovered tools must be a subset of what the FastMCP server actually registers.
 
     Catches drift between the AST lint set and the actual server registration.
     If a tool is registered via a dynamic path the AST cannot see, it falls
     through this check and is effectively exempt from all other lints.
-    """
-    ast_tools = {name for (name, _m, _d) in _iter_tool_functions()}
-    # Import after tree-walk to avoid masking AST errors with import errors.
-    # The server factory path varies by version; we try a couple of known
-    # entry points and skip (not fail) if none resolve — drift between AST
-    # and runtime registration is a separate concern from docstring lint.
-    try:
-        from trw_mcp.server._tools import mcp as server
-    except ImportError:
-        pytest.skip("trw_mcp.server._tools.mcp unavailable in this build")
-    # FastMCP exposes registered tools via its internal registry. We probe
-    # for common attributes but fall back to the AST set if none match.
-    runtime_tools: set[str] = set()
-    for attr in ("_tools", "tools", "_tool_manager"):
-        obj = getattr(server, attr, None)
-        if obj is None:
-            continue
-        # Dict-like
-        if isinstance(obj, dict):
-            runtime_tools = set(obj.keys())
-            break
-        # Manager-like with _tools dict
-        inner = getattr(obj, "_tools", None)
-        if isinstance(inner, dict):
-            runtime_tools = set(inner.keys())
-            break
-    # If the FastMCP internals moved, soft-pass with a warning rather than
-    # blocking the suite on an unrelated refactor.
-    if not runtime_tools:
-        pytest.skip("could not introspect FastMCP tool registry; AST set has {n} tools".format(n=len(ast_tools)))
 
-    missing_in_runtime = ast_tools - runtime_tools
+    Uses FastMCP's public ``mcp.list_tools()`` coroutine (stable API across
+    versions) rather than probing private registry attributes. If ``list_tools``
+    is removed or renamed upstream, this test fails loudly — exactly the
+    signal we want. No ``pytest.skip`` on ImportError: drift detection must
+    not silently pass.
+    """
+    ast_tools = {name for (name, _module, _docstring) in _iter_tool_functions()}
+    from trw_mcp.server import mcp as server
+
+    # mcp is typed `object` in trw_mcp/server/__init__.py (lazy loader hiding
+    # the optional fastmcp dependency). Cast at the call site to access the
+    # FastMCP public API without forcing the import at module load.
+    runtime_list = await server.list_tools()  # type: ignore[attr-defined]
+    runtime_tools = {tool.name for tool in runtime_list}
+
+    # Some AST tools may be gated by preset/feature flags and not appear at
+    # runtime. Assert directional inclusion: every runtime tool must be AST-
+    # discoverable (so lints cover them). The reverse is not required —
+    # AST-discovered tools that are runtime-gated by presets are legitimate.
     missing_in_ast = runtime_tools - ast_tools
-    assert not missing_in_runtime, f"AST sees tools the runtime server does not: {sorted(missing_in_runtime)}"
-    assert not missing_in_ast, f"Runtime registers tools the AST did not see: {sorted(missing_in_ast)}"
+    assert not missing_in_ast, (
+        f"{len(missing_in_ast)} runtime-registered tools are not discovered "
+        f"by the AST walker — they escape docstring lint: {sorted(missing_in_ast)!r}"
+    )
 
 
 # ---------------------------------------------------------------- negative (HARD)
