@@ -131,7 +131,12 @@ def _select_message_by_urgency(
 # ---------------------------------------------------------------------------
 
 
-def _select_nudge_message(step: str, state: CeremonyState, available_learnings: int) -> str:
+def _select_nudge_message(
+    step: str,
+    state: CeremonyState,
+    available_learnings: int,
+    profile: "ClientProfile | None" = None,
+) -> str:
     """Select the value-expressing static nudge message for the given step.
 
     Messages follow the value-expression template (FR02):
@@ -142,6 +147,23 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
     PRD-CORE-084 FR06.)
 
     Progressive urgency (FR03): messages grow more specific based on nudge_counts[step].
+
+    PRD-CORE-149 FR03: when ``profile`` is provided, the returned template is
+    piped through :func:`format_nudge` so ``{client_display_name}`` /
+    ``{client_config_dir}`` placeholders resolve to the active client's
+    identity. When ``profile`` is ``None``, literals pass through unchanged
+    (fast path in :func:`format_nudge`).
+    """
+    template = _select_nudge_template(step, state, available_learnings)
+    return format_nudge(template, profile)
+
+
+def _select_nudge_template(step: str, state: CeremonyState, available_learnings: int) -> str:
+    """Return the raw (pre-substitution) template for ``step`` at current urgency.
+
+    PRD-CORE-149 FR03: split out so profile-aware substitution happens in a
+    single place (``_select_nudge_message``) while the template bodies remain
+    focused on ceremony semantics.
     """
     urgency = _compute_urgency(state, step)
 
@@ -151,7 +173,7 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
             return _select_message_by_urgency(
                 urgency,
                 low=(
-                    f"\u26a1 {n} prior learnings load in 1s — "
+                    f"\u26a1 {n} prior learnings load in 1s for {{client_display_name}} — "
                     "past discoveries become active context. "
                     "Call trw_session_start() to begin."
                 ),
@@ -296,7 +318,7 @@ def _select_nudge_message(step: str, state: CeremonyState, available_learnings: 
             )
         return _select_message_by_urgency(
             urgency,
-            low=("\u26a1 Session complete — trw_deliver() persists the run and any learnings for future sessions."),
+            low=("\u26a1 Session complete for {client_display_name} — trw_deliver() persists the run and any learnings for future sessions."),
             medium=(
                 "\u26a1 Session complete but not delivered — "
                 "run record won't persist for future sessions without trw_deliver()."

@@ -81,6 +81,15 @@ class ProtocolRenderer:
             model_family=model_family,
             ceremony_mode=ceremony_mode,
         )
+        # PRD-CORE-149 NFR04: every renderer logs ``profile_rendering`` with
+        # client_id, display_name, and ceremony_mode so operators can verify
+        # which profile drove a given render.
+        _logger.info(
+            "profile_rendering",
+            client_id=self.client_profile.client_id,
+            display_name=self.client_profile.display_name,
+            ceremony_mode=ceremony_mode,
+        )
 
     # ------------------------------------------------------------------
     # FR02: Ceremony quick-reference table (from CEREMONY_TOOLS)

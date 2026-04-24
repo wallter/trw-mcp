@@ -104,6 +104,101 @@ def test_none_profile_falls_back_with_warn() -> None:
     assert any(entry.get("event") == "profile.fallback" for entry in logs)
 
 
+# ---------------------------------------------------------------------------
+# PRD-CORE-149 FR03: call-site wiring tests — format_nudge must be wired
+# into the production nudge pipeline, not just implemented in isolation.
+# ---------------------------------------------------------------------------
+
+
+def test_formatter_accepts_profile() -> None:
+    """FR03: _select_nudge_message must accept ``profile=`` kwarg."""
+    import inspect
+
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+
+    sig = inspect.signature(_select_nudge_message)
+    assert "profile" in sig.parameters, (
+        "_select_nudge_message must accept a 'profile' kwarg to honor "
+        "PRD-CORE-149 FR03 (pipe templates through format_nudge)."
+    )
+
+
+def test_every_call_site_passes_profile() -> None:
+    """FR03: every production call to _select_nudge_message passes profile=."""
+    import ast
+
+    src_dir = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
+    call_sites = [
+        src_dir / "state" / "ceremony_nudge.py",
+        src_dir / "tools" / "_ceremony_status.py",
+    ]
+    for path in call_sites:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
+            if name != "_select_nudge_message":
+                continue
+            kw_names = {kw.arg for kw in node.keywords}
+            assert "profile" in kw_names, (
+                f"{path.name} calls _select_nudge_message without profile= kwarg "
+                f"at line {node.lineno}; FR03 requires active profile plumbed through."
+            )
+
+
+def test_opencode_profile_substitutes_display_name_at_runtime() -> None:
+    """FR03 integration: _select_nudge_message with opencode profile substitutes 'OpenCode'."""
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+    from trw_mcp.state._nudge_state import CeremonyState
+
+    profile = resolve_client_profile("opencode")
+    # session_start low-urgency with learnings template contains {client_display_name}
+    state = CeremonyState()
+    rendered = _select_nudge_message("session_start", state, available_learnings=5, profile=profile)
+    assert "OpenCode" in rendered
+    assert "{client_display_name}" not in rendered
+    assert "Claude Code" not in rendered
+
+
+def test_claude_code_profile_runtime_renders_claude_code() -> None:
+    """FR07 parity guard: claude-code profile still renders 'Claude Code' at runtime."""
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+    from trw_mcp.state._nudge_state import CeremonyState
+
+    profile = resolve_client_profile("claude-code")
+    state = CeremonyState()
+    rendered = _select_nudge_message("session_start", state, available_learnings=5, profile=profile)
+    assert "Claude Code" in rendered
+
+
+def test_profile_none_preserves_placeholders_via_fallback() -> None:
+    """FR12: profile=None falls back and still returns a usable string."""
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+    from trw_mcp.state._nudge_state import CeremonyState
+
+    state = CeremonyState()
+    rendered = _select_nudge_message("session_start", state, available_learnings=5, profile=None)
+    # No exception. With no placeholders to format in fast-path, and with placeholders, fallback to <unknown>.
+    assert "{client_display_name}" not in rendered
+
+
+def test_profile_rendering_logged() -> None:
+    """NFR04: ProtocolRenderer.__init__ emits 'profile_rendering' event with required fields."""
+    from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+
+    profile = resolve_client_profile("opencode")
+    with capture_logs() as logs:
+        ProtocolRenderer(client_profile=profile, ceremony_mode="FULL")
+    matching = [e for e in logs if e.get("event") == "profile_rendering"]
+    assert matching, "profile_rendering event not emitted by ProtocolRenderer.__init__"
+    entry = matching[0]
+    assert entry.get("client_id") == "opencode"
+    assert entry.get("display_name") == profile.display_name
+    assert entry.get("ceremony_mode") == "FULL"
+
+
 def test_all_builtin_profiles_have_non_empty_display_name() -> None:
     """FR06: every registered profile must expose a human-readable display name."""
     for client_id in (

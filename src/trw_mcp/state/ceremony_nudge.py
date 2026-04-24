@@ -8,8 +8,12 @@ nudge callers and re-exports the legacy APIs without owning live wiring.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config._client_profile import ClientProfile
 
 from trw_mcp.state._nudge_messages import (
     _HEADER as _HEADER,
@@ -142,8 +146,16 @@ def compute_nudge(
     state: CeremonyState,
     available_learnings: int = 0,
     context: NudgeContext | None = None,
+    profile: "ClientProfile | None" = None,
 ) -> str:
-    """Compute the ceremony nudge message based on current state."""
+    """Compute the ceremony nudge message based on current state.
+
+    PRD-CORE-149 FR03: when ``profile`` is omitted, the active
+    :class:`ClientProfile` is resolved from :func:`get_config` so nudge
+    templates pipe through :func:`format_nudge` with the correct client
+    identity. Callers that already have a profile in hand (tests, offline
+    tooling) can pass one explicitly.
+    """
 
     try:
         from trw_mcp.models.config._loader import get_config
@@ -151,6 +163,9 @@ def compute_nudge(
         config = get_config()
         if not config.effective_nudge_enabled:
             return ""
+
+        if profile is None:
+            profile = config.client_profile
 
         budget = config.nudge_budget_chars
         weights = config.client_profile.nudge_pool_weights
@@ -171,11 +186,11 @@ def compute_nudge(
             content = load_pool_message("workflow", phase_hint=state.phase)
         elif pool == "learnings":
             if available_learnings > 0:
-                content = _select_nudge_message("session_start", state, available_learnings)
+                content = _select_nudge_message("session_start", state, available_learnings, profile=profile)
             else:
                 pending = _highest_priority_pending_step(state)
                 if pending:
-                    content = _select_nudge_message(pending, state, available_learnings)
+                    content = _select_nudge_message(pending, state, available_learnings, profile=profile)
         elif pool == "ceremony":
             pending = _highest_priority_pending_step(state)
             if pending:
@@ -183,7 +198,7 @@ def compute_nudge(
 
                 content = load_pool_message("ceremony", phase_hint=pending)
             if not content and pending:
-                content = _select_nudge_message(pending, state, available_learnings)
+                content = _select_nudge_message(pending, state, available_learnings, profile=profile)
         elif pool == "context":
             urgency = _compute_urgency(
                 state,
