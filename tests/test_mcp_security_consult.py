@@ -12,6 +12,7 @@ and exception paths.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -76,6 +77,7 @@ def test_consult_with_uninitialized_middleware_is_noop(
 def test_consult_calls_on_tool_call_when_set(restore_mcp_security: None) -> None:
     """With a spy middleware installed, consult forwards the dispatch exactly once."""
     spy = _SpyMiddleware()
+    spy.default_server_name = "filesystem"
     _app_mod._mcp_security = spy
 
     consult_mcp_security("trw_query_events", {"session_id": "s"}, "sess-42", "run-9")
@@ -86,7 +88,7 @@ def test_consult_calls_on_tool_call_when_set(restore_mcp_security: None) -> None
     assert call["args"] == {"session_id": "s"}
     assert call["session_id"] == "sess-42"
     assert call["run_id"] == "run-9"
-    assert call["server"] == "trw"
+    assert call["server"] == "filesystem"
     assert call["transport"] == "stdio"
 
 
@@ -123,15 +125,21 @@ def test_wrap_tool_calls_security_consult_in_finally_on_success() -> None:
     ) -> None:
         calls.append((tool, args, session_id, run_id))
 
-    def noop(x: int) -> int:
+    def noop(x: int, y: str = "default") -> int:
         return x + 1
 
-    wrapped = wrap_tool(noop, tool_name="noop_tool", security_consult=spy)
-    result = wrapped(41)
+    wrapped = wrap_tool(
+        noop,
+        tool_name="noop_tool",
+        security_consult=spy,
+        run_dir_resolver=lambda: None,
+    )
+    result = wrapped(41, y="custom")
 
     assert result == 42
     assert len(calls) == 1
     assert calls[0][0] == "noop_tool"
+    assert calls[0][1] == {"x": 41, "y": "custom"}
 
 
 def test_wrap_tool_calls_security_consult_on_exception() -> None:
@@ -156,3 +164,29 @@ def test_wrap_tool_calls_security_consult_on_exception() -> None:
 
     assert len(calls) == 1
     assert calls[0][0] == "boom_tool"
+
+
+def test_wrap_tool_passes_run_id_from_run_dir() -> None:
+    calls: list[tuple[str, dict[str, Any] | None, str, str | None]] = []
+
+    def spy(
+        tool: str,
+        args: dict[str, Any] | None,
+        session_id: str,
+        run_id: str | None,
+    ) -> None:
+        calls.append((tool, args, session_id, run_id))
+
+    def noop() -> str:
+        return "ok"
+
+    wrapped = wrap_tool(
+        noop,
+        tool_name="noop_tool",
+        session_id_resolver=lambda: "sess-1",
+        run_dir_resolver=lambda: Path("/repo/.trw/runs/task/run-123"),
+        security_consult=spy,
+    )
+    wrapped()
+
+    assert calls == [("noop_tool", {}, "sess-1", "run-123")]

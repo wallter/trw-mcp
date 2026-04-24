@@ -226,6 +226,7 @@ def register_learning_tools(server: FastMCP) -> None:
             client_profile = detect_client_profile()
         if model_id is None:
             model_id = detect_model_id()
+        call_ctx = _build_call_ctx(ctx)
 
         # Resolve from this module's namespace so test patches work
         return execute_learn(
@@ -254,6 +255,7 @@ def register_learning_tools(server: FastMCP) -> None:
             phase_affinity=phase_affinity,
             team_origin=team_origin,
             protection_tier=protection_tier,
+            session_id=call_ctx.session_id or call_ctx.fastmcp_session,
             # Dependency injection: pass module-level refs for testability
             _adapter_store=adapter_store,
             _generate_learning_id=generate_learning_id,

@@ -77,3 +77,15 @@ class TestMiddlewareHelpers:
 
         result = _build_middleware()
         assert isinstance(result, list)
+
+    def test_meta_tune_boot_validation_runs_when_enabled(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.models.config._sub_models import MetaTuneConfig
+        from trw_mcp.server._app import _run_meta_tune_boot_validation
+
+        cfg = TRWConfig(meta_tune=MetaTuneConfig(enabled=True))
+
+        with patch("trw_mcp.server._app.validate_meta_tune_defaults") as validate:
+            _run_meta_tune_boot_validation(cfg)
+
+        validate.assert_called_once()

@@ -24,6 +24,7 @@ from trw_mcp.telemetry.boot_audit import (
 )
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.event_base import (
+    EVENT_PAYLOAD_KEY_REGISTRY,
     EVENT_TYPE_REGISTRY,
     CeremonyEvent,
     ContractEvent,
@@ -94,6 +95,7 @@ __all__ = [
     "CeremonyEvent",
     "ContractEvent",
     "DefaultResolutionError",
+    "EVENT_PAYLOAD_KEY_REGISTRY",
     "EVENT_TYPE_REGISTRY",
     "H1ObserveModeWarning",
     "HPOCeremonyComplianceEvent",

@@ -1,23 +1,18 @@
 """CLEAR 5-dimensional scorer — PRD-HPO-MEAS-001 FR-5.
 
-Computes a ``ClearScore`` record per closed session joining
-:class:`ToolCallEvent` aggregates with session outcome records. Each
-dimension is a float in ``[0, 1]`` with a documented derivation:
+Computes a ``ClearScore`` record per closed session from the unified
+``HPOTelemetryEvent`` stream using the PRD's derivation formulas:
 
-- **Cost** (higher = cheaper): 1.0 minus the session's total USD cost
-  clamped to the p95 cost-per-session envelope (configurable).
-- **Latency** (higher = faster): 1.0 minus the total tool wall-time in
-  ms, clamped to the p95 latency envelope.
-- **Efficacy** (higher = better outcome): session outcome proxy —
-  ``ceremony_compliance_score`` when present, else a smoothed function
-  of the success/error tool-call ratio.
-- **Assurance** (higher = more verified): fraction of tool calls whose
-  outcome is ``success`` AND which emitted at least one paired
-  ``ContractEvent`` (contract-verified calls). During Phase 1 when
-  ContractEvents are sparse, this degrades gracefully to the
-  success-ratio.
-- **Reliability** (higher = less thrashing): 1.0 minus the share of
-  tool calls that appear in a ``ThrashingEvent`` burst.
+- **Cost** raw metric: ``sum(ToolCallEvent.usd_cost_est) + sum(LLMCallEvent.usd_cost_est)``
+  normalized against a configurable p95 envelope.
+- **Latency** raw metric: ``session_end.ts - session_start.ts`` wall-clock,
+  normalized against a configurable p95 envelope.
+- **Efficacy** raw metric: ``1.0`` for explicit PASS / compliant outcomes,
+  else ``0.0`` for explicit FAIL / non-compliant outcomes.
+- **Assurance** raw metric: mean of available validation rates
+  (contract-schema validity, auth verification, quarantine cleanliness).
+- **Reliability** raw metric: ``1 - retry_count / total_tool_calls`` where
+  retries count ``ToolCallEvent`` outcomes in ``{retry, error}``.
 
 Exactly one ``ClearScore`` record is produced per closed session;
 ``compute(session_id, events)`` is pure over the event list so callers
@@ -27,6 +22,7 @@ can replay it across historical sessions for trend analysis.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Iterable
 
 import structlog
@@ -65,13 +61,18 @@ class ClearScore(BaseModel):
 class _ToolCallAggregate:
     """Internal rollup of a session's ToolCallEvent set."""
 
-    count: int
-    success: int
-    error: int
-    total_wall_ms: int
+    tool_call_count: int
+    retry_or_error_count: int
+    total_tool_wall_ms: int
     total_usd: float
-    contract_paired: int  # calls with at least one paired ContractEvent
-    thrashing_burst: int  # calls that participated in a ThrashingEvent
+    contract_valid_count: int
+    contract_total_count: int
+    auth_verified_count: int
+    auth_total_count: int
+    quarantine_clean_sum: float
+    quarantine_total_count: int
+    session_wall_ms: int
+    efficacy_outcome: float | None
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -85,50 +86,91 @@ def _aggregate_tool_calls(events: Iterable[HPOTelemetryEvent]) -> _ToolCallAggre
     Resilient to malformed payloads: missing keys default to 0 and the
     event is counted without contributing to the sub-total.
     """
-    count = 0
-    success = 0
-    error = 0
-    total_wall_ms = 0
+    tool_call_count = 0
+    retry_or_error_count = 0
+    total_tool_wall_ms = 0
     total_usd = 0.0
-    contract_paired = 0
-    thrashing_burst = 0
-    tool_call_event_ids: set[str] = set()
-    contract_parent_ids: set[str] = set()
-    thrashing_parent_ids: set[str] = set()
+    contract_valid_count = 0
+    contract_total_count = 0
+    auth_verified_count = 0
+    auth_total_count = 0
+    quarantine_clean_sum = 0.0
+    quarantine_total_count = 0
+    session_start_ts: datetime | None = None
+    session_end_ts: datetime | None = None
+    efficacy_outcome: float | None = None
 
     for ev in events:
         if ev.event_type == "tool_call":
-            count += 1
-            tool_call_event_ids.add(ev.event_id)
-            outcome = str(ev.payload.get("outcome", "success"))
-            if outcome == "success":
-                success += 1
-            else:
-                error += 1
+            tool_call_count += 1
+            outcome = str(ev.payload.get("outcome", "success")).strip().lower()
+            if outcome in {"retry", "error"}:
+                retry_or_error_count += 1
             try:
-                total_wall_ms += int(ev.payload.get("wall_ms", 0) or 0)
+                total_tool_wall_ms += int(ev.payload.get("wall_ms", 0) or 0)
             except (TypeError, ValueError):
                 pass
             try:
                 total_usd += float(ev.payload.get("usd_cost_est", 0.0) or 0.0)
             except (TypeError, ValueError):
                 pass
-        elif ev.event_type == "contract" and ev.parent_event_id:
-            contract_parent_ids.add(ev.parent_event_id)
-        elif ev.event_type == "thrashing" and ev.parent_event_id:
-            thrashing_parent_ids.add(ev.parent_event_id)
+        elif ev.event_type == "llm_call":
+            try:
+                total_usd += float(ev.payload.get("usd_cost_est", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                pass
+        elif ev.event_type == "contract":
+            schema_valid = ev.payload.get("schema_valid")
+            if isinstance(schema_valid, bool):
+                contract_total_count += 1
+                if schema_valid:
+                    contract_valid_count += 1
+        elif ev.event_type == "mcp_security":
+            verified = ev.payload.get("verified")
+            if isinstance(verified, bool):
+                auth_total_count += 1
+                if verified:
+                    auth_verified_count += 1
+        elif ev.event_type == "observer":
+            clean_rate: object = ev.payload.get("clean_rate")
+            try:
+                if not isinstance(clean_rate, (int, float, str)):
+                    raise TypeError
+                clean_value = float(clean_rate)
+            except (TypeError, ValueError):
+                clean_value = None
+            if clean_value is not None:
+                quarantine_total_count += 1
+                quarantine_clean_sum += clean_value
+        elif ev.event_type == "session_start":
+            session_start_ts = ev.ts if session_start_ts is None else min(session_start_ts, ev.ts)
+        elif ev.event_type == "session_end":
+            session_end_ts = ev.ts if session_end_ts is None else max(session_end_ts, ev.ts)
+            explicit_outcome = str(ev.payload.get("outcome", "")).strip().upper()
+            if explicit_outcome:
+                efficacy_outcome = 1.0 if explicit_outcome == "PASS" else 0.0
+        elif ev.event_type == "ceremony_compliance":
+            compliant = ev.payload.get("compliant")
+            if isinstance(compliant, bool):
+                efficacy_outcome = 1.0 if compliant else 0.0
 
-    contract_paired = len(contract_parent_ids & tool_call_event_ids)
-    thrashing_burst = len(thrashing_parent_ids & tool_call_event_ids)
+    session_wall_ms = 0
+    if session_start_ts is not None and session_end_ts is not None:
+        session_wall_ms = max(0, int((session_end_ts - session_start_ts).total_seconds() * 1000))
 
     return _ToolCallAggregate(
-        count=count,
-        success=success,
-        error=error,
-        total_wall_ms=total_wall_ms,
+        tool_call_count=tool_call_count,
+        retry_or_error_count=retry_or_error_count,
+        total_tool_wall_ms=total_tool_wall_ms,
         total_usd=total_usd,
-        contract_paired=contract_paired,
-        thrashing_burst=thrashing_burst,
+        contract_valid_count=contract_valid_count,
+        contract_total_count=contract_total_count,
+        auth_verified_count=auth_verified_count,
+        auth_total_count=auth_total_count,
+        quarantine_clean_sum=quarantine_clean_sum,
+        quarantine_total_count=quarantine_total_count,
+        session_wall_ms=session_wall_ms,
+        efficacy_outcome=efficacy_outcome,
     )
 
 
@@ -140,41 +182,40 @@ def _cost_dim(agg: _ToolCallAggregate, *, cost_p95_usd: float) -> float:
 
 
 def _latency_dim(agg: _ToolCallAggregate, *, latency_p95_ms: int) -> float:
-    """Latency dimension: 1 − (wall_ms / p95_envelope), clamped."""
+    """Latency dimension from session wall-clock: 1 − (wall_ms / p95_envelope)."""
     if latency_p95_ms <= 0:
         return 1.0
-    return _clamp(1.0 - (agg.total_wall_ms / latency_p95_ms))
+    return _clamp(1.0 - (agg.session_wall_ms / latency_p95_ms))
 
 
 def _efficacy_dim(agg: _ToolCallAggregate, *, ceremony_score: float | None) -> float:
-    """Efficacy dimension: ceremony_score when present, else success/total."""
+    """Efficacy dimension from explicit pass/fail outcome signals."""
     if ceremony_score is not None:
         return _clamp(ceremony_score)
-    if agg.count == 0:
-        return 0.0
-    return _clamp(agg.success / agg.count)
+    if agg.efficacy_outcome is not None:
+        return agg.efficacy_outcome
+    return 0.0
 
 
 def _assurance_dim(agg: _ToolCallAggregate) -> float:
-    """Assurance dimension: contract-paired share of successful calls.
-
-    During Phase 1 when contract events are sparse, degrade to the
-    success-ratio so the dimension is never stuck at 0 for reasons
-    outside the caller's control.
-    """
-    if agg.count == 0:
+    """Assurance dimension: mean of available validation/verification rates."""
+    rates: list[float] = []
+    if agg.contract_total_count > 0:
+        rates.append(agg.contract_valid_count / agg.contract_total_count)
+    if agg.auth_total_count > 0:
+        rates.append(agg.auth_verified_count / agg.auth_total_count)
+    if agg.quarantine_total_count > 0:
+        rates.append(agg.quarantine_clean_sum / agg.quarantine_total_count)
+    if not rates:
         return 0.0
-    if agg.contract_paired == 0:
-        # Graceful fallback until Phase 2 ContractEvent retrofit lands.
-        return _clamp(agg.success / agg.count)
-    return _clamp(agg.contract_paired / agg.count)
+    return _clamp(sum(rates) / len(rates))
 
 
 def _reliability_dim(agg: _ToolCallAggregate) -> float:
-    """Reliability dimension: 1 − (thrashing-burst share)."""
-    if agg.count == 0:
+    """Reliability dimension: 1 − (retry_or_error_count / total_tool_calls)."""
+    if agg.tool_call_count == 0:
         return 1.0
-    return _clamp(1.0 - (agg.thrashing_burst / agg.count))
+    return _clamp(1.0 - (agg.retry_or_error_count / agg.tool_call_count))
 
 
 def compute(
@@ -194,9 +235,8 @@ def compute(
     Args:
         session_id: Canonical session id stamped on every event.
         events: Full event set for the session (order-independent).
-        ceremony_compliance_score: Optional sidecar — the H1 ceremony
-            rollup score in ``[0, 1]``. When provided, overrides the
-            success-ratio proxy for ``efficacy``.
+        ceremony_compliance_score: Optional sidecar override for the
+            efficacy dimension in backfill/replay contexts.
         cost_p95_usd: P95 cost envelope. Above this, cost dim → 0.
         latency_p95_ms: P95 latency envelope. Above this, latency dim → 0.
     """
@@ -209,9 +249,9 @@ def compute(
         efficacy=_efficacy_dim(agg, ceremony_score=ceremony_compliance_score),
         assurance=_assurance_dim(agg),
         reliability=_reliability_dim(agg),
-        tool_call_count=agg.count,
+        tool_call_count=agg.tool_call_count,
         total_usd_cost=agg.total_usd,
-        total_wall_ms=agg.total_wall_ms,
+        total_wall_ms=agg.total_tool_wall_ms,
     )
     logger.debug(
         "clear_score_computed",

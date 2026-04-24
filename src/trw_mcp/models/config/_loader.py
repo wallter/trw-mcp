@@ -17,6 +17,26 @@ logger = structlog.get_logger(__name__)
 _singleton: TRWConfig | None = None
 
 
+def _normalize_meta_tune_overrides(overrides: dict[str, object]) -> dict[str, object]:
+    """Keep legacy flat + nested SAFE-001 config keys compatible."""
+    normalized = dict(overrides)
+    legacy_enabled = normalized.get("meta_tune_enabled")
+    nested = normalized.get("meta_tune")
+
+    if isinstance(nested, dict):
+        nested_meta_tune = {str(k): v for k, v in nested.items()}
+    else:
+        nested_meta_tune = {}
+
+    if "enabled" not in nested_meta_tune and isinstance(legacy_enabled, bool):
+        nested_meta_tune["enabled"] = legacy_enabled
+    if nested_meta_tune:
+        normalized["meta_tune"] = nested_meta_tune
+        if isinstance(nested_meta_tune.get("enabled"), bool):
+            normalized["meta_tune_enabled"] = nested_meta_tune["enabled"]
+    return normalized
+
+
 def get_config() -> TRWConfig:
     """Return the shared TRWConfig singleton.
 
@@ -67,7 +87,7 @@ def _build_config() -> TRWConfig:
                     if v is not None and f"TRW_{str(k).upper()}" not in os.environ
                 }
                 if filtered:
-                    return TRWConfig(**filtered)  # type: ignore[arg-type]
+                    return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
     except Exception:  # justified: fail-open, config file read failure falls back to defaults
         logger.debug("config_load_failed", exc_info=True)
     return TRWConfig()

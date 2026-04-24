@@ -8,8 +8,11 @@ emitters. It intentionally coexists in parallel with the legacy
 ``trw_mcp.telemetry.models.TelemetryEvent`` (4-field installation-scoped
 event) during Phase-1 parallel-emit — the legacy class stays untouched.
 
-Subclasses (12) set only ``event_type`` and a default ``emitter`` so the
-base schema remains uniform across surfaces.
+Subclasses set only ``event_type`` and a default ``emitter`` so the base
+schema remains uniform across surfaces. Sprint-96 keeps subtype-specific
+telemetry details payload-backed rather than modeling extra top-level
+Pydantic fields; ``EVENT_PAYLOAD_KEY_REGISTRY`` documents the canonical
+payload keys that FR-14 truthfully proves today.
 
 FR-6: ``parent_event_id`` is nullable, string-typed, and references another
 ``event_id`` within the same ``run_id``. Validation is advisory — dangling
@@ -282,6 +285,44 @@ EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
 }
 
 
+#: Canonical payload-backed subtype details proven by FR-14 as shipped in
+#: Sprint 96. The H1 schema intentionally keeps subtype-specific details in
+#: ``payload`` rather than adding extra top-level Pydantic fields per event
+#: subclass. Production-path proof exists only for the live emitters called
+#: out in the PRD; the remaining entries are schema-level sample contracts.
+EVENT_PAYLOAD_KEY_REGISTRY: dict[str, tuple[str, ...]] = {
+    "ceremony": ("phase",),
+    "contract": ("contract_id", "outcome"),
+    "phase_exposure": ("phase", "duration_ms"),
+    "observer": ("kind",),
+    "mcp_security": ("decision", "scope"),
+    "meta_tune": ("proposal_id", "outcome"),
+    "thrashing": ("retry_count", "tool"),
+    "llm_call": ("model", "input_tokens", "output_tokens"),
+    "tool_call": (
+        "tool",
+        "start_ts",
+        "end_ts",
+        "wall_ms",
+        "input_tokens",
+        "output_tokens",
+        "usd_cost_est",
+        "pricing_version",
+        "outcome",
+    ),
+    "session_start": ("learnings_loaded", "framework_version"),
+    "session_end": ("reason", "duration_ms"),
+    "ceremony_compliance": ("score",),
+    "h1_observe_mode_warning": (
+        "emitter_name",
+        "fallback_reason",
+        "buffered_event_count_since_start",
+        "activation_gate_blocked_reason",
+    ),
+    "surface_registered": ("surface_id", "content_hash", "source_path", "category"),
+}
+
+
 def validate_parent_within_run(
     events: list[HPOTelemetryEvent],
     *,
@@ -339,6 +380,7 @@ __all__ = [
     "SurfaceRegistered",
     "DefaultResolutionError",
     "EVENT_TYPE_REGISTRY",
+    "EVENT_PAYLOAD_KEY_REGISTRY",
     "emit_h1_observe_mode_warning",
     "validate_parent_within_run",
 ]

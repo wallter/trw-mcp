@@ -14,9 +14,8 @@ import structlog
 
 from trw_mcp import __version__
 from trw_mcp._logging import configure_logging
-from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
-from trw_mcp.server._transport import resolve_and_run_transport
 
 
 def _check_mcp_json_portability(cwd: Path | None = None) -> None:
@@ -127,6 +126,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Port for HTTP transport (default: from config or 8100)",
+    )
+    parser.add_argument(
+        "--allow-unsigned",
+        action="store_true",
+        default=None,
+        help="Allow MCP peers absent from the signed registry; emits mandatory audit events",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -456,6 +461,23 @@ def _suggest_command(unknown: str, parser: argparse.ArgumentParser) -> str | Non
     return matches[0] if matches else None
 
 
+def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -> TRWConfig:
+    allow_unsigned = getattr(args, "allow_unsigned", None)
+    if allow_unsigned is None:
+        return config
+    return config.model_copy(
+        update={
+            "security": config.security.model_copy(
+                update={
+                    "mcp": config.security.mcp.model_copy(
+                        update={"allow_unsigned": bool(allow_unsigned)}
+                    )
+                }
+            )
+        }
+    )
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -524,7 +546,8 @@ def main() -> None:
         _sys.exit(1)
 
     # Default: run MCP server (no subcommand or "serve")
-    config = TRWConfig()
+    config = _apply_cli_security_overrides(TRWConfig(), args)
+    reload_config(config)
     debug = args.debug or config.debug
 
     # Resolve verbosity: --quiet overrides, --debug adds to -v count
@@ -556,6 +579,8 @@ def main() -> None:
     # accepting connections.  Wrapped in try/except (NFR02 fail-open) — sweep
     # failure MUST NOT block server startup.
     _boot_sequence(config, log)
+
+    from trw_mcp.server._transport import resolve_and_run_transport
 
     resolve_and_run_transport(args, config, debug=debug, log=log)
 

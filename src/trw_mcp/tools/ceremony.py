@@ -171,6 +171,32 @@ def _mark_run_complete(run_dir: Path) -> None:
         )
 
 
+def _persist_surface_snapshot_pointer(run_dir: Path, snapshot_id: str) -> None:
+    """Persist the run's surface snapshot pointer into ``run.yaml``.
+
+    FR-2 requires the resolved ``surface_snapshot_id`` be discoverable from
+    the session's ``run.yaml`` in addition to the immutable
+    ``run_surface_snapshot.yaml`` file under ``meta/``.
+    """
+    run_yaml = run_dir / "meta" / "run.yaml"
+    if not run_yaml.exists():
+        return
+    reader = FileStateReader()
+    writer = FileStateWriter()
+    try:
+        data = reader.read_yaml(run_yaml)
+        data["surface_snapshot_id"] = snapshot_id
+        data["run_surface_snapshot_path"] = "meta/run_surface_snapshot.yaml"
+        writer.write_yaml(run_yaml, data)
+    except Exception:  # justified: fail-open, pointer persistence must not block session start
+        logger.warning(
+            "surface_snapshot_pointer_persist_failed",
+            run_dir=str(run_dir),
+            snapshot_id=snapshot_id,
+            exc_info=True,
+        )
+
+
 # ── Synchronous delivery helpers (critical path) ──────────────────────
 
 
@@ -419,6 +445,12 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
+        # PRD-HPO-MEAS-001 NFR-12 / FR-13: fail at boot, before any session
+        # telemetry or startup artifacts are written.
+        from trw_mcp.telemetry.boot_audit import run_boot_audit
+
+        run_boot_audit()
+
         # Step 1: Recall learnings via SQLite adapter (compact mode)
         try:
             trw_dir = resolve_trw_dir()
@@ -480,14 +512,21 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
         #   Phase-1 default remains available on HPOTelemetryEvent.
         surface_snapshot_id: str = ""
         try:
-            from trw_mcp.telemetry.artifact_registry import resolve_surface_registry
+            from trw_mcp.telemetry.artifact_registry import SurfaceRegistry, resolve_surface_registry
             from trw_mcp.telemetry.surface_manifest import stamp_session
 
-            registry = resolve_surface_registry()
-            surface_snapshot_id = registry.snapshot_id
             if run_dir is not None:
-                meta_dir = run_dir / "meta"
-                stamp_session(meta_dir)
+                registry = SurfaceRegistry.build_and_emit(
+                    session_id=str(call_ctx.session_id),
+                    run_id=run_dir.name,
+                    run_dir=run_dir,
+                )
+                surface_snapshot_id = registry.snapshot_id
+                stamp_session(run_dir / "meta")
+                _persist_surface_snapshot_pointer(run_dir, surface_snapshot_id)
+            else:
+                registry = resolve_surface_registry()
+                surface_snapshot_id = registry.snapshot_id
             results["surface_snapshot_id"] = surface_snapshot_id
             logger.debug(
                 "surface_snapshot_stamped",

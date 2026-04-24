@@ -21,35 +21,35 @@ from trw_mcp.security.anomaly_detector import (
     hash_tool_args,
 )
 from trw_mcp.security.capability_scope import (
-    CapabilityFilter,
     CapabilityScope,
     CapabilityScopeError,
     apply_scope,
-    default_scopes_for_family,
+    scope_from_allowed_tool,
 )
 from trw_mcp.security.mcp_registry import (
+    AllowedTool,
     MCPAllowlist,
+    MCPRegistry,
+    MCPSecurityConfigError,
+    MCPSecurityUnavailableError,
     MCPServer,
-    TrustLevel,
-    is_allowed,
     load_allowlist,
-    verify_signature,
 )
 
 __all__ = [
     "AnomalyDetector",
     "AnomalyDetectorConfig",
     "AnomalyObservation",
-    "CapabilityFilter",
     "CapabilityScope",
     "CapabilityScopeError",
+    "AllowedTool",
     "MCPAllowlist",
+    "MCPRegistry",
+    "MCPSecurityConfigError",
+    "MCPSecurityUnavailableError",
     "MCPServer",
-    "TrustLevel",
     "apply_scope",
-    "default_scopes_for_family",
     "hash_tool_args",
-    "is_allowed",
     "load_allowlist",
-    "verify_signature",
+    "scope_from_allowed_tool",
 ]

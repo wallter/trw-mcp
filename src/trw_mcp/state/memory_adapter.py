@@ -27,7 +27,16 @@ from pathlib import Path
 import structlog
 from trw_memory.exceptions import StorageError
 from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
+from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
+from trw_memory.security.recall_filter import filter_recall_window
+from trw_memory.security.runtime import (
+    initialize_canaries,
+    prepare_entry_for_store,
+    probe_canaries,
+    should_halt_recalls,
+    store_quarantined_entry,
+)
 
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
@@ -221,6 +230,7 @@ def store_learning(
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
     anchor_validity: float = 1.0,
+    session_id: str | None = None,
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
 
@@ -267,7 +277,24 @@ def store_learning(
     for attempt in range(2):
         try:
             backend = get_backend(trw_dir)
-            backend.store(entry)
+            sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
+            initialize_canaries(sec_cfg, backend=backend)
+            decision = prepare_entry_for_store(
+                entry,
+                backend=backend,
+                config=sec_cfg,
+                session_id=session_id,
+                trw_dir=trw_dir,
+            )
+            if decision.quarantined:
+                store_quarantined_entry(sec_cfg, decision.entry)
+                return {
+                    "learning_id": learning_id,
+                    "path": f"sqlite://{learning_id}",
+                    "status": "quarantined",
+                    "distribution_warning": "",
+                }
+            backend.store(decision.entry)
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries storage before surfacing failure
             if attempt == 0 and _is_corruption_error(exc):
@@ -331,6 +358,13 @@ def recall_learnings(
     for attempt in range(2):
         try:
             backend = get_backend(trw_dir)
+            sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
+            initialize_canaries(sec_cfg, backend=backend)
+            if should_halt_recalls(sec_cfg):
+                from trw_memory.exceptions import CanaryTamperError
+
+                raise CanaryTamperError("recall halted after canary tamper")
+            probe_canaries(sec_cfg, backend=backend)
             if is_wildcard:
                 entries = backend.list_entries(
                     status=mem_status,
@@ -360,8 +394,16 @@ def recall_learnings(
                 continue
             raise
 
+    filter_result = (
+        filter_recall_window(entries, mode=sec_cfg.recall_filter_mode)
+        if sec_cfg.enable_recall_filter
+        else None
+    )
     results: list[dict[str, object]] = []
-    for entry in entries:
+    filtered_entries = filter_result.accepted if filter_result is not None else entries
+    for entry in filtered_entries:
+        if entry.metadata.get("system_canary") == "true":
+            continue
         # Wildcard path: list_entries doesn't filter by tags/impact, so apply
         # _apply_entry_filters (AND semantics) to match the search path.
         # Search path already applies these filters internally.
@@ -416,7 +458,7 @@ def update_learning(  # noqa: C901
     changes: list[str] = []
 
     if status is not None:
-        valid_statuses = {"active", "resolved", "obsolete"}
+        valid_statuses = {"active", "resolved", "obsolete", "obsolete_poisoned"}
         if status not in valid_statuses:
             return {
                 "error": f"Invalid status '{status}'. Must be one of: {valid_statuses}",
@@ -522,7 +564,9 @@ def list_active_learnings(
         limit=limit,
     )
     results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry) for entry in entries if entry.importance >= min_impact
+        _memory_to_learning_dict(entry)
+        for entry in entries
+        if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
     ]
     return results
 
@@ -586,7 +630,13 @@ def find_yaml_path_for_entry(trw_dir: Path, entry_id: str) -> Path | None:
 def count_entries(trw_dir: Path) -> int:
     """Return total number of entries in the SQLite store."""
     backend = get_backend(trw_dir)
-    return backend.count(namespace=_NAMESPACE)
+    return len(
+        [
+            entry
+            for entry in backend.list_entries(namespace=_NAMESPACE, limit=100_000)
+            if entry.metadata.get("system_canary") != "true"
+        ]
+    )
 
 
 def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:

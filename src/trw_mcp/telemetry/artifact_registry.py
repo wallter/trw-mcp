@@ -191,6 +191,18 @@ def _resolve_data_root() -> Path | None:
     (e.g. zip-imported package).
     """
     try:
+        import trw_mcp.data as data_pkg
+
+        pkg_paths = list(getattr(data_pkg, "__path__", ()))
+        if pkg_paths:
+            p = Path(pkg_paths[0]).resolve()
+            if p.exists() and p.is_dir():
+                return p
+        pkg_file = getattr(data_pkg, "__file__", None)
+        if isinstance(pkg_file, str) and pkg_file:
+            p = Path(pkg_file).resolve().parent
+            if p.exists() and p.is_dir():
+                return p
         root = _pkg_files(_DATA_PACKAGE)
         p = Path(str(root))
         return p if p.exists() and p.is_dir() else None
@@ -384,10 +396,13 @@ class SurfaceRegistry(BaseModel):
         """
         registry = cls.build(data_root=data_root, repo_root=repo_root, now=now)
         try:
+            from trw_mcp.state.persistence import FileStateWriter
             from trw_mcp.telemetry.event_base import SurfaceRegistered
             from trw_mcp.telemetry.unified_events import emit as _emit
 
             snapshot_id = registry.snapshot_id
+            writer = FileStateWriter()
+            registry_log = (run_dir / "meta" / "artifact_registry.jsonl") if run_dir is not None else None
             for art in registry.artifacts:
                 category = art.surface_id.split(":", 1)[0] if ":" in art.surface_id else "unknown"
                 event = SurfaceRegistered(
@@ -402,6 +417,20 @@ class SurfaceRegistry(BaseModel):
                     },
                 )
                 _emit(event, run_dir=run_dir, fallback_dir=fallback_dir)
+                if registry_log is not None:
+                    writer.append_jsonl(
+                        registry_log,
+                        {
+                            "session_id": session_id,
+                            "run_id": run_id,
+                            "snapshot_id": snapshot_id,
+                            "surface_id": art.surface_id,
+                            "content_hash": art.content_hash,
+                            "source_path": art.source_path,
+                            "category": category,
+                            "discovered_at": art.discovered_at.isoformat(),
+                        },
+                    )
         except Exception:  # justified: fail-open, event emission must not break registry resolution
             logger.debug("surface_registered_emit_failed", exc_info=True)
         return registry

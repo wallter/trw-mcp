@@ -11,6 +11,7 @@ import pytest
 from trw_mcp.telemetry.event_base import (
     CeremonyEvent,
     HPOSessionStartEvent,
+    MCPSecurityEvent,
     ToolCallEvent,
 )
 from trw_mcp.telemetry.unified_events import (
@@ -110,6 +111,23 @@ class TestEmitConvenience:
     def test_emit_returns_false_when_no_path(self) -> None:
         event = ToolCallEvent(session_id="s1")
         assert emit(event, run_dir=None, fallback_dir=None) is False
+
+    def test_emit_projects_mcp_security_events_to_legacy_tool_call_surface(
+        self, tmp_path: Path
+    ) -> None:
+        event = MCPSecurityEvent(
+            session_id="s1",
+            payload={"decision": "shadow_anomaly", "tool": "read_file", "server": "filesystem"},
+        )
+
+        assert emit(event, run_dir=None, fallback_dir=tmp_path) is True
+
+        projection = tmp_path / "tool_call_events.jsonl"
+        assert projection.exists()
+        rows = [json.loads(line) for line in projection.read_text().splitlines() if line]
+        assert len(rows) == 1
+        assert rows[0]["event_type"] == "mcp_security"
+        assert rows[0]["payload"]["decision"] == "shadow_anomaly"
 
 
 class TestDefaultWriter:

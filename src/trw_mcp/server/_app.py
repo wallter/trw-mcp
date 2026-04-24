@@ -17,6 +17,7 @@ import structlog
 from fastmcp import FastMCP
 
 from trw_mcp._logging import configure_logging
+from trw_mcp.meta_tune.boot_checks import validate_defaults as validate_meta_tune_defaults
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
 
@@ -94,55 +95,10 @@ def _try_init_observation_masking(config: TRWConfig) -> object | None:
 
 
 def _try_init_mcp_security(config: TRWConfig) -> object | None:
-    """Try to initialize MCPSecurityMiddleware (PRD-INFRA-SEC-001 FR-6/FR-9).
+    """Initialize the mounted MCP security middleware."""
+    from trw_mcp.startup import init_security
 
-    v1 is observe-mode: the middleware instantiates the signed registry,
-    the capability-scope filter, and the 3-week shadow anomaly detector.
-    It never blocks tool calls — it emits ``MCPSecurityEvent`` telemetry
-    through the unified events writer. Returns None on failure (fail-open).
-    """
-    try:
-        from trw_mcp.middleware.mcp_security import MCPSecurityMiddleware
-        from trw_mcp.security.anomaly_detector import (
-            AnomalyDetector,
-            AnomalyDetectorConfig,
-        )
-        from trw_mcp.security.mcp_registry import MCPAllowlist, load_allowlist
-        from trw_mcp.state._paths import resolve_trw_dir
-
-        trw_dir = resolve_trw_dir()
-        default_allowlist = (
-            Path(__file__).resolve().parent.parent / "data" / "mcp_servers.allowlist.yaml"
-        )
-        overlay = trw_dir / "mcp_servers.local.yaml"
-        try:
-            allowlist = load_allowlist(default_allowlist, overlay)
-        except (OSError, ValueError):  # justified: fail-open, allowlist load failure falls back to empty (observe-mode)
-            logger.warning(
-                "mcp_security_allowlist_load_failed",
-                path=str(default_allowlist),
-                outcome="fallback_empty",
-            )
-            allowlist = MCPAllowlist(servers=[])
-        det = AnomalyDetector(
-            config=AnomalyDetectorConfig(
-                shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
-            ),
-            run_dir=None,
-            fallback_dir=trw_dir / config.context_dir
-            if hasattr(config, "context_dir")
-            else trw_dir,
-        )
-        return MCPSecurityMiddleware(
-            allowlist=allowlist,
-            scopes={},
-            anomaly_detector=det,
-            run_dir=None,
-            fallback_dir=trw_dir,
-        )
-    except Exception:  # justified: fail-open, security layer is observe-mode and must not crash server startup
-        logger.warning("middleware_init_failed", component="MCPSecurityMiddleware")
-        return None
+    return init_security(config.security.mcp)
 
 
 def _try_init_response_optimizer() -> object | None:
@@ -156,6 +112,12 @@ def _try_init_response_optimizer() -> object | None:
         return None
 
 
+def _run_meta_tune_boot_validation(config: TRWConfig) -> None:
+    """Fail-loud SAFE-001 boot validation when meta-tune is enabled."""
+    if config.meta_tune.enabled:
+        validate_meta_tune_defaults(config)
+
+
 def _build_middleware() -> list[object]:
     """Build the middleware list, conditionally including progressive disclosure.
 
@@ -163,14 +125,21 @@ def _build_middleware() -> list[object]:
     returns None on failure (fail-open). This keeps the orchestration
     logic readable while isolating error handling per component.
     """
-    ceremony = _try_init_ceremony()
-    if ceremony is None:
-        return []
-    middleware: list[object] = [ceremony]
-
     config = _try_load_config()
     if config is None:
-        return middleware
+        config = TRWConfig()
+    _run_meta_tune_boot_validation(config)
+
+    middleware: list[object] = []
+
+    global _mcp_security
+    _mcp_security = _try_init_mcp_security(config)
+    if _mcp_security is not None:
+        middleware.append(_mcp_security)
+
+    ceremony = _try_init_ceremony()
+    if ceremony is not None:
+        middleware.append(ceremony)
 
     middleware.extend(
         mw
@@ -181,15 +150,6 @@ def _build_middleware() -> list[object]:
         )
         if mw is not None
     )
-
-    # PRD-INFRA-SEC-001 FR-6/FR-9: the MCP security middleware is instantiated
-    # at startup so the anomaly detector's shadow clock is written and the
-    # signed registry loaded. It is held on the module-level ``_mcp_security``
-    # attribute for use by the transport dispatch path (stdio/HTTP/SSE), NOT
-    # added to the FastMCP middleware chain (FastMCP expects a specific ASGI
-    # protocol which this observe-mode layer does not implement).
-    global _mcp_security
-    _mcp_security = _try_init_mcp_security(config)
 
     return middleware
 

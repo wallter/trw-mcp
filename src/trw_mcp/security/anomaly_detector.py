@@ -1,7 +1,8 @@
 """3-week shadow-mode anomaly detector (PRD-INFRA-SEC-001 FR-3 / FR-4 / NFR-7, -11).
 
-Reads (and/or observes in-process) the unified ``tool_call_events.jsonl``
-envelope and emits ``MCPSecurityEvent`` records with
+Observes live tool calls and emits ``MCPSecurityEvent`` records to the unified
+``events-YYYY-MM-DD.jsonl`` stream (with legacy ``tool_call_events.jsonl``
+projection for back-compat) with
 ``decision="shadow_anomaly"`` for three observation categories:
 
 * **Frequency spikes** — tool-call rolling rate exceeds baseline by ≥ sigma
@@ -33,6 +34,7 @@ from collections import defaultdict, deque
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -70,9 +72,11 @@ class AnomalyDetectorConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
+    mode: str = "shadow"
     sigma_threshold: float = Field(default=DEFAULT_SIGMA_THRESHOLD, gt=0.0)
     window_seconds: int = Field(default=DEFAULT_WINDOW_SECONDS, gt=0)
     shadow_clock_path: Path
+    baseline_store_path: Path | None = None
 
 
 def _hash_args(args: dict[str, Any]) -> str:
@@ -140,7 +144,7 @@ def _emit_anomaly(
         "anomaly_type": anomaly_type,
         "server": server,
         "tool": tool,
-        "mode": "observe",
+        "mode": extra.get("mode", "shadow"),
     }
     payload.update(extra)
     event = MCPSecurityEvent(
@@ -169,7 +173,7 @@ class AnomalyDetector:
         config: AnomalyDetectorConfig,
         run_dir: Path | None = None,
         fallback_dir: Path | None = None,
-        now_fn: Any = None,
+        now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
         self._run_dir = run_dir
@@ -180,13 +184,55 @@ class AnomalyDetector:
             lambda: deque(maxlen=32)
         )
         self._baseline_pairs: set[tuple[str, str]] = set()
+        self._baseline_arg_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
         _ensure_shadow_clock(config.shadow_clock_path, now=self._now_fn())
+        self._load_arg_hash_baseline()
+
+    def _load_arg_hash_baseline(self) -> None:
+        path = self._config.baseline_store_path
+        if path is None or not path.exists():
+            return
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            logger.warning("mcp_arg_baseline_load_failed", path=str(path), outcome="skipped")
+            return
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            server = row.get("server")
+            tool = row.get("tool")
+            args_hash = row.get("arg_hash")
+            if isinstance(server, str) and isinstance(tool, str) and isinstance(args_hash, str):
+                self._baseline_arg_hashes[(server, tool)].add(args_hash)
+
+    def _persist_arg_hash_baseline(self, obs: AnomalyObservation) -> None:
+        path = self._config.baseline_store_path
+        if path is None or not obs.args_hash:
+            return
+        payload = {
+            "type": "arg_baseline",
+            "ts": obs.ts.isoformat(),
+            "server": obs.server,
+            "tool": obs.tool,
+            "arg_hash": obs.args_hash,
+            "run_id": obs.run_id or "",
+            "session_id": obs.session_id,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
     def seed_baseline(
         self,
         known_pairs: Iterable[tuple[str, str]],
         *,
         historical_rates: dict[tuple[str, str], Iterable[float]] | None = None,
+        historical_arg_hashes: dict[tuple[str, str], Iterable[str]] | None = None,
     ) -> None:
         """Seed baseline pairs + per-pair historical rate samples.
 
@@ -201,6 +247,11 @@ class AnomalyDetector:
                 bucket = self._baseline_rates[pair]
                 for val in samples:
                     bucket.append(float(val))
+        if historical_arg_hashes:
+            for pair, arg_hashes in historical_arg_hashes.items():
+                arg_bucket = self._baseline_arg_hashes[pair]
+                for arg_hash in arg_hashes:
+                    arg_bucket.add(str(arg_hash))
 
     def _prune(self, key: tuple[str, str], now: datetime) -> None:
         window = self._rate_window[key]
@@ -242,7 +293,7 @@ class AnomalyDetector:
         sigma = (current_rate - mean) / stdev
         fires = sigma >= self._config.sigma_threshold
         sorted_samples = sorted(baseline_samples)
-        p99_index = max(0, int(round(0.99 * (len(sorted_samples) - 1))))
+        p99_index = max(0, round(0.99 * (len(sorted_samples) - 1)))
         p99 = sorted_samples[p99_index]
         return fires, {
             "current_rate": current_rate,
@@ -305,6 +356,20 @@ class AnomalyDetector:
                 extra={"declared_prefix": obs.tool.split("__", 1)[0]},
             )
             fired.append("namespace_mismatch")
+        if obs.args_hash and obs.args_hash not in self._baseline_arg_hashes[(obs.server, obs.tool)]:
+            self._baseline_arg_hashes[(obs.server, obs.tool)].add(obs.args_hash)
+            self._persist_arg_hash_baseline(obs)
+            _emit_anomaly(
+                anomaly_type="novel_arg_pattern",
+                server=obs.server,
+                tool=obs.tool,
+                session_id=obs.session_id,
+                run_id=obs.run_id,
+                run_dir=self._run_dir,
+                fallback_dir=self._fallback_dir,
+                extra={"args_hash": obs.args_hash, "novel_arg_pattern": True},
+            )
+            fired.append("novel_arg_pattern")
         return fired
 
 

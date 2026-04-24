@@ -1,42 +1,28 @@
-"""Rollback primitive for the meta-tune pipeline.
-
-PRD-HPO-SAFE-001 FR-4/FR-5 + NFR-3. ``rollback_proposal(proposal_id)``
-restores the pre-edit state of a promoted meta-tune change. The p95
-latency budget is ≤10s wall-clock (NFR-3). Idempotence: calling twice
-returns the same ``RollbackResult``.
-
-The implementation is storage-backend-agnostic: each promoted proposal is
-expected to have deposited a pre-edit snapshot at
-``state_dir/{proposal_id}.json``. Rollback marks it rolled-back in place
-by renaming to ``{proposal_id}.rolled.json`` (idempotent on repeat calls).
-
-Kill-switch (FR-7/FR-13): returns a ``status='disabled'`` result without
-mutating state.
-"""
+"""Rollback primitive for SAFE-001."""
 
 from __future__ import annotations
 
+import json
+import shutil
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
-from trw_mcp.telemetry.event_base import MetaTuneEvent
+from trw_mcp.meta_tune.audit import append_audit_entry
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
 
-
-StatusLiteral = Literal["rolled_back", "missing", "disabled", "error"]
+StatusLiteral = Literal["rolled_back", "missing", "disabled", "error", "window_expired"]
 
 
 class RollbackResult(BaseModel):
-    """Typed result of a rollback attempt."""
-
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     status: StatusLiteral
@@ -49,13 +35,23 @@ def _default_state_dir() -> Path:
     return Path(".trw/meta_tune/state")
 
 
+def _load_snapshot(path: Path) -> dict[str, str]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("rollback snapshot must be a JSON object")
+    required = {"target_path", "backup_path", "promotion_ts"}
+    missing = required - set(raw)
+    if missing:
+        raise ValueError(f"rollback snapshot missing keys: {sorted(missing)}")
+    return {k: str(v) for k, v in raw.items()}
+
+
 def rollback_proposal(
     proposal_id: str,
     *,
     state_dir: Path | None = None,
     _config: TRWConfig | None = None,
 ) -> RollbackResult:
-    """Reverse a promoted meta-tune proposal, idempotent + p95 ≤10s."""
     cfg = _config
     if cfg is None:
         from trw_mcp.models.config._main import TRWConfig
@@ -69,59 +65,84 @@ def rollback_proposal(
             outcome="noop",
             reason="kill_switch_off",
         )
-        return RollbackResult(
-            status="disabled", proposal_id=proposal_id, reason="kill_switch_off"
-        )
+        return RollbackResult(status="disabled", proposal_id=proposal_id, reason="kill_switch_off")
 
     dir_ = state_dir or _default_state_dir()
     start = time.monotonic()
+    snapshot_path = dir_ / f"{proposal_id}.json"
+    rolled_path = dir_ / f"{proposal_id}.rolled.json"
 
-    snapshot = dir_ / f"{proposal_id}.json"
-    rolled = dir_ / f"{proposal_id}.rolled.json"
-
-    # Idempotence: if already rolled, return same rolled_back result.
-    if rolled.exists():
+    if rolled_path.exists():
         elapsed = (time.monotonic() - start) * 1000.0
-        _emit(proposal_id, "rolled_back", elapsed_ms=elapsed, reason="idempotent")
         return RollbackResult(
             status="rolled_back",
             proposal_id=proposal_id,
             elapsed_ms=elapsed,
             reason="idempotent",
         )
-
-    if not snapshot.exists():
+    if not snapshot_path.exists():
         elapsed = (time.monotonic() - start) * 1000.0
-        _emit(proposal_id, "missing", elapsed_ms=elapsed, reason="no_snapshot")
-        return RollbackResult(
-            status="missing",
-            proposal_id=proposal_id,
-            elapsed_ms=elapsed,
-            reason="no_snapshot",
-        )
+        return RollbackResult(status="missing", proposal_id=proposal_id, elapsed_ms=elapsed, reason="no_snapshot")
 
     try:
-        # Atomic rename — records the rollback having happened.
-        snapshot.replace(rolled)
-    except OSError as exc:  # justified: io_boundary, surface to caller
+        snapshot = _load_snapshot(snapshot_path)
+        attempts = int(snapshot.get("rollback_attempts", "0"))
+        if attempts >= cfg.meta_tune.rollback_max_attempts:
+            elapsed = (time.monotonic() - start) * 1000.0
+            return RollbackResult(
+                status="error",
+                proposal_id=proposal_id,
+                elapsed_ms=elapsed,
+                reason="rollback_attempt_limit_exceeded",
+            )
+        promoted_at = datetime.fromisoformat(snapshot["promotion_ts"])
+        if promoted_at.tzinfo is None:
+            promoted_at = promoted_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - promoted_at > timedelta(days=30):
+            elapsed = (time.monotonic() - start) * 1000.0
+            return RollbackResult(
+                status="window_expired",
+                proposal_id=proposal_id,
+                elapsed_ms=elapsed,
+                reason="rollback_window_expired",
+            )
+        target_path = Path(snapshot["target_path"])
+        backup_path = Path(snapshot["backup_path"])
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_path, target_path)
+        snapshot_path.replace(rolled_path)
+        elapsed = (time.monotonic() - start) * 1000.0
+        append_audit_entry(
+            Path(cfg.meta_tune.audit_log_path),
+            edit_id=proposal_id,
+            event="rolled_back",
+            proposer_id="operator",
+            candidate_diff="",
+            surface_classification="advisory",
+            gate_decision="rolled_back",
+            promotion_session_id=snapshot.get("promotion_session_id", ""),
+            payload={"target_path": str(target_path), "backup_path": str(backup_path)},
+            _config=cfg,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        try:
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if isinstance(snapshot, dict):
+                snapshot["rollback_attempts"] = int(snapshot.get("rollback_attempts", 0)) + 1
+                snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        except Exception:
+            pass
         elapsed = (time.monotonic() - start) * 1000.0
         logger.error(
-            "rollback_rename_failed",
+            "rollback_failed",
             component="meta_tune.rollback",
             op="rollback_proposal",
             outcome="error",
             error=str(exc),
         )
-        _emit(proposal_id, "error", elapsed_ms=elapsed, reason=f"io:{exc}")
-        return RollbackResult(
-            status="error",
-            proposal_id=proposal_id,
-            elapsed_ms=elapsed,
-            reason=f"io:{exc}",
-        )
+        return RollbackResult(status="error", proposal_id=proposal_id, elapsed_ms=elapsed, reason=str(exc))
 
-    elapsed = (time.monotonic() - start) * 1000.0
-    if elapsed > 10_000.0:  # NFR-3: log (do not raise) on latency overage.
+    if elapsed > 10_000.0:
         logger.warning(
             "rollback_latency_overage",
             component="meta_tune.rollback",
@@ -130,45 +151,15 @@ def rollback_proposal(
             proposal_id=proposal_id,
             elapsed_ms=elapsed,
         )
-    _emit(proposal_id, "rolled_back", elapsed_ms=elapsed, reason="ok")
-    return RollbackResult(
-        status="rolled_back",
-        proposal_id=proposal_id,
-        elapsed_ms=elapsed,
-        reason="ok",
-    )
-
-
-def _emit(
-    proposal_id: str, status: str, *, elapsed_ms: float, reason: str
-) -> None:
-    try:
-        MetaTuneEvent(
-            session_id=proposal_id,
-            payload={
-                "action": "rollback",
-                "proposal_id": proposal_id,
-                "rollback_reason_code": reason,
-                "status": status,
-                "elapsed_ms": elapsed_ms,
-            },
-        )
-    except Exception:  # justified: telemetry_best_effort
-        logger.warning(
-            "rollback_telemetry_failed",
-            component="meta_tune.rollback",
-            op="_emit",
-            outcome="degraded",
-        )
     logger.info(
         "meta_tune_rollback",
         component="meta_tune.rollback",
         op="rollback_proposal",
-        outcome=status,
+        outcome="rolled_back",
         proposal_id=proposal_id,
-        elapsed_ms=elapsed_ms,
-        reason=reason,
+        elapsed_ms=elapsed,
     )
+    return RollbackResult(status="rolled_back", proposal_id=proposal_id, elapsed_ms=elapsed, reason="ok")
 
 
 __all__ = [

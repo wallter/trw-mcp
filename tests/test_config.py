@@ -244,6 +244,24 @@ class TestConfigYamlLoading:
         finally:
             _reset_config()
 
+    def test_meta_tune_flat_key_populates_nested_config(
+        self, config_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SAFE-001: legacy ``meta_tune_enabled`` still activates nested config."""
+        config_yaml = config_project / ".trw" / "config.yaml"
+        config_yaml.write_text("meta_tune_enabled: true\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root",
+            lambda: config_project,
+        )
+        _reset_config()
+        try:
+            cfg = get_config()
+            assert cfg.meta_tune_enabled is True
+            assert cfg.meta_tune.enabled is True
+        finally:
+            _reset_config()
+
 
 # --- Config field defaults (consolidated from 14 individual tests) ---
 

@@ -4,6 +4,13 @@ Covers sections 26, 36, 51 (OTEL) of the original _main_fields.py:
   - Debug & telemetry
   - OTEL
   - Velocity tracking
+
+MEAS-001 note:
+  - ``pricing_table_path`` is the only field in this mixin currently consumed
+    by the live H1 unified-telemetry path (``tool_call_timing`` /
+    ``boot_audit``).
+  - The remaining fields continue to govern legacy platform telemetry,
+    OTEL, or usage logging and are not claimed as MEAS-001 config-E2E fields.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ class _TelemetryFields:
     telemetry: bool = False
     telemetry_enabled: bool = True
     telemetry_file: str = "tool-telemetry.jsonl"
+    pricing_table_path: str = ""
     llm_usage_log_enabled: bool = True
     llm_usage_log_file: str = "llm_usage.jsonl"
 

@@ -33,6 +33,7 @@ def test_config_meta_tune_disabled_by_default() -> None:
 
     config = TRWConfig()
     assert config.meta_tune_enabled is False
+    assert config.meta_tune.enabled is False
 
 
 def test_config_team_sync_disabled_by_default() -> None:
@@ -70,3 +71,14 @@ def test_config_sync_fields_load_from_env(monkeypatch) -> None:  # type: ignore[
 
     assert config.backend_url == "https://backend.example.com"
     assert config.sync_interval_seconds == 120
+
+
+def test_meta_tune_enabled_env_syncs_nested_config(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from trw_mcp.models.config._main import TRWConfig
+
+    monkeypatch.setenv("TRW_META_TUNE_ENABLED", "true")
+
+    config = TRWConfig()
+
+    assert config.meta_tune_enabled is True
+    assert config.meta_tune.enabled is True

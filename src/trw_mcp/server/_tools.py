@@ -98,6 +98,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.query_tools import register_query_tools
@@ -108,6 +109,7 @@ def _register_tools() -> None:
     register_ceremony_tools(mcp)
     register_checkpoint_tools(mcp)
     register_learning_tools(mcp)
+    register_meta_tune_tools(mcp)
     register_knowledge_tools(mcp)
     register_orchestration_tools(mcp)
     register_requirements_tools(mcp)
@@ -152,18 +154,30 @@ def _apply_security_consult_wrapping() -> None:
         from trw_mcp.server._security_hook import consult_mcp_security
         from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
+        tools: dict[str, object] = {}
+
         tool_manager = getattr(mcp, "_tool_manager", None) or getattr(mcp, "tool_manager", None)
-        if tool_manager is None:
-            logger.debug("security_consult_rewrap_skipped", reason="no_tool_manager")
-            return
-        tools = getattr(tool_manager, "_tools", None) or getattr(tool_manager, "tools", None)
-        if not isinstance(tools, dict):
+        if tool_manager is not None:
+            raw_tools = getattr(tool_manager, "_tools", None) or getattr(tool_manager, "tools", None)
+            if isinstance(raw_tools, dict):
+                tools.update({str(name): tool_obj for name, tool_obj in raw_tools.items()})
+
+        local_provider = getattr(mcp, "_local_provider", None)
+        if local_provider is not None:
+            components = getattr(local_provider, "_components", None)
+            if isinstance(components, dict):
+                for key, component in components.items():
+                    if isinstance(key, str) and key.startswith("tool:"):
+                        name = key.split("tool:", 1)[1].split("@", 1)[0]
+                        tools[name] = component
+
+        if not tools:
             logger.debug("security_consult_rewrap_skipped", reason="no_tools_mapping")
             return
         rewrapped = 0
         for name, tool_obj in list(tools.items()):
             fn = getattr(tool_obj, "fn", None) or getattr(tool_obj, "func", None)
-            if not callable(fn):
+            if not callable(fn) or getattr(fn, "__trw_tool_call_wrapped__", False):
                 continue
             wrapped = wrap_tool(
                 fn, tool_name=str(name), security_consult=consult_mcp_security

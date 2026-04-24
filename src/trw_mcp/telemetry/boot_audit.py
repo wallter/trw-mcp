@@ -1,9 +1,9 @@
 """Default-resolution boot audit — PRD-HPO-MEAS-001 NFR-12 + FR-13.
 
 On first session-start per install, `trw_session_start` MUST invoke a
-default-resolution audit that proves every Phase-1 default resolves to a
-real on-disk resource: ``pricing.yaml``, compression algorithm, hash
-algorithm, event-schema registry. Any unresolvable default raises
+default-resolution audit that proves every currently shipped Phase-1
+default resolves to reality: bundled/configured ``pricing.yaml``,
+``sha256`` availability, and the event-schema registry. Any unresolvable default raises
 :class:`DefaultResolutionError` with file:line + remediation BEFORE the
 session writes any events.
 
@@ -44,6 +44,27 @@ class ResolutionFailure:
 def _check_pricing_yaml() -> ResolutionFailure | None:
     """PRD-HPO-MEAS-001 FR-13 §3: ``trw-mcp/data/pricing.yaml`` must exist."""
     try:
+        pricing_path: Path | None = None
+        try:
+            from trw_mcp.models.config import get_config
+
+            configured = str(get_config().pricing_table_path).strip()
+            if configured:
+                pricing_path = Path(configured).expanduser()
+        except Exception:
+            pricing_path = None
+
+        if pricing_path is not None:
+            if not pricing_path.is_file():
+                return ResolutionFailure(
+                    key="pricing_yaml",
+                    expected=f"configured pricing table at {pricing_path}",
+                    actual=f"missing at {pricing_path}",
+                    remediation="Update TRWConfig.pricing_table_path to an existing YAML file.",
+                )
+            _ = pricing_path.read_text(encoding="utf-8")
+            return None
+
         traversable = _pkg_files("trw_mcp.data").joinpath("pricing.yaml")
         if not traversable.is_file():
             return ResolutionFailure(
