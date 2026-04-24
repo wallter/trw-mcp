@@ -61,6 +61,55 @@ INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _resolve_hpo_event_context(
+    events_path: Path,
+    data: dict[str, object],
+) -> tuple[str, str | None, str]:
+    """Resolve ``(session_id, run_id, surface_snapshot_id)`` for unified HPO rows.
+
+    Legacy emitters often omit these H1 fields. When the legacy write target
+    is ``<run>/meta/events.jsonl``, recover them from ``run.yaml`` and/or
+    ``run_surface_snapshot.yaml`` so the parallel-emitted unified row still
+    satisfies FR-2 / FR-12.
+    """
+    session_id = str(data.get("session_id", "")) if data.get("session_id") is not None else ""
+    run_id = str(data.get("run_id")) if data.get("run_id") is not None else None
+    surface_snapshot_id = (
+        str(data.get("surface_snapshot_id", "")) if data.get("surface_snapshot_id") is not None else ""
+    )
+
+    if events_path.parent.name != "meta":
+        return session_id, run_id, surface_snapshot_id
+
+    meta_dir = events_path.parent
+    run_dir = meta_dir.parent
+    if run_id is None:
+        run_id = run_dir.name
+
+    run_yaml = meta_dir / "run.yaml"
+    if run_yaml.exists():
+        try:
+            run_data = FileStateReader().read_yaml(run_yaml)
+        except StateError:
+            run_data = {}
+        if not session_id and run_data.get("owner_session_id") is not None:
+            session_id = str(run_data.get("owner_session_id", ""))
+        if not surface_snapshot_id and run_data.get("surface_snapshot_id") is not None:
+            surface_snapshot_id = str(run_data.get("surface_snapshot_id", ""))
+
+    if not surface_snapshot_id:
+        snapshot_path = meta_dir / "run_surface_snapshot.yaml"
+        if snapshot_path.exists():
+            try:
+                snapshot_data = FileStateReader().read_yaml(snapshot_path)
+            except StateError:
+                snapshot_data = {}
+            if snapshot_data.get("snapshot_id") is not None:
+                surface_snapshot_id = str(snapshot_data.get("snapshot_id", ""))
+
+    return session_id, run_id, surface_snapshot_id
+
+
 def _safe_yaml() -> YAML:
     """Safe YAML loader for reading untrusted content.
 
@@ -506,7 +555,7 @@ class FileEventLogger:
         # Lazy imports to avoid a persistence ↔ telemetry cycle at module load.
         from trw_mcp.migration.v1_to_unified import _LEGACY_EVENT_TYPE_MAP
         from trw_mcp.telemetry.event_base import EVENT_TYPE_REGISTRY, ObserverEvent
-        from trw_mcp.telemetry.unified_events import resolve_unified_events_path
+        from trw_mcp.telemetry.unified_events import emit as emit_unified
 
         unified_type = _LEGACY_EVENT_TYPE_MAP.get(event_type, "observer")
         cls = EVENT_TYPE_REGISTRY.get(unified_type, ObserverEvent)
@@ -516,16 +565,15 @@ class FileEventLogger:
         payload: dict[str, object] = {k: v for k, v in data.items() if k not in reserved}
         payload.setdefault("legacy_event", event_type)
 
-        session_id_raw = data.get("session_id")
-        run_id_raw = data.get("run_id")
+        session_id, run_id, surface_snapshot_id = _resolve_hpo_event_context(events_path, data)
 
         try:
             event = cls(
-                session_id=str(session_id_raw) if session_id_raw is not None else "",
-                run_id=str(run_id_raw) if run_id_raw is not None else None,
+                session_id=session_id,
+                run_id=run_id,
                 emitter=str(cls.model_fields["emitter"].default or unified_type),
                 event_type=unified_type,
-                surface_snapshot_id=str(data.get("surface_snapshot_id", "")),
+                surface_snapshot_id=surface_snapshot_id,
                 parent_event_id=str(data.get("parent_event_id", "")) or None,
                 payload=payload,
             )
@@ -533,29 +581,10 @@ class FileEventLogger:
             logger.debug("unified_event_build_failed", event_type=event_type, exc_info=True)
             return
 
-        # Resolve target path under the same meta/ dir as the legacy
-        # file, or the file's parent when there is no meta dir.
         parent = events_path.parent
-        if parent.name == "meta":
-            target = resolve_unified_events_path(run_dir=parent.parent)
-        else:
-            target = resolve_unified_events_path(run_dir=None, fallback_dir=parent)
-        if target is None:
-            return
-
-        # Serialize via Pydantic model_dump_json for schema fidelity.
-        import json
-
-        try:
-            record = json.loads(event.model_dump_json())
-        except Exception:  # justified: fail-open, serialization edge cases
-            logger.debug("unified_event_serialize_failed", event_type=event_type, exc_info=True)
-            return
-        try:
-            self._writer.append_jsonl(target, record)
-        except OSError:  # justified: fail-open, disk errors must not break legacy path
-            logger.debug("unified_event_write_failed", target=str(target), exc_info=True)
-            return
+        run_dir = parent.parent if parent.name == "meta" else None
+        fallback_dir = None if parent.name == "meta" else parent
+        emit_unified(event, run_dir=run_dir, fallback_dir=fallback_dir)
 
 
 def model_to_dict(model: BaseModel) -> dict[str, object]:

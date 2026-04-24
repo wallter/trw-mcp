@@ -10,6 +10,7 @@ import pytest
 
 from trw_mcp.meta_tune.audit import (
     AuditAppendError,
+    AuditIntegrityError,
     append_audit_entry,
     verify_audit_chain,
 )
@@ -41,7 +42,10 @@ def test_append_writes_genesis_with_zero_prev_hash(tmp_path: Path) -> None:
     log = tmp_path / "audit.jsonl"
     entry = append_audit_entry(
         log,
-        proposal_id="p1",
+        edit_id="p1",
+        event="proposed",
+        proposer_id="agent:1",
+        candidate_diff="--- a/CLAUDE.md\n+++ b/CLAUDE.md\n",
         surface_classification="advisory",
         gate_decision="approve",
         payload={"k": 1},
@@ -57,11 +61,11 @@ def test_append_chains_hashes(tmp_path: Path) -> None:
     log = tmp_path / "audit.jsonl"
     cfg = _cfg_enabled()
     e1 = append_audit_entry(
-        log, proposal_id="p1", surface_classification="advisory",
+        log, edit_id="p1", proposer_id="agent:1", event="proposed", candidate_diff="diff-1", surface_classification="advisory",
         gate_decision="approve", payload={"k": 1}, _config=cfg,
     )
     e2 = append_audit_entry(
-        log, proposal_id="p2", surface_classification="advisory",
+        log, edit_id="p2", proposer_id="agent:2", event="proposed", candidate_diff="diff-2", surface_classification="advisory",
         gate_decision="reject", payload={"k": 2}, _config=cfg,
     )
     assert e1 is not None and e2 is not None
@@ -73,7 +77,7 @@ def test_verify_audit_chain_returns_none_when_intact(tmp_path: Path) -> None:
     cfg = _cfg_enabled()
     for i in range(5):
         append_audit_entry(
-            log, proposal_id=f"p{i}", surface_classification="advisory",
+            log, edit_id=f"p{i}", proposer_id=f"agent:{i}", event="sandboxed", candidate_diff=f"diff-{i}", surface_classification="advisory",
             gate_decision="approve", payload={"i": i}, _config=cfg,
         )
     assert verify_audit_chain(log) is None
@@ -84,7 +88,7 @@ def test_verify_audit_chain_detects_tamper(tmp_path: Path) -> None:
     cfg = _cfg_enabled()
     for i in range(3):
         append_audit_entry(
-            log, proposal_id=f"p{i}", surface_classification="advisory",
+            log, edit_id=f"p{i}", proposer_id=f"agent:{i}", event="promoted", candidate_diff=f"diff-{i}", surface_classification="advisory",
             gate_decision="approve", payload={"i": i}, _config=cfg,
         )
     # Mutate row 1 payload directly.
@@ -102,7 +106,7 @@ def test_verify_audit_chain_detects_broken_prev_link(tmp_path: Path) -> None:
     cfg = _cfg_enabled()
     for i in range(3):
         append_audit_entry(
-            log, proposal_id=f"p{i}", surface_classification="advisory",
+            log, edit_id=f"p{i}", proposer_id=f"agent:{i}", event="promoted", candidate_diff=f"diff-{i}", surface_classification="advisory",
             gate_decision="approve", payload={"i": i}, _config=cfg,
         )
     lines = log.read_text().splitlines()
@@ -128,20 +132,22 @@ def test_append_emits_required_fields(tmp_path: Path) -> None:
     """FR-14 incremental: every row has edit_id, verdict, ts, prev/entry hash."""
     log = tmp_path / "audit.jsonl"
     entry = append_audit_entry(
-        log, proposal_id="p1", surface_classification="advisory",
+        log, edit_id="p1", proposer_id="agent:1", event="promoted", candidate_diff="--- a/CLAUDE.md\n+++ b/CLAUDE.md\n", surface_classification="advisory",
         gate_decision="approve", payload={"v": 1},
         promotion_session_id="sess-A",
+        reviewer_id="alice",
         _config=_cfg_enabled(),
     )
     assert entry is not None
     for key in (
-        "ts", "proposal_id", "surface_classification", "gate_decision",
-        "prev_hash", "entry_hash", "promotion_session_id", "payload",
+        "ts", "edit_id", "event", "proposer_id", "candidate_diff",
+        "surface_classification", "gate_decision", "prev_hash", "entry_hash",
+        "promotion_session_id", "payload", "reviewer_id",
     ):
         assert key in entry
     # FR-16: promotion_session_id must be present and distinct from proposal_id
     assert entry["promotion_session_id"] == "sess-A"
-    assert entry["proposal_id"] == "p1"
+    assert entry["edit_id"] == "p1"
 
 
 def test_append_is_idempotent_safe_concurrent(tmp_path: Path) -> None:
@@ -150,9 +156,39 @@ def test_append_is_idempotent_safe_concurrent(tmp_path: Path) -> None:
     cfg = _cfg_enabled()
     for i in range(20):
         append_audit_entry(
-            log, proposal_id=f"p{i}", surface_classification="advisory",
+            log, edit_id=f"p{i}", proposer_id=f"agent:{i}", event="vote", candidate_diff=f"diff-{i}", surface_classification="advisory",
             gate_decision="approve", payload={"i": i}, _config=cfg,
         )
     assert verify_audit_chain(log) is None
     rows = log.read_text().strip().split("\n")
     assert len(rows) == 20
+
+
+def test_append_refuses_to_continue_after_corruption(tmp_path: Path) -> None:
+    log = tmp_path / "audit.jsonl"
+    cfg = _cfg_enabled()
+    append_audit_entry(
+        log,
+        edit_id="p1",
+        proposer_id="agent:1",
+        event="proposed",
+        candidate_diff="diff-1",
+        surface_classification="advisory",
+        gate_decision="approve",
+        payload={},
+        _config=cfg,
+    )
+    log.write_text(log.read_text() + "{broken-json}\n")
+
+    with pytest.raises(AuditIntegrityError):
+        append_audit_entry(
+            log,
+            edit_id="p2",
+            proposer_id="agent:2",
+            event="proposed",
+            candidate_diff="diff-2",
+            surface_classification="advisory",
+            gate_decision="approve",
+            payload={},
+            _config=cfg,
+        )

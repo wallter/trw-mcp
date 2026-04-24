@@ -175,6 +175,7 @@ def execute_learn(  # noqa: C901
     phase_affinity: list[str] | None = None,
     team_origin: str = "",
     protection_tier: str = "normal",
+    session_id: str | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
@@ -419,41 +420,41 @@ def execute_learn(  # noqa: C901
             logger.debug("anchor_validity_computation_skipped", exc_info=True)
 
     # Store via SQLite adapter (primary path)
-    try:
-        store_fn(
-            trw_dir,
-            learning_id=learning_id,
-            summary=summary,
-            detail=detail,
-            tags=safe_tags,
-            evidence=safe_evidence,
-            impact=calibrated_impact,
-            shard_id=shard_id,
-            source_type=source_type,
-            source_identity=source_identity,
-            client_profile=client_profile,
-            model_id=model_id,
-            assertions=assertions,
-            type=type,
-            nudge_line=nudge_line,
-            expires=expires,
-            confidence=confidence,
-            task_type=task_type,
-            domain=domain,
-            phase_origin=phase_origin,
-            phase_affinity=phase_affinity,
-            team_origin=team_origin,
-            protection_tier=protection_tier,
-            anchors=anchors,
-            anchor_validity=anchor_validity,
-        )
-    except Exception:  # justified: boundary, adapter may hit SQLite/network errors; fall through to YAML
-        logger.warning(
-            "learning_store_failed",
-            learning_id=learning_id,
-            summary=summary[:50],
-            exc_info=True,
-        )
+    store_result = store_fn(
+        trw_dir,
+        learning_id=learning_id,
+        summary=summary,
+        detail=detail,
+        tags=safe_tags,
+        evidence=safe_evidence,
+        impact=calibrated_impact,
+        shard_id=shard_id,
+        source_type=source_type,
+        source_identity=source_identity,
+        client_profile=client_profile,
+        model_id=model_id,
+        assertions=assertions,
+        type=type,
+        nudge_line=nudge_line,
+        expires=expires,
+        confidence=confidence,
+        task_type=task_type,
+        domain=domain,
+        phase_origin=phase_origin,
+        phase_affinity=phase_affinity,
+        team_origin=team_origin,
+        protection_tier=protection_tier,
+        anchors=anchors,
+        anchor_validity=anchor_validity,
+        session_id=session_id,
+    )
+    if store_result.get("status") == "quarantined":
+        return {
+            "learning_id": learning_id,
+            "path": str(store_result.get("path", f"sqlite://{learning_id}")),
+            "status": "quarantined",
+            "distribution_warning": "",
+        }
 
     # PRD-FIX-052-FR04: Auto-obsolete superseded entries
     _handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
@@ -504,17 +505,6 @@ def execute_learn(  # noqa: C901
         config,
     )
 
-    # PRD-SEC-001 FR-002 (Sprint-96 carry-forward-b): append an Ed25519
-    # provenance record for this write. Per-namespace chain file.
-    # Fail-open — provenance is advisory in observe mode.
-    _append_provenance_signed(
-        trw_dir=trw_dir,
-        learning_id=learning_id,
-        summary=summary,
-        detail=detail,
-        source_identity=source_identity,
-    )
-
     logger.info(
         "learn_ok",
         summary_len=len(summary),
@@ -525,7 +515,7 @@ def execute_learn(  # noqa: C901
     result_dict: LearnResultDict = {
         "learning_id": learning_id,
         "path": str(entry_path),
-        "status": "recorded",
+        "status": str(store_result.get("status", "recorded")) if store_result is not None else "recorded",
         "distribution_warning": distribution_warning,
     }
     if distribution_soft_cap_warning:
@@ -548,47 +538,6 @@ def execute_learn(  # noqa: C901
         logger.debug("learn_ceremony_status_skipped", exc_info=True)
 
     return result_dict
-
-
-def _append_provenance_signed(
-    *,
-    trw_dir: Path,
-    learning_id: str,
-    summary: str,
-    detail: str,
-    source_identity: str,
-) -> None:
-    """Append an Ed25519-signed provenance record for this learn write.
-
-    Fail-open: any error here is logged and swallowed so a provenance
-    hiccup never breaks the write path. Uses the project's per-namespace
-    chain file at ``.trw/memory/security/provenance.jsonl``.
-    """
-    try:
-        import hashlib
-
-        from trw_memory.security.keys import get_or_create_ed25519_key
-        from trw_memory.security.provenance import (
-            ProvenanceEntry,
-            append,
-            append_signed,
-        )
-
-        chain_path = trw_dir / "memory" / "security" / "provenance.jsonl"
-        content_hash = hashlib.sha256(f"{summary}\n{detail}".encode("utf-8")).hexdigest()
-        entry = ProvenanceEntry(
-            learning_id=learning_id,
-            content_hash=content_hash,
-            source_identity=source_identity or "unknown",
-        )
-        signing_key = get_or_create_ed25519_key(trw_dir)
-        if signing_key is None:
-            # PyNaCl unavailable — fall back to unsigned hash chain
-            append(chain_path, entry)
-        else:
-            append_signed(chain_path, entry, signing_key)
-    except Exception:  # justified: fail-open, provenance is advisory
-        logger.warning("learn_provenance_append_failed", learning_id=learning_id, exc_info=True)
 
 
 def _default_is_solution(summary: str) -> bool:

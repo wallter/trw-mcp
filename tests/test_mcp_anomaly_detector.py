@@ -159,3 +159,38 @@ def test_emits_via_unified_events(tmp_path: Path) -> None:
     content = events_files[0].read_text()
     assert "shadow_anomaly" in content
     assert "first_observation_after_deploy" in content
+
+
+def test_novel_arg_pattern_uses_persisted_baseline_not_process_local_first_seen(
+    tmp_path: Path,
+) -> None:
+    baseline_path = tmp_path / "security" / "mcp_arg_baseline.jsonl"
+    cfg = AnomalyDetectorConfig(
+        sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
+        window_seconds=DEFAULT_WINDOW_SECONDS,
+        shadow_clock_path=tmp_path / "security" / "mcp_shadow_start.yaml",
+        baseline_store_path=baseline_path,
+    )
+    arg_hash = hash_tool_args({"path": "README.md"})
+    first = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    assert "novel_arg_pattern" in first.observe(
+        AnomalyObservation(
+            ts=datetime.now(tz=timezone.utc),
+            server="filesystem",
+            tool="read_file",
+            session_id="session-a",
+            run_id="run-a",
+            args_hash=arg_hash,
+        )
+    )
+    second = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    assert "novel_arg_pattern" not in second.observe(
+        AnomalyObservation(
+            ts=datetime.now(tz=timezone.utc),
+            server="filesystem",
+            tool="read_file",
+            session_id="session-b",
+            run_id="run-b",
+            args_hash=arg_hash,
+        )
+    )

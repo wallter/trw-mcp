@@ -153,3 +153,35 @@ class TestMultiFileMigration:
         assert report.rows_read == 2
         assert report.rows_migrated == 2
         assert len(report.source_files) == 2
+
+    def test_parity_preserves_valid_row_count_timestamps_and_payloads(self, tmp_path: Path) -> None:
+        meta = tmp_path / "meta"
+        meta.mkdir()
+        source_rows = [
+            {"event": "session_start", "event_id": "evt_1", "ts": "2026-04-23T10:00:00+00:00", "session_id": "s1"},
+            {"event": "checkpoint", "event_id": "evt_2", "ts": "2026-04-23T10:01:00+00:00", "message": "checkpoint-1"},
+            {
+                "event": "contract",
+                "event_id": "evt_3",
+                "ts": "2026-04-23T10:02:00+00:00",
+                "contract_name": "schema-a",
+                "schema_valid": True,
+            },
+        ]
+        (meta / "events.jsonl").write_text(json.dumps(source_rows[0]) + "\n")
+        (meta / "checkpoints.jsonl").write_text(json.dumps(source_rows[1]) + "\n")
+        (meta / "contract_events.jsonl").write_text(json.dumps(source_rows[2]) + "\n")
+
+        report = migrate_run(tmp_path, apply=True)
+
+        assert report.rows_read == 3
+        assert report.rows_migrated == 3
+        target = report.target_file
+        assert target is not None
+        migrated_rows = [json.loads(line) for line in target.read_text().splitlines()]
+        assert len(migrated_rows) == 3
+        assert [row["event_id"] for row in migrated_rows] == ["evt_1", "evt_2", "evt_3"]
+        assert [row["ts"].replace("Z", "+00:00") for row in migrated_rows] == [row["ts"] for row in source_rows]
+        assert migrated_rows[1]["payload"]["message"] == "checkpoint-1"
+        assert migrated_rows[2]["payload"]["contract_name"] == "schema-a"
+        assert migrated_rows[2]["payload"]["schema_valid"] is True

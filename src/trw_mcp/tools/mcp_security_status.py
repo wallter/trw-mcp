@@ -1,12 +1,7 @@
-"""MCP security status operator tool (PRD-INFRA-SEC-001 FR-5 / FR-7).
+"""Operator-facing MCP security status tool.
 
-Registers ``trw_mcp_security_status()`` which reports:
-
-* ``registry_mode`` — ``observe`` (v1 default) or ``enforce``.
-* ``shadow_clock_start`` — ISO timestamp when the 3-week shadow window began.
-* ``anomaly_count_last_24h`` — count of anomaly events in the last 24h.
-* ``capability_scope_denials_last_24h`` — count of ``shadow_deny`` decisions.
-* ``enforce_mode`` — boolean; always ``False`` in v1.
+Reads the authoritative unified ``events-YYYY-MM-DD.jsonl`` stream and, when
+present, the legacy ``tool_call_events.jsonl`` projection for back-compat.
 """
 
 from __future__ import annotations
@@ -16,141 +11,115 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import structlog
-import yaml
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-logger = structlog.get_logger(__name__)
-
 
 class MCPSecurityStatus(BaseModel):
-    """Operator-facing security status shape (PRD FR-7)."""
+    """PRD shape for `trw_mcp_security_status()`."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    registry_mode: str = Field(default="observe")
-    shadow_clock_start: str = ""
-    anomaly_count_last_24h: int = 0
-    capability_scope_denials_last_24h: int = 0
-    enforce_mode: bool = False
-
-
-def _load_shadow_clock(path: Path) -> str:
-    if not path.exists():
-        return ""
-    try:
-        raw = yaml.safe_load(path.read_text()) or {}
-    except (OSError, yaml.YAMLError):  # justified: boundary, tolerate corrupt shadow-clock file
-        logger.warning("mcp_status_shadow_clock_unreadable", path=str(path))
-        return ""
-    if isinstance(raw, dict):
-        val = raw.get("started_at")
-        return str(val) if val else ""
-    return ""
+    registered_servers: list[str] = Field(default_factory=list)
+    allowlist_hash: str = ""
+    recent_anomalies: list[dict[str, Any]] = Field(default_factory=list)
+    quarantined_servers: list[str] = Field(default_factory=list)
 
 
 def _iter_event_rows(events_dir: Path) -> list[dict[str, Any]]:
-    """Read all ``events-*.jsonl`` rows under ``events_dir``. Fail-open."""
     if not events_dir.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for path in sorted(events_dir.glob("events-*.jsonl")):
+    seen_event_ids: set[str] = set()
+    candidates = sorted(events_dir.glob("events-*.jsonl"))
+    legacy_projection = events_dir / "tool_call_events.jsonl"
+    if legacy_projection.exists():
+        candidates.append(legacy_projection)
+    for path in candidates:
         try:
             text = path.read_text()
-        except OSError:  # justified: boundary, tolerate missing/unreadable files
+        except OSError:
             continue
         for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
             try:
                 parsed = json.loads(line)
-            except json.JSONDecodeError:  # justified: boundary, skip malformed row
+            except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):
+                event_id = parsed.get("event_id")
+                if isinstance(event_id, str) and event_id in seen_event_ids:
+                    continue
+                if isinstance(event_id, str):
+                    seen_event_ids.add(event_id)
                 rows.append(parsed)
     return rows
 
 
-def _count_recent(
+def _recent_anomalies(
     rows: list[dict[str, Any]],
     *,
-    decision_filter: str | None = None,
-    anomaly: bool = False,
-    horizon_hours: int = 24,
     now: datetime | None = None,
-) -> int:
-    """Count MCPSecurityEvent rows matching filters within the horizon."""
-    now = now or datetime.now(tz=timezone.utc)
-    cutoff = now - timedelta(hours=horizon_hours)
-    count = 0
+    horizon_hours: int = 24,
+) -> list[dict[str, Any]]:
+    resolved_now = now or datetime.now(tz=timezone.utc)
+    cutoff = resolved_now - timedelta(hours=horizon_hours)
+    recent: list[dict[str, Any]] = []
     for row in rows:
         if row.get("event_type") != "mcp_security":
             continue
-        ts_raw = row.get("ts", "")
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("decision") != "shadow_anomaly":
+            continue
+        ts_raw = str(row.get("ts", ""))
         try:
-            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-        except ValueError:  # justified: boundary, skip unparseable timestamp
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        except ValueError:
             continue
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         if ts < cutoff:
             continue
-        payload = row.get("payload", {})
-        if not isinstance(payload, dict):
-            continue
-        if anomaly and payload.get("decision") == "shadow_anomaly":
-            count += 1
-        elif decision_filter and payload.get("decision") == decision_filter:
-            count += 1
-    return count
+        recent.append(
+            {
+                "ts": ts.isoformat(),
+                "server": payload.get("server", ""),
+                "tool": payload.get("tool", ""),
+                "type": payload.get("anomaly_type", ""),
+            }
+        )
+    return recent
 
 
 def compute_security_status(
     *,
-    shadow_clock_path: Path,
     events_dir: Path,
-    enforce_mode: bool = False,
+    registered_servers: list[str] | None = None,
+    allowlist_hash: str = "",
+    quarantined_servers: list[str] | None = None,
     now: datetime | None = None,
 ) -> MCPSecurityStatus:
-    """Build an :class:`MCPSecurityStatus` from on-disk state."""
     rows = _iter_event_rows(events_dir)
     return MCPSecurityStatus(
-        registry_mode="enforce" if enforce_mode else "observe",
-        shadow_clock_start=_load_shadow_clock(shadow_clock_path),
-        anomaly_count_last_24h=_count_recent(rows, anomaly=True, now=now),
-        capability_scope_denials_last_24h=_count_recent(
-            rows, decision_filter="shadow_deny", now=now
-        ),
-        enforce_mode=enforce_mode,
+        registered_servers=list(registered_servers or []),
+        allowlist_hash=allowlist_hash,
+        recent_anomalies=_recent_anomalies(rows, now=now),
+        quarantined_servers=list(quarantined_servers or []),
     )
 
 
 def register_mcp_security_status(server: FastMCP) -> None:
-    """Register ``trw_mcp_security_status`` on the given FastMCP server."""
-    # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96 carry-forward
-    # a): deferred import to avoid circular dep with trw_mcp.server._app.
-    from trw_mcp.server._security_hook import consult_mcp_security
-
     @server.tool()
     def trw_mcp_security_status() -> dict[str, Any]:
-        """Return the current MCP security status (PRD-INFRA-SEC-001 FR-7).
-
-        v1 always reports ``registry_mode="observe"`` and
-        ``enforce_mode=False``. A Sprint 97+ decision gate flips these once
-        the 3-week shadow window closes.
-        """
-        consult_mcp_security("trw_mcp_security_status", {}, "", None)
+        from trw_mcp.server import _app as app_module
         from trw_mcp.state._paths import resolve_trw_dir
 
+        middleware = getattr(app_module, "_mcp_security", None)
+        if middleware is not None and hasattr(middleware, "status_snapshot"):
+            return middleware.status_snapshot().model_dump()
         trw_dir = resolve_trw_dir()
-        status = compute_security_status(
-            shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
-            events_dir=trw_dir / "context",
-            enforce_mode=False,
-        )
-        return status.model_dump()
+        return compute_security_status(events_dir=trw_dir / "context").model_dump()
 
 
 __all__ = [

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
+from trw_mcp.models.config import _reset_config
+from trw_mcp.state._paths import pin_active_run, unpin_active_run
 from trw_mcp.telemetry.boot_audit import (
     ResolutionFailure,
     _check_event_type_registry,
@@ -13,6 +18,7 @@ from trw_mcp.telemetry.boot_audit import (
     run_boot_audit,
 )
 from trw_mcp.telemetry.event_base import DefaultResolutionError
+from trw_mcp.telemetry.tool_call_timing import clear_pricing_cache
 
 
 class TestResolutionFailure:
@@ -94,7 +100,7 @@ class TestSurfaceRegisteredEmission:
     """FR-10 AC-8: SurfaceRegistry.build_and_emit produces SurfaceRegistered events."""
 
     def test_build_and_emit_writes_surface_registered_events(
-        self, tmp_path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from trw_mcp.telemetry.artifact_registry import (
             SurfaceRegistry,
@@ -120,7 +126,7 @@ class TestSurfaceRegisteredEmission:
             run_id="run-1",
             run_dir=run_dir,
             data_root=data_root,
-            repo_root=None,
+            repo_root=tmp_path,
         )
 
         # Registry still comes back.
@@ -138,3 +144,78 @@ class TestSurfaceRegisteredEmission:
         assert all("surface_id" in r["payload"] for r in records)
         assert all("content_hash" in r["payload"] for r in records)
         assert all("category" in r["payload"] for r in records)
+
+        registry_log = run_dir / "meta" / "artifact_registry.jsonl"
+        assert registry_log.exists()
+        registry_rows = [json.loads(line) for line in registry_log.read_text().splitlines()]
+        assert len(registry_rows) == 3
+        assert all(row["run_id"] == "run-1" for row in registry_rows)
+        assert all(row["session_id"] == "s1" for row in registry_rows)
+
+
+def _get_production_tool_fn(tool_name: str) -> Any:
+    import trw_mcp.server._tools  # noqa: F401
+    from trw_mcp.server._app import mcp
+
+    components = getattr(getattr(mcp, "_local_provider"), "_components", {})
+    for key, component in components.items():
+        if key.startswith(f"tool:{tool_name}@"):
+            fn = getattr(component, "fn", None) or getattr(component, "func", None)
+            if callable(fn):
+                return fn
+    pytest.fail(f"Production MCP tool {tool_name!r} not found.")
+
+
+class TestSessionStartBootGate:
+    def test_boot_audit_failure_raises_before_startup_event_write(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True)
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        run_dir = trw_dir / "runs" / "task" / "run-123"
+        meta_dir = run_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "run.yaml").write_text(
+            "\n".join(
+                (
+                    "run_id: run-123",
+                    "status: active",
+                    "phase: implement",
+                    "task: task",
+                    "owner_session_id: sess-123",
+                    "surface_snapshot_id: snap-123",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (meta_dir / "run_surface_snapshot.yaml").write_text("snapshot_id: snap-123\nartifacts: []\n")
+
+        monkeypatch.setenv("TRW_SESSION_ID", "sess-123")
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", lambda: trw_dir)
+        pin_active_run(run_dir, session_id="sess-123")
+        _reset_config(None)
+        clear_pricing_cache()
+
+        tool_fn = _get_production_tool_fn("trw_session_start")
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.boot_audit.run_boot_audit",
+            lambda **_: (_ for _ in ()).throw(DefaultResolutionError("boom")),
+        )
+
+        try:
+            with pytest.raises(DefaultResolutionError, match="boom"):
+                tool_fn()
+        finally:
+            unpin_active_run(session_id="sess-123")
+            _reset_config(None)
+            clear_pricing_cache()
+
+        assert not list((run_dir / "meta").glob("events-*.jsonl"))
+        assert not (run_dir / "meta" / "tool_call_events.jsonl").exists()
+        assert not (trw_dir / "context" / "session-events.jsonl").exists()

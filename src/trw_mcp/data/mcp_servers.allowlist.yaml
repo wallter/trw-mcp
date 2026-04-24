@@ -1,88 +1,49 @@
-# TRW MCP Server Canonical Allowlist (PRD-INFRA-SEC-001 FR-1 / FR-8)
-#
-# This file is the Tier-1 canonical allowlist shipped with every trw-mcp
-# release. It enumerates the MCP servers TRW maintainers vouch for.
-#
-# Trust levels:
-#   verified  — TRW-maintainer-signed (Tier 1)
-#   operator  — operator-overlay-signed (Tier 2, lives in .trw/mcp_servers.local.yaml)
-#   unsigned  — requires --allow-unsigned at startup; produces audit-log records.
-#
-# Signature fields are observe-mode stubs in v1 (PRD §8 Phase 1). Real Ed25519
-# signing lands in Sprint 97+ once the 3-week shadow window closes and thresholds
-# are calibrated. Do NOT treat signature-present as "trusted" in v1 — the
-# verify_signature() function returns True unconditionally and logs its decision.
-#
-# Editing rules: see trw-mcp/src/trw_mcp/security/CLAUDE.md §Editing Rules.
-
 version: 1
 signing_algorithm: ed25519
-signed_by: "trw-maintainer"
-# Canonical public-key fingerprint (stub for v1 — real key lands Sprint 97+).
-canonical_public_key_fingerprint: "sha256:PLACEHOLDER_TRW_MAINTAINER_KEY_2026"
-
 servers:
   - name: trw
-    url_or_command: "trw-mcp"
-    signer: "trw-maintainer"
-    # v1 observe-mode: signature is a placeholder. Sprint 97 replaces with
-    # real Ed25519 signature over the canonical entry bytes.
-    signature: "stub:v1-observe-mode"
-    trust_level: verified
-    capabilities:
-      - trw_session_start
-      - trw_learn
-      - trw_recall
-      - trw_checkpoint
-      - trw_deliver
-      - trw_build_check
-      - trw_init
-      - trw_prd_create
-      - trw_prd_validate
-      - trw_mcp_security_status
-      # PRD-HPO-MEAS-001 FR-7 + FR-8 (Wave 2c)
-      - trw_query_events
-      - trw_surface_diff
-
+    url_or_command: trw-mcp
+    public_key_fingerprint: sha256:cd3c68e6355e46689529d25fd705c4815d6ad6a7597e218e75f87a085ee22175
+    allowed_tools:
+      - {name: trw_session_start, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read, write]}
+      - {name: trw_learn, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: trw_recall, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: trw_checkpoint, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: trw_deliver, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: trw_build_check, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read, write]}
+      - {name: trw_init, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: trw_prd_create, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: trw_prd_validate, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: trw_mcp_security_status, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: trw_query_events, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: trw_surface_diff, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
   - name: filesystem
-    url_or_command: "npx -y @modelcontextprotocol/server-filesystem"
-    signer: "trw-maintainer"
-    signature: "stub:v1-observe-mode"
-    trust_level: verified
-    capabilities:
-      - read_file
-      - write_file
-      - list_directory
-      - search_files
-
+    url_or_command: npx -y @modelcontextprotocol/server-filesystem
+    public_key_fingerprint: sha256:e1e6ca97e71a612a9b6803b8327d25f16b35e1e509dc7158b6233b98b83b155c
+    allowed_tools:
+      - {name: read_file, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: write_file, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: list_directory, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: search_files, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
   - name: git
-    url_or_command: "uvx mcp-server-git"
-    signer: "trw-maintainer"
-    signature: "stub:v1-observe-mode"
-    trust_level: verified
-    capabilities:
-      - git_status
-      - git_diff
-      - git_log
-      - git_show
-
+    url_or_command: uvx mcp-server-git
+    public_key_fingerprint: sha256:6ec937feef53bccedcbe80e2a3af64ede35095a11cc33985aa29a44da82a7d66
+    allowed_tools:
+      - {name: git_status, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: git_diff, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: git_log, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: git_show, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
   - name: github
-    url_or_command: "npx -y @modelcontextprotocol/server-github"
-    signer: "trw-maintainer"
-    signature: "stub:v1-observe-mode"
-    trust_level: verified
-    capabilities:
-      - create_issue
-      - get_issue
-      - list_issues
-      - create_pull_request
-      - get_pull_request
-
-# Sample signature block (observe-mode; real signature Sprint 97+).
-# Algorithm: ed25519 over the SHA-256 of the canonicalized (sorted-keys,
-# stable separators) 'servers' list above. Verification is stubbed in v1.
+    url_or_command: npx -y @modelcontextprotocol/server-github
+    public_key_fingerprint: sha256:6bd87288931e05077c824702ef154d781bf7e801aab30f9f8ccc38a9922f4796
+    allowed_tools:
+      - {name: create_issue, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: get_issue, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: list_issues, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
+      - {name: create_pull_request, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
+      - {name: get_pull_request, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
 signature_block:
   algorithm: ed25519
-  signed_at: "2026-04-23T00:00:00Z"
-  signer_fingerprint: "sha256:PLACEHOLDER_TRW_MAINTAINER_KEY_2026"
-  signature: "stub:v1-observe-mode-0000000000000000000000000000000000000000000000000000000000000000"
+  signed_at: "2026-04-24T00:00:00Z"
+  signer_fingerprint: sha256:a3322d2e7379658d97e923d37ce268269753372295f0e076f94c2d4a0a4380fc
+  signature: "+6VRe/oDbstWjX1cFdd/zn8dgzqmQOAooW/UZYb/6CJ+J7ixPLLaBlk5j+MWwCR7XM+oonyx3GlDQ6amXjyACQ=="

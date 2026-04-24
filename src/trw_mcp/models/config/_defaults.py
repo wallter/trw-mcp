@@ -52,6 +52,7 @@ TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
     # PRD-HPO-MEAS-001 FR-7 + FR-8: unified event query + surface diff
     "trw_query_events",
     "trw_surface_diff",
+    "trw_surface_classify",
     # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
     "trw_mcp_security_status",
 )
@@ -65,6 +66,7 @@ TOOL_GROUP_ADMIN: tuple[str, ...] = (
     # PRD-CORE-141 FR07/FR08 — per-connection pin liveness + adoption.
     "trw_heartbeat",
     "trw_adopt_run",
+    "trw_meta_tune_rollback",
 )
 
 TOOL_PRESETS: dict[str, tuple[str, ...]] = {

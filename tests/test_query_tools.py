@@ -107,6 +107,48 @@ class TestQueryEvents:
         types = [e["event_type"] for e in out["events"]]
         assert types == ["b", "c", "a"]
 
+    def test_stable_tiebreak_on_event_id(self, tmp_path: Path) -> None:
+        _make_run(
+            tmp_path, "t", "r",
+            [
+                {"event_id": "evt_b", "event_type": "b", "session_id": "s", "ts": "2026-04-23T10:00:00"},
+                {"event_id": "evt_a", "event_type": "a", "session_id": "s", "ts": "2026-04-23T10:00:00"},
+            ],
+        )
+        out = query_events(session_id="s", trw_dir=tmp_path)
+        event_ids = [e["event_id"] for e in out["events"]]
+        assert event_ids == ["evt_a", "evt_b"]
+
+    def test_surface_snapshot_id_filter(self, tmp_path: Path) -> None:
+        _make_run(
+            tmp_path,
+            "t",
+            "r",
+            [
+                {
+                    "event_id": "evt_a",
+                    "event_type": "ceremony",
+                    "session_id": "s",
+                    "surface_snapshot_id": "snap_a",
+                    "ts": "2026-04-23T10:00:00",
+                },
+                {
+                    "event_id": "evt_b",
+                    "event_type": "ceremony",
+                    "session_id": "s",
+                    "surface_snapshot_id": "snap_b",
+                    "ts": "2026-04-23T10:01:00",
+                },
+            ],
+        )
+        out = query_events(
+            session_id="s",
+            filters={"surface_snapshot_id": "snap_b"},
+            trw_dir=tmp_path,
+        )
+        assert out["count"] == 1
+        assert out["events"][0]["event_id"] == "evt_b"
+
 
 class TestSurfaceDiff:
     def test_snapshot_not_found_returns_error(self, tmp_path: Path) -> None:
@@ -170,3 +212,12 @@ class TestSurfaceDiff:
         assert out["changed"] == ["agents:x.md"]
         assert out["added"] == []
         assert out["removed"] == []
+        assert out["changes"] == [
+            {
+                "surface_id": "agents:x.md",
+                "change_type": "changed",
+                "before_hash": "old",
+                "after_hash": "new",
+                "content_diff_summary": "content_hash changed from old to new",
+            }
+        ]

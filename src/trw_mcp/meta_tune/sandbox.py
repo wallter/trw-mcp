@@ -23,6 +23,7 @@ only. Network isolation and seccomp are unavailable; a warning is emitted.
 from __future__ import annotations
 
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,8 @@ from pathlib import Path
 from types import TracebackType
 
 import structlog
+
+from trw_mcp.meta_tune.errors import MetaTuneSafetyUnavailableError
 
 logger = structlog.get_logger(__name__)
 
@@ -86,6 +89,7 @@ class SandboxRunner:
         readonly_paths: tuple[Path, ...],
         writable_paths: tuple[Path, ...],
         degraded: bool,
+        strict: bool,
     ) -> None:
         self.timeout_s = timeout_s
         self.memory_cap_mb = memory_cap_mb
@@ -93,6 +97,32 @@ class SandboxRunner:
         self.readonly_paths = readonly_paths
         self.writable_paths = writable_paths
         self.degraded = degraded
+        self.strict = strict
+
+    def _path_is_writable(self, path: Path) -> bool:
+        """Return True when ``path`` falls under the writable allowlist."""
+        for root in self.writable_paths:
+            if path == root or root in path.parents:
+                return True
+        return False
+
+    def _snapshot_cmd_paths(self, cmd: list[str]) -> dict[Path, float]:
+        """Capture pre-run mtimes for absolute paths mentioned in ``cmd``."""
+        referenced: dict[Path, float] = {}
+        for arg in cmd:
+            candidates: set[Path] = set()
+            if arg.startswith("/"):
+                candidates.add(Path(arg))
+            for match in re.findall(r"([\"'])(/[^\"']+)\1", arg):
+                candidates.add(Path(match[1]))
+            for path in candidates:
+                if self._path_is_writable(path):
+                    continue
+                try:
+                    referenced[path] = path.stat().st_mtime
+                except OSError:
+                    referenced[path] = -1.0
+        return referenced
 
     def _preexec(self) -> None:  # pragma: no cover - child process
         """Executed in the forked child before ``execve``."""
@@ -135,6 +165,11 @@ class SandboxRunner:
             return cmd
         unshare = shutil.which("unshare")
         if unshare is None:
+            if self.strict:
+                raise MetaTuneSafetyUnavailableError(
+                    dependency_id="sandbox",
+                    activation_gate_blocked_reason="unshare missing; network isolation unavailable",
+                )
             logger.warning(
                 "sandbox_unshare_missing",
                 component="meta_tune.sandbox",
@@ -151,6 +186,11 @@ class SandboxRunner:
                 check=False,
             )
             if probe.returncode != 0:
+                if self.strict:
+                    raise MetaTuneSafetyUnavailableError(
+                        dependency_id="sandbox",
+                        activation_gate_blocked_reason="unshare probe failed; network isolation unavailable",
+                    )
                 logger.warning(
                     "sandbox_unshare_unavailable",
                     component="meta_tune.sandbox",
@@ -160,6 +200,11 @@ class SandboxRunner:
                 )
                 return cmd
         except (subprocess.TimeoutExpired, OSError):
+            if self.strict:
+                raise MetaTuneSafetyUnavailableError(
+                    dependency_id="sandbox",
+                    activation_gate_blocked_reason="unshare probe failed unexpectedly",
+                )
             return cmd
         return [unshare, "-n", "--", *cmd]
 
@@ -184,10 +229,7 @@ class SandboxRunner:
             except OSError:
                 readonly_snapshots[p] = -1.0
 
-        tempdir_snapshot: set[Path] = set()
-        for wp in self.writable_paths:
-            if wp.exists() and wp.is_dir():
-                tempdir_snapshot.update(wp.iterdir())
+        cmd_path_snapshots = self._snapshot_cmd_paths(cmd)
 
         start = time.monotonic()
         timed_out = False
@@ -216,6 +258,11 @@ class SandboxRunner:
                 outcome="error",
                 error=str(exc),
             )
+            if self.strict:
+                raise MetaTuneSafetyUnavailableError(
+                    dependency_id="sandbox",
+                    activation_gate_blocked_reason=f"subprocess failed to start: {exc}",
+                ) from exc
             raise
         wall_ms = (time.monotonic() - start) * 1000.0
 
@@ -242,6 +289,16 @@ class SandboxRunner:
                     writes_outside_tmp.append(str(p))
             except OSError:
                 pass
+
+        for p, mtime_before in cmd_path_snapshots.items():
+            if str(p) in writes_outside_tmp:
+                continue
+            try:
+                mtime_after = p.stat().st_mtime
+            except OSError:
+                continue
+            if mtime_before == -1.0 or mtime_after != mtime_before:
+                writes_outside_tmp.append(str(p))
 
         # Detect stray writes to /tmp beyond expected writable_paths:
         # A naive check — inspect common off-allowlist write signals in stderr.
@@ -330,16 +387,29 @@ class ProbeIsolationContext:
         allow_network: bool = False,
         readonly_paths: tuple[Path, ...] | list[Path] | None = None,
         writable_paths: tuple[Path, ...] | list[Path] | None = None,
+        strict: bool = True,
     ) -> None:
         self.timeout_s = timeout_s
         self.memory_cap_mb = memory_cap_mb
         self.allow_network = allow_network
         self.readonly_paths: tuple[Path, ...] = tuple(readonly_paths or ())
         self.writable_paths: tuple[Path, ...] = tuple(writable_paths or ())
+        self.strict = strict
         self._runner: SandboxRunner | None = None
 
     def __enter__(self) -> SandboxRunner:
         degraded = not _IS_LINUX or not _HAS_SECCOMP
+        if self.strict and not self.allow_network:
+            if not _IS_LINUX:
+                raise MetaTuneSafetyUnavailableError(
+                    dependency_id="sandbox",
+                    activation_gate_blocked_reason=f"non-linux platform {platform.system()} cannot enforce SAFE-001 isolation",
+                )
+            if not _HAS_SECCOMP:
+                raise MetaTuneSafetyUnavailableError(
+                    dependency_id="sandbox",
+                    activation_gate_blocked_reason="seccomp unavailable; SAFE-001 sandbox cannot degrade",
+                )
         if not _IS_LINUX:
             logger.warning(
                 "sandbox_degraded_mode",
@@ -364,6 +434,7 @@ class ProbeIsolationContext:
             readonly_paths=self.readonly_paths,
             writable_paths=self.writable_paths,
             degraded=degraded,
+            strict=self.strict,
         )
         logger.info(
             "sandbox_context_enter",
@@ -397,6 +468,7 @@ def run_sandboxed(
     allow_network: bool = False,
     readonly_paths: list[Path] | None = None,
     writable_paths: list[Path] | None = None,
+    strict: bool = True,
 ) -> SandboxResult:
     """One-shot helper: run ``cmd`` under :class:`ProbeIsolationContext`."""
     with ProbeIsolationContext(
@@ -405,6 +477,7 @@ def run_sandboxed(
         allow_network=allow_network,
         readonly_paths=tuple(readonly_paths or ()),
         writable_paths=tuple(writable_paths or ()),
+        strict=strict,
     ) as runner:
         return runner.run(cmd)
 
@@ -415,4 +488,3 @@ __all__ = [
     "SandboxRunner",
     "run_sandboxed",
 ]
-

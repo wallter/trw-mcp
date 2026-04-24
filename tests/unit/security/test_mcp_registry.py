@@ -1,141 +1,95 @@
-"""Unit tests for trw_mcp.security.mcp_registry (PRD-INFRA-SEC-001 FR-1 / FR-8)."""
+"""Unit tests for the signed MCP registry."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tests._structlog_capture import captured_structlog  # noqa: F401
-from trw_mcp.security.mcp_registry import (
-    MCPAllowlist,
-    MCPServer,
-    is_allowed,
-    load_allowlist,
-    verify_signature,
-)
+from trw_mcp.security.mcp_registry import MCPRegistry, verify_signature
 
 
-def _write_allowlist(path: Path, servers: list[dict[str, object]]) -> None:
-    path.write_text(yaml.safe_dump({"version": 1, "servers": servers}))
-
-
-@pytest.fixture
-def canonical_path(tmp_path: Path) -> Path:
-    p = tmp_path / "canonical.yaml"
-    _write_allowlist(
-        p,
-        [
-            {
-                "name": "trw-mcp",
-                "url_or_command": "stdio://trw-mcp",
-                "signer": "trw-maintainer",
-                "signature": "sha256:aaa",
-                "trust_level": "verified",
-                "capabilities": ["trw_session_start", "trw_learn"],
-            },
-            {
-                "name": "context7",
-                "url_or_command": "stdio://context7",
-                "signer": "trw-maintainer",
-                "signature": "sha256:bbb",
-                "trust_level": "verified",
-                "capabilities": ["resolve-library-id"],
-            },
-        ],
+def _public_key_bytes(private_key: Ed25519PrivateKey) -> bytes:
+    return private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
     )
-    return p
 
 
-def test_load_allowlist_from_default_only(canonical_path: Path) -> None:
-    allowlist = load_allowlist(canonical_path)
-    assert isinstance(allowlist, MCPAllowlist)
-    assert {s.name for s in allowlist.servers} == {"trw-mcp", "context7"}
-    assert all(s.trust_level == "verified" for s in allowlist.servers)
+def _fingerprint(raw_public_key: bytes) -> str:
+    return "sha256:" + hashlib.sha256(raw_public_key).hexdigest()
 
 
-def test_load_allowlist_merges_operator_overlay_additions(
-    canonical_path: Path, tmp_path: Path
-) -> None:
-    overlay = tmp_path / "overlay.yaml"
-    _write_allowlist(
-        overlay,
-        [
+def _write_signed_allowlist(path: Path, public_key_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    raw_public_key = _public_key_bytes(private_key)
+    public_key_path.write_bytes(raw_public_key)
+    payload = {
+        "version": 1,
+        "signing_algorithm": "ed25519",
+        "servers": [
             {
-                "name": "internal-tool",
-                "url_or_command": "stdio://internal",
-                "signer": "operator",
-                "signature": "sha256:opsig",
-                "trust_level": "operator",
-                "capabilities": ["do_thing"],
+                "name": "trw",
+                "url_or_command": "trw-mcp",
+                "public_key_fingerprint": "sha256:trw",
+                "allowed_tools": [
+                    {
+                        "name": "trw_recall",
+                        "allowed_phases": ["implement"],
+                        "allowed_scopes": ["read"],
+                    }
+                ],
             }
         ],
+    }
+    signature = private_key.sign(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     )
-    allowlist = load_allowlist(canonical_path, overlay)
-    names = {s.name for s in allowlist.servers}
-    assert names == {"trw-mcp", "context7", "internal-tool"}
-    added = allowlist.by_name("internal-tool")
-    assert added is not None
-    assert added.trust_level == "operator"
+    payload["signature_block"] = {
+        "algorithm": "ed25519",
+        "signed_at": "2026-04-24T00:00:00Z",
+        "signer_fingerprint": _fingerprint(raw_public_key),
+        "signature": base64.b64encode(signature).decode("ascii"),
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
 
-def test_load_allowlist_rejects_overlay_attempts_to_relax_trust_level(
-    canonical_path: Path,
-    tmp_path: Path,
-    captured_structlog: list[dict[str, object]],
-) -> None:
-    overlay = tmp_path / "overlay.yaml"
-    _write_allowlist(
-        overlay,
-        [
-            {
-                "name": "trw-mcp",
-                "url_or_command": "stdio://evil",
-                "signer": "operator",
-                "signature": "sha256:weaker",
-                "trust_level": "operator",
-                "capabilities": ["exec_shell"],
-            }
-        ],
-    )
-    allowlist = load_allowlist(canonical_path, overlay)
+def test_load_allowlist_from_signed_canonical(tmp_path: Path) -> None:
+    allowlist_path = tmp_path / "allowlist.yaml"
+    public_key_path = tmp_path / "maintainer.pub"
+    _write_signed_allowlist(allowlist_path, public_key_path)
 
-    entry = allowlist.by_name("trw-mcp")
-    assert entry is not None
-    # Canonical entry preserved: trust_level still "verified", not downgraded.
-    assert entry.trust_level == "verified"
-    assert entry.url_or_command == "stdio://trw-mcp"
-    assert any(
-        e.get("event") == "mcp_allowlist_overlay_downgrade_rejected"
-        for e in captured_structlog
+    registry = MCPRegistry.load(
+        canonical_path=allowlist_path,
+        canonical_public_key_path=public_key_path,
     )
 
+    assert registry.registered_servers == ["trw"]
+    assert registry.allowlist.by_name("trw") is not None
 
-def test_verify_signature_observe_mode_always_true_with_log(
-    captured_structlog: list[dict[str, object]],
-) -> None:
-    server = MCPServer(
-        name="trw-mcp",
-        url_or_command="stdio://trw-mcp",
-        signer="trw-maintainer",
-        signature="",
-        trust_level="verified",
+
+def test_verify_signature_helper_requires_fingerprint_shape() -> None:
+    from trw_mcp.security.mcp_registry import MCPServer
+
+    assert verify_signature(MCPServer(name="trw", url_or_command="trw-mcp"))
+
+
+def test_unsigned_server_denied_by_default(tmp_path: Path) -> None:
+    allowlist_path = tmp_path / "allowlist.yaml"
+    public_key_path = tmp_path / "maintainer.pub"
+    _write_signed_allowlist(allowlist_path, public_key_path)
+    registry = MCPRegistry.load(
+        canonical_path=allowlist_path,
+        canonical_public_key_path=public_key_path,
     )
-    assert verify_signature(server) is True
-    events = [e for e in captured_structlog if e.get("event") == "mcp_signature_verify"]
-    assert events, "expected mcp_signature_verify structlog event"
-    assert events[0].get("mode") == "observe"
 
+    decision = registry.authorize_server("ghost")
 
-def test_is_allowed_returns_false_for_unknown_server(canonical_path: Path) -> None:
-    allowlist = load_allowlist(canonical_path)
-    assert is_allowed("nonexistent-server", allowlist) is False
-
-
-def test_is_allowed_returns_true_for_default_allowlist_entry(
-    canonical_path: Path,
-) -> None:
-    allowlist = load_allowlist(canonical_path)
-    assert is_allowed("trw-mcp", allowlist) is True
-    assert is_allowed("context7", allowlist) is True
+    assert decision.allowed is False
+    assert decision.reason == "server_not_in_allowlist"

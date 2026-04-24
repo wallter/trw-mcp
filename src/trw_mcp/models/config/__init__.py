@@ -22,6 +22,7 @@ from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
+    SecurityConfig,
     MemoryConfig,
     OrchestrationConfig,
     PathsConfig,
@@ -52,6 +53,7 @@ __all__ = [
     "PhaseTimeCaps",
     "RecallConfig",
     "ScoringConfig",
+    "SecurityConfig",
     "ScoringDimensionWeights",
     "SurfaceConfig",
     "TRWConfig",

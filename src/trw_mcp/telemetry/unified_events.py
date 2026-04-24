@@ -3,7 +3,9 @@
 Every :class:`HPOTelemetryEvent` subclass emits here in parallel with its
 legacy CORE-031 counterpart during Phase 1 rollout. The unified file is
 the **single source of truth** for H1 substrate queries (``trw_query_events``
-in Wave 2c) and H4 meta-tune correlation.
+in Wave 2c) and H4 meta-tune correlation. Selected event types also mirror
+into legacy projection files (for example ``tool_call_events.jsonl``) so
+older consumers keep working while unified events remain authoritative.
 
 Design invariants:
 
@@ -66,6 +68,25 @@ def resolve_unified_events_path(
             return meta / fname
     if fallback_dir is not None:
         return fallback_dir / fname
+    return None
+
+
+_LEGACY_PROJECTION_EVENT_TYPES = frozenset({"tool_call", "mcp_security"})
+
+
+def _resolve_projection_path(
+    *,
+    event: HPOTelemetryEvent,
+    run_dir: Path | None,
+    fallback_dir: Path | None,
+) -> Path | None:
+    """Resolve the legacy projection path for selected unified event types."""
+    if event.event_type not in _LEGACY_PROJECTION_EVENT_TYPES:
+        return None
+    if run_dir is not None:
+        return run_dir / "meta" / "tool_call_events.jsonl"
+    if fallback_dir is not None:
+        return fallback_dir / "tool_call_events.jsonl"
     return None
 
 
@@ -147,7 +168,24 @@ def emit(
             event_id=event.event_id,
         )
         return False
-    return get_default_writer().write(event, path)
+    written = get_default_writer().write(event, path)
+    if not written:
+        return False
+
+    projection_path = _resolve_projection_path(event=event, run_dir=run_dir, fallback_dir=fallback_dir)
+    if projection_path is not None:
+        try:
+            record = json.loads(event.model_dump_json())
+            FileStateWriter().append_jsonl(projection_path, record)
+        except OSError:
+            logger.warning(
+                "unified_projection_write_failed",
+                event_type=event.event_type,
+                event_id=event.event_id,
+                path=str(projection_path),
+                exc_info=True,
+            )
+    return True
 
 
 __all__ = [

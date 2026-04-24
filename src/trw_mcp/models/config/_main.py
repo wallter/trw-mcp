@@ -22,7 +22,7 @@ import structlog
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -32,6 +32,7 @@ from trw_mcp.models.config._sub_models import (
     OrchestrationConfig,
     PathsConfig,
     ScoringConfig,
+    SecurityConfig,
     TelemetryConfig,
     ToolsConfig,
     TrustConfig,
@@ -65,12 +66,58 @@ class TRWConfig(_TRWConfigFields):
         nudge_enabled: bool | None = None
         nudge_messenger: NudgeMessengerLiteral | None = None
         nudge_density: Literal["low", "medium", "high"] | None = None
+        pricing_table_path: str = ""
 
     # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
     # Nested sub-config (not projected from flat fields) because the meta-
     # tune pipeline owns its own config surface distinct from ceremony/
     # scoring/build settings. Kill switch defaults to False per NFR-7.
     meta_tune: MetaTuneConfig = Field(default_factory=MetaTuneConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_meta_tune_compat(cls, data: object) -> object:
+        """Keep legacy ``meta_tune_enabled`` and nested ``meta_tune.enabled`` aligned.
+
+        SAFE-001 runtime code reads ``config.meta_tune.enabled`` while older
+        config surfaces and env-vars still populate the flat
+        ``meta_tune_enabled`` field. Normalize both directions so loader/env
+        compatibility remains trustworthy end-to-end.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+        legacy_enabled = payload.get("meta_tune_enabled")
+        nested_meta_tune = payload.get("meta_tune")
+
+        if isinstance(nested_meta_tune, MetaTuneConfig):
+            nested_data: dict[str, object] = nested_meta_tune.model_dump()
+        elif isinstance(nested_meta_tune, dict):
+            nested_data = dict(nested_meta_tune)
+        else:
+            nested_data = {}
+
+        if "enabled" not in nested_data and isinstance(legacy_enabled, bool):
+            nested_data["enabled"] = legacy_enabled
+
+        if nested_data:
+            payload["meta_tune"] = nested_data
+            if isinstance(nested_data.get("enabled"), bool):
+                payload["meta_tune_enabled"] = nested_data["enabled"]
+        elif isinstance(legacy_enabled, bool):
+            payload["meta_tune"] = {"enabled": legacy_enabled}
+
+        return payload
+
+    @model_validator(mode="after")
+    def _finalize_meta_tune_compat(self) -> "TRWConfig":
+        """Ensure env-populated flat fields still activate nested SAFE-001 config."""
+        if self.meta_tune.enabled == self.meta_tune_enabled:
+            return self
+        self.meta_tune = self.meta_tune.model_copy(update={"enabled": self.meta_tune_enabled})
+        return self
 
     # -- Domain Sub-Config Properties (PRD-CORE-071-FR01) --
     # Type-narrowed access: ``config.build.build_check_enabled``

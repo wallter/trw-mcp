@@ -63,12 +63,15 @@ def consult_mcp_security(
         middleware = getattr(_app_mod, "_mcp_security", None)
         if middleware is None:
             return
+        if getattr(middleware, "mounted_in_chain", False):
+            return
         on_tool_call = getattr(middleware, "on_tool_call", None)
         if on_tool_call is None:
             return
+        server_name = getattr(middleware, "default_server_name", "trw")
         on_tool_call(
             transport=transport,
-            server="trw",
+            server=server_name,
             tool=tool,
             args=args or {},
             session_id=session_id,

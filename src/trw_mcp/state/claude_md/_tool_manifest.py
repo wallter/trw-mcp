@@ -51,6 +51,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_status": "Show current run status and session overview",
     "trw_query_events": "Merged cross-emitter view of HPO telemetry events for a session (FR-7)",
     "trw_surface_diff": "Structured diff between two surface snapshots (FR-8)",
+    "trw_surface_classify": "Classify a repository path as SAFE-001 control or advisory surface",
     "trw_mcp_security_status": "Report MCP-security observability counters and shadow-clock state (FR-5)",
     # Admin
     "trw_pre_compact_checkpoint": "Save checkpoint before context compaction",
@@ -60,6 +61,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_knowledge_sync": "Generate knowledge topic docs from clustered learnings",
     "trw_heartbeat": "Refresh run liveness and report whether a checkpoint is due",
     "trw_adopt_run": "Attach this session to an existing run for an explicit handoff or resume",
+    "trw_meta_tune_rollback": "Restore a promoted SAFE-001 advisory edit from its recorded pre-edit snapshot",
 }
 
 # Validate at import time: every tool in the "all" preset has a description

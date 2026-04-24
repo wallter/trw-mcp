@@ -62,6 +62,7 @@ class SurfaceClassification(BaseModel):
 _CONTROL_PATTERNS: tuple[tuple[re.Pattern[str], tuple[Surface, ...], str], ...] = (
     (re.compile(r"(^|/)docs/CONSTITUTION\.md$"), (Surface.POLICY,), "constitution"),
     (re.compile(r"(^|/)docs/VISION\.md$"), (Surface.POLICY,), "vision"),
+    (re.compile(r"(^|/)\.trw/config\.ya?ml$"), (Surface.CONFIG,), "hard_boundary_config"),
     (re.compile(r"(^|/)data/hooks/.+\.sh$"), (Surface.POLICY,), "hook_policy"),
     (re.compile(r"/hooks/.+\.sh$"), (Surface.POLICY,), "hook_policy"),
     (re.compile(r"\.github/workflows/"), (Surface.POLICY,), "ci_policy"),
@@ -74,7 +75,6 @@ _ADVISORY_PATTERNS: tuple[tuple[re.Pattern[str], tuple[Surface, ...], str], ...]
     (re.compile(r"(^|/)AGENTS?\.md$"), (Surface.PROMPT,), "agents_md"),
     (re.compile(r"/data/agents/.+\.md$"), (Surface.PROMPT,), "agent_prompt"),
     (re.compile(r"/data/skills/.+\.md$"), (Surface.PROMPT,), "skill_prompt"),
-    (re.compile(r"\.trw/config\.ya?ml$"), (Surface.CONFIG,), "trw_config"),
     (re.compile(r"/data/pricing\.ya?ml$"), (Surface.CONFIG,), "pricing_config"),
     (re.compile(r"\.safetensors$|\.pt$|\.bin$|/weights/"), (Surface.WEIGHTS,), "weights_blob"),
     (re.compile(r"/models/.+\.(safetensors|pt|bin|gguf)$"), (Surface.WEIGHTS, Surface.MODEL), "model_weights"),

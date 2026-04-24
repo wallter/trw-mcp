@@ -99,6 +99,7 @@ _TOOL_GROUPS: dict[str, tuple[str, str]] = {
     "checkpoint": ("trw_mcp.tools.checkpoint", "register_checkpoint_tools"),
     "knowledge": ("trw_mcp.tools.knowledge", "register_knowledge_tools"),
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
+    "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
     "report": ("trw_mcp.tools.report", "register_report_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),

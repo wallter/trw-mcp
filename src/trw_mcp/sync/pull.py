@@ -194,6 +194,8 @@ class SyncPuller:
             from trw_memory.storage._row_mapper import row_to_entry
             from trw_memory.sync.conflict import resolve_conflict
             from trw_memory.sync.delta import DeltaTracker
+            from trw_memory.models.config import MemoryConfig
+            from trw_memory.security.runtime import prepare_entry_for_store, store_quarantined_entry
 
             from trw_mcp.state._memory_connection import get_backend as _get_backend
         except Exception:  # justified: import-guard, optional sync merge dependencies may be unavailable
@@ -204,6 +206,7 @@ class SyncPuller:
         inserted = 0
         merged = 0
         backend = _get_backend(self._trw_dir)
+        sec_cfg = MemoryConfig(storage_path=str(self._trw_dir / "memory"))
 
         def find_existing(source_learning_id: str) -> MemoryEntry | None:
             conn = getattr(backend, "_conn", None)
@@ -242,7 +245,11 @@ class SyncPuller:
                 pull_seq=raw_learning.get("sync_seq"),
             )
             try:
-                backend.store(resolved)
+                decision = prepare_entry_for_store(resolved, backend=backend, config=sec_cfg, session_id=None)
+                if decision.quarantined:
+                    store_quarantined_entry(sec_cfg, decision.entry)
+                    continue
+                backend.store(decision.entry)
                 DeltaTracker.mark_synced([resolved.id], backend)
                 if existing is None:
                     inserted += 1

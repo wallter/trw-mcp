@@ -19,8 +19,9 @@ from trw_mcp.middleware.mcp_security import (
     AdvertisedTool,
     MCPSecurityMiddleware,
 )
+from trw_mcp.security.capability_scope import CapabilityScope
 from trw_mcp.security.anomaly_detector import AnomalyDetector, AnomalyDetectorConfig
-from trw_mcp.security.mcp_registry import MCPAllowlist, MCPServer
+from trw_mcp.security.mcp_registry import AllowedTool, MCPAllowlist, MCPServer
 
 pytestmark = pytest.mark.integration
 
@@ -31,18 +32,36 @@ def _mw(tmp_path: Path) -> MCPSecurityMiddleware:
             MCPServer(
                 name="trw",
                 url_or_command="trw-mcp",
-                signer="trw-maintainer",
-                signature="stub:v1",
-                trust_level="verified",
-                capabilities=["trw_recall", "trw_learn"],
+                public_key_fingerprint="sha256:trw",
+                allowed_tools=[
+                    AllowedTool(
+                        name="trw_recall",
+                        allowed_phases=("implement",),
+                        allowed_scopes=("read",),
+                    ),
+                    AllowedTool(
+                        name="trw_learn",
+                        allowed_phases=("implement",),
+                        allowed_scopes=("write",),
+                    ),
+                ],
             ),
             MCPServer(
                 name="filesystem",
                 url_or_command="npx fs",
-                signer="trw-maintainer",
-                signature="stub:v1",
-                trust_level="verified",
-                capabilities=["read_file", "write_file"],
+                public_key_fingerprint="sha256:filesystem",
+                allowed_tools=[
+                    AllowedTool(
+                        name="read_file",
+                        allowed_phases=("implement",),
+                        allowed_scopes=("read",),
+                    ),
+                    AllowedTool(
+                        name="write_file",
+                        allowed_phases=("implement",),
+                        allowed_scopes=("write",),
+                    ),
+                ],
             ),
         ]
     )
@@ -53,7 +72,20 @@ def _mw(tmp_path: Path) -> MCPSecurityMiddleware:
     )
     return MCPSecurityMiddleware(
         allowlist=allowlist,
-        scopes={},
+        scopes={
+            "trw_recall": CapabilityScope(
+                server_name="trw",
+                tool_name="trw_recall",
+                allowed_phases=("implement",),
+                allowed_scopes=("read",),
+            ),
+            "read_file": CapabilityScope(
+                server_name="filesystem",
+                tool_name="read_file",
+                allowed_phases=("implement",),
+                allowed_scopes=("read",),
+            ),
+        },
         anomaly_detector=det,
         run_dir=None,
         fallback_dir=tmp_path,
@@ -107,21 +139,20 @@ def test_fuzz_all_transports_fire_three_layers(
 def test_fuzz_signature_drift_never_bypasses(
     tmp_path: Path, mutated_signature: str, mutated_signer: str
 ) -> None:
-    """Signature drift on an allowlist entry does NOT bypass observe-mode.
-
-    Because v1 verify_signature is a stub, signature drift is logged but not
-    enforced — the middleware still emits a decision. This test confirms the
-    middleware never crashes on mutated signature material.
-    """
+    """Fingerprint drift blocks rather than bypasses authorization."""
     allowlist = MCPAllowlist(
         servers=[
             MCPServer(
                 name="trw",
                 url_or_command="trw-mcp",
-                signer=mutated_signer,
-                signature=mutated_signature,
-                trust_level="verified",
-                capabilities=["trw_recall"],
+                public_key_fingerprint="sha256:trw",
+                allowed_tools=[
+                    AllowedTool(
+                        name="trw_recall",
+                        allowed_phases=("implement",),
+                        allowed_scopes=("read",),
+                    )
+                ],
             ),
         ]
     )
@@ -132,15 +163,34 @@ def test_fuzz_signature_drift_never_bypasses(
     )
     mw = MCPSecurityMiddleware(
         allowlist=allowlist,
-        scopes={},
+        scopes={
+            "trw_recall": CapabilityScope(
+                server_name="trw",
+                tool_name="trw_recall",
+                allowed_phases=("implement",),
+                allowed_scopes=("read",),
+            )
+        },
         anomaly_detector=det,
         run_dir=None,
         fallback_dir=tmp_path,
     )
-    decision = mw.on_tool_call(
-        transport="sse", server="trw", tool="trw_recall", args={}
+    _ = (mutated_signature, mutated_signer)
+    mw.on_tool_call(
+        transport="sse",
+        server="trw",
+        tool="trw_recall",
+        args={},
+        observed_fingerprint="sha256:trw",
     )
-    assert decision.allowed is True
+    decision = mw.on_tool_call(
+        transport="sse",
+        server="trw",
+        tool="trw_recall",
+        args={},
+        observed_fingerprint="sha256:drifted",
+    )
+    assert decision.allowed is False
 
 
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -157,7 +207,7 @@ def test_fuzz_advertise_filter_handles_random_batches(
         AdvertisedTool(server=server, name=f"{CLAUDE_CODE_PREFIX}tool_{i}")
         for i in range(count)
     ]
-    out = mw.filter_advertised_tools(transport="http", advertisements=ads)
+    out = mw.filter_advertised_tools(transport="streamable-http", advertisements=ads)
     # All outputs must be short-name normalized
     for ad in out:
         assert not ad.name.startswith(CLAUDE_CODE_PREFIX)

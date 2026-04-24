@@ -12,9 +12,11 @@ Wave 2a wiring were reverted to the Phase-1 empty-string default.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.conftest import extract_tool_fn, make_test_server
 from trw_mcp.telemetry.artifact_registry import clear_snapshot_cache
@@ -92,6 +94,79 @@ def test_session_start_writes_run_surface_snapshot_when_run_pinned(
     body = manifest.read_text()
     assert "snapshot_id:" in body
     assert "artifacts:" in body
+
+
+def test_session_start_updates_run_yaml_with_surface_snapshot_pointer(
+    tmp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_project / ".trw" / "runs" / "test-task" / "20260423T000000Z-deadbeef"
+    (run_root / "meta").mkdir(parents=True, exist_ok=True)
+    (run_root / "meta" / "run.yaml").write_text(
+        "task: test-task\nphase: research\nstatus: active\n"
+    )
+    (run_root / "meta" / "events.jsonl").touch()
+
+    import trw_mcp.tools.ceremony as ceremony_mod
+
+    monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
+    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    monkeypatch.setattr(
+        ceremony_mod,
+        "_get_run_status",
+        lambda rd: {
+            "active_run": rd.name,
+            "status": "active",
+            "task_name": "test-task",
+            "phase": "research",
+        },
+    )
+
+    server = make_test_server("ceremony")
+    session_start = extract_tool_fn(server, "trw_session_start")
+    result = session_start()
+
+    run_yaml = yaml.safe_load((run_root / "meta" / "run.yaml").read_text(encoding="utf-8"))
+    assert run_yaml["surface_snapshot_id"] == result["surface_snapshot_id"]
+    assert run_yaml["run_surface_snapshot_path"] == "meta/run_surface_snapshot.yaml"
+
+
+def test_subsequent_checkpoint_event_inherits_surface_snapshot_id_from_run_context(
+    tmp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_project / ".trw" / "runs" / "test-task" / "20260423T000000Z-deadbeef"
+    (run_root / "meta").mkdir(parents=True, exist_ok=True)
+    (run_root / "meta" / "run.yaml").write_text(
+        "task: test-task\nphase: research\nstatus: active\nowner_session_id: s-test\n"
+    )
+    (run_root / "meta" / "events.jsonl").touch()
+
+    import trw_mcp.tools.ceremony as ceremony_mod
+
+    monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
+    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    monkeypatch.setattr(
+        ceremony_mod,
+        "_get_run_status",
+        lambda rd: {
+            "active_run": rd.name,
+            "status": "active",
+            "task_name": "test-task",
+            "phase": "research",
+        },
+    )
+
+    server = make_test_server("ceremony", "orchestration")
+    session_start = extract_tool_fn(server, "trw_session_start")
+    checkpoint = extract_tool_fn(server, "trw_checkpoint")
+    result = session_start()
+    checkpoint(run_path=str(run_root), message="milestone")
+
+    events_files = sorted((run_root / "meta").glob("events-*.jsonl"))
+    assert events_files, "unified events file should exist after session_start + checkpoint"
+    records = [json.loads(line) for line in events_files[0].read_text(encoding="utf-8").splitlines()]
+    assert all(record["surface_snapshot_id"] == result["surface_snapshot_id"] for record in records)
 
 
 def test_session_start_fail_open_returns_empty_string_not_missing() -> None:

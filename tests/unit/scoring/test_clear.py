@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,10 +12,12 @@ from trw_mcp.scoring.clear import (
     compute,
 )
 from trw_mcp.telemetry.event_base import (
-    CeremonyEvent,
     ContractEvent,
+    HPOCeremonyComplianceEvent,
     HPOTelemetryEvent,
-    ThrashingEvent,
+    HPOSessionEndEvent,
+    HPOSessionStartEvent,
+    LLMCallEvent,
     ToolCallEvent,
 )
 
@@ -38,6 +42,21 @@ def _tool_call(
     if event_id is not None:
         kwargs["event_id"] = event_id
     return ToolCallEvent(**kwargs)  # type: ignore[arg-type]
+
+
+def _llm_call(*, session_id: str = "s1", usd: float = 0.001) -> LLMCallEvent:
+    return LLMCallEvent(
+        session_id=session_id,
+        payload={"model": "claude-opus-4-7", "usd_cost_est": usd},
+    )
+
+
+def _session_start(ts: datetime) -> HPOSessionStartEvent:
+    return HPOSessionStartEvent(session_id="s", ts=ts)
+
+
+def _session_end(ts: datetime, *, outcome: str = "PASS") -> HPOSessionEndEvent:
+    return HPOSessionEndEvent(session_id="s", ts=ts, payload={"outcome": outcome})
 
 
 class TestClearScoreModel:
@@ -75,13 +94,10 @@ class TestComputeEmptySession:
 
 
 class TestCostDimension:
-    def test_low_cost_high_score(self) -> None:
-        events: list[HPOTelemetryEvent] = [
-            _tool_call(usd=0.01) for _ in range(3)
-        ]
-        score = compute("s", events)
-        # 0.03 USD / 2.00 p95 → cost = 1 - 0.015 = 0.985
-        assert score.cost == pytest.approx(0.985, abs=1e-3)
+    def test_includes_tool_and_llm_costs(self) -> None:
+        events: list[HPOTelemetryEvent] = [_tool_call(usd=0.25), _llm_call(usd=0.25)]
+        score = compute("s", events, cost_p95_usd=1.0)
+        assert score.cost == pytest.approx(0.5, abs=1e-6)
 
     def test_cost_clamped_at_zero_when_over_p95(self) -> None:
         events: list[HPOTelemetryEvent] = [_tool_call(usd=5.0)]
@@ -90,68 +106,69 @@ class TestCostDimension:
 
 
 class TestLatencyDimension:
-    def test_fast_session_high_score(self) -> None:
-        events: list[HPOTelemetryEvent] = [_tool_call(wall_ms=1000)]
-        score = compute("s", events)
-        # 1000 / 120_000 → latency = 1 - ~0.0083 = 0.9917
-        assert score.latency == pytest.approx(0.9917, abs=1e-3)
+    def test_uses_session_start_end_wall_clock(self) -> None:
+        start = datetime(2026, 4, 23, 10, 0, 0, tzinfo=timezone.utc)
+        end = start + timedelta(seconds=5)
+        events: list[HPOTelemetryEvent] = [
+            _session_start(start),
+            _tool_call(wall_ms=100),
+            _tool_call(wall_ms=200),
+            _session_end(end),
+        ]
+        score = compute("s", events, latency_p95_ms=10_000)
+        assert score.latency == pytest.approx(0.5, abs=1e-6)
 
     def test_latency_clamped_at_zero_when_over_p95(self) -> None:
-        events: list[HPOTelemetryEvent] = [_tool_call(wall_ms=500_000)]
-        score = compute("s", events)
+        start = datetime(2026, 4, 23, 10, 0, 0, tzinfo=timezone.utc)
+        end = start + timedelta(seconds=500)
+        events: list[HPOTelemetryEvent] = [_session_start(start), _session_end(end)]
+        score = compute("s", events, latency_p95_ms=120_000)
         assert score.latency == 0.0
 
 
 class TestEfficacyDimension:
-    def test_uses_ceremony_score_when_provided(self) -> None:
-        events: list[HPOTelemetryEvent] = [_tool_call(outcome="error")] * 10
-        # Even though all tool calls errored, ceremony_compliance_score
-        # overrides the fallback.
-        score = compute("s", events, ceremony_compliance_score=0.75)
-        assert score.efficacy == 0.75
-
-    def test_falls_back_to_success_ratio(self) -> None:
+    def test_uses_ceremony_compliance_pass_fail(self) -> None:
         events: list[HPOTelemetryEvent] = [
             _tool_call(outcome="success") for _ in range(7)
-        ] + [_tool_call(outcome="error") for _ in range(3)]
+        ] + [
+            HPOCeremonyComplianceEvent(
+                session_id="s",
+                payload={"compliant": False, "violations": ["missing_build"]},
+            )
+        ]
         score = compute("s", events)
-        assert score.efficacy == pytest.approx(0.7, abs=1e-6)
+        assert score.efficacy == 0.0
+
+    def test_falls_back_to_session_end_outcome(self) -> None:
+        events: list[HPOTelemetryEvent] = [_session_end(datetime.now(tz=timezone.utc), outcome="PASS")]
+        score = compute("s", events)
+        assert score.efficacy == 1.0
 
 
 class TestAssuranceDimension:
-    def test_contract_paired_calls_lift_assurance(self) -> None:
-        tc1 = _tool_call(event_id="evt_tool_1")
-        tc2 = _tool_call(event_id="evt_tool_2")
-        # Pair a ContractEvent with tc1 — assurance = 1/2 = 0.5
-        contract = ContractEvent(
-            session_id="s",
-            parent_event_id="evt_tool_1",
-            payload={"contract_id": "c1", "outcome": "pass"},
-        )
-        score = compute("s", [tc1, tc2, contract])
-        assert score.assurance == pytest.approx(0.5, abs=1e-6)
-
-    def test_falls_back_to_success_ratio_when_no_contracts(self) -> None:
+    def test_uses_contract_schema_valid_rate(self) -> None:
         events: list[HPOTelemetryEvent] = [
-            _tool_call(outcome="success") for _ in range(8)
-        ] + [_tool_call(outcome="error") for _ in range(2)]
+            ContractEvent(session_id="s", payload={"schema_valid": True}),
+            ContractEvent(session_id="s", payload={"schema_valid": False}),
+            ContractEvent(session_id="s", payload={"schema_valid": True}),
+        ]
         score = compute("s", events)
-        # No contract events → assurance = success_ratio = 0.8
-        assert score.assurance == pytest.approx(0.8, abs=1e-6)
+        assert score.assurance == pytest.approx(2 / 3, abs=1e-6)
+
+    def test_missing_assurance_signals_defaults_to_zero(self) -> None:
+        score = compute("s", [_tool_call(outcome="success")])
+        assert score.assurance == 0.0
 
 
 class TestReliabilityDimension:
-    def test_thrashing_bursts_lower_reliability(self) -> None:
-        tc1 = _tool_call(event_id="evt_tool_a")
-        tc2 = _tool_call(event_id="evt_tool_b")
-        thrashing = ThrashingEvent(
-            session_id="s",
-            parent_event_id="evt_tool_a",
-            payload={"retry_count": 5},
-        )
-        score = compute("s", [tc1, tc2, thrashing])
-        # 1 burst / 2 calls → reliability = 1 - 0.5 = 0.5
-        assert score.reliability == pytest.approx(0.5, abs=1e-6)
+    def test_retry_and_error_outcomes_lower_reliability(self) -> None:
+        events: list[HPOTelemetryEvent] = [
+            _tool_call(outcome="success"),
+            _tool_call(outcome="retry"),
+            _tool_call(outcome="error"),
+        ]
+        score = compute("s", events)
+        assert score.reliability == pytest.approx(1 / 3, abs=1e-6)
 
     def test_no_thrashing_yields_full_reliability(self) -> None:
         events: list[HPOTelemetryEvent] = [_tool_call() for _ in range(5)]
@@ -183,10 +200,10 @@ class TestMalformedPayloads:
         assert score.tool_call_count == 1
         assert score.total_wall_ms == 0
 
-    def test_ceremony_events_dont_count_as_tool_calls(self) -> None:
+    def test_session_events_dont_count_as_tool_calls(self) -> None:
         events: list[HPOTelemetryEvent] = [
-            CeremonyEvent(session_id="s", payload={"phase": "IMPLEMENT"}),
-            CeremonyEvent(session_id="s", payload={"phase": "DELIVER"}),
+            _session_start(datetime.now(tz=timezone.utc)),
+            _session_end(datetime.now(tz=timezone.utc)),
         ]
         score = compute("s", events)
         assert score.tool_call_count == 0

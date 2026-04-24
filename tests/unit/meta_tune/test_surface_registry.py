@@ -69,6 +69,8 @@ def test_classify_path_constitution_is_control_surface() -> None:
 def test_classify_path_config_yaml_is_config_surface() -> None:
     result = classify_path(Path(".trw/config.yaml"))
     assert Surface.CONFIG in result.surfaces
+    assert result.is_control is True
+    assert "control" in (result.rationale or "")
 
 
 def test_classify_path_pricing_yaml_is_config_surface() -> None:

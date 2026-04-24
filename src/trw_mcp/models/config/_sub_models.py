@@ -180,6 +180,95 @@ class MetaTuneConfig(BaseModel):
             "the proposer short-circuits and no candidates are generated."
         ),
     )
+    promotion_gate_consensus_quorum: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Minimum SAFE-001 votes required for promotion. v1 requires all "
+            "three checks (outcome, Goodhart, human sign-off)."
+        ),
+    )
+    sandbox_timeout_seconds: float = Field(
+        default=900.0,
+        gt=0.0,
+        description="Sandbox replay timeout in seconds for candidate evaluation.",
+    )
+    kill_switch_path: str = Field(
+        default=".trw/config.yaml",
+        description=(
+            "Anchored path to the kill-switch config file. Resolution MUST use "
+            "git-toplevel, explicit repo, or upward .trw/ search — never raw cwd-relative lookup."
+        ),
+    )
+    rollback_max_attempts: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum rollback attempts per proposal before operators must intervene.",
+    )
+    sandbox_image_tag: str = Field(
+        default="subprocess-seccomp-v1",
+        description=(
+            "SAFE-001 sandbox isolation primitive identifier. v1 requires Linux "
+            "+ seccomp + unshare network isolation."
+        ),
+    )
+    audit_log_path: str = Field(
+        default=".trw/meta_tune/meta_tune_audit.jsonl",
+        description="Path to the append-only SAFE-001 audit log.",
+    )
+    corpus_path: str = Field(
+        default="trw-mcp/tests/fixtures/meta_tune/corpora",
+        description="Held-out replay corpus root for SAFE-001 sandbox evaluation.",
+    )
+    eval_gaming_fixture_path: str = Field(
+        default="trw-mcp/tests/fixtures/meta_tune/dgm_attacks",
+        description="Synthetic DGM attack fixture directory for SAFE-001 detector validation.",
+    )
+
+
+class MCPSecurityAnomalyConfig(BaseModel):
+    """MCP anomaly-detection configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: str = Field(default="shadow", description="shadow logs only; enforce blocks rate spikes")
+    sigma_threshold: float = Field(default=5.0, description="Rate-spike sigma threshold")
+    window_seconds: int = Field(default=60, description="Rolling anomaly-detection window in seconds")
+    baseline_min_sessions: int = 5
+
+
+class MCPSecurityQuarantineConfig(BaseModel):
+    """MCP quarantine policy configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    auto_release: bool = Field(
+        default=False,
+        description="Release drift quarantine once the runtime again presents the canonical fingerprint",
+    )
+
+
+class MCPSecurityConfig(BaseModel):
+    """MCP authorization and registry configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enforce: bool = Field(default=True, description="Block denied MCP servers/tools instead of telemetry-only observe mode")
+    allowlist_path: str = "data/mcp_servers.allowlist.yaml"
+    operator_overlay_path: str = ".trw/mcp_servers.local.yaml"
+    operator_public_key: str = ""
+    allow_unsigned: bool = False
+    audit_log_path: str = ".trw/context"
+    anomaly: MCPSecurityAnomalyConfig = Field(default_factory=MCPSecurityAnomalyConfig)
+    quarantine: MCPSecurityQuarantineConfig = Field(default_factory=MCPSecurityQuarantineConfig)
+
+
+class SecurityConfig(BaseModel):
+    """Top-level security configuration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mcp: MCPSecurityConfig = Field(default_factory=MCPSecurityConfig)
 
 
 class PhaseTimeCaps(BaseModel):
