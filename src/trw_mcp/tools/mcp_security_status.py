@@ -129,6 +129,9 @@ def compute_security_status(
 
 def register_mcp_security_status(server: FastMCP) -> None:
     """Register ``trw_mcp_security_status`` on the given FastMCP server."""
+    # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96 carry-forward
+    # a): deferred import to avoid circular dep with trw_mcp.server._app.
+    from trw_mcp.server._security_hook import consult_mcp_security
 
     @server.tool()
     def trw_mcp_security_status() -> dict[str, Any]:
@@ -138,6 +141,7 @@ def register_mcp_security_status(server: FastMCP) -> None:
         ``enforce_mode=False``. A Sprint 97+ decision gate flips these once
         the 3-week shadow window closes.
         """
+        consult_mcp_security("trw_mcp_security_status", {}, "", None)
         from trw_mcp.state._paths import resolve_trw_dir
 
         trw_dir = resolve_trw_dir()

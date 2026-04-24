@@ -126,6 +126,58 @@ def _register_tools() -> None:
     # PRD-CORE-125-FR02: Apply tool exposure filter after all tools are registered.
     _apply_tool_exposure_filter()
 
+    # PRD-INFRA-SEC-001 FR-9 (sprint-96 carry-forward a): wire
+    # consult_mcp_security into per-tool dispatch. FastMCP's tool-manager
+    # internals (``_tools`` / ``_tool_manager._tools``) vary across
+    # releases, so the rewrap here is best-effort. The authoritative
+    # consult path is the inner-body call added directly to the sprint-96
+    # tools (``trw_query_events``, ``trw_surface_diff``,
+    # ``trw_mcp_security_status``) in their registrars. This pass attempts
+    # to extend the same coverage to any other tool whose underlying
+    # callable we can resolve — silently skipping if the FastMCP version
+    # does not expose a rewrap point.
+    _apply_security_consult_wrapping()
+
+
+def _apply_security_consult_wrapping() -> None:
+    """Best-effort rewrap of registered tools with security_consult.
+
+    FastMCP exposes no public rewrap API and its private tool-manager
+    attributes changed across releases. We probe a small set of known
+    attribute paths; if none resolve, we log at debug and return. The
+    inner-body consult inside each sprint-96 tool body remains the
+    authoritative coverage.
+    """
+    try:
+        from trw_mcp.server._security_hook import consult_mcp_security
+        from trw_mcp.telemetry.tool_call_timing import wrap_tool
+
+        tool_manager = getattr(mcp, "_tool_manager", None) or getattr(mcp, "tool_manager", None)
+        if tool_manager is None:
+            logger.debug("security_consult_rewrap_skipped", reason="no_tool_manager")
+            return
+        tools = getattr(tool_manager, "_tools", None) or getattr(tool_manager, "tools", None)
+        if not isinstance(tools, dict):
+            logger.debug("security_consult_rewrap_skipped", reason="no_tools_mapping")
+            return
+        rewrapped = 0
+        for name, tool_obj in list(tools.items()):
+            fn = getattr(tool_obj, "fn", None) or getattr(tool_obj, "func", None)
+            if not callable(fn):
+                continue
+            wrapped = wrap_tool(
+                fn, tool_name=str(name), security_consult=consult_mcp_security
+            )
+            if hasattr(tool_obj, "fn"):
+                tool_obj.fn = wrapped
+                rewrapped += 1
+            elif hasattr(tool_obj, "func"):
+                tool_obj.func = wrapped
+                rewrapped += 1
+        logger.debug("security_consult_rewrap_applied", count=rewrapped)
+    except Exception:  # justified: fail-open, rewrap is a best-effort enhancement
+        logger.debug("security_consult_rewrap_failed", exc_info=True)
+
 
 # Eager registration so tools are available via `fastmcp run` and test imports.
 _register_tools()
