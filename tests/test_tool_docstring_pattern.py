@@ -58,7 +58,13 @@ REQUIRED_OUTPUT_CONTRACT: frozenset[str] = frozenset(
 
 # Allow-list for grandfathered exceptions — each entry MUST have an
 # inline justification comment describing why this exception exists.
-ALLOW_LIST: dict[str, str] = {}
+ALLOW_LIST: dict[str, str] = {
+    # Sprint-96 tools landed in parallel (commits 5d7d6db9f, 0519a923e, etc.);
+    # docstring hygiene tracked under that sprint's own PRD, not PRD-QUAL-074.
+    "trw_mcp_security_status": "Sprint-96 (security surface)",
+    "trw_query_events": "Sprint-96 MEAS-001 FR-7",
+    "trw_surface_diff": "Sprint-96 MEAS-001 FR-8",
+}
 
 # Prescriptive tokens to scrub from trw_deliver / trw_learn (FR02).
 PRESCRIPTIVE_TOKENS: tuple[str, ...] = ("MUST", "CRITICAL", "RIGID")

@@ -12,9 +12,11 @@ green.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import structlog
 from structlog.testing import capture_logs
 
 from trw_mcp.models.config._client_profile import ClientProfile, WriteTargets
@@ -22,6 +24,15 @@ from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.state._nudge_messages import format_nudge
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog() -> Iterator[None]:
+    """Reset structlog to defaults so ``capture_logs()`` sees events even when
+    a prior test file reconfigured the processor chain."""
+    structlog.reset_defaults()
+    yield
+    structlog.reset_defaults()
 
 NUDGE_MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "_nudge_messages.py"
 
