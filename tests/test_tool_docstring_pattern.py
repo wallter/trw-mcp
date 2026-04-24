@@ -27,6 +27,7 @@ USE_WHEN_SYNONYMS: tuple[str, ...] = ("Use when",)
 # Tools that MUST name an output contract via "Output:" or "Returns:" (FR10 hard).
 REQUIRED_OUTPUT_CONTRACT: frozenset[str] = frozenset(
     {
+        "trw_build_check",
         "trw_session_start",
         "trw_deliver",
         "trw_checkpoint",
