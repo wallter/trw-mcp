@@ -15,7 +15,12 @@ from pathlib import Path
 
 import structlog
 
-from ._file_ops import _new_result, _record_write
+from ._file_ops import (
+    _new_result,
+    _record_write,
+    smart_merge_marker_section,
+    write_instruction_file_with_merge,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -74,27 +79,17 @@ def _gemini_instructions_content() -> str:
 
 
 def _smart_merge_instructions(existing: str, trw_content: str) -> str:
-    """Merge TRW section into existing GEMINI.md, preserving user content.
+    """Backward-compatible wrapper around the shared marker-merge helper.
 
-    Handles edge cases:
-    - Both markers present in correct order -> replace between markers
-    - End before start (corrupted) -> treat as no markers, append
-    - Only one marker present -> treat as no markers, append
-    - Empty existing content -> just the TRW content
-    - Identical TRW content already present -> return unchanged (idempotent)
+    Kept so external callers / tests targeting this private symbol still work.
+    New code should call :func:`smart_merge_marker_section` directly.
     """
-    start_idx = existing.find(_GEMINI_TRW_START_MARKER)
-    end_idx = existing.find(_GEMINI_TRW_END_MARKER)
-
-    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-        end_idx += len(_GEMINI_TRW_END_MARKER)
-        merged = existing[:start_idx] + trw_content.rstrip("\n") + existing[end_idx:]
-        if merged == existing:
-            return existing
-        return merged
-
-    separator = "\n\n" if existing.strip() else ""
-    return existing.rstrip() + separator + trw_content + "\n"
+    return smart_merge_marker_section(
+        existing,
+        trw_content,
+        start_marker=_GEMINI_TRW_START_MARKER,
+        end_marker=_GEMINI_TRW_END_MARKER,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -107,26 +102,22 @@ def generate_gemini_instructions(
     *,
     force: bool = False,
 ) -> dict[str, list[str]]:
-    """Generate or smart-merge ``GEMINI.md``."""
+    """Generate or smart-merge ``GEMINI.md``.
+
+    Delegates to the shared ``write_instruction_file_with_merge`` helper so
+    the merge / idempotency / error-handling contract is identical across
+    every per-client instruction file generator.
+    """
     result = _new_result()
-    instructions_path = target_dir / _GEMINI_MD_PATH
-    existed = instructions_path.exists()
-    trw_content = _gemini_instructions_content()
-
-    try:
-        if existed and not force:
-            existing = instructions_path.read_text(encoding="utf-8")
-            merged = _smart_merge_instructions(existing, trw_content)
-            if merged == existing:
-                result["preserved"].append(_GEMINI_MD_PATH)
-                return result
-            instructions_path.write_text(merged, encoding="utf-8")
-        else:
-            instructions_path.write_text(trw_content, encoding="utf-8")
-        _record_write(result, _GEMINI_MD_PATH, existed=existed)
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {instructions_path}: {exc}")
-
+    write_instruction_file_with_merge(
+        target_path=target_dir / _GEMINI_MD_PATH,
+        rel_path=_GEMINI_MD_PATH,
+        trw_section=_gemini_instructions_content(),
+        start_marker=_GEMINI_TRW_START_MARKER,
+        end_marker=_GEMINI_TRW_END_MARKER,
+        force=force,
+        result=result,
+    )
     return result
 
 
@@ -143,6 +134,12 @@ def generate_gemini_mcp_config(
     """Deep-merge TRW MCP server entry into ``.gemini/settings.json``.
 
     Only touches ``mcpServers.trw`` — preserves all other settings and servers.
+    Hardened against pre-existing user files written by the Gemini CLI itself
+    or other tooling: malformed JSON or schema-incompatible top-level types
+    fall back to a fresh document rather than corrupting the file silently.
+    The previous file is preserved alongside as ``settings.json.bak`` when
+    the parsed root is not a JSON object so the user can recover their
+    customizations.
     """
     result = _new_result()
     settings_path = target_dir / _GEMINI_SETTINGS_PATH
@@ -152,15 +149,47 @@ def generate_gemini_mcp_config(
     if existed:
         try:
             raw = settings_path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                existing = parsed
-        except (json.JSONDecodeError, OSError) as exc:
+        except OSError as exc:
             result["errors"].append(f"Failed to read {_GEMINI_SETTINGS_PATH}: {exc}")
             return result
 
+        if raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                # Preserve user content so they can recover, then start fresh.
+                backup = settings_path.with_suffix(settings_path.suffix + ".bak")
+                try:
+                    backup.write_text(raw, encoding="utf-8")
+                except OSError:
+                    pass
+                result.setdefault("warnings", []).append(
+                    f"{_GEMINI_SETTINGS_PATH} was not valid JSON ({exc.msg}); "
+                    f"backed up to {backup.name} and rewriting from scratch"
+                )
+                parsed = None
+            else:
+                if not isinstance(parsed, dict):
+                    backup = settings_path.with_suffix(settings_path.suffix + ".bak")
+                    try:
+                        backup.write_text(raw, encoding="utf-8")
+                    except OSError:
+                        pass
+                    result.setdefault("warnings", []).append(
+                        f"{_GEMINI_SETTINGS_PATH} top-level was not a JSON object; "
+                        f"backed up to {backup.name} and rewriting from scratch"
+                    )
+                    parsed = None
+
+            if isinstance(parsed, dict):
+                existing = parsed
+
     mcp_servers = existing.get("mcpServers")
     if not isinstance(mcp_servers, dict):
+        # User had ``mcpServers`` set to a non-object (list, string, null);
+        # don't propagate the bad type — replace with a fresh dict. Other
+        # mcpServers entries are lost in this corner case but the alternative
+        # is crashing on a write that would produce an invalid Gemini config.
         mcp_servers = {}
     existing["mcpServers"] = mcp_servers
 
@@ -170,11 +199,27 @@ def generate_gemini_mcp_config(
         "args": args,
         "trust": True,
     }
-    mcp_servers["trw"] = trw_entry
+
+    # Idempotent write: if the document on disk already matches what we'd
+    # produce, skip the write so callers can report ``preserved`` cleanly.
+    new_payload = dict(existing)
+    new_servers = dict(mcp_servers)
+    new_servers["trw"] = trw_entry
+    new_payload["mcpServers"] = new_servers
+    new_text = json.dumps(new_payload, indent=2) + "\n"
+
+    if existed and not force:
+        try:
+            current_text = settings_path.read_text(encoding="utf-8")
+        except OSError:
+            current_text = ""
+        if current_text == new_text:
+            result.setdefault("preserved", []).append(_GEMINI_SETTINGS_PATH)
+            return result
 
     try:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        settings_path.write_text(new_text, encoding="utf-8")
         _record_write(result, _GEMINI_SETTINGS_PATH, existed=existed)
     except OSError as exc:
         result["errors"].append(f"Failed to write {settings_path}: {exc}")
