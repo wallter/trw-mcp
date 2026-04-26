@@ -19,7 +19,12 @@ from typing import TypedDict
 
 import structlog
 
-from ._file_ops import _new_result, _record_write
+from ._file_ops import (
+    _new_result,
+    _record_write,
+    smart_merge_marker_section,
+    write_instruction_file_with_merge,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -141,29 +146,17 @@ TRW tools are available via MCP server. Key tools: `trw_session_start`, `trw_lea
 
 
 def _smart_merge_instructions(existing: str, trw_content: str) -> str:
-    """Merge TRW section into existing instructions, preserving user content.
+    """Backward-compatible wrapper around the shared marker-merge helper.
 
-    Handles edge cases:
-    - Both markers present in correct order → replace between markers
-    - End before start (corrupted) → treat as no markers, append
-    - Only one marker present → treat as no markers, append
-    - Empty existing content → just the TRW content
-    - Identical TRW content already present → return unchanged (idempotent)
+    Kept so external callers / tests targeting this private symbol still work.
+    New code should call :func:`smart_merge_marker_section` directly.
     """
-    start_idx = existing.find(_COPILOT_TRW_START_MARKER)
-    end_idx = existing.find(_COPILOT_TRW_END_MARKER)
-
-    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-        # Valid marker pair — replace the section between them
-        end_idx += len(_COPILOT_TRW_END_MARKER)
-        merged = existing[:start_idx] + trw_content.rstrip("\n") + existing[end_idx:]
-        if merged == existing:
-            return existing
-        return merged
-
-    # No valid marker pair — append TRW section
-    separator = "\n\n" if existing.strip() else ""
-    return existing.rstrip() + separator + trw_content + "\n"
+    return smart_merge_marker_section(
+        existing,
+        trw_content,
+        start_marker=_COPILOT_TRW_START_MARKER,
+        end_marker=_COPILOT_TRW_END_MARKER,
+    )
 
 
 def generate_copilot_instructions(
@@ -171,28 +164,20 @@ def generate_copilot_instructions(
     *,
     force: bool = False,
 ) -> dict[str, list[str]]:
-    """Generate or smart-merge ``.github/copilot-instructions.md``."""
+    """Generate or smart-merge ``.github/copilot-instructions.md``.
+
+    Delegates to the shared ``write_instruction_file_with_merge`` helper.
+    """
     result = _new_result()
-    github_dir = target_dir / _GITHUB_DIR
-    github_dir.mkdir(parents=True, exist_ok=True)
-    instructions_path = target_dir / _COPILOT_INSTRUCTIONS_PATH
-    existed = instructions_path.exists()
-    trw_content = _copilot_instructions_content()
-
-    try:
-        if existed and not force:
-            existing = instructions_path.read_text(encoding="utf-8")
-            merged = _smart_merge_instructions(existing, trw_content)
-            if merged == existing:
-                result["preserved"].append(_COPILOT_INSTRUCTIONS_PATH)
-                return result
-            instructions_path.write_text(merged, encoding="utf-8")
-        else:
-            instructions_path.write_text(trw_content, encoding="utf-8")
-        _record_write(result, _COPILOT_INSTRUCTIONS_PATH, existed=existed)
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {instructions_path}: {exc}")
-
+    write_instruction_file_with_merge(
+        target_path=target_dir / _COPILOT_INSTRUCTIONS_PATH,
+        rel_path=_COPILOT_INSTRUCTIONS_PATH,
+        trw_section=_copilot_instructions_content(),
+        start_marker=_COPILOT_TRW_START_MARKER,
+        end_marker=_COPILOT_TRW_END_MARKER,
+        force=force,
+        result=result,
+    )
     return result
 
 

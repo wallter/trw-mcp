@@ -169,3 +169,100 @@ def _files_identical(a: Path, b: Path) -> bool:
         return ha == hb
     except OSError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Marker-based smart merge — shared across instruction-file generators
+# ---------------------------------------------------------------------------
+
+
+def smart_merge_marker_section(
+    existing: str,
+    trw_section: str,
+    *,
+    start_marker: str,
+    end_marker: str,
+) -> str:
+    """Merge a TRW-managed section into a user-authored instruction file.
+
+    Replaces (or appends) the block delimited by *start_marker* / *end_marker*
+    while preserving every byte of user content outside the markers. Designed
+    to be safe against pre-existing files written by users or other tools
+    (the common case for ``GEMINI.md``, ``.github/copilot-instructions.md``,
+    and similar shared-namespace artifacts).
+
+    Behavior:
+      - Both markers present in correct order → replace the section between.
+      - Markers absent / corrupted (only one, or end before start) → append
+        a fresh TRW section to the end. User content is preserved as-is.
+      - Identical TRW content already in place → return *existing* unchanged
+        (so callers can skip a write and report ``preserved``).
+      - Empty *existing* → return *trw_section* + trailing newline.
+
+    *trw_section* MUST already include both *start_marker* and *end_marker*;
+    callers are responsible for rendering the full delimited block.
+
+    Args:
+        existing: Current file contents (may be empty / arbitrary user prose).
+        trw_section: Replacement section, including both markers.
+        start_marker: Opening sentinel (e.g. ``"<!-- trw:gemini:start -->"``).
+        end_marker: Closing sentinel.
+
+    Returns:
+        The merged document. Idempotent: ``f(f(x)) == f(x)`` for any *x*.
+    """
+    start_idx = existing.find(start_marker)
+    end_idx = existing.find(end_marker)
+
+    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+        end_idx += len(end_marker)
+        merged = existing[:start_idx] + trw_section.rstrip("\n") + existing[end_idx:]
+        if merged == existing:
+            return existing
+        return merged
+
+    separator = "\n\n" if existing.strip() else ""
+    return existing.rstrip() + separator + trw_section + "\n"
+
+
+def write_instruction_file_with_merge(
+    *,
+    target_path: Path,
+    rel_path: str,
+    trw_section: str,
+    start_marker: str,
+    end_marker: str,
+    force: bool,
+    result: dict[str, list[str]],
+) -> None:
+    """Idempotently write or merge a TRW-managed instruction file.
+
+    Encapsulates the read/merge/write/short-circuit pattern used identically
+    by every per-client instruction-file generator (Gemini, Copilot, Codex,
+    OpenCode). On idempotent writes (no diff vs. disk), records the path
+    under ``preserved`` so callers can report it without a redundant
+    filesystem write.
+
+    Failures are appended to ``result["errors"]`` and the function returns
+    normally — the caller decides whether to escalate.
+    """
+    existed = target_path.exists()
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if existed and not force:
+            existing = target_path.read_text(encoding="utf-8")
+            merged = smart_merge_marker_section(
+                existing,
+                trw_section,
+                start_marker=start_marker,
+                end_marker=end_marker,
+            )
+            if merged == existing:
+                result.setdefault("preserved", []).append(rel_path)
+                return
+            target_path.write_text(merged, encoding="utf-8")
+        else:
+            target_path.write_text(trw_section, encoding="utf-8")
+        _record_write(result, rel_path, existed=existed)
+    except OSError as exc:
+        result.setdefault("errors", []).append(f"Failed to write {target_path}: {exc}")
