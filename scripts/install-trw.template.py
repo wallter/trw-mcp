@@ -791,6 +791,45 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
         return False
 
 
+
+def _run_python_smoke(cmd: list[str], target_dir: str = "", timeout: int = 120) -> bool:
+    """Run a Python smoke command with installer target path on PYTHONPATH."""
+    try:
+        env = _build_pip_runtime_env(target_dir)
+        if target_dir:
+            env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
+        return (
+            subprocess.run(  # noqa: S603 -- installer executes its own Python smoke command
+                cmd,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            ).returncode
+            == 0
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def verify_embeddings_runtime(python: str, target_dir: str = "") -> bool:
+    """Return True when the installed runtime can create the embedding provider."""
+    return _run_python_smoke(
+        [
+            python,
+            "-B",
+            "-c",
+            (
+                "from trw_memory.embeddings.local import LocalEmbeddingProvider; "
+                "provider = LocalEmbeddingProvider(); "
+                "raise SystemExit(0 if provider.available() else 1)"
+            ),
+        ],
+        target_dir=target_dir,
+        timeout=180,
+    )
+
+
 def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
     """Return True when installed packages already satisfy wheel dependencies."""
     try:
@@ -1802,8 +1841,13 @@ def phase_install_extras(
             ui.step_ok(
                 "Embeddings available via host overlay (PYTHONPATH=/trw-embeddings) \u2014 skipping pip install"
             )
-            features.append("embeddings")
-            ok = True
+            ui.start_spinner("Verifying embeddings runtime...")
+            ok = verify_embeddings_runtime(python, target_dir=validated_target)
+            ui.stop_spinner(ok, "Embeddings verified", "Embeddings runtime failed (non-fatal)")
+            if ok:
+                features.append("embeddings")
+            else:
+                ui.hint("Run: pip install trw-memory[embeddings]")
         else:
             ui.start_spinner("Installing sentence-transformers (embeddings)...")
             ok = pip_install(
@@ -1813,11 +1857,18 @@ def phase_install_extras(
                 ui,
                 target_dir=validated_target,
             )
-            ui.stop_spinner(ok, "Embeddings enabled", "Embeddings install failed (non-fatal)")
+            if ok:
+                ui.stop_spinner(True, "Embeddings package installed")
+                ui.start_spinner("Verifying embeddings runtime...")
+                ok = verify_embeddings_runtime(python, target_dir=validated_target)
+                ui.stop_spinner(ok, "Embeddings verified", "Embeddings runtime failed (non-fatal)")
+            else:
+                ui.stop_spinner(False, "Embeddings enabled", "Embeddings install failed (non-fatal)")
             if ok:
                 features.append("embeddings")
             else:
-                ui.step_warn("sentence-transformers failed \u2014 recall uses keyword-only search")
+                ui.step_warn("embeddings failed \u2014 recall uses keyword-only search")
+                ui.hint("Run: pip install trw-memory[embeddings]")
 
     if install_sqlitevec:
         ui.start_spinner("Installing sqlite-vec...")
@@ -1901,16 +1952,27 @@ def phase_project_setup(
     if not isinstance(prior_targets, list):
         prior_targets = []
 
+    # A real prior install writes ``.trw/installer-meta.yaml`` (init-project /
+    # update-project). The mere existence of ``.trw/`` is NOT sufficient — the
+    # bash bootstrap pre-creates ``.trw/`` so ``trw-mcp auth login`` can save
+    # config.yaml, which would otherwise trip the update branch and silently
+    # auto-select detected clients without prompting (see install-trw.py
+    # phase_project_setup PRD-FIX-???).
+    has_prior_install = (
+        (target_dir / ".trw" / "installer-meta.yaml").is_file()
+        or bool(prior_targets)
+    )
+
     resolved_targets: list[str] | None = ide
-    is_update = (target_dir / ".trw").is_dir()
+    is_update = (target_dir / ".trw").is_dir() and has_prior_install
     if resolved_targets is None:
-        if is_update and interactive and prior_targets:
+        if has_prior_install and interactive and prior_targets:
             resolved_targets = _normalize_ide_targets(prior_targets)
             ui.step_ok(f"Client surfaces: {_format_ide_list(resolved_targets)} (from prior install)")
-        elif is_update and interactive and detected_ides:
-            resolved_targets = _normalize_ide_targets(detected_ides)
-            ui.step_ok(f"Client surfaces: {_format_ide_list(resolved_targets)} (from existing repo config)")
         elif interactive:
+            # First-time install (no installer-meta.yaml) OR a prior install with
+            # no recorded target_platforms: always prompt so users know which
+            # clients TRW is being configured for.
             resolved_targets = _prompt_ide_selection(detected_clis, detected_ides, prior_targets=prior_targets)
         else:
             # Headless: reuse prior targets, else auto-configure detected clients.
