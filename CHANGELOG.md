@@ -2,6 +2,34 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.46.2] — 2026-04-26
+
+### Fixed
+
+- **Installer skipped client-selection prompt on first install** (Issue 1
+  from Mac install report). The bash bootstrap (`platform/public/install.sh`)
+  pre-creates `.trw/` so `trw-mcp auth login` can persist `platform_api_key`
+  to `config.yaml`. The legacy gate in `phase_project_setup` of
+  `install-trw.template.py` treated *any* `.trw/` directory as evidence of a
+  prior install and silently auto-selected detected client surfaces (e.g.
+  `GEMINI.md` → `gemini`) without ever prompting. Gate now requires a strong
+  sentinel — `.trw/installer-meta.yaml` (only written by `init-project` /
+  `update-project`) OR a non-empty `target_platforms` in prior config.
+  Interactive first installs always prompt regardless of detected clients.
+  Test: `tests/test_install_trw_client_prompt_gate.py` (10 cases).
+
+- **Per-client instruction-file generators were fragile against
+  pre-existing user content** (Issue 2). The marker-based smart-merge logic
+  was duplicated character-for-character between `bootstrap/_gemini.py` and
+  `bootstrap/_copilot.py` (markers as the only difference). Extracted to
+  `bootstrap/_file_ops.py` as `smart_merge_marker_section` and
+  `write_instruction_file_with_merge`; both clients now delegate. Hardened
+  `generate_gemini_mcp_config` against malformed / schema-incompatible
+  pre-existing `.gemini/settings.json` — invalid JSON or non-object root
+  gets backed up to `settings.json.bak` and the file is rewritten with a
+  `warnings` entry; idempotent skip when the document on disk already
+  matches. Test: `tests/test_bootstrap_smart_merge.py` (20 cases).
+
 ## [Unreleased]
 
 ### Changed
