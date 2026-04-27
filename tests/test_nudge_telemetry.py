@@ -319,9 +319,7 @@ class TestStructlogNudgeTelemetry:
             encoding="utf-8",
         )
 
-        fake_recall_context = type(
-            "Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()}
-        )()
+        fake_recall_context = type("Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()})()
         fake_learning = {
             "id": "L-fr06-a",
             "summary": "test learning summary for fr06",
@@ -335,8 +333,9 @@ class TestStructlogNudgeTelemetry:
         monkey_recall = cn.recall_learnings if hasattr(cn, "recall_learnings") else None
 
         # Use direct attribute replacement (restored manually in finally).
+        from trw_mcp.state import memory_adapter
+        from trw_mcp.state import recall_context as _recall_ctx_mod
         from trw_mcp.tools import _recall_impl
-        from trw_mcp.state import memory_adapter, recall_context as _recall_ctx_mod
 
         orig_build = _recall_impl.build_recall_context
         orig_build_state = _recall_ctx_mod.build_recall_context
@@ -428,16 +427,15 @@ class TestStructlogNudgeTelemetry:
             },
         )
 
-        fake_recall_context = type(
-            "Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()}
-        )()
+        fake_recall_context = type("Ctx", (), {"modified_files": ["src/foo.py"], "inferred_domains": set()})()
         fake_learning = {
             "id": "L-dedup-x",
             "summary": "already shown in validate phase",
             "nudge_line": "skip me",
         }
 
-        from trw_mcp.state import memory_adapter, recall_context as _recall_ctx_mod
+        from trw_mcp.state import memory_adapter
+        from trw_mcp.state import recall_context as _recall_ctx_mod
         from trw_mcp.tools import _recall_impl
 
         orig_build = _recall_impl.build_recall_context
@@ -448,20 +446,14 @@ class TestStructlogNudgeTelemetry:
         memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]  # type: ignore[assignment]
         try:
             with structlog.testing.capture_logs() as captured:
-                selected, _ = _select_learning_injection_candidate(
-                    state, trw_dir, skip_phase_duplicates=True
-                )
+                selected, _ = _select_learning_injection_candidate(state, trw_dir, skip_phase_duplicates=True)
         finally:
             _recall_impl.build_recall_context = orig_build  # type: ignore[assignment]
             _recall_ctx_mod.build_recall_context = orig_build_state  # type: ignore[assignment]
             memory_adapter.recall_learnings = orig_recall  # type: ignore[assignment]
 
         assert selected is None, "phase-shown learning must be filtered out"
-        skipped = [
-            e
-            for e in captured
-            if e.get("event") == "nudge_skipped" and e.get("reason") == "phase_dedup"
-        ]
+        skipped = [e for e in captured if e.get("event") == "nudge_skipped" and e.get("reason") == "phase_dedup"]
         assert skipped, f"no phase_dedup nudge_skipped captured; events={[e.get('event') for e in captured]}"
         evt = skipped[0]
         assert evt["log_level"] == "debug"

@@ -20,4 +20,3 @@ class MetaTuneBootValidationError(DefaultResolutionError):
 
 class KillSwitchNotFoundError(FileNotFoundError):
     """Raised when the anchored kill-switch path cannot be resolved."""
-

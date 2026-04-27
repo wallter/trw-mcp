@@ -68,6 +68,5 @@ def test_sha256_matches_baseline() -> None:
     expected_sha = SHA_PATH.read_text(encoding="utf-8").strip()
     actual_sha = hashlib.sha256(content).hexdigest()
     assert actual_sha == expected_sha, (
-        f"SHA sidecar {SHA_PATH.name} stale: baseline file has changed but "
-        "sidecar was not regenerated."
+        f"SHA sidecar {SHA_PATH.name} stale: baseline file has changed but sidecar was not regenerated."
     )

@@ -191,11 +191,11 @@ class SyncPuller:
             return 0
 
         try:
+            from trw_memory.models.config import MemoryConfig
+            from trw_memory.security.runtime import prepare_entry_for_store, store_quarantined_entry
             from trw_memory.storage._row_mapper import row_to_entry
             from trw_memory.sync.conflict import resolve_conflict
             from trw_memory.sync.delta import DeltaTracker
-            from trw_memory.models.config import MemoryConfig
-            from trw_memory.security.runtime import prepare_entry_for_store, store_quarantined_entry
 
             from trw_mcp.state._memory_connection import get_backend as _get_backend
         except Exception:  # justified: import-guard, optional sync merge dependencies may be unavailable
@@ -347,7 +347,7 @@ class SyncPuller:
         for key, value in raw.items():
             try:
                 result[str(key)] = int(value)
-            except (TypeError, ValueError):  # noqa: PERF203
+            except (TypeError, ValueError):
                 continue
         return result
 

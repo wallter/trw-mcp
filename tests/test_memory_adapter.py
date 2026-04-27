@@ -299,7 +299,9 @@ class TestStoreLearning:
         assert entry is not None
         assert entry["shard_id"] == "shard-A"
 
-    def test_store_persists_nonempty_provenance_session_id(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_store_persists_nonempty_provenance_session_id(
+        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("MEMORY_ENABLE_TRUST_SCORING", "true")
         monkeypatch.setenv("MEMORY_TRUST_SCORING_MODE", "enforce")
         monkeypatch.setenv("MEMORY_PROVENANCE_REQUIRED", "true")
@@ -425,7 +427,7 @@ class TestRecallLearnings:
         with pytest.raises(Exception, match="canary"):
             recall_learnings(trw_dir, "Safe", max_results=10)
 
-        with pytest.raises(Exception, match="halted|canary"):
+        with pytest.raises(Exception, match=r"halted|canary"):
             recall_learnings(trw_dir, "Safe", max_results=10)
 
 

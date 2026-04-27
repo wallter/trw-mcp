@@ -36,6 +36,7 @@ def _resolve_client_id() -> str:
     except Exception:  # justified: fail-open per NFR02
         return ""
 
+
 # Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
 #
 # PRD-CORE-120-FR04: Rationale for each phase's ceremony step selection.
@@ -259,9 +260,7 @@ def is_pool_in_cooldown(
         try:
             from trw_mcp.models.config import get_config
 
-            wall_clock_max_hours = int(
-                getattr(get_config(), "nudge_pool_cooldown_wall_clock_max_hours", 24)
-            )
+            wall_clock_max_hours = int(getattr(get_config(), "nudge_pool_cooldown_wall_clock_max_hours", 24))
         except Exception:  # justified: fail-open — no config means use conservative default
             wall_clock_max_hours = 24
 

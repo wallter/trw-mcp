@@ -74,7 +74,7 @@ def check_for_update() -> dict[str, object]:
                         "channel": cfg.update_channel,
                         "advisory": advisory,
                     }
-        except (  # noqa: PERF203
+        except (
             urllib.error.URLError,
             urllib.error.HTTPError,
             OSError,
@@ -298,7 +298,7 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
                 if 200 <= response.status < 300:
                     result: dict[str, object] = json.loads(response.read().decode("utf-8"))
                     return result
-        except (  # noqa: PERF203
+        except (
             urllib.error.URLError,
             urllib.error.HTTPError,
             OSError,

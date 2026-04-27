@@ -274,9 +274,7 @@ class TelemetryPipeline:
         for event in events:
             try:
                 self._writer.append_jsonl(jsonl_path, event)
-            except (
-                Exception
-            ):  # per-item error handling: one write failure must not block the rest of the batch
+            except Exception:  # per-item error handling: one write failure must not block the rest of the batch
                 logger.debug("pipeline_jsonl_write_error", exc_info=True)
 
         # Resolve config for remote send

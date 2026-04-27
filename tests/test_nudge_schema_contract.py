@@ -135,8 +135,7 @@ def test_ceremony_state_variants_parse_with_pinned_fields(fixture_name: str) -> 
     elif fixture_name == "ceremony-state.high_turn.json":
         assert state["tool_call_counter"] == 10000
         assert 1 <= len(history) <= _NUDGE_HISTORY_CAP, (
-            f"high_turn variant has {len(history)} entries; "
-            f"must be <= _NUDGE_HISTORY_CAP={_NUDGE_HISTORY_CAP}"
+            f"high_turn variant has {len(history)} entries; must be <= _NUDGE_HISTORY_CAP={_NUDGE_HISTORY_CAP}"
         )
         # All entries must respect the inner shape
         for entry_id, entry in history.items():

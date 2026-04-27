@@ -288,7 +288,7 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                         proxy.create_initialization_options(),
                     )
                 return  # Clean exit
-        except (  # noqa: PERF203
+        except (
             ConnectionError,
             OSError,
             Exception,

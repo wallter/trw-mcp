@@ -395,9 +395,7 @@ def recall_learnings(
             raise
 
     filter_result = (
-        filter_recall_window(entries, mode=sec_cfg.recall_filter_mode)
-        if sec_cfg.enable_recall_filter
-        else None
+        filter_recall_window(entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
     )
     results: list[dict[str, object]] = []
     filtered_entries = filter_result.accepted if filter_result is not None else entries
@@ -423,7 +421,7 @@ def recall_learnings(
     return results
 
 
-def update_learning(  # noqa: C901
+def update_learning(
     trw_dir: Path,
     learning_id: str,
     *,
@@ -652,7 +650,9 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     access_count=entry.access_count + 1,
                     last_accessed_at=now,
                 )
-        except Exception:  # per-item error handling: access tracking is best-effort, one failure must not break recall results  # noqa: PERF203
+        except (
+            Exception
+        ):  # per-item error handling: access tracking is best-effort, one failure must not break recall results
             logger.warning(
                 "access_tracking_update_failed",
                 exc_info=True,

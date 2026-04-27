@@ -143,7 +143,7 @@ def log_selection(
                     model_family = getattr(cfg, "model_family", "") or "generic"
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
-            except Exception:  # noqa: S110  # justified: fail-open, auto-detection is best-effort
+            except Exception:  # justified: fail-open, auto-detection is best-effort
                 pass
 
         # Ensure model_family is never an empty string in propensity logs (P1-A)

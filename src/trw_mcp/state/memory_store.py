@@ -24,7 +24,7 @@ try:
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:  # pragma: no cover — optional dep
-    sqlite_vec = None  # type: ignore[assignment]
+    sqlite_vec = None  # type: ignore[assignment,unused-ignore]
     _SQLITE_VEC_AVAILABLE = False
 
 logger = structlog.get_logger(__name__)
@@ -63,7 +63,7 @@ class MemoryStore:
             # AttributeError: Python built without SQLITE_ENABLE_LOAD_EXTENSION
             # (common on macOS system Python / some python.org builds).
             conn.enable_load_extension(True)
-            assert sqlite_vec is not None  # guarded by _SQLITE_VEC_AVAILABLE
+            assert sqlite_vec is not None  # noqa: S101 — guarded by _SQLITE_VEC_AVAILABLE flag
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
         except (sqlite3.Error, OSError, AttributeError) as exc:

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import platform
 import subprocess
 import sys
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -114,11 +112,7 @@ def test_sandbox_no_network_egress() -> None:
     # validates that the sandbox still completed deterministically with a
     # SandboxResult. Full enforcement lands in PRD-HPO-SAFE-002.
     degraded_mode = not IS_LINUX or not sandbox_mod._HAS_SECCOMP
-    assert (
-        result.exit_code != 0
-        or result.network_attempted
-        or degraded_mode
-    )
+    assert result.exit_code != 0 or result.network_attempted or degraded_mode
     assert isinstance(result, SandboxResult)
 
 

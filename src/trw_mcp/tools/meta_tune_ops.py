@@ -56,11 +56,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         )
         from trw_mcp.models.config import get_config
 
-        parsed_approval_ts = (
-            datetime.fromisoformat(approval_ts.replace("Z", "+00:00"))
-            if approval_ts
-            else None
-        )
+        parsed_approval_ts = datetime.fromisoformat(approval_ts.replace("Z", "+00:00")) if approval_ts else None
         result = promote_candidate(
             target_path=Path(target_path),
             candidate_content=candidate_content,
@@ -99,11 +95,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
                 }
             )
         elif not config.meta_tune.enabled:
-            config = config.model_copy(
-                update={
-                    "meta_tune": config.meta_tune.model_copy(update={"enabled": True})
-                }
-            )
+            config = config.model_copy(update={"meta_tune": config.meta_tune.model_copy(update={"enabled": True})})
         result = rollback_proposal(
             proposal_id,
             state_dir=Path(state_dir) if state_dir is not None else None,

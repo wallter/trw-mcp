@@ -76,7 +76,7 @@ def _build_call_context(ctx: Context | None) -> TRWCallContext:
     )
 
 
-def register_orchestration_tools(server: FastMCP) -> None:  # noqa: C901
+def register_orchestration_tools(server: FastMCP) -> None:
     """Register orchestration tools on the MCP server.
 
     Args:

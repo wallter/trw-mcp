@@ -23,9 +23,7 @@ from trw_mcp.telemetry.tool_call_timing import clear_pricing_cache
 
 class TestResolutionFailure:
     def test_is_frozen_dataclass(self) -> None:
-        f = ResolutionFailure(
-            key="x", expected="a", actual="b", remediation="fix"
-        )
+        f = ResolutionFailure(key="x", expected="a", actual="b", remediation="fix")
         with pytest.raises(Exception):
             f.key = "y"  # type: ignore[misc]
 
@@ -77,9 +75,7 @@ class TestRunBootAudit:
         assert "synthetic" in str(excinfo.value)
         assert "simulated failure" in str(excinfo.value)
 
-    def test_returns_failures_when_raise_on_failure_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_failures_when_raise_on_failure_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.telemetry import boot_audit as ba
 
         def _broken() -> ResolutionFailure:

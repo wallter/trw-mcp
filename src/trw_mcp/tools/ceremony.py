@@ -389,7 +389,7 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
 # ── Tool registration ─────────────────────────────────────────────────
 
 
-def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool registration with 6 nested tool defs
+def register_ceremony_tools(server: FastMCP) -> None:
     """Register session ceremony composite tools on the MCP server."""
 
     @server.tool(output_schema=None)
@@ -686,7 +686,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_deliver(  # noqa: C901 — delivery lifecycle with deferred background steps
+    def trw_deliver(
         ctx: Context | None = None,
         run_path: str | None = None,
         skip_reflect: bool = False,
@@ -851,9 +851,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                 from trw_mcp.scoring.clear import load_and_score_run
 
                 session_id_for_clear = str(resolved_run.name)
-                clear_score = load_and_score_run(
-                    session_id_for_clear, resolved_run
-                )
+                clear_score = load_and_score_run(session_id_for_clear, resolved_run)
                 if clear_score is not None:
                     import json as _clear_json
 
@@ -862,9 +860,7 @@ def register_ceremony_tools(server: FastMCP) -> None:  # noqa: C901 — tool reg
                         _clear_json.dumps(clear_score.model_dump(mode="json"), indent=2),
                         encoding="utf-8",
                     )
-                    results["clear_score"] = cast(
-                        "dict[str, object]", clear_score.model_dump(mode="json")
-                    )
+                    results["clear_score"] = cast("dict[str, object]", clear_score.model_dump(mode="json"))
                     logger.info(
                         "clear_score_persisted",
                         session_id=session_id_for_clear,

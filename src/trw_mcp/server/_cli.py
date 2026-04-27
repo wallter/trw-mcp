@@ -468,11 +468,7 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
     return config.model_copy(
         update={
             "security": config.security.model_copy(
-                update={
-                    "mcp": config.security.mcp.model_copy(
-                        update={"allow_unsigned": bool(allow_unsigned)}
-                    )
-                }
+                update={"mcp": config.security.mcp.model_copy(update={"allow_unsigned": bool(allow_unsigned)})}
             )
         }
     )

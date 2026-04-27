@@ -37,16 +37,10 @@ class CandidateEdit(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     edit_id: str = Field(..., description="UUID identifying this candidate.")
-    proposer_id: str = Field(
-        ..., description="Agent/session identity that proposed this edit."
-    )
-    target_path: Path = Field(
-        ..., description="Path to the advisory surface this candidate edits."
-    )
+    proposer_id: str = Field(..., description="Agent/session identity that proposed this edit.")
+    target_path: Path = Field(..., description="Path to the advisory surface this candidate edits.")
     diff: str = Field(..., description="Unified diff representing the candidate edit.")
-    created_ts: datetime = Field(
-        ..., description="UTC timestamp when the candidate was proposed."
-    )
+    created_ts: datetime = Field(..., description="UTC timestamp when the candidate was proposed.")
 
 
 class SandboxResult(BaseModel):
@@ -60,16 +54,10 @@ class SandboxResult(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     edit_id: str = Field(..., description="UUID of the candidate that was replayed.")
-    corpus_version: str = Field(
-        ..., description="Version tag of the held-out replay corpus."
-    )
+    corpus_version: str = Field(..., description="Version tag of the held-out replay corpus.")
     seed: int = Field(..., description="Deterministic seed used for this replay.")
-    scores: dict[str, float] = Field(
-        ..., description="Per-task outcome scores produced by the sandbox."
-    )
-    eval_gaming_flags: list[str] = Field(
-        ..., description="Eval-gaming detector flags (empty when clean)."
-    )
+    scores: dict[str, float] = Field(..., description="Per-task outcome scores produced by the sandbox.")
+    eval_gaming_flags: list[str] = Field(..., description="Eval-gaming detector flags (empty when clean).")
     elapsed_ms: int = Field(..., description="Wall-clock replay latency in ms.")
 
 
@@ -84,19 +72,11 @@ class PromotionDecision(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     edit_id: str = Field(..., description="UUID of the candidate under review.")
-    outcome_correlation_ok: bool = Field(
-        ..., description="Whether the outcome-correlation check passed."
-    )
+    outcome_correlation_ok: bool = Field(..., description="Whether the outcome-correlation check passed.")
     goodhart_ok: bool = Field(..., description="Whether the Goodhart detector passed.")
-    reviewer_id: str | None = Field(
-        default=None, description="Reviewer identity when a human signed off."
-    )
-    approval_ts: datetime | None = Field(
-        default=None, description="UTC timestamp of reviewer sign-off."
-    )
-    decision: Literal["promoted", "rejected"] = Field(
-        ..., description="Terminal decision."
-    )
+    reviewer_id: str | None = Field(default=None, description="Reviewer identity when a human signed off.")
+    approval_ts: datetime | None = Field(default=None, description="UTC timestamp of reviewer sign-off.")
+    decision: Literal["promoted", "rejected"] = Field(..., description="Terminal decision.")
     reason: str = Field(..., description="Machine-readable reason tag.")
 
 
@@ -112,14 +92,10 @@ class AuditEntry(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     edit_id: str = Field(..., description="UUID of the edit this entry records.")
-    event: Literal[
-        "proposed", "sandboxed", "promoted", "rejected", "rolled_back"
-    ] = Field(..., description="Lifecycle event captured by this entry.")
-    payload: dict[str, object] = Field(
-        ..., description="Event-specific payload (diff, scores, reviewer, etc.)."
+    event: Literal["proposed", "sandboxed", "promoted", "rejected", "rolled_back"] = Field(
+        ..., description="Lifecycle event captured by this entry."
     )
+    payload: dict[str, object] = Field(..., description="Event-specific payload (diff, scores, reviewer, etc.).")
     ts: datetime = Field(..., description="UTC timestamp of the event.")
-    prev_hash: str = Field(
-        ..., description="SHA-256 hex of the previous chained entry."
-    )
+    prev_hash: str = Field(..., description="SHA-256 hex of the previous chained entry.")
     entry_hash: str = Field(..., description="SHA-256 hex of this entry.")

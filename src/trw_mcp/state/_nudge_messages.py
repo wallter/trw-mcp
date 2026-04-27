@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def format_nudge(template: str, profile: "ClientProfile | None") -> str:
+def format_nudge(template: str, profile: ClientProfile | None) -> str:
     """Substitute profile-derived placeholders into a nudge template.
 
     PRD-CORE-149 FR02/FR03: supports ``{client_display_name}`` and
@@ -89,6 +89,7 @@ def format_nudge(template: str, profile: "ClientProfile | None") -> str:
         )
         return template
 
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ def _select_nudge_message(
     step: str,
     state: CeremonyState,
     available_learnings: int,
-    profile: "ClientProfile | None" = None,
+    profile: ClientProfile | None = None,
 ) -> str:
     """Select the value-expressing static nudge message for the given step.
 
@@ -318,7 +319,9 @@ def _select_nudge_template(step: str, state: CeremonyState, available_learnings:
             )
         return _select_message_by_urgency(
             urgency,
-            low=("\u26a1 Session complete for {client_display_name} — trw_deliver() persists the run and any learnings for future sessions."),
+            low=(
+                "\u26a1 Session complete for {client_display_name} — trw_deliver() persists the run and any learnings for future sessions."
+            ),
             medium=(
                 "\u26a1 Session complete but not delivered — "
                 "run record won't persist for future sessions without trw_deliver()."

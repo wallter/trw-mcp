@@ -82,7 +82,7 @@ def collect_promotable_learnings(
 
             if score >= config.learning_promotion_impact:
                 high_impact.append(data)
-        except (ValueError, TypeError):  # per-item error handling: skip entries with malformed fields  # noqa: PERF203
+        except (ValueError, TypeError):  # per-item error handling: skip entries with malformed fields
             continue
 
     return high_impact

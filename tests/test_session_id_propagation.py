@@ -33,26 +33,20 @@ class TestResolveEffectiveSessionId:
         assert sid
         assert re.fullmatch(r"[0-9a-f]{32}", sid), "expected a UUIDv4 hex"
 
-    def test_process_uuid_stable_across_calls(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_process_uuid_stable_across_calls(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TRW_SESSION_ID", raising=False)
         with patch("trw_mcp.state._paths.find_active_run", return_value=None):
             sid1 = resolve_effective_session_id(tmp_path)
             sid2 = resolve_effective_session_id(tmp_path)
         assert sid1 == sid2
 
-    def test_env_var_takes_precedence_over_process_uuid(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_takes_precedence_over_process_uuid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_SESSION_ID", "operator-forced-id")
         with patch("trw_mcp.state._paths.find_active_run", return_value=None):
             sid = resolve_effective_session_id(tmp_path)
         assert sid == "operator-forced-id"
 
-    def test_active_run_wins_over_env_var(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_active_run_wins_over_env_var(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_SESSION_ID", "env-id")
         fake_run = tmp_path / "task1" / "run-abc123" / "meta"
         fake_run.mkdir(parents=True)
@@ -63,9 +57,7 @@ class TestResolveEffectiveSessionId:
             sid = resolve_effective_session_id(tmp_path)
         assert sid == "run-abc123"
 
-    def test_lookup_exception_falls_through(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_lookup_exception_falls_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TRW_SESSION_ID", raising=False)
         with patch(
             "trw_mcp.state._paths.find_active_run",
@@ -83,9 +75,7 @@ class TestSurfaceEventSessionIdPropagation:
             return []
         return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
 
-    def test_recall_impl_surface_events_have_session_id(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_recall_impl_surface_events_have_session_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Import the function under test lazily.
         from trw_mcp.tools import _recall_impl
 
@@ -109,9 +99,7 @@ class TestSurfaceEventSessionIdPropagation:
         assert all(e["session_id"] == "run-XYZ" for e in events)
         assert all(e["surface_type"] == "recall" for e in events)
 
-    def test_legacy_empty_session_id_events_still_readable(
-        self, tmp_path: Path
-    ) -> None:
+    def test_legacy_empty_session_id_events_still_readable(self, tmp_path: Path) -> None:
         """Pre-fix data with session_id="" must not crash readers."""
         from trw_mcp.state.surface_tracking import read_surface_events
 

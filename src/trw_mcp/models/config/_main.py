@@ -18,12 +18,11 @@ from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
 
 import structlog
+from pydantic import Field, model_validator
 
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
-from pydantic import Field, model_validator
-
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
@@ -112,7 +111,7 @@ class TRWConfig(_TRWConfigFields):
         return payload
 
     @model_validator(mode="after")
-    def _finalize_meta_tune_compat(self) -> "TRWConfig":
+    def _finalize_meta_tune_compat(self) -> TRWConfig:
         """Ensure env-populated flat fields still activate nested SAFE-001 config."""
         if self.meta_tune.enabled == self.meta_tune_enabled:
             return self
@@ -380,8 +379,7 @@ class TRWConfig(_TRWConfigFields):
         if self.backend_url:
             explicit_key = self.backend_api_key or platform_key
             candidates.append((self.backend_url, explicit_key))
-        for url in self.platform_urls:
-            candidates.append((url, platform_key))
+        candidates.extend((url, platform_key) for url in self.platform_urls)
 
         seen: set[str] = set()
         result: list[tuple[str, str]] = []

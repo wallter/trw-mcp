@@ -41,9 +41,7 @@ def _entry(
     created_days_ago: int,
 ) -> dict[str, object]:
     """Build a learning dict matching the shape returned by adapter_recall."""
-    created = (
-        datetime.now(timezone.utc) - timedelta(days=created_days_ago)
-    ).date().isoformat()
+    created = (datetime.now(timezone.utc) - timedelta(days=created_days_ago)).date().isoformat()
     return {
         "id": entry_id,
         "summary": f"test learning {entry_id}",
@@ -104,21 +102,15 @@ class TestRecencyBypass:
         chain link 1 wrote) must appear in the wildcard recall."""
         baseline: list[dict[str, object]] = []
         fresh = [_entry(entry_id="L-fresh", impact=0.5, created_days_ago=1)]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=_config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=_config, reader=reader)
 
         ids = {str(e.get("id", "")) for e in learnings}
-        assert "L-fresh" in ids, (
-            f"expected L-fresh in recall but got {ids}. L-fovv fix broken."
-        )
+        assert "L-fresh" in ids, f"expected L-fresh in recall but got {ids}. L-fovv fix broken."
 
     def test_old_low_impact_learning_stays_filtered(
         self,
@@ -130,20 +122,14 @@ class TestRecencyBypass:
         only the RECENT low-impact ones get the courtesy."""
         baseline: list[dict[str, object]] = []
         fresh = [_entry(entry_id="L-old", impact=0.5, created_days_ago=30)]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=_config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=_config, reader=reader)
         ids = {str(e.get("id", "")) for e in learnings}
-        assert "L-old" not in ids, (
-            f"bypass should not surface 30-day-old impact=0.5 entries; got {ids}"
-        )
+        assert "L-old" not in ids, f"bypass should not surface 30-day-old impact=0.5 entries; got {ids}"
 
     def test_high_impact_always_surfaces_regardless_of_age(
         self,
@@ -155,20 +141,14 @@ class TestRecencyBypass:
         the bypass is additive, not replacement."""
         baseline = [_entry(entry_id="L-old-hi", impact=0.9, created_days_ago=60)]
         fresh: list[dict[str, object]] = []
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=_config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=_config, reader=reader)
         ids = {str(e.get("id", "")) for e in learnings}
-        assert "L-old-hi" in ids, (
-            f"high-impact baseline must always surface; got {ids}"
-        )
+        assert "L-old-hi" in ids, f"high-impact baseline must always surface; got {ids}"
 
     def test_fresh_entries_ordered_before_baseline(
         self,
@@ -181,20 +161,14 @@ class TestRecencyBypass:
         task."""
         baseline = [_entry(entry_id="L-old-hi", impact=0.9, created_days_ago=90)]
         fresh = [_entry(entry_id="L-new-lo", impact=0.5, created_days_ago=0)]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=_config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=_config, reader=reader)
         ids_order = [str(e.get("id", "")) for e in learnings]
-        assert ids_order[0] == "L-new-lo", (
-            f"fresh entry should appear first, got order {ids_order}"
-        )
+        assert ids_order[0] == "L-new-lo", f"fresh entry should appear first, got order {ids_order}"
         assert "L-old-hi" in ids_order
 
     def test_bypass_days_zero_disables_bypass(
@@ -210,20 +184,14 @@ class TestRecencyBypass:
         )
         baseline: list[dict[str, object]] = []
         fresh = [_entry(entry_id="L-fresh", impact=0.5, created_days_ago=1)]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=config, reader=reader)
         ids = {str(e.get("id", "")) for e in learnings}
-        assert "L-fresh" not in ids, (
-            "bypass_days=0 must restore pre-L-fovv filter behavior"
-        )
+        assert "L-fresh" not in ids, "bypass_days=0 must restore pre-L-fovv filter behavior"
 
     def test_duplicate_id_not_surfaced_twice(
         self,
@@ -236,20 +204,14 @@ class TestRecencyBypass:
         entry = _entry(entry_id="L-both", impact=0.8, created_days_ago=1)
         baseline = [entry]
         fresh = [entry]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=_config, reader=reader
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=_config, reader=reader)
         ids = [str(e.get("id", "")) for e in learnings]
-        assert ids.count("L-both") == 1, (
-            f"duplicate id should dedupe; got {ids}"
-        )
+        assert ids.count("L-both") == 1, f"duplicate id should dedupe; got {ids}"
 
     def test_bypass_respects_effective_max(
         self,
@@ -263,24 +225,12 @@ class TestRecencyBypass:
             recall_max_results=5,
             session_start_recent_bypass_days=7,
         )
-        baseline = [
-            _entry(entry_id=f"L-old-{i}", impact=0.9, created_days_ago=30)
-            for i in range(5)
-        ]
-        fresh = [
-            _entry(entry_id=f"L-fresh-{i}", impact=0.5, created_days_ago=1)
-            for i in range(10)
-        ]
-        _install_recall_mock(
-            monkeypatch, baseline_results=baseline, fresh_results=fresh
-        )
+        baseline = [_entry(entry_id=f"L-old-{i}", impact=0.9, created_days_ago=30) for i in range(5)]
+        fresh = [_entry(entry_id=f"L-fresh-{i}", impact=0.5, created_days_ago=1) for i in range(10)]
+        _install_recall_mock(monkeypatch, baseline_results=baseline, fresh_results=fresh)
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         reader = FileStateReader()
-        learnings, _ar, _extra = perform_session_recalls(
-            trw_dir, query="", config=config, reader=reader
-        )
-        assert len(learnings) <= 5, (
-            f"union exceeded recall_max_results=5; got {len(learnings)}"
-        )
+        learnings, _ar, _extra = perform_session_recalls(trw_dir, query="", config=config, reader=reader)
+        assert len(learnings) <= 5, f"union exceeded recall_max_results=5; got {len(learnings)}"

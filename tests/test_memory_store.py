@@ -502,9 +502,7 @@ class TestExtensionLoadFailureDegradesGracefully:
     """
 
     @staticmethod
-    def _install_bad_connect(
-        monkeypatch: pytest.MonkeyPatch, exc: Exception
-    ) -> None:
+    def _install_bad_connect(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
         import sqlite3
 
         original_connect = sqlite3.connect
@@ -525,14 +523,10 @@ class TestExtensionLoadFailureDegradesGracefully:
 
         monkeypatch.setattr(sqlite3, "connect", connect_proxy)
 
-    def test_init_survives_attribute_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_init_survives_attribute_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.memory_store import MemoryStore
 
-        self._install_bad_connect(
-            monkeypatch, AttributeError("enable_load_extension not available")
-        )
+        self._install_bad_connect(monkeypatch, AttributeError("enable_load_extension not available"))
 
         store = MemoryStore(tmp_path / "noext.db")
 
@@ -541,9 +535,7 @@ class TestExtensionLoadFailureDegradesGracefully:
         assert store.search([0.1] * 4, top_k=5) == []
         store.close()
 
-    def test_init_survives_operational_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_init_survives_operational_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import sqlite3 as _sqlite3
 
         from trw_mcp.state.memory_store import MemoryStore

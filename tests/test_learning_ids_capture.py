@@ -15,9 +15,7 @@ class TestLearningIdsCapture:
         trw_dir.mkdir()
         # Three distinct learnings surfaced in the current session
         for lid in ("L-a", "L-b", "L-c"):
-            log_surface_event(
-                trw_dir, learning_id=lid, surface_type="recall", session_id="my-session"
-            )
+            log_surface_event(trw_dir, learning_id=lid, surface_type="recall", session_id="my-session")
 
         with patch.dict("os.environ", {"TRW_SESSION_ID": "my-session"}):
             result = _step_delivery_metrics(trw_dir, None)
@@ -33,12 +31,8 @@ class TestLearningIdsCapture:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         # Same learning surfaced twice
-        log_surface_event(
-            trw_dir, learning_id="L-dup", surface_type="nudge", session_id="my-session"
-        )
-        log_surface_event(
-            trw_dir, learning_id="L-dup", surface_type="recall", session_id="my-session"
-        )
+        log_surface_event(trw_dir, learning_id="L-dup", surface_type="nudge", session_id="my-session")
+        log_surface_event(trw_dir, learning_id="L-dup", surface_type="recall", session_id="my-session")
 
         with patch.dict("os.environ", {"TRW_SESSION_ID": "my-session"}):
             result = _step_delivery_metrics(trw_dir, None)
@@ -65,9 +59,7 @@ class TestLearningIdsCapture:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         log_surface_event(trw_dir, learning_id="mine", surface_type="recall", session_id="me")
-        log_surface_event(
-            trw_dir, learning_id="theirs", surface_type="recall", session_id="someone-else"
-        )
+        log_surface_event(trw_dir, learning_id="theirs", surface_type="recall", session_id="someone-else")
 
         with patch.dict("os.environ", {"TRW_SESSION_ID": "me"}):
             result = _step_delivery_metrics(trw_dir, None)

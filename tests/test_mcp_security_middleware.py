@@ -15,8 +15,8 @@ from trw_mcp.middleware.mcp_security import (
     TRANSPORTS,
     AdvertisedTool,
     MCPSecurityMiddleware,
-    normalize_transport,
     normalize_tool_name,
+    normalize_transport,
 )
 from trw_mcp.security.anomaly_detector import AnomalyDetector, AnomalyDetectorConfig
 from trw_mcp.security.capability_scope import CapabilityScope
@@ -160,12 +160,10 @@ def test_filter_advertised_tools_emits_runtime_constraint_when_fingerprint_missi
 
     assert [tool.name for tool in allowed] == ["trw_recall"]
     events_file = next(tmp_path.glob("events-*.jsonl"))
-    payloads = [
-        json.loads(line)["payload"]
-        for line in events_file.read_text().splitlines()
-        if line
-    ]
-    assert any(payload.get("fingerprint_constraint") == "runtime_did_not_expose_peer_fingerprint" for payload in payloads)
+    payloads = [json.loads(line)["payload"] for line in events_file.read_text().splitlines() if line]
+    assert any(
+        payload.get("fingerprint_constraint") == "runtime_did_not_expose_peer_fingerprint" for payload in payloads
+    )
     assert any(payload.get("identity_verification") == "server_name_only_runtime_constraint" for payload in payloads)
 
 

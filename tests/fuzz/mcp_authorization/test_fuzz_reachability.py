@@ -19,8 +19,8 @@ from trw_mcp.middleware.mcp_security import (
     AdvertisedTool,
     MCPSecurityMiddleware,
 )
-from trw_mcp.security.capability_scope import CapabilityScope
 from trw_mcp.security.anomaly_detector import AnomalyDetector, AnomalyDetectorConfig
+from trw_mcp.security.capability_scope import CapabilityScope
 from trw_mcp.security.mcp_registry import AllowedTool, MCPAllowlist, MCPServer
 
 pytestmark = pytest.mark.integration
@@ -102,9 +102,7 @@ def _mw(tmp_path: Path) -> MCPSecurityMiddleware:
     prefix=st.sampled_from(["", CLAUDE_CODE_PREFIX, "random_prefix__"]),
     server=st.sampled_from(["trw", "filesystem", "evil", "ghost", ""]),
 )
-def test_fuzz_stdio_never_raises(
-    tmp_path: Path, raw_name: str, prefix: str, server: str
-) -> None:
+def test_fuzz_stdio_never_raises(tmp_path: Path, raw_name: str, prefix: str, server: str) -> None:
     """stdio transport: fuzz random tool names; middleware must never raise."""
     mw = _mw(tmp_path)
     tool = f"{prefix}{raw_name}" if raw_name else "placeholder"
@@ -117,9 +115,7 @@ def test_fuzz_stdio_never_raises(
     tool=st.text(min_size=1, max_size=40),
     server=st.sampled_from(["trw", "filesystem", "evil"]),
 )
-def test_fuzz_all_transports_fire_three_layers(
-    tmp_path: Path, transport: str, tool: str, server: str
-) -> None:
+def test_fuzz_all_transports_fire_three_layers(tmp_path: Path, transport: str, tool: str, server: str) -> None:
     """FR-9: every (transport × input) triple hits all three layers."""
     mw = _mw(tmp_path)
     decision = mw.on_tool_call(
@@ -136,9 +132,7 @@ def test_fuzz_all_transports_fire_three_layers(
     mutated_signature=st.text(min_size=0, max_size=120),
     mutated_signer=st.text(min_size=1, max_size=40),
 )
-def test_fuzz_signature_drift_never_bypasses(
-    tmp_path: Path, mutated_signature: str, mutated_signer: str
-) -> None:
+def test_fuzz_signature_drift_never_bypasses(tmp_path: Path, mutated_signature: str, mutated_signer: str) -> None:
     """Fingerprint drift blocks rather than bypasses authorization."""
     allowlist = MCPAllowlist(
         servers=[
@@ -198,15 +192,10 @@ def test_fuzz_signature_drift_never_bypasses(
     count=st.integers(min_value=1, max_value=20),
     server=st.sampled_from(["trw", "filesystem"]),
 )
-def test_fuzz_advertise_filter_handles_random_batches(
-    tmp_path: Path, count: int, server: str
-) -> None:
+def test_fuzz_advertise_filter_handles_random_batches(tmp_path: Path, count: int, server: str) -> None:
     """Advertise-time filter never raises on random batches of tool names."""
     mw = _mw(tmp_path)
-    ads = [
-        AdvertisedTool(server=server, name=f"{CLAUDE_CODE_PREFIX}tool_{i}")
-        for i in range(count)
-    ]
+    ads = [AdvertisedTool(server=server, name=f"{CLAUDE_CODE_PREFIX}tool_{i}") for i in range(count)]
     out = mw.filter_advertised_tools(transport="streamable-http", advertisements=ads)
     # All outputs must be short-name normalized
     for ad in out:

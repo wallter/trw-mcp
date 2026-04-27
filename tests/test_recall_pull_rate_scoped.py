@@ -20,9 +20,7 @@ class TestScopedPullRate:
         log_surface_event(trw_dir, learning_id="A-1", surface_type="recall", session_id="sess-A")
         # Session B: 4 nudges, 0 recalls
         for i in range(4):
-            log_surface_event(
-                trw_dir, learning_id=f"B-{i}", surface_type="nudge", session_id="sess-B"
-            )
+            log_surface_event(trw_dir, learning_id=f"B-{i}", surface_type="nudge", session_id="sess-B")
 
         rate_a, count_a, ids_a = compute_recall_pull_rate(trw_dir, session_id="sess-A")
         assert count_a == 2
@@ -66,9 +64,7 @@ class TestScopedPullRate:
         trw_dir.mkdir()
         # Write 600 noise events with an empty session_id (> 500 line tail cap)
         for i in range(600):
-            log_surface_event(
-                trw_dir, learning_id=f"noise-{i}", surface_type="recall", session_id=""
-            )
+            log_surface_event(trw_dir, learning_id=f"noise-{i}", surface_type="recall", session_id="")
         # Then 2 session-scoped events for session "live"
         log_surface_event(trw_dir, learning_id="target", surface_type="nudge", session_id="live")
         log_surface_event(trw_dir, learning_id="target", surface_type="recall", session_id="live")

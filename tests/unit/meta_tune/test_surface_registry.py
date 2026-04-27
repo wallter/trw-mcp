@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,6 @@ from trw_mcp.meta_tune.surface_registry import (
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._sub_models import MetaTuneConfig
 from trw_mcp.models.meta_tune import CandidateEdit
-from datetime import datetime, timezone
 
 
 def _enabled_config() -> TRWConfig:
@@ -147,6 +147,4 @@ def test_classification_model_is_frozen_extra_forbid() -> None:
         )
     with pytest.raises(ValidationError):
         # frozen: direct mutation raises
-        cls.__class__.model_validate(
-            {"is_control": False, "surfaces": [Surface.PROMPT], "extra": 1}
-        )
+        cls.__class__.model_validate({"is_control": False, "surfaces": [Surface.PROMPT], "extra": 1})

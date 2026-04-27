@@ -92,9 +92,7 @@ def test_consult_calls_on_tool_call_when_set(restore_mcp_security: None) -> None
     assert call["transport"] == "stdio"
 
 
-def test_consult_swallows_middleware_exceptions(
-    restore_mcp_security: None, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_consult_swallows_middleware_exceptions(restore_mcp_security: None, caplog: pytest.LogCaptureFixture) -> None:
     """If middleware.on_tool_call raises, consult swallows it and warns.
 
     The key contract is fail-open: the call must not re-raise. We capture

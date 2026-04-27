@@ -138,7 +138,7 @@ def _handle_consolidation(
                     ref_id=ref_id,
                     compendium_id=learning_id,
                 )
-        except Exception:  # noqa: PERF203  # per-item error handling: skip failing obsolete-mark, continue with next ref
+        except Exception:  # per-item error handling: skip failing obsolete-mark, continue with next ref
             logger.warning(
                 "auto_obsolete_failed",
                 ref_id=ref_id,
@@ -147,7 +147,7 @@ def _handle_consolidation(
             )
 
 
-def execute_learn(  # noqa: C901
+def execute_learn(
     summary: str,
     detail: str,
     trw_dir: Path,

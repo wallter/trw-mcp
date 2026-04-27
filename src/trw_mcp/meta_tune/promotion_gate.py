@@ -59,12 +59,8 @@ class PromotionProposal(BaseModel):
     surface_classification: Literal["advisory", "control"] = Field(
         ..., description="Classifier verdict — control proposals are rejected."
     )
-    surfaces: tuple[str, ...] = Field(
-        default=(), description="Domains touched (prompt/config/policy/etc.)."
-    )
-    diff_lines_touched: int = Field(
-        default=0, description="Number of lines changed; used for context only."
-    )
+    surfaces: tuple[str, ...] = Field(default=(), description="Domains touched (prompt/config/policy/etc.).")
+    diff_lines_touched: int = Field(default=0, description="Number of lines changed; used for context only.")
     eval_gaming_ok: bool = Field(
         default=True,
         description="True when the eval-gaming detector found no blocking flags.",
@@ -180,9 +176,7 @@ class PromotionGate:
 
         outcome_ok = self.outcome_ok(proposal)
         goodhart_ok = self.goodhart_ok(proposal)
-        human_ok = self.human_signoff(
-            reviewer_id=reviewer_id, approval_ts=approval_ts
-        )
+        human_ok = self.human_signoff(reviewer_id=reviewer_id, approval_ts=approval_ts)
         eval_ok = proposal.eval_gaming_ok
         vote_count = int(outcome_ok) + int(goodhart_ok) + int(human_ok) + int(eval_ok)
         if not self._persist_votes(
@@ -326,7 +320,7 @@ class PromotionGate:
                     _config=self._config,
                 )
         except (AuditAppendError, AuditIntegrityError):
-            logger.error(
+            logger.exception(
                 "meta_tune.safety_dependency_unavailable",
                 component="meta_tune.promotion_gate",
                 op="evaluate",
@@ -346,11 +340,7 @@ class PromotionGate:
         promotion_session_id: str,
     ) -> GateDecision:
         audit_event = (
-            "promoted"
-            if decision.decision == "approve"
-            else "rejected"
-            if decision.decision == "reject"
-            else "gated"
+            "promoted" if decision.decision == "approve" else "rejected" if decision.decision == "reject" else "gated"
         )
         try:
             append_audit_entry(
@@ -374,7 +364,7 @@ class PromotionGate:
                 _config=self._config,
             )
         except (AuditAppendError, AuditIntegrityError):
-            logger.error(
+            logger.exception(
                 "meta_tune.safety_dependency_unavailable",
                 component="meta_tune.promotion_gate",
                 op="_record",

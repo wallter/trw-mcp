@@ -37,12 +37,12 @@ from trw_mcp.security.mcp_registry import (
 )
 
 __all__ = [
+    "AllowedTool",
     "AnomalyDetector",
     "AnomalyDetectorConfig",
     "AnomalyObservation",
     "CapabilityScope",
     "CapabilityScopeError",
-    "AllowedTool",
     "MCPAllowlist",
     "MCPRegistry",
     "MCPSecurityConfigError",

@@ -105,7 +105,7 @@ async def _send_forbidden(send: Send, origin: str) -> None:
     body = (
         f"403 Forbidden: cross-origin request from {origin!r} rejected "
         "by TRW MCP server. Set TRW_MCP_DISABLE_ORIGIN_CHECK=1 to bypass."
-    ).encode("utf-8")
+    ).encode()
     await send(
         {
             "type": "http.response.start",

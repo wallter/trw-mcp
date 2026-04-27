@@ -11,8 +11,8 @@ Wave 2a wiring were reverted to the Phase-1 empty-string default.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -57,9 +57,7 @@ def test_session_start_writes_run_surface_snapshot_when_run_pinned(
     """
     run_root = tmp_project / ".trw" / "runs" / "test-task" / "20260423T000000Z-deadbeef"
     (run_root / "meta").mkdir(parents=True, exist_ok=True)
-    (run_root / "meta" / "run.yaml").write_text(
-        "task: test-task\nphase: research\nstatus: active\n"
-    )
+    (run_root / "meta" / "run.yaml").write_text("task: test-task\nphase: research\nstatus: active\n")
     (run_root / "meta" / "events.jsonl").touch()
 
     # Stub the run discovery + pin so Step 2c of trw_session_start always
@@ -102,9 +100,7 @@ def test_session_start_updates_run_yaml_with_surface_snapshot_pointer(
 ) -> None:
     run_root = tmp_project / ".trw" / "runs" / "test-task" / "20260423T000000Z-deadbeef"
     (run_root / "meta").mkdir(parents=True, exist_ok=True)
-    (run_root / "meta" / "run.yaml").write_text(
-        "task: test-task\nphase: research\nstatus: active\n"
-    )
+    (run_root / "meta" / "run.yaml").write_text("task: test-task\nphase: research\nstatus: active\n")
     (run_root / "meta" / "events.jsonl").touch()
 
     import trw_mcp.tools.ceremony as ceremony_mod

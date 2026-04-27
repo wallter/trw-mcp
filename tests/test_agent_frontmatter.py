@@ -79,9 +79,7 @@ def test_effort_present(agent_path: Path) -> None:
     fm = _parse_frontmatter(agent_path)
     effort = fm.get("effort")
     assert effort is not None, f"{agent_path.name}: missing ``effort`` frontmatter field"
-    assert effort in _VALID_EFFORTS, (
-        f"{agent_path.name}: effort={effort!r} not in {sorted(_VALID_EFFORTS)}"
-    )
+    assert effort in _VALID_EFFORTS, f"{agent_path.name}: effort={effort!r} not in {sorted(_VALID_EFFORTS)}"
 
 
 @pytest.mark.parametrize("agent_path", _AGENT_PARAMS)
@@ -100,12 +98,9 @@ def test_description_use_when(agent_path: Path) -> None:
     """FR04-05, FR11: every description contains ``"use when"`` (case-insensitive)."""
     fm = _parse_frontmatter(agent_path)
     desc = fm.get("description", "")
-    assert isinstance(desc, str) and desc.strip(), (
-        f"{agent_path.name}: missing or empty ``description`` field"
-    )
+    assert isinstance(desc, str) and desc.strip(), f"{agent_path.name}: missing or empty ``description`` field"
     assert "use when" in desc.lower(), (
-        f"{agent_path.name}: description lacks ``Use when...`` trigger\n"
-        f"description: {desc!r}"
+        f"{agent_path.name}: description lacks ``Use when...`` trigger\ndescription: {desc!r}"
     )
 
 
@@ -114,9 +109,7 @@ def test_name_matches_filename(agent_path: Path) -> None:
     """FR11: ``name`` frontmatter equals file stem."""
     fm = _parse_frontmatter(agent_path)
     name = fm.get("name")
-    assert name == agent_path.stem, (
-        f"{agent_path.name}: name={name!r} does not match filename stem {agent_path.stem!r}"
-    )
+    assert name == agent_path.stem, f"{agent_path.name}: name={name!r} does not match filename stem {agent_path.stem!r}"
 
 
 @pytest.mark.parametrize("agent_path", _AGENT_PARAMS)
@@ -125,8 +118,7 @@ def test_no_prescriptive_line_starts(agent_path: Path) -> None:
     body = _agent_body(agent_path)
     matches = _PRESCRIPTIVE_LINE_START_RE.findall(body)
     assert not matches, (
-        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; "
-        "soften per OPUS-4-7-BEST-PRACTICES.md §4"
+        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; soften per OPUS-4-7-BEST-PRACTICES.md §4"
     )
 
 
@@ -179,13 +171,10 @@ def test_auditors_reference_shared_doc() -> None:
         body = _agent_body(path)
         first_30_body = "\n".join(body.splitlines()[:30])
         assert "audit-framework.md" in first_30_body, (
-            f"{name}: does not reference audit-framework.md in first 30 body lines "
-            "(per PRD-QUAL-073 FR06 acceptance)"
+            f"{name}: does not reference audit-framework.md in first 30 body lines (per PRD-QUAL-073 FR06 acceptance)"
         )
 
 
 def test_agents_dir_has_expected_count() -> None:
     """Sanity: 12 agents are present so parametrize didn't silently collapse."""
-    assert len(_agent_files()) == 12, (
-        f"expected 12 agents in {AGENTS_DIR}, found {len(_agent_files())}"
-    )
+    assert len(_agent_files()) == 12, f"expected 12 agents in {AGENTS_DIR}, found {len(_agent_files())}"

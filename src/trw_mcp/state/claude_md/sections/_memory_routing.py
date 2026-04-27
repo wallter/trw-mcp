@@ -12,7 +12,6 @@ imports between sibling section modules.
 from __future__ import annotations
 
 import contextvars
-import time
 from typing import NamedTuple
 
 import structlog
@@ -63,7 +62,11 @@ def _load_analytics_counts() -> tuple[int, int]:
     analytics_path = _facade.resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
     analytics_key = str(analytics_path)
     cached = _analytics_cache.get()
-    if cached is not None and cached.path == analytics_key and (_facade.time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS:
+    if (
+        cached is not None
+        and cached.path == analytics_key
+        and (_facade.time.monotonic() - cached.ts) < _ANALYTICS_TTL_SECONDS
+    ):
         return cached.sessions, cached.learnings
 
     if not analytics_path.exists():

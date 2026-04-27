@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
 from trw_mcp.tools.mcp_security_status import (
     MCPSecurityStatus,
     compute_security_status,
@@ -101,11 +102,10 @@ def test_status_reads_legacy_tool_call_projection_for_recent_anomalies(tmp_path:
 
 def test_status_tool_registered_in_server() -> None:
     """FR-7: tool is registered and produces the correct shape."""
-    from tests.conftest import extract_tool_fn, make_test_server
-
     # Register on a fresh FastMCP instance
     from fastmcp import FastMCP
 
+    from tests.conftest import extract_tool_fn, make_test_server
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
 
     srv = FastMCP("test")

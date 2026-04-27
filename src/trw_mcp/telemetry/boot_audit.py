@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from importlib.resources import as_file, files as _pkg_files
+from importlib.resources import as_file
+from importlib.resources import files as _pkg_files
 from pathlib import Path
 
 import structlog
@@ -163,13 +164,8 @@ def run_boot_audit(*, raise_on_failure: bool = True) -> list[ResolutionFailure]:
     """
     failures = check_defaults()
     if failures and raise_on_failure:
-        lines = [
-            f"- {f.key}: expected {f.expected!r}; got {f.actual!r}. → {f.remediation}"
-            for f in failures
-        ]
-        msg = "Default-resolution boot audit failed ({} issue(s)):\n{}".format(
-            len(failures), "\n".join(lines)
-        )
+        lines = [f"- {f.key}: expected {f.expected!r}; got {f.actual!r}. → {f.remediation}" for f in failures]
+        msg = "Default-resolution boot audit failed ({} issue(s)):\n{}".format(len(failures), "\n".join(lines))
         raise DefaultResolutionError(msg)
     return failures
 

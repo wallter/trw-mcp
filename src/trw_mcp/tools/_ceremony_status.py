@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
@@ -446,9 +445,9 @@ def append_ceremony_status(
             increment_nudge_count,
             increment_tool_call_counter,
             is_nudge_eligible,
+            record_nudge_shown,
             record_pool_ignore,
             record_pool_nudge,
-            record_nudge_shown,
         )
         from trw_mcp.state.ceremony_nudge import (
             _compute_urgency,
@@ -620,6 +619,7 @@ def append_ceremony_status(
             "governance",
         }:
             try:
+                contentual_content: str | None
                 if messenger == "contextual_distress":
                     from trw_mcp.state.ceremony_nudge import compute_nudge_contextual_distress
 

@@ -31,10 +31,9 @@ import json
 import math
 import statistics
 from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -180,9 +179,7 @@ class AnomalyDetector:
         self._fallback_dir = fallback_dir
         self._now_fn = now_fn or (lambda: datetime.now(tz=timezone.utc))
         self._rate_window: dict[tuple[str, str], deque[datetime]] = defaultdict(deque)
-        self._baseline_rates: dict[tuple[str, str], deque[float]] = defaultdict(
-            lambda: deque(maxlen=32)
-        )
+        self._baseline_rates: dict[tuple[str, str], deque[float]] = defaultdict(lambda: deque(maxlen=32))
         self._baseline_pairs: set[tuple[str, str]] = set()
         self._baseline_arg_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
         _ensure_shadow_clock(config.shadow_clock_path, now=self._now_fn())
@@ -259,9 +256,7 @@ class AnomalyDetector:
         while window and window[0] < cutoff:
             window.popleft()
 
-    def _check_rate_spike(
-        self, obs: AnomalyObservation
-    ) -> tuple[bool, dict[str, float]]:
+    def _check_rate_spike(self, obs: AnomalyObservation) -> tuple[bool, dict[str, float]]:
         key = (obs.server, obs.tool)
         window = self._rate_window[key]
         window.append(obs.ts)
@@ -379,11 +374,11 @@ def hash_tool_args(args: dict[str, Any]) -> str:
 
 
 __all__ = [
-    "AnomalyDetector",
-    "AnomalyDetectorConfig",
-    "AnomalyObservation",
     "DEFAULT_SIGMA_THRESHOLD",
     "DEFAULT_WINDOW_SECONDS",
     "SHADOW_WINDOW_DAYS",
+    "AnomalyDetector",
+    "AnomalyDetectorConfig",
+    "AnomalyObservation",
     "hash_tool_args",
 ]

@@ -124,7 +124,9 @@ class BatchSender:
                 try:
                     if fut.result():
                         any_success = True
-                except Exception as exc:  # per-item error handling: one future failure must not stop other URLs from being checked  # noqa: PERF203
+                except (
+                    Exception
+                ) as exc:  # per-item error handling: one future failure must not stop other URLs from being checked
                     logger.debug("batch_future_failed", exc_type=type(exc).__name__)
             return any_success
 

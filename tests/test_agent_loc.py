@@ -29,6 +29,5 @@ def test_loc_under_limit(agent_path: Path) -> None:
     """Every agent file must be <= 350 lines."""
     loc = len(agent_path.read_text(encoding="utf-8").splitlines())
     assert loc <= LOC_LIMIT, (
-        f"{agent_path.name}: {loc} LOC exceeds limit of {LOC_LIMIT}; "
-        "extract shared content into a referenced doc"
+        f"{agent_path.name}: {loc} LOC exceeds limit of {LOC_LIMIT}; extract shared content into a referenced doc"
     )

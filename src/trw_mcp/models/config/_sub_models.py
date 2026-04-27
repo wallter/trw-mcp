@@ -208,8 +208,7 @@ class MetaTuneConfig(BaseModel):
     sandbox_image_tag: str = Field(
         default="subprocess-seccomp-v1",
         description=(
-            "SAFE-001 sandbox isolation primitive identifier. v1 requires Linux "
-            "+ seccomp + unshare network isolation."
+            "SAFE-001 sandbox isolation primitive identifier. v1 requires Linux + seccomp + unshare network isolation."
         ),
     )
     audit_log_path: str = Field(
@@ -253,7 +252,9 @@ class MCPSecurityConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    enforce: bool = Field(default=True, description="Block denied MCP servers/tools instead of telemetry-only observe mode")
+    enforce: bool = Field(
+        default=True, description="Block denied MCP servers/tools instead of telemetry-only observe mode"
+    )
     allowlist_path: str = "data/mcp_servers.allowlist.yaml"
     operator_overlay_path: str = ".trw/mcp_servers.local.yaml"
     operator_public_key: str = ""

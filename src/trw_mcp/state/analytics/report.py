@@ -240,9 +240,7 @@ def scan_all_runs(
                 run_data = _analyze_single_run(run_dir, trw_dir=resolve_trw_dir())
                 if run_data is not None:
                     runs.append(run_data)
-            except (
-                Exception
-            ) as exc:  # per-item error handling: skip bad run dirs without aborting report
+            except Exception as exc:  # per-item error handling: skip bad run dirs without aborting report
                 parse_errors.append(f"{run_dir.name}: {exc}")
 
     # Apply since filter (validate ISO date format)

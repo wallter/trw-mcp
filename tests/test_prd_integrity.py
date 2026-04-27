@@ -61,9 +61,7 @@ def _config_empty_extras() -> Iterator[None]:
 
 
 @pytest.mark.parametrize("category", ["EVAL", "DIST", "INTENT", "SCALE", "THRASH", "HPO", "SEC"])
-def test_check_allowed_category_accepts_config_extension(
-    category: str, _config_with_extras: None
-) -> None:
+def test_check_allowed_category_accepts_config_extension(category: str, _config_with_extras: None) -> None:
     """All 7 TRW-specific categories pass when registered in config."""
     failures = _check_allowed_category({"category": category})
     assert failures == []
@@ -77,9 +75,7 @@ def test_builtin_categories_still_accepted(category: str, _config_with_extras: N
 
 
 @pytest.mark.parametrize("category", sorted(BUILTIN_PRD_CATEGORIES))
-def test_builtin_categories_accepted_with_no_extras(
-    category: str, _config_empty_extras: None
-) -> None:
+def test_builtin_categories_accepted_with_no_extras(category: str, _config_empty_extras: None) -> None:
     """Backward compat: empty extra_prd_categories preserves BUILTIN behavior."""
     failures = _check_allowed_category({"category": category})
     assert failures == []
@@ -126,15 +122,15 @@ def test_allowed_prd_categories_unions_extras(_config_with_extras: None) -> None
 @pytest.mark.parametrize(
     "candidate",
     [
-        ".../pre_analyzers.py",      # prefix ellipsis
-        "a/.../b.py",                 # middle ellipsis
-        "foo/bar/...",                # trailing ellipsis
-        ".../nested/.../deep.py",    # multiple ellipses
+        ".../pre_analyzers.py",  # prefix ellipsis
+        "a/.../b.py",  # middle ellipsis
+        "foo/bar/...",  # trailing ellipsis
+        ".../nested/.../deep.py",  # multiple ellipses
         # PRD-EVAL-037 audit P2 follow-up: explicitly cover the 4+ dot
         # edge cases. These would regress silently if the guard ever
         # narrows to "exactly three dots" instead of "any ellipsis run".
-        "....",                       # four dots alone
-        ".../.../.../x.py",          # multiple triple-dot fragments
+        "....",  # four dots alone
+        ".../.../.../x.py",  # multiple triple-dot fragments
     ],
 )
 def test_normalize_repo_path_rejects_ellipsis_prefix(candidate: str) -> None:
@@ -195,9 +191,7 @@ Full path present once: `trw-mcp/src/trw_mcp/state/validation/prd_integrity.py`.
 """
 
 
-def test_prd_eval_037_fixture_validates_clean(
-    tmp_path: Path, _config_with_extras: None
-) -> None:
+def test_prd_eval_037_fixture_validates_clean(tmp_path: Path, _config_with_extras: None) -> None:
     """End-to-end: the fixture produces ZERO category or path-exists failures."""
     import yaml
 
@@ -466,26 +460,25 @@ def test_batch_revalidation_zero_flips(tmp_path: Path) -> None:
     _mk_tree(
         tmp_path,
         [
-            "docs/eval/TRACE-SCHEMA.md",        # unambiguous
-            "a/prompts.py",                      # ambiguous
-            "b/prompts.py",                      # ambiguous
+            "docs/eval/TRACE-SCHEMA.md",  # unambiguous
+            "a/prompts.py",  # ambiguous
+            "b/prompts.py",  # ambiguous
         ],
     )
     # Exercise the full 25-bare-filename shape from PRD-EVAL-037 plus a known-
     # missing token (aggregate.json). All should emit warning, never error.
     tokens = [
-        "TRACE-SCHEMA.md",         # 1 match
-        "prompts.py",              # many
-        "aggregate.json",          # 0 matches
-        "test_parser_examples.py", # 0 matches (should warn, not error)
-        "score.json",              # 0 matches
+        "TRACE-SCHEMA.md",  # 1 match
+        "prompts.py",  # many
+        "aggregate.json",  # 0 matches
+        "test_parser_examples.py",  # 0 matches (should warn, not error)
+        "score.json",  # 0 matches
     ]
     content = " ".join(f"`{t}`" for t in tokens)
     failures = _check_repo_path_references(content, tmp_path)
     for f in failures:
         assert f.severity == "warning", (
-            f"QUAL-067 NFR-01: bare-filename entry must be warning, "
-            f"got {f.severity!r}: {f.message}"
+            f"QUAL-067 NFR-01: bare-filename entry must be warning, got {f.severity!r}: {f.message}"
         )
     # At least one warning emitted (prompts.py + the 3 zero-match tokens).
     assert sum(1 for f in failures if f.severity == "warning") >= 4

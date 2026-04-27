@@ -24,9 +24,10 @@ import functools
 import inspect
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import structlog
 import yaml
@@ -81,7 +82,7 @@ def _load_pricing() -> dict[str, Any]:
     """
     global _PRICING_CACHE, _PRICING_PATH_CACHE
     resolved_path = _resolve_pricing_path()
-    if _PRICING_CACHE is not None and _PRICING_PATH_CACHE == resolved_path:
+    if _PRICING_CACHE is not None and resolved_path == _PRICING_PATH_CACHE:
         return _PRICING_CACHE
     try:
         if resolved_path is None or not resolved_path.is_file():
@@ -197,8 +198,7 @@ def _resolve_run_dir(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Path 
         return Path(explicit_run).expanduser().resolve()
 
     try:
-        from trw_mcp.state._paths import find_active_run, get_pinned_run
-        from trw_mcp.state._paths import TRWCallContext
+        from trw_mcp.state._paths import TRWCallContext, find_active_run, get_pinned_run
 
         call_ctx = cast("TRWCallContext | None", _build_call_context(_extract_ctx(fn, *args, **kwargs)))
         if call_ctx is not None:
@@ -306,8 +306,7 @@ def wrap_tool(
     session_id_resolver: Callable[[], str] | None = None,
     run_dir_resolver: Callable[[], Path | None] | None = None,
     fallback_dir_resolver: Callable[[], Path | None] | None = None,
-    security_consult: Callable[[str, dict[str, Any] | None, str, str | None], None]
-    | None = None,
+    security_consult: Callable[[str, dict[str, Any] | None, str, str | None], None] | None = None,
 ) -> Callable[..., Any]:
     """Return a wrapped copy of ``fn`` that emits a :class:`ToolCallEvent` per call.
 
@@ -431,7 +430,7 @@ def wrap_tool(
                 except Exception:  # justified: fail-open, event construction must not leak
                     logger.warning("tool_call_timing_failed", tool=recorded_name, exc_info=True)
 
-    setattr(wrapper, "__trw_tool_call_wrapped__", True)
+    wrapper.__trw_tool_call_wrapped__ = True  # type: ignore[attr-defined]
     return wrapper
 
 

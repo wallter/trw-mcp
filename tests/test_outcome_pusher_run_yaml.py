@@ -81,9 +81,7 @@ def test_legacy_run_emits_empty_ids_and_logs(tmp_path: Path) -> None:
     assert item.payload["learning_ids"] == []
     assert item.payload["rework_rate"] == 0.4
     # Structured log emitted
-    legacy_events = [
-        e for e in cap if e.get("event") == "legacy_run_pushed"
-    ]
+    legacy_events = [e for e in cap if e.get("event") == "legacy_run_pushed"]
     assert legacy_events, "expected a legacy_run_pushed log event"
     assert legacy_events[0]["run_id"] == "run-legacy"
 
@@ -174,9 +172,7 @@ def test_hash_changes_when_session_metrics_change(tmp_path: Path) -> None:
         target_label="t",
     )
     # Mutate the run.yaml
-    (run_dir / "meta" / "run.yaml").write_text(
-        GOOD_RUN_YAML.replace("0.15", "0.99"), encoding="utf-8"
-    )
+    (run_dir / "meta" / "run.yaml").write_text(GOOD_RUN_YAML.replace("0.15", "0.99"), encoding="utf-8")
     second = load_pending_outcomes(tmp_path)
     assert len(second) == 1
     assert second[0].sync_hash != first[0].sync_hash

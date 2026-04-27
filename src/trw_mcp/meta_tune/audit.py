@@ -123,7 +123,7 @@ def append_audit_entry(
             fh.flush()
             os.fsync(fh.fileno())
     except OSError as exc:
-        logger.error(
+        logger.exception(
             "audit_append_failed",
             component="meta_tune.audit",
             op="append_audit_entry",

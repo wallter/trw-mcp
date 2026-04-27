@@ -41,9 +41,7 @@ class TestQual072FrameworkMdRegression:
         """FRAMEWORK.md header must mention Opus 4.7 and must not mention Opus 4.6."""
         content = _framework_content()
         assert "Opus 4.7" in content, "FRAMEWORK.md must mention 'Opus 4.7'"
-        assert "Opus 4.6" not in content, (
-            "FRAMEWORK.md must not still mention 'Opus 4.6' after the 4.7 cutover"
-        )
+        assert "Opus 4.6" not in content, "FRAMEWORK.md must not still mention 'Opus 4.6' after the 4.7 cutover"
 
     def test_framework_md_bundled_copy_matches_root(self) -> None:
         """Bundled framework.md under trw-mcp/src/trw_mcp/data/ must be byte-identical to the canonical .trw/frameworks/FRAMEWORK.md."""

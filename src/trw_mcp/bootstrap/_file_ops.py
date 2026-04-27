@@ -123,7 +123,7 @@ def _write_if_missing(
             on_progress("Error", str(dest))
 
 
-def _write_hook_env_file(trw_dir: Path, profile: "ClientProfile") -> Path:
+def _write_hook_env_file(trw_dir: Path, profile: ClientProfile) -> Path:
     """PRD-CORE-149 FR04: write ``.trw/runtime/hook-env.sh`` for hook scripts.
 
     The generated file is sourced by every TRW hook at startup to decide

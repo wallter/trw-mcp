@@ -64,7 +64,5 @@ def test_counts_match() -> None:
     bundled = {p.name for p in BUNDLED_DIR.glob("*.md")}
     claude = {p.name for p in CLAUDE_DIR.glob("*.md")}
     assert bundled == claude, (
-        f"filename set drift:\n"
-        f"  bundled-only: {sorted(bundled - claude)}\n"
-        f"  claude-only:  {sorted(claude - bundled)}"
+        f"filename set drift:\n  bundled-only: {sorted(bundled - claude)}\n  claude-only:  {sorted(claude - bundled)}"
     )

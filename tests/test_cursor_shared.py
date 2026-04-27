@@ -422,7 +422,7 @@ def test_build_cursor_hook_config_raises_on_missing_command() -> None:
     events_map = {
         "stop": [{"description": "TRW stop"}],  # missing 'command'
     }
-    with pytest.raises(ValueError, match="missing.*required key 'command'"):
+    with pytest.raises(ValueError, match=r"missing.*required key 'command'"):
         build_cursor_hook_config(events_map)
 
 

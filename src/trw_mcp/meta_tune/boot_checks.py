@@ -23,7 +23,7 @@ logger = structlog.get_logger(__name__)
 _IS_LINUX: bool = platform.system() == "Linux"
 
 try:  # pragma: no cover - import guard
-    import pyseccomp  # type: ignore[import-not-found]
+    import pyseccomp  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
     _HAS_SECCOMP = True
 except ImportError:  # pragma: no cover - optional dep
@@ -48,7 +48,7 @@ def _resolve_repo_root(*, repo_root: Path | None = None, cwd: Path | None = None
                 return candidate
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 — git is on PATH; partial-path is intentional
             capture_output=True,
             check=True,
             timeout=2.0,
@@ -76,7 +76,7 @@ def _resolve_repo_path(path_str: str, *, repo_root: Path) -> Path:
 
 
 def resolve_kill_switch_path(
-    config: "TRWConfig | Any",
+    config: TRWConfig | Any,
     *,
     repo_root: Path | None = None,
     cwd: Path | None = None,
@@ -252,12 +252,9 @@ def validate_defaults(config: TRWConfig | None = None, *, repo_root: Path | None
                 actual=failure.actual,
             )
         details = "\n".join(
-            f"- {failure.key}: {failure.actual}. Remediation: {failure.remediation}"
-            for failure in failures
+            f"- {failure.key}: {failure.actual}. Remediation: {failure.remediation}" for failure in failures
         )
-        raise MetaTuneBootValidationError(
-            f"SAFE-001 boot validation failed ({len(failures)} issue(s)):\n{details}"
-        )
+        raise MetaTuneBootValidationError(f"SAFE-001 boot validation failed ({len(failures)} issue(s)):\n{details}")
 
     logger.info(
         "meta_tune_boot_validation_ok",

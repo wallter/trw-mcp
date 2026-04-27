@@ -7,7 +7,7 @@ import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,7 +38,7 @@ def _default_state_dir() -> Path:
 def _load_snapshot(path: Path) -> dict[str, str]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise ValueError("rollback snapshot must be a JSON object")
+        raise TypeError("rollback snapshot must be a JSON object")
     required = {"target_path", "backup_path", "promotion_ts"}
     missing = required - set(raw)
     if missing:
@@ -126,14 +126,14 @@ def rollback_proposal(
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         try:
-            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-            if isinstance(snapshot, dict):
-                snapshot["rollback_attempts"] = int(snapshot.get("rollback_attempts", 0)) + 1
-                snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            snapshot_data: Any = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if isinstance(snapshot_data, dict):
+                snapshot_data["rollback_attempts"] = int(snapshot_data.get("rollback_attempts", 0)) + 1
+                snapshot_path.write_text(json.dumps(snapshot_data), encoding="utf-8")
         except Exception:
             pass
         elapsed = (time.monotonic() - start) * 1000.0
-        logger.error(
+        logger.exception(
             "rollback_failed",
             component="meta_tune.rollback",
             op="rollback_proposal",

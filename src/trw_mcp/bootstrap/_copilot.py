@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import structlog
 
@@ -364,9 +364,7 @@ def _merge_copilot_hooks(
 
         # Keep user-managed groups, replace TRW-managed ones
         user_groups: list[CopilotHookGroup] = [
-            g
-            for g in existing_groups
-            if isinstance(g, dict) and not _is_trw_hook_group(g)  # type: ignore[misc]
+            cast("CopilotHookGroup", g) for g in existing_groups if isinstance(g, dict) and not _is_trw_hook_group(g)
         ]
         trw_groups = trw_hooks.get(event_name, [])
 

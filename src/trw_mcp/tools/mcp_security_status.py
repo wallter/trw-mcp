@@ -117,7 +117,8 @@ def register_mcp_security_status(server: FastMCP) -> None:
 
         middleware = getattr(app_module, "_mcp_security", None)
         if middleware is not None and hasattr(middleware, "status_snapshot"):
-            return middleware.status_snapshot().model_dump()
+            snapshot: dict[str, Any] = middleware.status_snapshot().model_dump()
+            return snapshot
         trw_dir = resolve_trw_dir()
         return compute_security_status(events_dir=trw_dir / "context").model_dump()
 

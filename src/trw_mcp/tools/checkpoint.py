@@ -154,7 +154,7 @@ def _read_last_events(events_path: Path) -> list[str]:
             try:
                 evt = json.loads(line)
                 last_5_events.append(str(evt.get("event_type", "")))
-            except Exception:  # per-item error handling: skip malformed JSONL lines, scan-resilience  # noqa: PERF203
+            except Exception:  # per-item error handling: skip malformed JSONL lines, scan-resilience
                 logger.debug("jsonl_line_parse_failed", exc_info=True)
     return last_5_events
 

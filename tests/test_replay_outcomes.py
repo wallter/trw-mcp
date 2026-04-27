@@ -18,9 +18,7 @@ from trw_mcp.tools.replay import replay_outcomes
 def _mk_run(runs_root: Path, task: str, run_id: str) -> Path:
     run_dir = runs_root / task / run_id
     (run_dir / "meta").mkdir(parents=True, exist_ok=True)
-    (run_dir / "meta" / "run.yaml").write_text(
-        "session_metrics:\n  status: success\n", encoding="utf-8"
-    )
+    (run_dir / "meta" / "run.yaml").write_text("session_metrics:\n  status: success\n", encoding="utf-8")
     return run_dir
 
 
@@ -37,9 +35,7 @@ class TestReplayGate:
         # Marker untouched
         assert (run_dir / "meta" / "synced.json").exists()
 
-    def test_replay_with_env_deletes_all_markers(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_replay_with_env_deletes_all_markers(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("TRW_ALLOW_REPLAY", "1")
         runs_root = tmp_path / "runs"
         r1 = _mk_run(runs_root, "t", "r1")
@@ -53,9 +49,7 @@ class TestReplayGate:
         assert not (r1 / "meta" / "synced.json").exists()
         assert not (r2 / "meta" / "synced.json").exists()
 
-    def test_replay_respects_since_cutoff(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_replay_respects_since_cutoff(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("TRW_ALLOW_REPLAY", "1")
         runs_root = tmp_path / "runs"
         r1 = _mk_run(runs_root, "t", "r1")  # will be old
@@ -78,9 +72,7 @@ class TestReplayGate:
         assert (r1 / "meta" / "synced.json").exists()
         assert not (r2 / "meta" / "synced.json").exists()
 
-    def test_replay_no_runs_dir_is_safe(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_replay_no_runs_dir_is_safe(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setenv("TRW_ALLOW_REPLAY", "1")
         result = replay_outcomes(tmp_path)
         assert result == {"gated": False, "replayed": 0, "scanned": 0, "since": ""}

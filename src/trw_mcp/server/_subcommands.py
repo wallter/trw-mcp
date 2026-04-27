@@ -390,7 +390,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
                 p.unlink()
             removed += 1
             print(f"  Removed: {p.relative_to(target)}")
-        except OSError as exc:  # noqa: PERF203
+        except OSError as exc:
             print(f"  Error removing {p.relative_to(target)}: {exc}")
 
     print(f"\n  Done. Removed {removed} item(s).")

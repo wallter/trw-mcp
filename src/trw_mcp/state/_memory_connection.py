@@ -442,7 +442,7 @@ def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
                 entry = entry.model_copy(update={"namespace": _NAMESPACE})
             backend.store(entry)
             migrated += 1
-        except Exception:  # per-item error handling: one bad entry must not abort migration  # noqa: PERF203
+        except Exception:  # per-item error handling: one bad entry must not abort migration
             skipped += 1
             logger.warning(
                 "memory_migration_entry_skipped",

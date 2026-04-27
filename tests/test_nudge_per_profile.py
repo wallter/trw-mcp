@@ -48,12 +48,8 @@ _EXPECTED_NUDGE_ENABLED: dict[str, bool] = {
     "aider": False,
 }
 
-_FULL_MODE_PROFILES: tuple[str, ...] = tuple(
-    p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if enabled
-)
-_NUDGE_OFF_PROFILES: tuple[str, ...] = tuple(
-    p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if not enabled
-)
+_FULL_MODE_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if enabled)
+_NUDGE_OFF_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if not enabled)
 
 
 def _write_profile_config(trw_dir: Path, profile_id: str, extra: str = "") -> None:
@@ -151,8 +147,8 @@ def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
     loader so the raw candidate exceeds budget; the assembler must trim.
     """
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.ceremony_nudge import compute_nudge
     from trw_mcp.state._ceremony_progress_state import CeremonyState
+    from trw_mcp.state.ceremony_nudge import compute_nudge
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
@@ -172,18 +168,14 @@ def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
     # compute_nudge returns either a bounded string or "" (fail-open). Either
     # way the budget invariant holds.
     assert isinstance(result, str)
-    assert len(result) <= budget, (
-        f"{profile_id}: compute_nudge returned {len(result)} chars, budget={budget}"
-    )
+    assert len(result) <= budget, f"{profile_id}: compute_nudge returned {len(result)} chars, budget={budget}"
 
 
 # --- FR10.5: idempotent / dedup invariant across two calls --------------------
 
 
 @pytest.mark.parametrize("profile_id", _FULL_MODE_PROFILES)
-def test_append_ceremony_status_idempotent_across_two_calls(
-    profile_id: str, tmp_path: Path
-) -> None:
+def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp_path: Path) -> None:
     """FR10: two sequential ``append_ceremony_status`` calls with the same
     learning candidate must honour the phase-dedup invariant — the second
     call MUST NOT log a second ``nudge_shown`` INFO event for the same
@@ -249,9 +241,7 @@ def test_append_ceremony_status_idempotent_across_two_calls(
 
 
 @pytest.mark.parametrize("profile_id", _NUDGE_OFF_PROFILES)
-def test_nudge_off_profile_emits_no_nudge_shown_info(
-    profile_id: str, tmp_path: Path
-) -> None:
+def test_nudge_off_profile_emits_no_nudge_shown_info(profile_id: str, tmp_path: Path) -> None:
     """FR11: nudge-off profiles must NEVER log ``nudge_shown`` INFO events,
     even when a learning candidate is mocked to be available. The early
     return at ``effective_nudge_enabled=False`` guards this.
@@ -274,9 +264,7 @@ def test_nudge_off_profile_emits_no_nudge_shown_info(
         response = append_ceremony_status({"status": "ok"}, trw_dir)
 
     nudge_events = [e for e in captured if e.get("event") == "nudge_shown"]
-    assert nudge_events == [], (
-        f"{profile_id}: nudge-off profile emitted nudge_shown events: {nudge_events!r}"
-    )
+    assert nudge_events == [], f"{profile_id}: nudge-off profile emitted nudge_shown events: {nudge_events!r}"
     # ceremony_status should still be present (fail-closed on nudge only).
     assert "ceremony_status" in response
     # nudge_content should NOT have been set.
@@ -284,9 +272,7 @@ def test_nudge_off_profile_emits_no_nudge_shown_info(
 
 
 @pytest.mark.parametrize("profile_id", _NUDGE_OFF_PROFILES)
-def test_nudge_off_profile_emits_no_nudge_shown_jsonl(
-    profile_id: str, tmp_path: Path
-) -> None:
+def test_nudge_off_profile_emits_no_nudge_shown_jsonl(profile_id: str, tmp_path: Path) -> None:
     """FR11: nudge-off profiles must not append ``nudge_shown`` rows to
     ``.trw/context/session-events.jsonl``.
     """
@@ -309,6 +295,4 @@ def test_nudge_off_profile_emits_no_nudge_shown_jsonl(
 
     text = events_path.read_text(encoding="utf-8")
     nudge_rows = [line for line in text.splitlines() if '"event":"nudge_shown"' in line]
-    assert nudge_rows == [], (
-        f"{profile_id}: nudge-off profile wrote nudge_shown rows: {nudge_rows!r}"
-    )
+    assert nudge_rows == [], f"{profile_id}: nudge-off profile wrote nudge_shown rows: {nudge_rows!r}"

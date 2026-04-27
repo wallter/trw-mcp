@@ -14,9 +14,9 @@ from trw_mcp.scoring.clear import (
 from trw_mcp.telemetry.event_base import (
     ContractEvent,
     HPOCeremonyComplianceEvent,
-    HPOTelemetryEvent,
     HPOSessionEndEvent,
     HPOSessionStartEvent,
+    HPOTelemetryEvent,
     LLMCallEvent,
     ToolCallEvent,
 )
@@ -65,15 +65,26 @@ class TestClearScoreModel:
             ClearScore(
                 session_id="s",
                 cost=1.5,  # out of range
-                latency=1.0, efficacy=1.0, assurance=1.0, reliability=1.0,
-                tool_call_count=0, total_usd_cost=0.0, total_wall_ms=0,
+                latency=1.0,
+                efficacy=1.0,
+                assurance=1.0,
+                reliability=1.0,
+                tool_call_count=0,
+                total_usd_cost=0.0,
+                total_wall_ms=0,
             )
 
     def test_frozen(self) -> None:
         s = ClearScore(
-            session_id="s", cost=1.0, latency=1.0, efficacy=1.0,
-            assurance=1.0, reliability=1.0,
-            tool_call_count=0, total_usd_cost=0.0, total_wall_ms=0,
+            session_id="s",
+            cost=1.0,
+            latency=1.0,
+            efficacy=1.0,
+            assurance=1.0,
+            reliability=1.0,
+            tool_call_count=0,
+            total_usd_cost=0.0,
+            total_wall_ms=0,
         )
         with pytest.raises(ValidationError):
             s.cost = 0.5  # type: ignore[misc]
@@ -128,9 +139,7 @@ class TestLatencyDimension:
 
 class TestEfficacyDimension:
     def test_uses_ceremony_compliance_pass_fail(self) -> None:
-        events: list[HPOTelemetryEvent] = [
-            _tool_call(outcome="success") for _ in range(7)
-        ] + [
+        events: list[HPOTelemetryEvent] = [_tool_call(outcome="success") for _ in range(7)] + [
             HPOCeremonyComplianceEvent(
                 session_id="s",
                 payload={"compliant": False, "violations": ["missing_build"]},

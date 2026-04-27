@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:  # noqa: ANN401 — shim intentionally returns Any so Pyright honors __all__ for statically-defined exports; runtime type is unchanged.
+def __getattr__(name: str) -> Any:
     """Backward-compat shim for removed module-level singletons (FIX-044).
 
     Return type is ``Any`` (not ``object``) so Pyright does not widen every

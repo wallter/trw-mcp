@@ -132,9 +132,7 @@ def test_promote_candidate_uses_non_default_timeout_and_audit_log_path(
     assert audit_log.exists()
 
 
-def test_promote_candidate_uses_non_default_consensus_quorum(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_promote_candidate_uses_non_default_consensus_quorum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root, _, audit_log = _project_layout(tmp_path)
     target = repo_root / "CLAUDE.md"
     target.write_text("before\n", encoding="utf-8")
