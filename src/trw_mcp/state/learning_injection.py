@@ -22,6 +22,14 @@ logger = structlog.get_logger(__name__)
 
 # Domain tag mapping: path component -> domain tags.
 # Stems are matched case-insensitively against each path component.
+#
+# Two coverage groups:
+# - TRW-internal directories (backend/routers/trw-mcp/etc.) — original set.
+# - External eval-corpus roots (sphinx/pylint/astropy/etc.) — added 2026-04-27
+#   after the iter-22 root-cause investigation found that empty tag sets on
+#   external repos collapsed the relevance ranker to pure-impact, surfacing
+#   off-domain TRW-framework learnings against SWE-bench tasks. See
+#   docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md.
 _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "backend": {"backend", "fastapi", "api"},
     "routers": {"api", "endpoints"},
@@ -50,6 +58,29 @@ _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "services": {"services"},
     "security": {"security", "auth"},
     "ui": {"ui", "components", "frontend"},
+    # SWE-bench Verified repo roots (12 repos).
+    "sphinx": {"docs", "sphinx", "documentation"},
+    "django": {"django", "web", "orm"},
+    "astropy": {"astropy", "astronomy", "scientific"},
+    "sympy": {"sympy", "symbolic", "math"},
+    "pytest": {"pytest", "testing"},
+    "pylint": {"pylint", "linting", "static-analysis"},
+    "matplotlib": {"matplotlib", "plotting", "visualization"},
+    "seaborn": {"seaborn", "plotting", "visualization"},
+    "flask": {"flask", "web", "api"},
+    "requests": {"requests", "http", "networking"},
+    "xarray": {"xarray", "scientific", "arrays"},
+    "scikit-learn": {"scikit-learn", "ml", "scientific"},
+    "sklearn": {"scikit-learn", "ml", "scientific"},
+    # FeatureBench repo roots (frequent ones).
+    "pandas": {"pandas", "dataframes", "scientific"},
+    "transformers": {"transformers", "ml", "huggingface"},
+    "mlflow": {"mlflow", "ml", "tracking"},
+    "numpy": {"numpy", "arrays", "scientific"},
+    "pytorch": {"pytorch", "ml", "deep-learning"},
+    "torch": {"pytorch", "ml", "deep-learning"},
+    "lightning": {"lightning", "ml", "deep-learning"},
+    "fastapi": {"fastapi", "web", "api"},
 }
 
 
