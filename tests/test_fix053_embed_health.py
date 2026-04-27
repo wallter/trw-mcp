@@ -71,6 +71,27 @@ class TestEmbedHealthAdvisory:
         assert result["enabled"] is False
         assert result.get("advisory", "") == ""
 
+    def test_advisory_reports_runtime_failure_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Installed-but-broken embeddings should not be reported as merely missing."""
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _memory_connection
+
+        mock_config = TRWConfig.__new__(TRWConfig)
+        object.__setattr__(mock_config, "embeddings_enabled", True)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: mock_config)
+        monkeypatch.setattr(_memory_connection, "get_embedder", lambda: None)
+        monkeypatch.setattr(
+            _memory_connection,
+            "_embedder_unavailable_reason",
+            "sentence-transformers installed but runtime dependency failed: torchcodec mismatch",
+        )
+
+        result = _memory_connection.check_embeddings_status()
+
+        advisory = str(result["advisory"])
+        assert "runtime dependency failed" in advisory
+        assert "torchcodec mismatch" in advisory
+
     def test_check_embeddings_status_has_required_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """check_embeddings_status always returns enabled, available, advisory keys."""
         from trw_mcp.models.config import TRWConfig
