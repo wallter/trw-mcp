@@ -24,6 +24,15 @@ def _consult(tool_name: str, args: dict[str, Any]) -> None:
 def register_meta_tune_tools(server: FastMCP) -> None:
     @server.tool()
     def trw_surface_classify(path: str) -> dict[str, Any]:
+        """Classify a meta-tune surface as control vs advisory.
+
+        Use when you need to know whether a candidate path is governed
+        by the SAFE-001 control surface registry before promoting a
+        meta-tune proposal.
+
+        Returns: dict with ``classification`` ("control"|"advisory"),
+        ``surfaces`` (list of surface names), and ``rationale``.
+        """
         _consult("trw_surface_classify", {"path": path})
         classification = classify_path(Path(path))
         return {
@@ -45,6 +54,15 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         promotion_session_id: str | None = None,
         state_dir: str | None = None,
     ) -> dict[str, Any]:
+        """Promote a meta-tune candidate through the SAFE-001 dispatch path.
+
+        Use when an operator (or proposer agent) has produced a candidate
+        prompt/config update and wants to run it through sandbox + reviewer
+        approval before swapping it into production surfaces.
+
+        Returns: dict serialization of the promotion result, including
+        proposal id, sandbox outcome, and approval state.
+        """
         _consult(
             "trw_meta_tune_propose",
             {
@@ -77,6 +95,15 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         state_dir: str | None = None,
         audit_log_path: str | None = None,
     ) -> dict[str, Any]:
+        """Roll back a previously promoted meta-tune proposal.
+
+        Use when a promoted candidate is causing regressions and you need
+        to restore the prior surface content while writing an entry to the
+        SAFE-001 audit log.
+
+        Returns: dict serialization of the rollback result, including the
+        proposal id and the restored content hash.
+        """
         _consult(
             "trw_meta_tune_rollback",
             {

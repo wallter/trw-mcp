@@ -36,6 +36,25 @@ TRANSPORTS: tuple[Transport, ...] = ("stdio", "streamable-http", "sse")
 CLAUDE_CODE_PREFIX = "mcp__trw__"
 
 
+def _safe_session_id(fastmcp_ctx: object | None) -> str:
+    """Return ``ctx.session_id`` or ``""`` when no request context exists.
+
+    Recent FastMCP versions raise :class:`RuntimeError` from the
+    ``Context.session_id`` property descriptor when accessed outside a
+    request context (rather than returning a generated id).  ``getattr``
+    only catches :class:`AttributeError`, so we need an explicit
+    ``try``/``except`` to keep startup-time and test-time code paths
+    (where there is no live MCP session) from blowing up.
+    """
+    if fastmcp_ctx is None:
+        return ""
+    try:
+        value = fastmcp_ctx.session_id  # type: ignore[attr-defined]
+    except (AttributeError, RuntimeError):
+        return ""
+    return value if isinstance(value, str) else ""
+
+
 class AdvertisedTool(BaseModel):
     """A tool advertisement emitted by a server before exposure."""
 
@@ -534,11 +553,11 @@ class MCPSecurityMiddleware(Middleware):
         allowed_ads = self.filter_advertised_tools(
             transport=transport,
             advertisements=[AdvertisedTool(server=self.default_server_name, name=tool.name) for tool in tools],
-            session_id=getattr(fastmcp_ctx, "session_id", "") if fastmcp_ctx is not None else "",
+            session_id=_safe_session_id(fastmcp_ctx),
             run_id=_resolve_run_id(
                 _resolve_runtime_run_dir(
                     configured_run_dir=self._run_dir,
-                    session_id=getattr(fastmcp_ctx, "session_id", "") if fastmcp_ctx is not None else "",
+                    session_id=_safe_session_id(fastmcp_ctx),
                     fastmcp_context=fastmcp_ctx,
                 )
             ),
@@ -564,11 +583,11 @@ class MCPSecurityMiddleware(Middleware):
             server=runtime_peer.server,
             tool=context.message.name,
             args=context.message.arguments or {},
-            session_id=getattr(fastmcp_ctx, "session_id", "") if fastmcp_ctx is not None else "",
+            session_id=_safe_session_id(fastmcp_ctx),
             run_id=_resolve_run_id(
                 _resolve_runtime_run_dir(
                     configured_run_dir=self._run_dir,
-                    session_id=getattr(fastmcp_ctx, "session_id", "") if fastmcp_ctx is not None else "",
+                    session_id=_safe_session_id(fastmcp_ctx),
                     fastmcp_context=fastmcp_ctx,
                 )
             ),

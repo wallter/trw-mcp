@@ -447,13 +447,23 @@ class TestGeminiMCPConfig:
         assert (fake_git_repo / ".gemini").is_dir()
 
     def test_mcp_config_handles_malformed_json(self, fake_git_repo: Path) -> None:
-        """Malformed JSON in existing file produces error, not crash."""
+        """Malformed JSON in existing file is recovered: backed up + rewritten.
+
+        The bootstrap path treats malformed pre-existing settings as recoverable —
+        it writes a ``.bak`` next to the original and rewrites a fresh document
+        rather than crashing or aborting.  The signal is therefore a warning
+        plus a backup file on disk, not an error.
+        """
         settings_path = fake_git_repo / ".gemini" / "settings.json"
         settings_path.parent.mkdir(parents=True)
         settings_path.write_text("{broken json!!")
 
         result = generate_gemini_mcp_config(fake_git_repo)
-        assert len(result["errors"]) >= 1
+        # Recovery (not crash): no errors, but a warning naming the backup.
+        assert result["errors"] == []
+        warnings = result.get("warnings", [])
+        assert any("backed up" in w for w in warnings), warnings
+        assert (settings_path.with_suffix(".json.bak")).exists()
 
     def test_mcp_config_updated_when_existing(self, fake_git_repo: Path) -> None:
         """Re-running on existing file marks as updated."""
