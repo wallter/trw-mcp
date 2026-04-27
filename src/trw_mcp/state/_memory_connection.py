@@ -44,6 +44,7 @@ _embedder_checked: bool = False
 
 # FR07 (PRD-FIX-053): Embed failure counter -- resets on process restart.
 _embed_failures: int = 0
+_embedder_unavailable_reason: str = ""
 
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = DEFAULT_NAMESPACE
@@ -170,7 +171,7 @@ def get_embedder() -> LocalEmbeddingProvider | None:
     Only attempts initialization when ``embeddings_enabled=True`` in config.
     The result is cached -- repeated calls are cheap.
     """
-    global _embedder, _embedder_checked
+    global _embedder, _embedder_checked, _embedder_unavailable_reason
     if _embedder_checked:
         return _embedder
 
@@ -182,6 +183,7 @@ def get_embedder() -> LocalEmbeddingProvider | None:
 
         cfg = get_config()
         if not cfg.embeddings_enabled:
+            _embedder_unavailable_reason = ""
             _embedder_checked = True
             return None
 
@@ -194,14 +196,19 @@ def get_embedder() -> LocalEmbeddingProvider | None:
             )
             if provider.available():
                 _embedder = provider
+                _embedder_unavailable_reason = ""
                 logger.info(
                     "embedder_initialized",
                     model=cfg.retrieval_embedding_model,
                     dim=cfg.retrieval_embedding_dim,
                 )
             else:
+                _embedder_unavailable_reason = provider.unavailable_reason() or (
+                    "sentence-transformers is not installed"
+                )
                 logger.info(
-                    "embeddings_enabled_but_deps_missing",
+                    "embeddings_enabled_but_unavailable",
+                    reason=_embedder_unavailable_reason,
                     hint="pip install trw-memory[embeddings]",
                 )
         except Exception:  # justified: import-guard, embedder init may fail if deps missing
@@ -217,10 +224,11 @@ def get_embedder() -> LocalEmbeddingProvider | None:
 
 def reset_embedder() -> None:
     """Reset the embedder singleton (for tests)."""
-    global _embedder, _embedder_checked
+    global _embedder, _embedder_checked, _embedder_unavailable_reason
     with _embedder_lock:
         _embedder = None
         _embedder_checked = False
+        _embedder_unavailable_reason = ""
 
 
 def embedding_available() -> bool:
@@ -347,12 +355,11 @@ def check_embeddings_status() -> dict[str, object]:
         _append_wal_health(result)
         return result
 
+    reason = _embedder_unavailable_reason or "sentence-transformers is not installed"
     result = {
         "enabled": True,
         "available": False,
-        "advisory": (
-            "Embeddings enabled but sentence-transformers not installed. Run: pip install trw-memory[embeddings]"
-        ),
+        "advisory": f"Embeddings enabled but unavailable: {reason}. Run: pip install trw-memory[embeddings]",
         "recent_failures": _embed_failures,
     }
     _append_wal_health(result)
