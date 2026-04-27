@@ -2,6 +2,45 @@
 
 All notable changes to the TRW MCP server package.
 
+## [0.47.0] — 2026-04-26
+
+### Added
+
+- **SEC001 entrypoint security wiring + signed MCP registry**
+  (commit `6d20d2445`). New `startup.py` binds the security context
+  (audit, telemetry, kill-switches) at server boot so every tool
+  dispatch goes through the same gate. The MCP tool registry is
+  verified at startup against an ed25519 public key bundled at
+  `trw_mcp/data/mcp_registry_ed25519.pub`. Adds `meta_tune/dispatch.py`
+  + `meta_tune/errors.py` and the user-facing `meta_tune_ops` tool,
+  with matching unit + integration tests
+  (`test_mcp_registry`, `test_mcp_security_startup`,
+  `test_sec001_entrypoint_wiring`, `tests/integration/meta_tune/`).
+
+- **Client profile registry + integration dispatch**
+  (PRD-CORE-147 / PRD-CORE-148, commit `89ac42693`). The eight
+  built-in client profiles (`aider`, `claude-code`, `codex`,
+  `copilot`, `cursor-cli`, `cursor-ide`, `gemini`, `opencode`) are
+  now expressed as a single source of truth in
+  `trw_mcp/client_profiles/{catalog,markdown,__init__}.py`. The
+  install-time integration dispatch in
+  `bootstrap/_client_integrations.py` consumes the catalog so per-
+  client integration files (CLAUDE.md, AGENTS.md, etc.) stay
+  consistent across surfaces. Parity test
+  (`tests/test_client_profile_docs_parity.py`) keeps
+  `docs/client-profiles/` aligned with the registry; dispatch test
+  (`tests/test_client_integration_dispatch.py`) pins the wiring.
+
+### Fixed
+
+- **FIX053: harden embedding health probe** (commit `cbe4a5bcd`).
+  `get_embedder()` now records the unavailability reason on the
+  connection module and threads it into `check_embeddings_status()`
+  so the advisory string surfaces the real cause (e.g. broken
+  torchcodec wheel) instead of a generic "deps missing" message.
+  Pairs with the trw-memory `LocalEmbeddingProvider` torchcodec
+  guard.
+
 ## [0.46.2] — 2026-04-26
 
 ### Fixed
