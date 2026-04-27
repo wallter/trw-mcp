@@ -354,3 +354,150 @@ class TestPhaseCrossingDedupRegression:
         )
         assert str(selected.get("id", "")) in {"L-a", "L-b"}
         assert target_label == "foo.py"
+
+
+# ---------------------------------------------------------------------------
+# iter-22 root-cause fix — end-to-end regression
+# ---------------------------------------------------------------------------
+
+
+class TestIter22FixEndToEnd:
+    """End-to-end regression for the 2026-04-27 iter-22 root-cause fix.
+
+    Closes the "not yet validated end-to-end" caveat in the
+    HANDOFF-NEXT-INSTANCE.md commit f2d7f170a. The investigation
+    (docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md)
+    localized the structural defect to ``_PATH_DOMAIN_MAP`` having no
+    entries for external eval-corpus repos. Commit 56ca4b9c2 added 20
+    repo-root entries to close the gap.
+
+    These tests prove that the full pipeline behavior changes — not just
+    the unit-level ``infer_domain_tags`` output. Specifically:
+
+    1. ``_select_learning_injection_candidate`` now passes a non-None
+       ``tags`` argument on the first attempt when the recall context's
+       modified file is in a SWE-bench-shaped path (sphinx, pylint,
+       astropy, ...). Previously these paths fell through to ``None``.
+    2. With sphinx-tagged candidates available, the relevance ranker
+       picks one of them rather than degenerating to impact-only.
+    """
+
+    def test_swebench_path_routes_tags_into_recall(self, tmp_path: Path) -> None:
+        """The map extension flows through to the ranker: external repo
+        paths now produce tagged recalls instead of falling to ``None``.
+        """
+        from types import SimpleNamespace
+
+        from trw_mcp.state.ceremony_nudge import _select_learning_injection_candidate
+
+        trw_dir = _setup_trw_dir(tmp_path)
+        state = CeremonyState(phase="implement")
+        write_ceremony_state(trw_dir, state)
+
+        # Plausible sphinx-domain candidate that should surface.
+        sphinx_candidate = {
+            "id": "L-sphinx",
+            "summary": "Sphinx domain registration gotcha",
+            "impact": 0.8,
+            "tags": ["sphinx", "documentation"],
+        }
+        # Capture the tags kwarg from each recall_learnings call.
+        recall_call_tags: list[list[str] | None] = []
+
+        def _capture_recall(*args: object, **kwargs: object) -> list[dict[str, object]]:
+            recall_call_tags.append(kwargs.get("tags"))  # type: ignore[arg-type]
+            return [sphinx_candidate]
+
+        fake_ctx = SimpleNamespace(modified_files=["sphinx/domains/python.py"])
+
+        with (
+            patch(
+                "trw_mcp.state.recall_context.build_recall_context",
+                return_value=fake_ctx,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                side_effect=_capture_recall,
+            ),
+        ):
+            selected, target_label = _select_learning_injection_candidate(
+                state, trw_dir,
+            )
+
+        # Selector returned the sphinx candidate.
+        assert selected is not None, (
+            "post-fix selector should not return None for a SWE-bench path"
+        )
+        assert selected.get("id") == "L-sphinx"
+        assert target_label == "python.py"
+        # First recall attempt carried a non-empty tag list — pre-fix this
+        # would have been None or empty for sphinx paths.
+        assert recall_call_tags, "expected at least one recall_learnings call"
+        first_tags = recall_call_tags[0]
+        assert first_tags, (
+            f"first recall attempt must carry tags after the map "
+            f"extension (got {first_tags!r}); regression points to a "
+            f"_PATH_DOMAIN_MAP truncation"
+        )
+        assert "sphinx" in first_tags, (
+            f"first recall must carry the sphinx tag (got {first_tags!r})"
+        )
+
+    def test_pre_fix_collapse_simulated_via_empty_tags(
+        self, tmp_path: Path,
+    ) -> None:
+        """Simulate the pre-fix world by patching ``infer_domain_tags`` to
+        return an empty set (which is what sphinx/pylint/astropy paths
+        produced before commit 56ca4b9c2). The selector should then call
+        recall_learnings with ``tags=None`` on the first attempt — the
+        exact failure mode the fix addresses.
+        """
+        from types import SimpleNamespace
+
+        from trw_mcp.state.ceremony_nudge import _select_learning_injection_candidate
+
+        trw_dir = _setup_trw_dir(tmp_path)
+        state = CeremonyState(phase="implement")
+        write_ceremony_state(trw_dir, state)
+
+        # Off-domain TRW-framework candidate — what the impact-only
+        # ranker would have surfaced for a SWE-bench task.
+        framework_candidate = {
+            "id": "L-9026cbce",
+            "summary": "SQLite WAL corruption gotcha",
+            "impact": 0.95,
+            "tags": ["framework", "sqlite", "wal"],
+        }
+        recall_call_tags: list[list[str] | None] = []
+
+        def _capture_recall(*args: object, **kwargs: object) -> list[dict[str, object]]:
+            recall_call_tags.append(kwargs.get("tags"))  # type: ignore[arg-type]
+            return [framework_candidate]
+
+        fake_ctx = SimpleNamespace(modified_files=["sphinx/domains/python.py"])
+
+        with (
+            patch(
+                "trw_mcp.state.recall_context.build_recall_context",
+                return_value=fake_ctx,
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.recall_learnings",
+                side_effect=_capture_recall,
+            ),
+            # Force the pre-fix degenerate behavior.
+            patch(
+                "trw_mcp.state.learning_injection.infer_domain_tags",
+                return_value=set(),
+            ),
+        ):
+            selected, _ = _select_learning_injection_candidate(state, trw_dir)
+
+        # Pre-fix path: tags=None on first attempt. The off-domain
+        # framework_candidate is what got surfaced — exactly the iter-22
+        # failure mode the investigation identified.
+        assert recall_call_tags
+        assert recall_call_tags[0] is None, (
+            f"pre-fix simulation should pass tags=None (got {recall_call_tags[0]!r})"
+        )
+        assert selected is not None and selected.get("id") == "L-9026cbce"
