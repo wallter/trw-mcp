@@ -110,6 +110,55 @@ class TestInferDomainTags:
         assert "config" in tags
         assert "settings" in tags
 
+    def test_swebench_repo_paths_get_tags(self) -> None:
+        """SWE-bench repo roots produce non-empty tag sets after the
+        2026-04-27 iter-22 root-cause fix. Closes the relevance-ranker
+        collapse documented in
+        docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md.
+        """
+        from trw_mcp.state.learning_injection import infer_domain_tags
+
+        # iter-22 failure-concentration repos — each must produce tags
+        # so the recall ranker has tag-overlap signal.
+        assert infer_domain_tags(["sphinx/domains/python.py"]) == {
+            "docs", "sphinx", "documentation",
+        }
+        assert infer_domain_tags(["pylint/checkers/refactoring.py"]) == {
+            "pylint", "linting", "static-analysis",
+        }
+        assert infer_domain_tags(["astropy/io/registry/base.py"]) == {
+            "astropy", "astronomy", "scientific",
+        }
+        # Other SWE-bench Verified repo roots — sample check.
+        assert "sympy" in infer_domain_tags(["sympy/core/numbers.py"])
+        assert "pytest" in infer_domain_tags(["pytest/_pytest/main.py"])
+        assert "matplotlib" in infer_domain_tags(["matplotlib/axes/_base.py"])
+        assert "flask" in infer_domain_tags(["flask/app.py"])
+        assert "requests" in infer_domain_tags(["requests/sessions.py"])
+        assert "scikit-learn" in infer_domain_tags(
+            ["scikit-learn/sklearn/cluster/_kmeans.py"],
+        )
+        # sklearn alias also resolves.
+        assert "scikit-learn" in infer_domain_tags(["sklearn/cluster/_kmeans.py"])
+
+    def test_featurebench_repo_paths_get_tags(self) -> None:
+        """FeatureBench corpus repos (pandas/transformers/mlflow/etc.)
+        also resolve to non-empty tags so trw-eval Lv1/Lv2 problems
+        benefit from the relevance ranker.
+        """
+        from trw_mcp.state.learning_injection import infer_domain_tags
+
+        assert "pandas" in infer_domain_tags(["pandas/core/frame.py"])
+        assert "transformers" in infer_domain_tags(
+            ["transformers/models/bert/modeling_bert.py"],
+        )
+        assert "mlflow" in infer_domain_tags(["mlflow/tracking/client.py"])
+        assert "numpy" in infer_domain_tags(["numpy/core/arrayprint.py"])
+        # torch and pytorch both resolve to the same tag set.
+        assert "pytorch" in infer_domain_tags(["torch/nn/modules/linear.py"])
+        assert "pytorch" in infer_domain_tags(["pytorch/torch/optim/sgd.py"])
+        assert "fastapi" in infer_domain_tags(["fastapi/routing.py"])
+
 
 # ---------------------------------------------------------------------------
 # FR-1: select_learnings_for_task
