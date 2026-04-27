@@ -15,9 +15,7 @@ pytestmark = pytest.mark.unit
 
 _MAX_LINES = 350
 
-_CLAUDE_MD_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "claude_md"
-)
+_CLAUDE_MD_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "claude_md"
 
 
 def _iter_py_files(root: Path) -> list[Path]:
@@ -52,12 +50,8 @@ def test_claude_md_tree_under_max_lines() -> None:
         if lines > ceiling:
             offenders.append((py_file, lines, ceiling))
 
-    assert not offenders, (
-        "claude_md files exceed their LOC ceiling: "
-        + ", ".join(
-            f"{p.relative_to(_CLAUDE_MD_DIR.parents[3])}={n} (ceiling {c})"
-            for p, n, c in offenders
-        )
+    assert not offenders, "claude_md files exceed their LOC ceiling: " + ", ".join(
+        f"{p.relative_to(_CLAUDE_MD_DIR.parents[3])}={n} (ceiling {c})" for p, n, c in offenders
     )
 
 

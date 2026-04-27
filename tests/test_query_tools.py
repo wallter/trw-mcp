@@ -5,15 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 import yaml
 
 from trw_mcp.tools.query_tools import query_events, surface_diff
 
 
-def _make_run(
-    trw_dir: Path, task: str, run_id: str, events: list[dict[str, object]]
-) -> Path:
+def _make_run(trw_dir: Path, task: str, run_id: str, events: list[dict[str, object]]) -> Path:
     run_dir = trw_dir / "runs" / task / run_id
     (run_dir / "meta").mkdir(parents=True)
     events_file = run_dir / "meta" / "events-2026-04-23.jsonl"
@@ -43,11 +40,15 @@ class TestQueryEvents:
 
     def test_merges_across_runs(self, tmp_path: Path) -> None:
         _make_run(
-            tmp_path, "taskA", "run1",
+            tmp_path,
+            "taskA",
+            "run1",
             [{"event_type": "ceremony", "session_id": "s1", "ts": "2026-04-23T10:00:00"}],
         )
         _make_run(
-            tmp_path, "taskB", "run2",
+            tmp_path,
+            "taskB",
+            "run2",
             [{"event_type": "tool_call", "session_id": "s1", "ts": "2026-04-23T11:00:00"}],
         )
         out = query_events(session_id="s1", trw_dir=tmp_path)
@@ -56,7 +57,9 @@ class TestQueryEvents:
 
     def test_session_id_filter(self, tmp_path: Path) -> None:
         _make_run(
-            tmp_path, "taskA", "run1",
+            tmp_path,
+            "taskA",
+            "run1",
             [
                 {"event_type": "ceremony", "session_id": "s1", "ts": "t1"},
                 {"event_type": "ceremony", "session_id": "s2", "ts": "t2"},
@@ -68,7 +71,9 @@ class TestQueryEvents:
 
     def test_event_type_filter(self, tmp_path: Path) -> None:
         _make_run(
-            tmp_path, "t", "r",
+            tmp_path,
+            "t",
+            "r",
             [
                 {"event_type": "ceremony", "session_id": "s", "ts": "t1"},
                 {"event_type": "tool_call", "session_id": "s", "ts": "t2"},
@@ -88,7 +93,7 @@ class TestQueryEvents:
         events_file = run_dir / "meta" / "events-2026-04-23.jsonl"
         events_file.write_text(
             '{"event_type": "ok", "session_id": "s", "ts": "t1"}\n'
-            '{INVALID JSON HERE\n'
+            "{INVALID JSON HERE\n"
             '{"event_type": "ok2", "session_id": "s", "ts": "t2"}\n'
         )
         out = query_events(session_id=None, trw_dir=tmp_path)
@@ -96,7 +101,9 @@ class TestQueryEvents:
 
     def test_chronological_sort(self, tmp_path: Path) -> None:
         _make_run(
-            tmp_path, "t", "r",
+            tmp_path,
+            "t",
+            "r",
             [
                 {"event_type": "a", "session_id": "s", "ts": "2026-04-23T12:00:00"},
                 {"event_type": "b", "session_id": "s", "ts": "2026-04-23T10:00:00"},
@@ -109,7 +116,9 @@ class TestQueryEvents:
 
     def test_stable_tiebreak_on_event_id(self, tmp_path: Path) -> None:
         _make_run(
-            tmp_path, "t", "r",
+            tmp_path,
+            "t",
+            "r",
             [
                 {"event_id": "evt_b", "event_type": "b", "session_id": "s", "ts": "2026-04-23T10:00:00"},
                 {"event_id": "evt_a", "event_type": "a", "session_id": "s", "ts": "2026-04-23T10:00:00"},
@@ -177,7 +186,8 @@ class TestSurfaceDiff:
         run_b = _make_run(tmp_path, "t", "r2", [])
         _make_snapshot(run_a, "snap_A", [{"surface_id": "agents:a.md", "content_hash": "h"}])
         _make_snapshot(
-            run_b, "snap_B",
+            run_b,
+            "snap_B",
             [
                 {"surface_id": "agents:a.md", "content_hash": "h"},
                 {"surface_id": "agents:new.md", "content_hash": "h2"},
@@ -192,7 +202,8 @@ class TestSurfaceDiff:
         run_a = _make_run(tmp_path, "t", "r1", [])
         run_b = _make_run(tmp_path, "t", "r2", [])
         _make_snapshot(
-            run_a, "snap_A",
+            run_a,
+            "snap_A",
             [
                 {"surface_id": "agents:a.md", "content_hash": "h"},
                 {"surface_id": "agents:gone.md", "content_hash": "h2"},

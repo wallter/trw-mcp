@@ -67,7 +67,7 @@ def _sweep_hot_to_warm(
             self._flush_last_accessed(entry_id)
             demoted += 1
             logger.debug("sweep_hot_to_warm", entry_id=entry_id)
-        except Exception:  # per-item error handling: one failed eviction must not abort the sweep  # noqa: PERF203
+        except Exception:  # per-item error handling: one failed eviction must not abort the sweep
             logger.warning("sweep_hot_to_warm_failed", entry_id=entry_id, exc_info=True)
             errors += 1
 
@@ -232,9 +232,7 @@ def _sweep_cold_to_purge(
                         days=days,
                         importance_score=importance,
                     )
-            except (
-                Exception
-            ):  # per-item error handling: skip unreadable cold files, continue purge sweep
+            except Exception:  # per-item error handling: skip unreadable cold files, continue purge sweep
                 logger.warning(
                     "sweep_cold_purge_failed",
                     path=str(yaml_file),

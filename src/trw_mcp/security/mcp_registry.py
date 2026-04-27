@@ -240,9 +240,7 @@ def _merge_allowlists(canonical: MCPAllowlist, overlay: MCPAllowlist) -> MCPAllo
             merged[overlay_entry.name] = overlay_entry.model_copy(update={"source_tier": "overlay"})
             continue
         if not _overlay_is_not_weaker(existing, overlay_entry):
-            raise MCPSecurityConfigError(
-                f"overlay entry {overlay_entry.name!r} weakens canonical authorization"
-            )
+            raise MCPSecurityConfigError(f"overlay entry {overlay_entry.name!r} weakens canonical authorization")
         merged[overlay_entry.name] = overlay_entry.model_copy(update={"source_tier": "overlay"})
     payload = {
         "version": canonical.version,

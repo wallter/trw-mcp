@@ -146,7 +146,7 @@ def compute_nudge(
     state: CeremonyState,
     available_learnings: int = 0,
     context: NudgeContext | None = None,
-    profile: "ClientProfile | None" = None,
+    profile: ClientProfile | None = None,
 ) -> str:
     """Compute the ceremony nudge message based on current state.
 
@@ -589,9 +589,7 @@ def select_contextual_nudge_content(
         learning_id: str | None = None
         if selected_learning is not None and include_learning_caution:
             learning_id = str(selected_learning.get("id", "")).strip() or None
-            raw_caution = str(
-                selected_learning.get("nudge_line") or selected_learning.get("summary") or ""
-            ).strip()
+            raw_caution = str(selected_learning.get("nudge_line") or selected_learning.get("summary") or "").strip()
             if raw_caution:
                 clipped_caution = raw_caution[:120] + ("..." if len(raw_caution) > 120 else "")
                 target_phrase = f" for {target_label}" if target_label else ""

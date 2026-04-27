@@ -20,9 +20,7 @@ from trw_mcp.models.config._sub_models import MetaTuneConfig
 
 
 def _enabled_config(tmp_path: Path) -> TRWConfig:
-    fixture_root = (
-        Path(__file__).resolve().parents[2] / "fixtures" / "meta_tune"
-    )
+    fixture_root = Path(__file__).resolve().parents[2] / "fixtures" / "meta_tune"
     return TRWConfig(
         meta_tune=MetaTuneConfig(
             enabled=True,
@@ -64,9 +62,7 @@ def test_audit_defaults_returns_report_structure(tmp_path: Path) -> None:
     assert "sandbox" in report
 
 
-def test_validate_defaults_passes_when_safe_defaults_resolve(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_defaults_passes_when_safe_defaults_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / ".trw").mkdir(parents=True)
     (repo_root / ".trw" / "config.yaml").write_text("meta_tune:\n  enabled: false\n")
@@ -93,9 +89,7 @@ def test_validate_defaults_raises_when_kill_switch_missing(tmp_path: Path) -> No
     assert "kill_switch_path" in str(ei.value)
 
 
-def test_validate_defaults_raises_when_fixture_count_too_low(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_defaults_raises_when_fixture_count_too_low(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / ".trw").mkdir(parents=True)
     (repo_root / ".trw" / "config.yaml").write_text("meta_tune:\n  enabled: false\n")
@@ -179,9 +173,7 @@ def test_resolve_kill_switch_path_raises_without_anchor(tmp_path: Path) -> None:
         )
 
 
-def test_validate_defaults_is_fast(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validate_defaults_is_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR-10: ≤2s wall-clock."""
     import time
 

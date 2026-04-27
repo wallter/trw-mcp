@@ -92,9 +92,7 @@ def test_ts_autopopulates_utc() -> None:
 def test_surface_snapshot_id_empty_string_allowed_phase1() -> None:
     ev = HPOTelemetryEvent(session_id="s1", emitter="x", event_type="x")
     assert ev.surface_snapshot_id == ""
-    ev2 = HPOTelemetryEvent(
-        session_id="s1", emitter="x", event_type="x", surface_snapshot_id="snap_123"
-    )
+    ev2 = HPOTelemetryEvent(session_id="s1", emitter="x", event_type="x", surface_snapshot_id="snap_123")
     assert ev2.surface_snapshot_id == "snap_123"
 
 

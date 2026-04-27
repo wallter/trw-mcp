@@ -367,9 +367,7 @@ class MCPSecurityMiddleware(Middleware):
                     )
                 )
             _emit_decision(
-                decision="allow"
-                if is_allowed
-                else "deny",
+                decision="allow" if is_allowed else "deny",
                 transport=normalized_transport,
                 server=resolved_server,
                 tool=runtime_peer.tool,
@@ -535,10 +533,7 @@ class MCPSecurityMiddleware(Middleware):
         )
         allowed_ads = self.filter_advertised_tools(
             transport=transport,
-            advertisements=[
-                AdvertisedTool(server=self.default_server_name, name=tool.name)
-                for tool in tools
-            ],
+            advertisements=[AdvertisedTool(server=self.default_server_name, name=tool.name) for tool in tools],
             session_id=getattr(fastmcp_ctx, "session_id", "") if fastmcp_ctx is not None else "",
             run_id=_resolve_run_id(
                 _resolve_runtime_run_dir(

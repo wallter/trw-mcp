@@ -60,8 +60,7 @@ def test_profile_count_current() -> None:
     """FR12: stale 'Five built-in profiles' phrase must not appear in CLAUDE.md."""
     content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
     assert "Five built-in profiles" not in content, (
-        "CLAUDE.md still says 'Five built-in profiles'. Update to match the "
-        "current profile registry count."
+        "CLAUDE.md still says 'Five built-in profiles'. Update to match the current profile registry count."
     )
 
 

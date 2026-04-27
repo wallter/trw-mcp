@@ -9,10 +9,9 @@ Handles three transport paths:
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import structlog
-
-from typing import Any
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._app import mcp

@@ -54,9 +54,7 @@ class TestConfigResource:
         result = resources["trw://framework/config"].fn()
         assert "custom_key" in result
 
-    def test_redacts_backend_api_key(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_redacts_backend_api_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Security audit 2026-04-18 M2: backend_api_key must never appear
         verbatim in the config resource payload, which is readable by any
         connected MCP client."""

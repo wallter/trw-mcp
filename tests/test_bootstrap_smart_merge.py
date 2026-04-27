@@ -24,7 +24,6 @@ from trw_mcp.bootstrap._file_ops import (
     write_instruction_file_with_merge,
 )
 
-
 _START = "<!-- trw:test:start -->"
 _END = "<!-- trw:test:end -->"
 
@@ -38,22 +37,14 @@ def _section(body: str) -> str:
 
 class TestSmartMergeMarkerSection:
     def test_empty_existing_returns_section_with_newline(self) -> None:
-        out = smart_merge_marker_section(
-            "", _section("hello"), start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section("", _section("hello"), start_marker=_START, end_marker=_END)
         assert out == _section("hello") + "\n"
 
     def test_replaces_between_markers_preserving_user_content(self) -> None:
-        existing = (
-            "# My GEMINI.md\n\nuser preamble\n\n"
-            + _section("OLD trw body")
-            + "\n\nuser postamble\n"
-        )
+        existing = "# My GEMINI.md\n\nuser preamble\n\n" + _section("OLD trw body") + "\n\nuser postamble\n"
         new = _section("NEW trw body")
 
-        out = smart_merge_marker_section(
-            existing, new, start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section(existing, new, start_marker=_START, end_marker=_END)
 
         assert "user preamble" in out
         assert "user postamble" in out
@@ -64,12 +55,8 @@ class TestSmartMergeMarkerSection:
         section = _section("identical body")
         existing = "before\n\n" + section + "\n\nafter\n"
 
-        once = smart_merge_marker_section(
-            existing, section, start_marker=_START, end_marker=_END
-        )
-        twice = smart_merge_marker_section(
-            once, section, start_marker=_START, end_marker=_END
-        )
+        once = smart_merge_marker_section(existing, section, start_marker=_START, end_marker=_END)
+        twice = smart_merge_marker_section(once, section, start_marker=_START, end_marker=_END)
 
         assert once == existing
         assert twice == once
@@ -78,9 +65,7 @@ class TestSmartMergeMarkerSection:
         existing = "user-authored prose\nwith multiple lines\n"
         section = _section("trw body")
 
-        out = smart_merge_marker_section(
-            existing, section, start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section(existing, section, start_marker=_START, end_marker=_END)
 
         # User content preserved verbatim at the head, TRW section appended.
         assert out.startswith("user-authored prose\nwith multiple lines")
@@ -90,9 +75,7 @@ class TestSmartMergeMarkerSection:
         existing = f"{_START}\nuser opened the marker by accident\n"
         section = _section("trw body")
 
-        out = smart_merge_marker_section(
-            existing, section, start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section(existing, section, start_marker=_START, end_marker=_END)
 
         # Treated as no valid pair → append.
         assert out.endswith(section + "\n")
@@ -101,16 +84,12 @@ class TestSmartMergeMarkerSection:
         existing = f"{_END}\nmangled\n{_START}\n"
         section = _section("trw body")
 
-        out = smart_merge_marker_section(
-            existing, section, start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section(existing, section, start_marker=_START, end_marker=_END)
 
         assert out.endswith(section + "\n")
 
     def test_empty_existing_with_strip(self) -> None:
-        out = smart_merge_marker_section(
-            "   \n\n", _section("body"), start_marker=_START, end_marker=_END
-        )
+        out = smart_merge_marker_section("   \n\n", _section("body"), start_marker=_START, end_marker=_END)
         # No leading separator because existing strips to empty.
         assert out.startswith(_START)
 
@@ -160,9 +139,7 @@ class TestWriteInstructionFileWithMerge:
 
     def test_updates_when_section_changed(self, tmp_path: Path) -> None:
         target = tmp_path / "FOO.md"
-        target.write_text(
-            "user preamble\n\n" + _section("OLD") + "\n", encoding="utf-8"
-        )
+        target.write_text("user preamble\n\n" + _section("OLD") + "\n", encoding="utf-8")
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
 
         write_instruction_file_with_merge(
@@ -227,7 +204,7 @@ class TestWriteInstructionFileWithMerge:
 class TestGenerateGeminiMcpConfigHardening:
     """Issue 2 — hardened settings.json schema recovery."""
 
-    def _import_under_test(self):  # noqa: ANN202
+    def _import_under_test(self):
         from trw_mcp.bootstrap._gemini import generate_gemini_mcp_config
 
         return generate_gemini_mcp_config

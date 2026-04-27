@@ -43,7 +43,10 @@ class TestBuildToolCallEvent:
         start = datetime(2026, 4, 23, 12, 0, 0, tzinfo=timezone.utc)
         end = start - timedelta(milliseconds=5)  # clock skew
         ev = build_tool_call_event(
-            tool="x", start_ts=start, end_ts=end, session_id="s1",
+            tool="x",
+            start_ts=start,
+            end_ts=end,
+            session_id="s1",
         )
         assert ev.payload["wall_ms"] == 0
 

@@ -54,8 +54,7 @@ def test_hooks_enabled_exits_cleanly(tmp_path: Path) -> None:
     )
     # fail-open: even if phase state is missing, the hook should exit 0 via trap
     assert proc.returncode == 0, (
-        f"hook should fail-open under HOOKS_ENABLED=true, got rc={proc.returncode} "
-        f"stderr={proc.stderr[:200]!r}"
+        f"hook should fail-open under HOOKS_ENABLED=true, got rc={proc.returncode} stderr={proc.stderr[:200]!r}"
     )
 
 

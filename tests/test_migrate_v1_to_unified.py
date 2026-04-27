@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from trw_mcp.migration.v1_to_unified import MigrationReport, migrate_run
+from trw_mcp.migration.v1_to_unified import migrate_run
 
 
 def _write_legacy_events(run_dir: Path, rows: list[dict[str, object]]) -> None:
@@ -117,9 +115,7 @@ class TestMigrateMalformed:
         meta = tmp_path / "meta"
         meta.mkdir()
         (meta / "events.jsonl").write_text(
-            '{"event": "session_start", "ts": "t1"}\n'
-            '{bad json\n'
-            '{"event": "phase_enter", "ts": "t2"}\n'
+            '{"event": "session_start", "ts": "t1"}\n{bad json\n{"event": "phase_enter", "ts": "t2"}\n'
         )
         report = migrate_run(tmp_path, apply=True)
         assert report.rows_read == 3
@@ -143,12 +139,8 @@ class TestMultiFileMigration:
     def test_merges_events_and_checkpoints(self, tmp_path: Path) -> None:
         meta = tmp_path / "meta"
         meta.mkdir()
-        (meta / "events.jsonl").write_text(
-            json.dumps({"event": "session_start", "ts": "t1"}) + "\n"
-        )
-        (meta / "checkpoints.jsonl").write_text(
-            json.dumps({"event": "checkpoint", "ts": "t2"}) + "\n"
-        )
+        (meta / "events.jsonl").write_text(json.dumps({"event": "session_start", "ts": "t1"}) + "\n")
+        (meta / "checkpoints.jsonl").write_text(json.dumps({"event": "checkpoint", "ts": "t2"}) + "\n")
         report = migrate_run(tmp_path, apply=True)
         assert report.rows_read == 2
         assert report.rows_migrated == 2

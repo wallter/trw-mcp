@@ -259,20 +259,14 @@ class TestRepoRootArtifactDiscovery:
         # Verify the specific sub-CLAUDE we created is in there.
         assert any("telemetry/CLAUDE.md" in i for i in sub_ids)
 
-    def test_claude_md_edit_changes_snapshot_id(
-        self, _fake_repo: Path, tmp_path: Path
-    ) -> None:
+    def test_claude_md_edit_changes_snapshot_id(self, _fake_repo: Path, tmp_path: Path) -> None:
         empty_data = tmp_path / "empty-data"
         empty_data.mkdir()
         fixed = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
-        reg_a = SurfaceRegistry.build(
-            data_root=empty_data, repo_root=_fake_repo, now=fixed
-        )
+        reg_a = SurfaceRegistry.build(data_root=empty_data, repo_root=_fake_repo, now=fixed)
         (_fake_repo / "CLAUDE.md").write_text("# Root governing document — EDITED")
-        reg_b = SurfaceRegistry.build(
-            data_root=empty_data, repo_root=_fake_repo, now=fixed
-        )
+        reg_b = SurfaceRegistry.build(data_root=empty_data, repo_root=_fake_repo, now=fixed)
         assert reg_a.snapshot_id != reg_b.snapshot_id, (
             "CLAUDE.md edit must change snapshot_id — otherwise prompt "
             "ablation against outcome deltas is impossible (FR-1)"

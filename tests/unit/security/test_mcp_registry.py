@@ -7,7 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
 import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -48,9 +47,7 @@ def _write_signed_allowlist(path: Path, public_key_path: Path) -> None:
             }
         ],
     }
-    signature = private_key.sign(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    )
+    signature = private_key.sign(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     payload["signature_block"] = {
         "algorithm": "ed25519",
         "signed_at": "2026-04-24T00:00:00Z",

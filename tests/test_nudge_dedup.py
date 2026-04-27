@@ -421,13 +421,12 @@ class TestIter22FixEndToEnd:
             ),
         ):
             selected, target_label = _select_learning_injection_candidate(
-                state, trw_dir,
+                state,
+                trw_dir,
             )
 
         # Selector returned the sphinx candidate.
-        assert selected is not None, (
-            "post-fix selector should not return None for a SWE-bench path"
-        )
+        assert selected is not None, "post-fix selector should not return None for a SWE-bench path"
         assert selected.get("id") == "L-sphinx"
         assert target_label == "python.py"
         # First recall attempt carried a non-empty tag list — pre-fix this
@@ -439,12 +438,11 @@ class TestIter22FixEndToEnd:
             f"extension (got {first_tags!r}); regression points to a "
             f"_PATH_DOMAIN_MAP truncation"
         )
-        assert "sphinx" in first_tags, (
-            f"first recall must carry the sphinx tag (got {first_tags!r})"
-        )
+        assert "sphinx" in first_tags, f"first recall must carry the sphinx tag (got {first_tags!r})"
 
     def test_pre_fix_collapse_simulated_via_empty_tags(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """Simulate the pre-fix world by patching ``infer_domain_tags`` to
         return an empty set (which is what sphinx/pylint/astropy paths
@@ -497,7 +495,5 @@ class TestIter22FixEndToEnd:
         # framework_candidate is what got surfaced — exactly the iter-22
         # failure mode the investigation identified.
         assert recall_call_tags
-        assert recall_call_tags[0] is None, (
-            f"pre-fix simulation should pass tags=None (got {recall_call_tags[0]!r})"
-        )
+        assert recall_call_tags[0] is None, f"pre-fix simulation should pass tags=None (got {recall_call_tags[0]!r})"
         assert selected is not None and selected.get("id") == "L-9026cbce"

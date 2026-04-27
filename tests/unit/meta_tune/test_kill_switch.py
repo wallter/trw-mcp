@@ -19,9 +19,7 @@ import yaml
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._sub_models import MetaTuneConfig
 
-PROFILES_DIR = (
-    Path(__file__).resolve().parents[3] / "data" / "profiles"
-)
+PROFILES_DIR = Path(__file__).resolve().parents[3] / "data" / "profiles"
 
 
 def test_meta_tune_config_default_disabled() -> None:
@@ -41,10 +39,7 @@ def test_profiles_directory_contains_at_least_one_bundled_profile() -> None:
     """Guard: the bundled-profile corpus must be non-empty, or the
     NFR-7 glob test below would pass vacuously."""
     profiles = sorted(PROFILES_DIR.glob("*.yaml"))
-    assert profiles, (
-        f"No bundled profile YAMLs under {PROFILES_DIR}; NFR-7 check would "
-        "pass vacuously."
-    )
+    assert profiles, f"No bundled profile YAMLs under {PROFILES_DIR}; NFR-7 check would pass vacuously."
 
 
 def test_all_bundled_profiles_ship_with_enabled_false() -> None:
@@ -56,10 +51,7 @@ def test_all_bundled_profiles_ship_with_enabled_false() -> None:
         meta_tune = data.get("meta_tune")
         if not isinstance(meta_tune, dict) or meta_tune.get("enabled") is not False:
             offenders.append(f"{path.name}: meta_tune={meta_tune!r}")
-    assert not offenders, (
-        "Bundled profiles must ship with meta_tune.enabled=false (NFR-7); "
-        f"offenders: {offenders}"
-    )
+    assert not offenders, f"Bundled profiles must ship with meta_tune.enabled=false (NFR-7); offenders: {offenders}"
 
 
 def test_log_message_meta_tune_disabled_at_info(
@@ -93,14 +85,10 @@ def test_log_message_meta_tune_disabled_at_info(
         rec
         for rec in caplog.records
         if rec.levelno == logging.INFO
-        and (
-            "meta-tune-disabled" in rec.getMessage()
-            or getattr(rec, "event", None) == "meta-tune-disabled"
-        )
+        and ("meta-tune-disabled" in rec.getMessage() or getattr(rec, "event", None) == "meta-tune-disabled")
     ]
     assert len(matching) == 1, (
-        f"expected exactly one INFO meta-tune-disabled record, got "
-        f"{[r.getMessage() for r in caplog.records]}"
+        f"expected exactly one INFO meta-tune-disabled record, got {[r.getMessage() for r in caplog.records]}"
     )
 
 

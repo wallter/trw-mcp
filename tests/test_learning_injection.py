@@ -121,13 +121,19 @@ class TestInferDomainTags:
         # iter-22 failure-concentration repos — each must produce tags
         # so the recall ranker has tag-overlap signal.
         assert infer_domain_tags(["sphinx/domains/python.py"]) == {
-            "docs", "sphinx", "documentation",
+            "docs",
+            "sphinx",
+            "documentation",
         }
         assert infer_domain_tags(["pylint/checkers/refactoring.py"]) == {
-            "pylint", "linting", "static-analysis",
+            "pylint",
+            "linting",
+            "static-analysis",
         }
         assert infer_domain_tags(["astropy/io/registry/base.py"]) == {
-            "astropy", "astronomy", "scientific",
+            "astropy",
+            "astronomy",
+            "scientific",
         }
         # Other SWE-bench Verified repo roots — sample check.
         assert "sympy" in infer_domain_tags(["sympy/core/numbers.py"])

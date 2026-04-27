@@ -13,9 +13,9 @@ the real server wrapping path never wrote events end-to-end.
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Iterator
-import importlib
 from pathlib import Path
 from typing import Any, Final
 
@@ -30,16 +30,16 @@ from trw_mcp.telemetry.tool_call_timing import clear_pricing_cache
 #: When a capability's module lands, add its import path here so this
 #: gate starts asserting the symbol exists.
 _FR10_CAPABILITIES: Final[tuple[tuple[str, str, str], ...]] = (
-    ("ceremony",         "trw_mcp.telemetry.event_base",          "CeremonyEvent"),
-    ("contract",         "trw_mcp.telemetry.event_base",          "ContractEvent"),
-    ("phase_exposure",   "trw_mcp.telemetry.event_base",          "PhaseExposureEvent"),
-    ("observer",         "trw_mcp.telemetry.event_base",          "ObserverEvent"),
-    ("mcp_security",     "trw_mcp.telemetry.event_base",          "MCPSecurityEvent"),
-    ("meta_tune",        "trw_mcp.telemetry.event_base",          "MetaTuneEvent"),
-    ("thrashing",        "trw_mcp.telemetry.event_base",          "ThrashingEvent"),
-    ("artifact_registry","trw_mcp.telemetry.artifact_registry",   "SurfaceRegistry"),
-    ("surface_manifest", "trw_mcp.telemetry.surface_manifest",    "stamp_session"),
-    ("tool_call_timing", "trw_mcp.telemetry.tool_call_timing",    "wrap_tool"),
+    ("ceremony", "trw_mcp.telemetry.event_base", "CeremonyEvent"),
+    ("contract", "trw_mcp.telemetry.event_base", "ContractEvent"),
+    ("phase_exposure", "trw_mcp.telemetry.event_base", "PhaseExposureEvent"),
+    ("observer", "trw_mcp.telemetry.event_base", "ObserverEvent"),
+    ("mcp_security", "trw_mcp.telemetry.event_base", "MCPSecurityEvent"),
+    ("meta_tune", "trw_mcp.telemetry.event_base", "MetaTuneEvent"),
+    ("thrashing", "trw_mcp.telemetry.event_base", "ThrashingEvent"),
+    ("artifact_registry", "trw_mcp.telemetry.artifact_registry", "SurfaceRegistry"),
+    ("surface_manifest", "trw_mcp.telemetry.surface_manifest", "stamp_session"),
+    ("tool_call_timing", "trw_mcp.telemetry.tool_call_timing", "wrap_tool"),
 )
 
 
@@ -89,15 +89,11 @@ class TestFR10CapabilityResolvability:
     """
 
     @pytest.mark.parametrize(("capability", "module_path", "symbol_name"), _FR10_CAPABILITIES)
-    def test_capability_symbol_importable(
-        self, capability: str, module_path: str, symbol_name: str
-    ) -> None:
+    def test_capability_symbol_importable(self, capability: str, module_path: str, symbol_name: str) -> None:
         try:
             mod = importlib.import_module(module_path)
         except ImportError as exc:
-            pytest.fail(
-                f"FR-10 capability {capability!r} — module {module_path!r} not importable: {exc}"
-            )
+            pytest.fail(f"FR-10 capability {capability!r} — module {module_path!r} not importable: {exc}")
         assert hasattr(mod, symbol_name), (
             f"FR-10 capability {capability!r} — symbol {symbol_name!r} missing from "
             f"{module_path}. Declared capability has no wiring."

@@ -34,9 +34,7 @@ _PATHS = [_TEMPLATE, _ARTIFACT]
 
 
 def _load(installer_path: Path):
-    spec = importlib.util.spec_from_file_location(
-        f"install_trw_probe_{installer_path.stem}", installer_path
-    )
+    spec = importlib.util.spec_from_file_location(f"install_trw_probe_{installer_path.stem}", installer_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -106,14 +104,19 @@ def test_preflight_passes_when_tools_list_returns_trw_session_start(
         '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"trw_session_start"}]}}\n'
     )
     observed, target = _install_fixture(
-        module, monkeypatch, tmp_path,
+        module,
+        monkeypatch,
+        tmp_path,
         create_wrapper=True,
         probe_stdout=good_stdout,
     )
 
     # Should not raise SystemExit
     module.phase_install_packages(
-        MagicMock(), 2, 4, sys.executable,
+        MagicMock(),
+        2,
+        4,
+        sys.executable,
         tmp_path / "trw-memory.whl",
         tmp_path / "trw-mcp.whl",
         pip_target=str(target),
@@ -125,9 +128,7 @@ def test_preflight_passes_when_tools_list_returns_trw_session_start(
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
-def test_preflight_exits_when_wrapper_binary_missing(
-    installer_path: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_preflight_exits_when_wrapper_binary_missing(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """Hard regression guard: missing bin/trw-mcp → sys.exit(1).
 
     This IS the iter-18-replication failure mode. The wrapper generator
@@ -140,7 +141,9 @@ def test_preflight_exits_when_wrapper_binary_missing(
     # pip_install failure that would have sys.exit'd earlier but for some
     # reason didn't in a future refactor).
     observed, target = _install_fixture(
-        module, monkeypatch, tmp_path,
+        module,
+        monkeypatch,
+        tmp_path,
         create_wrapper=False,
         probe_stdout="",
     )
@@ -178,7 +181,9 @@ def test_preflight_exits_when_tools_list_lacks_trw_session_start(
         '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}\n'  # empty tool list
     )
     observed, target = _install_fixture(
-        module, monkeypatch, tmp_path,
+        module,
+        monkeypatch,
+        tmp_path,
         create_wrapper=True,
         probe_stdout=bad_stdout,
         probe_stderr="no tools registered",
@@ -186,7 +191,10 @@ def test_preflight_exits_when_tools_list_lacks_trw_session_start(
 
     with pytest.raises(SystemExit) as exc_info:
         module.phase_install_packages(
-            MagicMock(), 2, 4, sys.executable,
+            MagicMock(),
+            2,
+            4,
+            sys.executable,
             tmp_path / "trw-memory.whl",
             tmp_path / "trw-mcp.whl",
             pip_target=str(target),
@@ -195,9 +203,7 @@ def test_preflight_exits_when_tools_list_lacks_trw_session_start(
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
-def test_preflight_exits_when_probe_times_out(
-    installer_path: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_preflight_exits_when_probe_times_out(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """If the MCP server hangs, fail loud with a timeout message.
 
     This catches a different regression mode where the server starts but
@@ -205,7 +211,9 @@ def test_preflight_exits_when_probe_times_out(
     """
     module = _load(installer_path)
     observed, target = _install_fixture(
-        module, monkeypatch, tmp_path,
+        module,
+        monkeypatch,
+        tmp_path,
         create_wrapper=True,
         probe_stdout="",
         probe_timeout=True,
@@ -213,7 +221,10 @@ def test_preflight_exits_when_probe_times_out(
 
     with pytest.raises(SystemExit) as exc_info:
         module.phase_install_packages(
-            MagicMock(), 2, 4, sys.executable,
+            MagicMock(),
+            2,
+            4,
+            sys.executable,
             tmp_path / "trw-memory.whl",
             tmp_path / "trw-mcp.whl",
             pip_target=str(target),
@@ -222,9 +233,7 @@ def test_preflight_exits_when_probe_times_out(
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
-def test_preflight_skipped_when_target_dir_empty(
-    installer_path: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_preflight_skipped_when_target_dir_empty(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """Backward compat: ordinary virtualenv installs don't run the probe.
 
     The probe only activates when --pip-target is set (the eval container
@@ -244,13 +253,14 @@ def test_preflight_skipped_when_target_dir_empty(
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
     module.phase_install_packages(
-        MagicMock(), 2, 4, sys.executable,
+        MagicMock(),
+        2,
+        4,
+        sys.executable,
         tmp_path / "trw-memory.whl",
         tmp_path / "trw-mcp.whl",
         pip_target="",  # empty → no target → no probe
     )
 
     probe_runs = [r for r in observed_runs if "serve" in r]
-    assert not probe_runs, (
-        f"MCP probe should not run when pip_target is empty; got: {probe_runs}"
-    )
+    assert not probe_runs, f"MCP probe should not run when pip_target is empty; got: {probe_runs}"

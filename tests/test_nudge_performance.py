@@ -103,7 +103,7 @@ def _percentile(samples: list[float], pct: float) -> float:
     """Return the ``pct`` percentile of ``samples`` (0 < pct < 100)."""
     assert 0 < pct < 100
     ordered = sorted(samples)
-    idx = int(round((pct / 100.0) * (len(ordered) - 1)))
+    idx = round((pct / 100.0) * (len(ordered) - 1))
     return ordered[idx]
 
 
@@ -134,8 +134,7 @@ def test_append_ceremony_status_p95_under_5ms(warm_trw_dir: Path) -> None:
     # NFR01 dev targets: p95 < 5ms, p99 < 10ms.
     # CI thresholds: p95 < 10ms, p99 < 25ms (shared-runner variance).
     assert p95 < 10.0, (
-        f"p95 latency {p95:.3f}ms exceeds CI threshold 10ms "
-        f"(NFR01 dev target <5ms). p50={p50:.3f}ms p99={p99:.3f}ms"
+        f"p95 latency {p95:.3f}ms exceeds CI threshold 10ms (NFR01 dev target <5ms). p50={p50:.3f}ms p99={p99:.3f}ms"
     )
     assert p99 < 25.0, (
         f"p99 latency {p99:.3f}ms exceeds CI threshold 25ms "

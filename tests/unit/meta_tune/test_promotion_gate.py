@@ -90,9 +90,7 @@ def test_gate_rejects_goodhart_spike() -> None:
 
 def test_gate_rejects_negative_declared_delta() -> None:
     gate = PromotionGate(config=_cfg_enabled())
-    d = gate.evaluate(
-        _proposal(delta=-0.01), reviewer_id="r", approval_ts=datetime.now(timezone.utc)
-    )
+    d = gate.evaluate(_proposal(delta=-0.01), reviewer_id="r", approval_ts=datetime.now(timezone.utc))
     assert d.decision == "reject"
     assert "outcome" in d.reason
 
@@ -118,9 +116,7 @@ def test_gate_decision_is_frozen() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        d.__class__.model_validate(
-            {"decision": "approve", "reason": "ok", "disabled": False, "extra": 1}
-        )
+        d.__class__.model_validate({"decision": "approve", "reason": "ok", "disabled": False, "extra": 1})
 
 
 def test_gate_emits_metatune_event_on_evaluate() -> None:
@@ -179,9 +175,7 @@ def test_gate_persists_rejected_lifecycle_row(tmp_path: Path) -> None:
     assert '"event":"rejected"' in audit_log.read_text()
 
 
-def test_gate_rejects_when_audit_dependency_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_gate_rejects_when_audit_dependency_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from trw_mcp.meta_tune import promotion_gate as pg
 
     cfg = TRWConfig(
@@ -190,7 +184,9 @@ def test_gate_rejects_when_audit_dependency_unavailable(
             audit_log_path=str(tmp_path / "missing-parent" / "audit.jsonl"),
         )
     )
-    monkeypatch.setattr(pg, "append_audit_entry", lambda *args, **kwargs: (_ for _ in ()).throw(pg.AuditAppendError("boom")))
+    monkeypatch.setattr(
+        pg, "append_audit_entry", lambda *args, **kwargs: (_ for _ in ()).throw(pg.AuditAppendError("boom"))
+    )
     gate = PromotionGate(config=cfg)
 
     decision = gate.evaluate(

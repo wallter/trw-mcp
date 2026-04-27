@@ -204,9 +204,7 @@ def promote_candidate(
     resolved_corpus_path = _resolve_repo_path(cfg.meta_tune.corpus_path, repo_root=repo_root)
     resolved_edit_id = edit_id or str(uuid.uuid4())
     resolved_session_id = promotion_session_id or str(uuid.uuid4())
-    original_content = (
-        resolved_target.read_text(encoding="utf-8") if resolved_target.exists() else ""
-    )
+    original_content = resolved_target.read_text(encoding="utf-8") if resolved_target.exists() else ""
     diff = _build_diff(resolved_target, original_content, candidate_content)
 
     candidate = CandidateEdit(

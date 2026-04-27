@@ -47,9 +47,9 @@ from trw_mcp.telemetry.tool_call_timing import clear_pricing_cache
 #: PRD-HPO-MEAS-001 §FR-14: fields legitimately zero/null by design.
 _NULLABLE_BY_DESIGN: Final[frozenset[str]] = frozenset(
     {
-        "run_id",                 # Phase 1 pre-run cold-start
-        "surface_snapshot_id",    # Phase 1 default empty-string until wiring
-        "parent_event_id",        # optional for root events
+        "run_id",  # Phase 1 pre-run cold-start
+        "surface_snapshot_id",  # Phase 1 default empty-string until wiring
+        "parent_event_id",  # optional for root events
     }
 )
 
@@ -57,39 +57,57 @@ _NULLABLE_BY_DESIGN: Final[frozenset[str]] = frozenset(
 #: populated event (payload carrying FR-14 meaningful keys).
 _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
     "ceremony": CeremonyEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"phase": "IMPLEMENT"},
     ),
     "contract": ContractEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"contract_id": "ctx-42", "outcome": "pass"},
     ),
     "phase_exposure": PhaseExposureEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"phase": "VALIDATE", "duration_ms": 1200},
     ),
     "observer": ObserverEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"kind": "oversight_hook"},
     ),
     "mcp_security": MCPSecurityEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"decision": "allow", "scope": "tool_call"},
     ),
     "meta_tune": MetaTuneEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"proposal_id": "prop-7", "outcome": "queued"},
     ),
     "thrashing": ThrashingEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"retry_count": 3, "tool": "trw_recall"},
     ),
     "llm_call": LLMCallEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"model": "claude-opus-4-7", "input_tokens": 120, "output_tokens": 80},
     ),
     "tool_call": ToolCallEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={
             "tool": "trw_recall",
             "start_ts": "2026-04-24T00:00:00+00:00",
@@ -98,19 +116,26 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
             "input_tokens": 12,
             "output_tokens": 7,
             "usd_cost_est": 0.00042,
-            "outcome": "success", "pricing_version": "2026-04-23",
+            "outcome": "success",
+            "pricing_version": "2026-04-23",
         },
     ),
     "session_start": HPOSessionStartEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"learnings_loaded": 42, "framework_version": "v24.6_TRW"},
     ),
     "session_end": HPOSessionEndEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"reason": "deliver", "duration_ms": 8700},
     ),
     "ceremony_compliance": HPOCeremonyComplianceEvent(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={"score": 0.91},
     ),
     "h1_observe_mode_warning": emit_h1_observe_mode_warning(
@@ -122,7 +147,9 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
         surface_snapshot_id="snap_a",
     ),
     "surface_registered": SurfaceRegistered(
-        session_id="s1", run_id="r1", surface_snapshot_id="snap_a",
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
         payload={
             "surface_id": "agents:trw-implementer.md",
             "content_hash": "ff" * 32,
@@ -146,8 +173,7 @@ def test_registered_event_has_sample_builder(event_type: str) -> None:
 def test_registered_event_has_payload_key_contract(event_type: str) -> None:
     """Every registered subtype must declare the payload keys FR-14 proves."""
     assert event_type in EVENT_PAYLOAD_KEY_REGISTRY, (
-        f"EVENT_TYPE_REGISTRY entry {event_type!r} has no payload-key contract in "
-        "EVENT_PAYLOAD_KEY_REGISTRY."
+        f"EVENT_TYPE_REGISTRY entry {event_type!r} has no payload-key contract in EVENT_PAYLOAD_KEY_REGISTRY."
     )
 
 
@@ -297,9 +323,7 @@ class TestRepresentativeProductionPaths:
         query_events = _get_production_tool_fn("trw_query_events")
         surface_diff = _get_production_tool_fn("trw_surface_diff")
 
-        other_run = (
-            production_workspace.parent.parent.parent / "task" / "run-456" / "meta"
-        )
+        other_run = production_workspace.parent.parent.parent / "task" / "run-456" / "meta"
         other_run.mkdir(parents=True)
         (other_run / "run_surface_snapshot.yaml").write_text(
             "\n".join(

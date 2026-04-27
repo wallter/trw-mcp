@@ -34,6 +34,7 @@ def _reset_structlog() -> Iterator[None]:
     yield
     structlog.reset_defaults()
 
+
 NUDGE_MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "_nudge_messages.py"
 
 
@@ -66,16 +67,14 @@ def test_no_hardcoded_claude_code_in_nudge_messages_module() -> None:
     """FR02 exit criteria: zero literal 'Claude Code' in _nudge_messages.py."""
     content = NUDGE_MODULE_PATH.read_text(encoding="utf-8")
     assert "Claude Code" not in content, (
-        "Literal 'Claude Code' found in _nudge_messages.py; use "
-        "{client_display_name} template instead."
+        "Literal 'Claude Code' found in _nudge_messages.py; use {client_display_name} template instead."
     )
 
 
 def test_no_hardcoded_claude_config_path_in_nudge_messages_module() -> None:
     content = NUDGE_MODULE_PATH.read_text(encoding="utf-8")
     assert ".claude/" not in content, (
-        "Literal '.claude/' path found in _nudge_messages.py; use "
-        "{client_config_dir} template instead."
+        "Literal '.claude/' path found in _nudge_messages.py; use {client_config_dir} template instead."
     )
 
 

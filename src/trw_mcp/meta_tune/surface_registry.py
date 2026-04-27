@@ -44,12 +44,8 @@ class SurfaceClassification(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     is_control: bool = Field(..., description="True when surface is control (FR-1/FR-8).")
-    surfaces: tuple[Surface, ...] = Field(
-        default=(), description="Surface domains touched by the candidate."
-    )
-    rationale: str | None = Field(
-        default=None, description="Short human-readable reason for the classification."
-    )
+    surfaces: tuple[Surface, ...] = Field(default=(), description="Surface domains touched by the candidate.")
+    rationale: str | None = Field(default=None, description="Short human-readable reason for the classification.")
     disabled: bool = Field(
         default=False,
         description="True when meta_tune.enabled=False caused a fail-safe no-op.",
@@ -91,9 +87,7 @@ def classify_path(path: Path) -> SurfaceClassification:
     # Control first — if any control rule matches, classify as control.
     for pattern, surfaces, reason in _CONTROL_PATTERNS:
         if pattern.search(norm):
-            return SurfaceClassification(
-                is_control=True, surfaces=surfaces, rationale=f"control:{reason}"
-            )
+            return SurfaceClassification(is_control=True, surfaces=surfaces, rationale=f"control:{reason}")
     # Advisory rules.
     matched: list[Surface] = []
     reasons: list[str] = []
@@ -110,20 +104,18 @@ def classify_path(path: Path) -> SurfaceClassification:
             rationale=f"advisory:{','.join(reasons)}",
         )
     # FR-8: fail-safe closed default.
-    return SurfaceClassification(
-        is_control=True, surfaces=(), rationale="untagged_default_control"
-    )
+    return SurfaceClassification(is_control=True, surfaces=(), rationale="untagged_default_control")
 
 
 def _iter_diff_paths(diff: str) -> list[str]:
     """Extract paths referenced in a unified diff's ``+++``/``---`` lines."""
     out: list[str] = []
     for line in diff.splitlines():
-        if line.startswith("+++ ") or line.startswith("--- "):
+        if line.startswith(("+++ ", "--- ")):
             frag = line[4:].strip()
             if frag in ("/dev/null", ""):
                 continue
-            if frag.startswith("a/") or frag.startswith("b/"):
+            if frag.startswith(("a/", "b/")):
                 frag = frag[2:]
             out.append(frag)
     return out

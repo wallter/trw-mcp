@@ -79,8 +79,7 @@ def test_patchable_dependencies_live_on_facade() -> None:
     exported = set(dir(_static_sections))
     missing = _PATCHABLE_DEPENDENCIES - exported
     assert not missing, (
-        "facade must expose patchable dependency attributes for legacy "
-        f"monkeypatch sites; missing: {sorted(missing)}"
+        f"facade must expose patchable dependency attributes for legacy monkeypatch sites; missing: {sorted(missing)}"
     )
 
 

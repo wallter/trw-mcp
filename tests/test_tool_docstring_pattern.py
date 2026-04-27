@@ -207,10 +207,7 @@ async def test_all_registered_tools_discoverable() -> None:
 
 def test_missing_docstring_fails() -> None:
     """Synthetic: a function with no docstring is flagged by the AST walker."""
-    src = (
-        "def _fake_tool():\n"
-        "    pass\n"
-    )
+    src = "def _fake_tool():\n    pass\n"
     tree = ast.parse(src)
     fn = tree.body[0]
     assert isinstance(fn, ast.FunctionDef)

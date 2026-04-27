@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover - windows
     _HAS_RESOURCE = False
 
 try:  # pragma: no cover - optional dep
-    import pyseccomp  # type: ignore[import-not-found]
+    import pyseccomp  # type: ignore[import-untyped, import-not-found, unused-ignore]
 
     _HAS_SECCOMP = True
 except ImportError:  # pragma: no cover - optional dep
@@ -101,10 +101,7 @@ class SandboxRunner:
 
     def _path_is_writable(self, path: Path) -> bool:
         """Return True when ``path`` falls under the writable allowlist."""
-        for root in self.writable_paths:
-            if path == root or root in path.parents:
-                return True
-        return False
+        return any(path == root or root in path.parents for root in self.writable_paths)
 
     def _snapshot_cmd_paths(self, cmd: list[str]) -> dict[Path, float]:
         """Capture pre-run mtimes for absolute paths mentioned in ``cmd``."""
@@ -199,12 +196,12 @@ class SandboxRunner:
                     stderr=probe.stderr.decode("utf-8", errors="replace")[:200],
                 )
                 return cmd
-        except (subprocess.TimeoutExpired, OSError):
+        except (subprocess.TimeoutExpired, OSError) as exc:
             if self.strict:
                 raise MetaTuneSafetyUnavailableError(
                     dependency_id="sandbox",
                     activation_gate_blocked_reason="unshare probe failed unexpectedly",
-                )
+                ) from exc
             return cmd
         return [unshare, "-n", "--", *cmd]
 
@@ -251,7 +248,7 @@ class SandboxRunner:
             stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
             stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
         except FileNotFoundError as exc:
-            logger.error(
+            logger.exception(
                 "sandbox_exec_missing_binary",
                 component="meta_tune.sandbox",
                 op="run",
@@ -320,9 +317,13 @@ class SandboxRunner:
         if not self.writable_paths:
             joined = " ".join(cmd)
             for token in joined.split():
-                if token.startswith("/tmp/") and token.endswith("probe_test_should_fail"):
-                    if Path(token).exists() and str(token) not in writes_outside_tmp:
-                        writes_outside_tmp.append(token)
+                if (
+                    token.startswith("/tmp/")
+                    and token.endswith("probe_test_should_fail")
+                    and Path(token).exists()
+                    and str(token) not in writes_outside_tmp
+                ):
+                    writes_outside_tmp.append(token)
 
         rss_peak_mb = 0.0
         if _HAS_RESOURCE and _resource is not None:

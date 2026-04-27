@@ -37,9 +37,7 @@ _PATHS = [_TEMPLATE, _ARTIFACT]
 
 
 def _load(installer_path: Path):
-    spec = importlib.util.spec_from_file_location(
-        f"install_trw_combined_{installer_path.stem}", installer_path
-    )
+    spec = importlib.util.spec_from_file_location(f"install_trw_combined_{installer_path.stem}", installer_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -47,9 +45,7 @@ def _load(installer_path: Path):
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
-def test_phase_install_packages_uses_combined_find_links(
-    installer_path: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_phase_install_packages_uses_combined_find_links(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """phase_install_packages must install both wheels in ONE pip call with
     --find-links pointing at the wheel directory. Pins the combined-invocation
     contract that fixes the iter-18-replication-v2 structlog-missing regression.
@@ -57,7 +53,19 @@ def test_phase_install_packages_uses_combined_find_links(
     module = _load(installer_path)
     observed_runs: list[list[str]] = []
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, input=None, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        *,
+        capture_output=False,
+        text=False,
+        timeout=None,
+        check=False,
+        input=None,
+        **_kwargs,
+    ):
         observed_runs.append(list(cmd))
         return SimpleNamespace(
             returncode=0,
@@ -79,15 +87,21 @@ def test_phase_install_packages_uses_combined_find_links(
     mcp_whl.write_bytes(b"stub")
 
     module.phase_install_packages(
-        MagicMock(), 2, 4, sys.executable,
-        memory_whl, mcp_whl,
+        MagicMock(),
+        2,
+        4,
+        sys.executable,
+        memory_whl,
+        mcp_whl,
         pip_target=str(pip_target),
     )
 
     # Find the combined invocation: a pip install with --find-links and BOTH wheels.
     combined_runs = [
-        cmd for cmd in observed_runs
-        if "pip" in cmd and "install" in cmd
+        cmd
+        for cmd in observed_runs
+        if "pip" in cmd
+        and "install" in cmd
         and "--find-links" in cmd
         and str(memory_whl) in cmd
         and str(mcp_whl) in cmd
@@ -109,21 +123,30 @@ def test_phase_install_packages_uses_combined_find_links(
     # Importantly, --no-deps should NOT be in this combined call (so pip can
     # fetch transitive external deps like structlog from PyPI)
     assert "--no-deps" not in combined, (
-        "combined install must NOT use --no-deps — structlog and other "
-        "transitive deps must come from PyPI"
+        "combined install must NOT use --no-deps — structlog and other transitive deps must come from PyPI"
     )
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
-def test_combined_install_passes_target_dir(
-    installer_path: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_combined_install_passes_target_dir(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """The combined install must preserve --target so wheels land in the
     pip_target directory, not in site-packages."""
     module = _load(installer_path)
     observed_runs: list[list[str]] = []
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, input=None, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        *,
+        capture_output=False,
+        text=False,
+        timeout=None,
+        check=False,
+        input=None,
+        **_kwargs,
+    ):
         observed_runs.append(list(cmd))
         return SimpleNamespace(
             returncode=0,
@@ -143,15 +166,16 @@ def test_combined_install_passes_target_dir(
     mcp_whl.write_bytes(b"stub")
 
     module.phase_install_packages(
-        MagicMock(), 2, 4, sys.executable,
-        memory_whl, mcp_whl,
+        MagicMock(),
+        2,
+        4,
+        sys.executable,
+        memory_whl,
+        mcp_whl,
         pip_target=str(pip_target),
     )
 
-    combined_runs = [
-        cmd for cmd in observed_runs
-        if "pip" in cmd and "install" in cmd and "--find-links" in cmd
-    ]
+    combined_runs = [cmd for cmd in observed_runs if "pip" in cmd and "install" in cmd and "--find-links" in cmd]
     assert combined_runs
     combined = combined_runs[0]
     target_idx = combined.index("--target")
@@ -169,7 +193,19 @@ def test_combined_install_falls_back_to_sequential_on_failure(
     observed_runs: list[list[str]] = []
     pip_install_calls: list[tuple[str, str]] = []
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, input=None, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        *,
+        capture_output=False,
+        text=False,
+        timeout=None,
+        check=False,
+        input=None,
+        **_kwargs,
+    ):
         observed_runs.append(list(cmd))
         # Fail the combined call (has --find-links), succeed others
         if "--find-links" in list(cmd):
@@ -185,9 +221,7 @@ def test_combined_install_falls_back_to_sequential_on_failure(
     monkeypatch.setattr(
         module,
         "pip_install",
-        lambda python, package, label, ui, target_dir="": (
-            pip_install_calls.append((package, target_dir)) or True
-        ),
+        lambda python, package, label, ui, target_dir="": pip_install_calls.append((package, target_dir)) or True,
     )
 
     pip_target = tmp_path / "trw-pip"
@@ -201,15 +235,17 @@ def test_combined_install_falls_back_to_sequential_on_failure(
     mcp_whl.write_bytes(b"stub")
 
     module.phase_install_packages(
-        MagicMock(), 2, 4, sys.executable,
-        memory_whl, mcp_whl,
+        MagicMock(),
+        2,
+        4,
+        sys.executable,
+        memory_whl,
+        mcp_whl,
         pip_target=str(pip_target),
     )
 
     # Verify the fallback fired (pip_install was called for each wheel)
-    assert len(pip_install_calls) >= 2, (
-        f"expected pip_install fallback for both wheels; got {pip_install_calls}"
-    )
+    assert len(pip_install_calls) >= 2, f"expected pip_install fallback for both wheels; got {pip_install_calls}"
     packages_installed = [call[0] for call in pip_install_calls]
     assert str(memory_whl) in packages_installed
     assert str(mcp_whl) in packages_installed

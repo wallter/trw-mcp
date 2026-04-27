@@ -220,9 +220,7 @@ class TestKillSwitch:
         assert origin_check_enabled() is False
 
     @pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "random"])
-    def test_other_values_leave_enabled(
-        self, monkeypatch: pytest.MonkeyPatch, value: str
-    ) -> None:
+    def test_other_values_leave_enabled(self, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
         monkeypatch.setenv("TRW_MCP_DISABLE_ORIGIN_CHECK", value)
         assert origin_check_enabled() is True
 
@@ -234,9 +232,7 @@ class TestTransportWiring:
     """Verify `_http_transport_kwargs` returns middleware by default and
     drops it when the kill switch is set."""
 
-    def test_wiring_default_includes_middleware(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wiring_default_includes_middleware(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TRW_MCP_DISABLE_ORIGIN_CHECK", raising=False)
         from trw_mcp.server._transport import _http_transport_kwargs
 
@@ -249,9 +245,7 @@ class TestTransportWiring:
         # The Middleware wrapper carries the class it will instantiate
         assert mw_list[0].cls is OriginGuardMiddleware  # type: ignore[attr-defined]
 
-    def test_wiring_empty_when_kill_switch(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wiring_empty_when_kill_switch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_MCP_DISABLE_ORIGIN_CHECK", "1")
         from trw_mcp.server._transport import _http_transport_kwargs
 

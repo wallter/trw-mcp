@@ -86,9 +86,7 @@ def test_direct_dispatch_invokes_promotion_gate_and_writes_live_surface(
 
     original_evaluate = PromotionGate.evaluate
 
-    def _spy_evaluate(
-        self: PromotionGate, proposal: PromotionProposal, **kwargs: Any
-    ) -> object:
+    def _spy_evaluate(self: PromotionGate, proposal: PromotionProposal, **kwargs: Any) -> object:
         calls.append(proposal.proposal_id)
         return original_evaluate(self, proposal, **kwargs)
 
@@ -205,9 +203,7 @@ def test_direct_dispatch_rejects_network_attempt_before_gate_or_live_write(
     assert '"network_attempted":true' in audit_text
 
 
-def test_mcp_tool_path_invokes_same_promotion_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _config(tmp_path)
     reload_config(cfg)
     target = tmp_path / "CLAUDE.md"
@@ -216,9 +212,7 @@ def test_mcp_tool_path_invokes_same_promotion_gate(
 
     original_evaluate = PromotionGate.evaluate
 
-    def _spy_evaluate(
-        self: PromotionGate, proposal: PromotionProposal, **kwargs: Any
-    ) -> object:
+    def _spy_evaluate(self: PromotionGate, proposal: PromotionProposal, **kwargs: Any) -> object:
         calls.append(proposal.proposal_id)
         return original_evaluate(self, proposal, **kwargs)
 

@@ -32,7 +32,7 @@ def _resolve_security_anchor(start: Path | None = None) -> Path:
             return parent
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 — git is on PATH; partial-path is intentional
             check=True,
             capture_output=True,
             text=True,
@@ -65,9 +65,7 @@ def init_security(config: MCPSecurityConfig | None = None) -> MCPSecurityMiddlew
         raise MCPSecurityConfigError(f"MCP allowlist not found: {canonical_path}")
     overlay_path = _resolve_repo_anchored_path(resolved.operator_overlay_path)
     operator_key_path = (
-        _resolve_repo_anchored_path(resolved.operator_public_key)
-        if resolved.operator_public_key
-        else None
+        _resolve_repo_anchored_path(resolved.operator_public_key) if resolved.operator_public_key else None
     )
     registry = MCPRegistry.load(
         canonical_path=canonical_path,

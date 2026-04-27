@@ -169,7 +169,7 @@ def _learning_to_memory_entry(
                 if file_val.startswith("/"):
                     anchor_data["file"] = file_val.lstrip("/")
                 anchor_objects.append(Anchor.model_validate(anchor_data))
-            except Exception:  # noqa: PERF203  # justified: fail-open, skip invalid anchors
+            except Exception:  # justified: fail-open, skip invalid anchors
                 logger.debug("invalid_anchor_skipped", anchor=a, exc_info=True)
 
     return MemoryEntry(

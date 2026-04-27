@@ -403,7 +403,7 @@ class TestGeminiMCPConfig:
         assert "trw" in data["mcpServers"]
         # PRD-FIX-072-FR02: command is now an absolute path via shutil.which
         cmd = data["mcpServers"]["trw"]["command"]
-        assert cmd.endswith("trw-mcp") or cmd.endswith("python"), f"Unexpected command: {cmd}"
+        assert cmd.endswith(("trw-mcp", "python")), f"Unexpected command: {cmd}"
         args = data["mcpServers"]["trw"]["args"]
         # Args are either ["serve"] (direct) or ["-m", "trw_mcp", "serve"] (module fallback)
         assert "serve" in args

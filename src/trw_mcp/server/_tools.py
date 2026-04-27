@@ -98,8 +98,8 @@ def _register_tools() -> None:
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
-    from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
+    from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.query_tools import register_query_tools
     from trw_mcp.tools.requirements import register_requirements_tools
@@ -179,9 +179,7 @@ def _apply_security_consult_wrapping() -> None:
             fn = getattr(tool_obj, "fn", None) or getattr(tool_obj, "func", None)
             if not callable(fn) or getattr(fn, "__trw_tool_call_wrapped__", False):
                 continue
-            wrapped = wrap_tool(
-                fn, tool_name=str(name), security_consult=consult_mcp_security
-            )
+            wrapped = wrap_tool(fn, tool_name=str(name), security_consult=consult_mcp_security)
             if hasattr(tool_obj, "fn"):
                 tool_obj.fn = wrapped
                 rewrapped += 1

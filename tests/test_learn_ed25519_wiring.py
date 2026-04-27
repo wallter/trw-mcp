@@ -70,9 +70,10 @@ def test_execute_learn_appends_signed_provenance_record(tmp_path: Path) -> None:
 
 
 def test_provenance_chain_verifies_across_two_writes(tmp_path: Path) -> None:
-    from trw_mcp.tools._learn_impl import execute_learn
     from trw_memory.security.keys import get_or_create_ed25519_key
     from trw_memory.security.provenance import verify_signed
+
+    from trw_mcp.tools._learn_impl import execute_learn
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
@@ -104,9 +105,7 @@ def test_provenance_chain_verifies_across_two_writes(tmp_path: Path) -> None:
     assert broken is None, f"chain should verify; first broken link: {broken}"
 
 
-def test_provenance_wrapper_is_fail_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_provenance_wrapper_is_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Provenance is advisory — a failure must not raise."""
     from trw_mcp.tools._learn_impl import _append_provenance_signed
 
@@ -117,9 +116,7 @@ def test_provenance_wrapper_is_fail_open(
     def boom(_dir: Path) -> Any:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "trw_memory.security.keys.get_or_create_ed25519_key", boom
-    )
+    monkeypatch.setattr("trw_memory.security.keys.get_or_create_ed25519_key", boom)
 
     # Must not raise
     _append_provenance_signed(

@@ -61,7 +61,7 @@ def _iter_entries(entries_dir: Path) -> list[LearningEntryDict]:
     for f in iter_yaml_entry_files(entries_dir):
         try:
             entries.append(cast("LearningEntryDict", reader.read_yaml(f)))
-        except Exception:  # per-item error handling: fail-open, skip malformed YAML entries  # noqa: PERF203, S112
+        except Exception:  # per-item error handling: fail-open, skip malformed YAML entries  # noqa: S112
             continue
     return entries
 

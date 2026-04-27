@@ -102,9 +102,7 @@ def test_lint_scans_both_mirror_trees() -> None:
     """FR05: both .claude/ and trw-mcp/src/trw_mcp/data/ are inspected."""
     files = _iter_scan_files()
     assert any(".claude/agents" in str(p) for p in files), "missing .claude/agents/ in scan set"
-    assert any(
-        "trw_mcp/data/agents" in str(p) for p in files
-    ), "missing bundled trw-mcp data/agents/ in scan set"
+    assert any("trw_mcp/data/agents" in str(p) for p in files), "missing bundled trw-mcp data/agents/ in scan set"
 
 
 # ---------------------------------------------------------------------------

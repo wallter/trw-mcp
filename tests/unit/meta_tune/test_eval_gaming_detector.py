@@ -14,10 +14,7 @@ from trw_mcp.meta_tune.eval_gaming_detector import (
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._sub_models import MetaTuneConfig
 
-
-FIXTURE_DIR = (
-    Path(__file__).resolve().parents[2] / "fixtures" / "meta_tune" / "dgm_attacks"
-)
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "meta_tune" / "dgm_attacks"
 
 
 def _cfg_enabled() -> TRWConfig:
@@ -47,21 +44,13 @@ def test_detector_catches_all_fixtures(fixture: dict[str, object]) -> None:
         outcome_trace=trace,
         _config=_cfg_enabled(),
     )
-    assert verdict.rejected is True, (
-        f"Fixture {fixture['name']} not caught — verdict={verdict}"
-    )
+    assert verdict.rejected is True, f"Fixture {fixture['name']} not caught — verdict={verdict}"
     assert len(verdict.flags) >= 1
 
 
 def test_detector_allows_clean_proposal() -> None:
     """A genuine advisory proposal with a varied trace and no tells is accepted."""
-    diff = (
-        "--- a/CLAUDE.md\n"
-        "+++ b/CLAUDE.md\n"
-        "@@ -5,3 +5,4 @@\n"
-        " Some advice.\n"
-        "+Add a concrete example.\n"
-    )
+    diff = "--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -5,3 +5,4 @@\n Some advice.\n+Add a concrete example.\n"
     trace = [
         {"task": "t1", "score": 0.42},
         {"task": "t2", "score": 0.55},
@@ -81,9 +70,7 @@ def test_detector_allows_clean_proposal() -> None:
 
 def test_detector_noop_when_disabled() -> None:
     """FR-7/FR-13: when kill-switch off, detector returns fail-safe reject."""
-    v = detect_eval_gaming(
-        diff="--- a/x\n+++ b/x\n", target_path="x", outcome_trace=[]
-    )
+    v = detect_eval_gaming(diff="--- a/x\n+++ b/x\n", target_path="x", outcome_trace=[])
     assert v.disabled is True
     assert v.rejected is True
 
@@ -93,6 +80,4 @@ def test_eval_gaming_verdict_model_extra_forbid() -> None:
 
     EvalGamingVerdict(rejected=False, flags=(), disabled=False)
     with pytest.raises(ValidationError):
-        EvalGamingVerdict.model_validate(
-            {"rejected": False, "flags": [], "disabled": False, "extra": 1}
-        )
+        EvalGamingVerdict.model_validate({"rejected": False, "flags": [], "disabled": False, "extra": 1})

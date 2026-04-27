@@ -50,7 +50,7 @@ def dispatch_for_profile(
     target_dir: str | None,
     config: TRWConfig,
     reader: FileStateReader,
-    llm: "LLMClient",
+    llm: LLMClient,
     client: str = "auto",
 ) -> ClaudeMdSyncResultDict:
     """Dispatch a CLAUDE.md / AGENTS.md sync for the active profile.

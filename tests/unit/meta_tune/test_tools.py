@@ -62,9 +62,7 @@ def test_rollback_tool_restores_target_file(tmp_path: Path) -> None:
     assert live_file.read_text() == "original"
 
 
-def test_propose_tool_dispatches_to_real_entrypoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_propose_tool_dispatches_to_real_entrypoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from trw_mcp.models.config import reload_config
     from trw_mcp.models.config._main import TRWConfig
     from trw_mcp.models.config._sub_models import MetaTuneConfig

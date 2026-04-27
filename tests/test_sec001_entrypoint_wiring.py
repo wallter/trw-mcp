@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from trw_mcp.tools.learning import register_learning_tools
 from trw_mcp.state.memory_adapter import recall_learnings, store_learning
+from trw_mcp.tools.learning import register_learning_tools
 
 
 def test_mcp_store_and_recall_apply_security_live_path(tmp_path: Path, monkeypatch) -> None:

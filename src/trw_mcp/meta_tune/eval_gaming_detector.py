@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import math
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,11 +68,11 @@ _SELF_PRAISE_TOKENS: tuple[str, ...] = (
 
 def _iter_diff_paths(diff: str) -> Iterable[str]:
     for line in diff.splitlines():
-        if line.startswith("+++ ") or line.startswith("--- "):
+        if line.startswith(("+++ ", "--- ")):
             frag = line[4:].strip()
             if frag in ("/dev/null", ""):
                 continue
-            if frag.startswith("a/") or frag.startswith("b/"):
+            if frag.startswith(("a/", "b/")):
                 frag = frag[2:]
             yield frag
 
@@ -86,9 +86,7 @@ def _touches_eval_artifact(diff: str, target_path: str) -> bool:
 
 
 def _added_lines(diff: str) -> str:
-    return "\n".join(
-        ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")
-    )
+    return "\n".join(ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
 
 
 def _self_praise_score(diff: str) -> int:
@@ -160,9 +158,7 @@ def detect_eval_gaming(
             outcome="noop",
             reason="kill_switch_off",
         )
-        return EvalGamingVerdict(
-            rejected=True, flags=("meta_tune_disabled",), disabled=True
-        )
+        return EvalGamingVerdict(rejected=True, flags=("meta_tune_disabled",), disabled=True)
 
     flags: list[str] = []
     if _touches_eval_artifact(diff, target_path):

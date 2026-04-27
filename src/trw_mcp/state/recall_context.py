@@ -91,7 +91,7 @@ def build_recall_context(
         )
         if git_result.returncode == 0:
             modified_files = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
-    except Exception:  # noqa: S110  # justified: fail-open, git probing is best-effort
+    except Exception:  # justified: fail-open, git probing is best-effort
         pass
 
     inferred_domains = infer_domains(file_paths=modified_files, query=query)
@@ -106,7 +106,7 @@ def build_recall_context(
         profile = config.client_profile
         client_profile = profile.client_id if profile else ""
         model_family = getattr(config, "model_family", "") or ""
-    except Exception:  # noqa: S110  # justified: fail-open, config auto-detection is best-effort
+    except Exception:  # justified: fail-open, config auto-detection is best-effort
         pass
 
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
@@ -125,7 +125,7 @@ def build_recall_context(
                 raw_ids = kr_data.get("learning_ids", [])
                 if isinstance(raw_ids, list):
                     prd_knowledge_ids = {str(lid) for lid in raw_ids}
-    except Exception:  # noqa: S110  # justified: fail-open, PRD knowledge ID loading is best-effort
+    except Exception:  # justified: fail-open, PRD knowledge ID loading is best-effort
         pass
 
     intel_cache = _load_recall_intel_cache(trw_dir)

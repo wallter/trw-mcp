@@ -19,15 +19,7 @@ from pathlib import Path
 
 import pytest
 
-_GATE_SCRIPT: Path = (
-    Path(__file__).parent.parent
-    / "src"
-    / "trw_mcp"
-    / "data"
-    / "hooks"
-    / "cursor"
-    / "_nudge_gate.py"
-)
+_GATE_SCRIPT: Path = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor" / "_nudge_gate.py"
 
 
 def _invoke_gate(
@@ -111,9 +103,7 @@ def test_cursor_hook_nudge_gate_dispatch(profile_id: str, tmp_path: Path) -> Non
     # Contract: the output is either the rotated message or {} (suppressed).
     # With no prior state file and no matching tool in the hook log, the
     # gate MUST emit.
-    assert "followup_message" in first, (
-        f"{profile_id}: expected followup_message in hook output, got {first!r}"
-    )
+    assert "followup_message" in first, f"{profile_id}: expected followup_message in hook output, got {first!r}"
     assert first["followup_message"] in messages
 
     # --- second call: within cooldown window => suppressed ---
@@ -126,22 +116,16 @@ def test_cursor_hook_nudge_gate_dispatch(profile_id: str, tmp_path: Path) -> Non
         response_key="followup_message",
         messages=messages,
     )
-    assert second == {}, (
-        f"{profile_id}: second call within cooldown should be suppressed, got {second!r}"
-    )
+    assert second == {}, f"{profile_id}: second call within cooldown should be suppressed, got {second!r}"
 
     # Confirm state file was written to the isolated CURSOR_PROJECT_DIR,
     # not to the real project — proves env isolation.
     state_file = tmp_path / ".trw" / "logs" / "cursor-nudge-state.jsonl"
-    assert state_file.is_file(), (
-        f"{profile_id}: nudge-gate should persist emission state at {state_file}"
-    )
+    assert state_file.is_file(), f"{profile_id}: nudge-gate should persist emission state at {state_file}"
 
 
 @pytest.mark.parametrize("profile_id", ["cursor-ide", "cursor-cli"])
-def test_cursor_hook_nudge_gate_empty_messages_suppressed(
-    profile_id: str, tmp_path: Path
-) -> None:
+def test_cursor_hook_nudge_gate_empty_messages_suppressed(profile_id: str, tmp_path: Path) -> None:
     """FR12 corollary: when messages is an empty list, the gate must print
     ``{}`` regardless of profile — nothing to rotate through.
     """
@@ -156,6 +140,4 @@ def test_cursor_hook_nudge_gate_empty_messages_suppressed(
         response_key="followup_message",
         messages=[],
     )
-    assert result == {}, (
-        f"{profile_id}: empty messages must suppress emission, got {result!r}"
-    )
+    assert result == {}, f"{profile_id}: empty messages must suppress emission, got {result!r}"

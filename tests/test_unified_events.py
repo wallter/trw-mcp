@@ -6,8 +6,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.telemetry.event_base import (
     CeremonyEvent,
     HPOSessionStartEvent,
@@ -112,9 +110,7 @@ class TestEmitConvenience:
         event = ToolCallEvent(session_id="s1")
         assert emit(event, run_dir=None, fallback_dir=None) is False
 
-    def test_emit_projects_mcp_security_events_to_legacy_tool_call_surface(
-        self, tmp_path: Path
-    ) -> None:
+    def test_emit_projects_mcp_security_events_to_legacy_tool_call_surface(self, tmp_path: Path) -> None:
         event = MCPSecurityEvent(
             session_id="s1",
             payload={"decision": "shadow_anomaly", "tool": "read_file", "server": "filesystem"},

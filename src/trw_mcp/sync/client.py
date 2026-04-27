@@ -106,12 +106,16 @@ class BackendSyncClient:
         # Primary puller uses the first target (intel pull is single-source for now).
         primary_url = self._targets[0].url if self._targets else ""
         primary_key = self._targets[0].api_key if self._targets else ""
-        self._pusher = self._pushers.get(self._targets[0].label) if self._targets else SyncPusher(
-            backend_url=primary_url,
-            api_key=primary_key,
-            batch_size=config.sync_push_batch_size,
-            timeout=config.sync_push_timeout_seconds,
-            client_id=self._client_id,
+        self._pusher = (
+            self._pushers.get(self._targets[0].label)
+            if self._targets
+            else SyncPusher(
+                backend_url=primary_url,
+                api_key=primary_key,
+                batch_size=config.sync_push_batch_size,
+                timeout=config.sync_push_timeout_seconds,
+                client_id=self._client_id,
+            )
         )
         self._puller = SyncPuller(
             backend_url=primary_url,
@@ -142,7 +146,7 @@ class BackendSyncClient:
                 await asyncio.sleep(self._next_sleep_seconds)
                 force = self._consume_next_cycle_force()
                 await self._run_one_cycle(force=force)
-            except asyncio.CancelledError:  # noqa: PERF203
+            except asyncio.CancelledError:
                 logger.info("sync_loop_cancelled", client_id=self._client_id)
                 break
             except Exception:  # justified: fail-open, background sync loop errors must not crash the daemon
@@ -214,16 +218,12 @@ class BackendSyncClient:
                     # Legacy behaviour reported the backend-side failure count as entry count.
                     self._coordinator.record_sync_failure(f"push failed: {failed_count} entries")
                 else:
-                    self._coordinator.record_sync_failure(
-                        f"all {len(self._targets)} targets failed"
-                    )
+                    self._coordinator.record_sync_failure(f"all {len(self._targets)} targets failed")
             if pending_outcomes and any_target_succeeded:
                 self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
                 # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
                 # next pusher pass skips already-synced runs.
-                successful_labels = ",".join(
-                    lbl for lbl, rep in report.items() if rep.get("error") is None
-                )
+                successful_labels = ",".join(lbl for lbl, rep in report.items() if rep.get("error") is None)
                 for item in pending_outcomes:
                     if item.run_dir is None or not item.sync_hash:
                         continue
@@ -304,7 +304,7 @@ class BackendSyncClient:
 
     def _fanout_push(
         self,
-        dirty: "list[MemoryEntry]",
+        dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
         """Push dirty entries + outcomes to every target with per-target isolation.
@@ -328,7 +328,12 @@ class BackendSyncClient:
                     error=str(exc)[:200],
                     exc_info=True,
                 )
-                report[target.label] = {"pushed": 0, "skipped": 0, "failed": 1, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+                report[target.label] = {
+                    "pushed": 0,
+                    "skipped": 0,
+                    "failed": 1,
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                }
                 continue
             report[target.label] = {
                 "pushed": result.pushed,
@@ -345,7 +350,7 @@ class BackendSyncClient:
     def _push_to_target(
         self,
         target: SyncTarget,
-        dirty: "list[MemoryEntry]",
+        dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> PushResult:
         """Push learnings + outcomes to a single target. Raises on transport failure."""

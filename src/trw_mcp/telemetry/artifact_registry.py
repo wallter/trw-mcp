@@ -31,12 +31,13 @@ Design invariants (FR-1, FR-2):
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from functools import lru_cache
 from importlib import metadata as _metadata
 from importlib.resources import files as _pkg_files
 from pathlib import Path
-from typing import Final, Iterable
+from typing import Final
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -231,7 +232,9 @@ def _framework_version() -> str:
         return _FRAMEWORK_VERSION_FALLBACK
 
 
-def _artifacts_snapshot_id(artifacts: Iterable[SurfaceArtifact], *, trw_mcp_version: str, framework_version: str) -> str:
+def _artifacts_snapshot_id(
+    artifacts: Iterable[SurfaceArtifact], *, trw_mcp_version: str, framework_version: str
+) -> str:
     """Compute ``snapshot_id`` from sorted artifact records + version rollup.
 
     Sort key is ``(surface_id, source_path)`` so content_hash changes perturb
@@ -274,9 +277,7 @@ def _resolve_repo_root() -> Path | None:
     return None
 
 
-def _discover_repo_artifacts(
-    repo_root: Path | None, *, version: str, now: datetime
-) -> list[SurfaceArtifact]:
+def _discover_repo_artifacts(repo_root: Path | None, *, version: str, now: datetime) -> list[SurfaceArtifact]:
     """Discover repo-root governing artifacts (CLAUDE.md, FRAMEWORK.md, sub-CLAUDE.md)."""
     if repo_root is None or not repo_root.exists():
         return []
@@ -495,9 +496,7 @@ class SurfaceRegistry(BaseModel):
             trw_mcp_version=self.trw_mcp_version,
             framework_version=self.framework_version,
             generated_at=self.generated_at,
-            artifacts=tuple(
-                sorted(self.artifacts, key=lambda a: (a.surface_id, a.source_path))
-            ),
+            artifacts=tuple(sorted(self.artifacts, key=lambda a: (a.surface_id, a.source_path))),
         )
 
     def component_rollup(self) -> dict[str, ComponentFingerprint]:

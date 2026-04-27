@@ -198,13 +198,8 @@ def perform_session_recalls(
         if bypass_days > 0:
             import datetime as _dt
 
-            bypass_min = float(
-                getattr(config, "session_start_recent_bypass_min_impact", 0.3)
-            )
-            cutoff = (
-                _dt.datetime.now(_dt.timezone.utc).date()
-                - _dt.timedelta(days=bypass_days)
-            ).isoformat()
+            bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
+            cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
             fresh = adapter_recall(
                 trw_dir,
                 query="*",
@@ -214,10 +209,7 @@ def perform_session_recalls(
             )
             seen_ids = {str(e.get("id", "")) for e in baseline}
             fresh_additions = [
-                e
-                for e in fresh
-                if str(e.get("created", "")) >= cutoff
-                and str(e.get("id", "")) not in seen_ids
+                e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
             ]
             # Fresh entries are highest-priority context for the current session —
             # surface them before the high-impact baseline.

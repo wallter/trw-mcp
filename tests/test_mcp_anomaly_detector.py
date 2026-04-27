@@ -87,9 +87,7 @@ def test_silent_on_normal_traffic(tmp_path: Path) -> None:
         historical_rates={("trw", "trw_recall"): [5.0, 5.0, 5.0, 5.0, 5.0, 5.0]},
     )
     now = datetime.now(tz=timezone.utc)
-    fired = det.observe(
-        AnomalyObservation(ts=now, server="trw", tool="trw_recall", session_id="s")
-    )
+    fired = det.observe(AnomalyObservation(ts=now, server="trw", tool="trw_recall", session_id="s"))
     assert "rate_spike" not in fired
 
 

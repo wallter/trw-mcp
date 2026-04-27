@@ -44,21 +44,13 @@ def apply_scope(
     """Validate that a dispatch stays within its authorized phase/scope."""
 
     if scope.server_name != server_name:
-        raise CapabilityScopeError(
-            f"tool {tool_name!r} is not authorized for server {server_name!r}"
-        )
+        raise CapabilityScopeError(f"tool {tool_name!r} is not authorized for server {server_name!r}")
     if scope.tool_name != tool_name:
-        raise CapabilityScopeError(
-            f"tool {tool_name!r} does not match scope {scope.tool_name!r}"
-        )
+        raise CapabilityScopeError(f"tool {tool_name!r} does not match scope {scope.tool_name!r}")
     if current_phase is not None and scope.allowed_phases and current_phase not in scope.allowed_phases:
-        raise CapabilityScopeError(
-            f"tool {tool_name!r} is not allowed during phase {current_phase!r}"
-        )
+        raise CapabilityScopeError(f"tool {tool_name!r} is not allowed during phase {current_phase!r}")
     if requested_scope is not None and scope.allowed_scopes and requested_scope not in scope.allowed_scopes:
-        raise CapabilityScopeError(
-            f"tool {tool_name!r} is not allowed for scope {requested_scope!r}"
-        )
+        raise CapabilityScopeError(f"tool {tool_name!r} is not allowed for scope {requested_scope!r}")
 
 
 __all__ = [

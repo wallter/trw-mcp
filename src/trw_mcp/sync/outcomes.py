@@ -221,9 +221,7 @@ def load_pending_outcomes(
             run_id = run_dir.name
             exposure = metrics.get("learning_exposure") or {}
             legacy_no_ids = not (
-                isinstance(exposure, dict)
-                and isinstance(exposure.get("ids"), list)
-                and exposure["ids"]
+                isinstance(exposure, dict) and isinstance(exposure.get("ids"), list) and exposure["ids"]
             )
 
             sync_hash = _compute_sync_hash(run_id, metrics)

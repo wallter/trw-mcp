@@ -21,9 +21,9 @@ can replay it across historical sessions for trend analysis.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -322,7 +322,7 @@ def load_and_score_run(
             cls = EVENT_TYPE_REGISTRY.get(et, ObserverEvent)
             try:
                 ev = cls.model_validate(record)
-            except Exception:  # justified: scan-resilience, drift between schema + persisted rows
+            except Exception:  # noqa: S112 — scan-resilience: drift between schema + persisted rows is expected
                 continue
             events.append(ev)
 
@@ -332,9 +332,9 @@ def load_and_score_run(
 
 
 __all__ = [
-    "ClearScore",
     "DEFAULT_COST_P95_USD",
     "DEFAULT_LATENCY_P95_MS",
+    "ClearScore",
     "compute",
     "load_and_score_run",
 ]

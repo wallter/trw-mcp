@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Literal
 
 import structlog
 
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts._ceremony import ClaudeMdSyncResultDict, ReviewMdResultDict
 
@@ -37,11 +36,6 @@ from trw_mcp.state.claude_md._agents_md import (
 )
 from trw_mcp.state.claude_md._agents_md import (
     _sync_instruction_targets as _sync_instruction_targets,
-)
-from trw_mcp.state.claude_md._parser import (
-    load_claude_md_template,
-    merge_trw_section,
-    render_template,
 )
 from trw_mcp.state.claude_md._promotion import (
     collect_context_data as collect_context_data,
@@ -71,13 +65,6 @@ from trw_mcp.state.claude_md._review_md import (
 )
 from trw_mcp.state.claude_md._review_md import (
     recall_learnings as recall_learnings,
-)
-from trw_mcp.state.claude_md._static_sections import (
-    render_ceremony_quick_ref,
-    render_closing_reminder,
-    render_imperative_opener,
-    render_memory_harmonization,
-    render_shared_learnings,
 )
 from trw_mcp.state.persistence import FileStateReader
 
@@ -323,7 +310,7 @@ def generate_review_md(
 # ``_profile_dispatcher.py`` so the per-profile routing logic lives next to
 # the dispatch helper. Re-exported here to preserve the legacy import path
 # used by ``tools/learning.py`` and assorted tests.
-from trw_mcp.state.claude_md._profile_dispatcher import (
+from trw_mcp.state.claude_md._profile_dispatcher import (  # noqa: E402 — late import avoids circular dep with _profile_dispatcher
     dispatch_for_profile as _dispatch_for_profile,
 )
 
@@ -333,7 +320,7 @@ def execute_claude_md_sync(
     target_dir: str | None,
     config: TRWConfig,
     reader: FileStateReader,
-    llm: "LLMClient",
+    llm: LLMClient,
     client: str = "auto",
 ) -> ClaudeMdSyncResultDict:
     """Thin facade over ``dispatch_for_profile`` — see that function for docs."""

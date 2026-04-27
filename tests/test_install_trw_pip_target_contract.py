@@ -45,7 +45,19 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
         lambda python, package, label, ui, target_dir="": pip_calls.append((package, target_dir)) or True,
     )
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, input=None, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        *,
+        capture_output=False,
+        text=False,
+        timeout=None,
+        check=False,
+        input=None,
+        **_kwargs,
+    ):
         run_calls.append({"cmd": cmd, "env": dict(env or {})})
         # The 2026-04-21 MCP preflight probe passes capture_output=True and
         # inspects stdout/stderr; return a response that contains
@@ -129,7 +141,18 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
     )
     monkeypatch.setenv("PYTHONPATH", "preexisting-path")
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, *, capture_output=False, text=False, timeout=None, check=False, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        *,
+        capture_output=False,
+        text=False,
+        timeout=None,
+        check=False,
+        **_kwargs,
+    ):
         run_calls.append({"cmd": cmd, "env": dict(env or {})})
         return SimpleNamespace(returncode=0)
 
@@ -155,12 +178,8 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
             for arg in cmd:
                 if str(arg).endswith(".whl"):
                     installed_wheels.append(str(arg))
-    assert str(memory_whl) in installed_wheels, (
-        f"expected memory wheel install; got {installed_wheels}"
-    )
-    assert str(mcp_whl) in installed_wheels, (
-        f"expected mcp wheel install; got {installed_wheels}"
-    )
+    assert str(memory_whl) in installed_wheels, f"expected memory wheel install; got {installed_wheels}"
+    assert str(mcp_whl) in installed_wheels, f"expected mcp wheel install; got {installed_wheels}"
     assert not wrapper_path.exists()
     # Filter run_calls to just the import-verification calls.
     verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
@@ -178,7 +197,18 @@ def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch)
     ui = MagicMock()
     calls: list[dict[str, object]] = []
 
-    def fake_run(cmd, env=None, stdout=None, stderr=None, timeout=None, *, capture_output=False, text=False, check=False, **_kwargs):
+    def fake_run(
+        cmd,
+        env=None,
+        stdout=None,
+        stderr=None,
+        timeout=None,
+        *,
+        capture_output=False,
+        text=False,
+        check=False,
+        **_kwargs,
+    ):
         calls.append({"cmd": cmd, "env": dict(env or {}), "timeout": timeout})
         return SimpleNamespace(returncode=0)
 
@@ -519,7 +549,7 @@ def test_phase_project_setup_prefers_pip_target_wrapper_for_multi_client_setup(
 
     run_calls: list[list[str]] = []
 
-    monkeypatch.setattr(module, "_detect_installed_clis", lambda: [])
+    monkeypatch.setattr(module, "_detect_installed_clis", list)
     monkeypatch.setattr(module, "_detect_project_ides", lambda _path: ["cursor-ide", "codex"])
     monkeypatch.setattr(module, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
 

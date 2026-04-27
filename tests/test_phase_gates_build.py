@@ -605,10 +605,10 @@ class TestGetChangedFiles:
             call_count += 1
             if call_count == 1:  # git diff HEAD
                 return subprocess_mod.CompletedProcess(cmd, 0, stdout="foo.py\nbar.py\n")
-            elif call_count == 2:  # git diff --cached
+            if call_count == 2:  # git diff --cached
                 return subprocess_mod.CompletedProcess(cmd, 0, stdout="bar.py\nbaz.py\n")
-            else:  # git ls-files --others
-                return subprocess_mod.CompletedProcess(cmd, 0, stdout="qux.py\n")
+            # git ls-files --others
+            return subprocess_mod.CompletedProcess(cmd, 0, stdout="qux.py\n")
 
         monkeypatch.setattr(subprocess_mod, "run", fake_run)
         result = pgb._get_changed_files(tmp_path)

@@ -115,12 +115,8 @@ class TestToolDocstrings:
     def test_trw_claude_md_sync_alias_still_registered(self) -> None:
         """The deprecated trw_claude_md_sync alias must remain registered for backward compat."""
         tools = _get_tools()
-        assert "trw_claude_md_sync" in tools, (
-            "trw_claude_md_sync alias must remain for backward compatibility"
-        )
-        assert "trw_instructions_sync" in tools, (
-            "canonical name trw_instructions_sync must be registered"
-        )
+        assert "trw_claude_md_sync" in tools, "trw_claude_md_sync alias must remain for backward compatibility"
+        assert "trw_instructions_sync" in tools, "canonical name trw_instructions_sync must be registered"
 
 
 class TestTrwLearn:

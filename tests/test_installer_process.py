@@ -148,7 +148,7 @@ def _normalize_ide_targets(ides: list[str]) -> list[str]:
         return _SUPPORTED_IDES.copy()
     invalid = [ide for ide in normalized if ide not in _SUPPORTED_IDES]
     if invalid:
-        supported = ", ".join(_SUPPORTED_IDES + ["all"])
+        supported = ", ".join([*_SUPPORTED_IDES, "all"])
         raise ValueError(f"Unknown --ide value(s): {', '.join(invalid)}. Supported values: {supported}")
     return list(dict.fromkeys(normalized))
 

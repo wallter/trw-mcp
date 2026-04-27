@@ -63,7 +63,7 @@ def _artifact_from_dict(payload: dict[str, Any]) -> SurfaceArtifact:
         discovered_at = datetime.fromisoformat(raw_ts)
     else:
         msg = f"artifact.discovered_at must be datetime or ISO string, got {type(raw_ts).__name__}"
-        raise ValueError(msg)
+        raise TypeError(msg)
     return SurfaceArtifact(
         surface_id=str(payload["surface_id"]),
         content_hash=str(payload["content_hash"]),
@@ -99,18 +99,18 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
         msg = f"run_surface_snapshot payload must be a mapping, got {type(data).__name__}"
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     artifacts_raw = data.get("artifacts", [])
     if not isinstance(artifacts_raw, list):
         msg = "run_surface_snapshot.artifacts must be a list"
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     artifacts: list[SurfaceArtifact] = []
     for idx, entry in enumerate(artifacts_raw):
         if not isinstance(entry, dict):
             msg = f"run_surface_snapshot.artifacts[{idx}] must be a mapping"
-            raise ValueError(msg)
+            raise TypeError(msg)
         artifacts.append(_artifact_from_dict(entry))
 
     raw_generated = data.get("generated_at")
@@ -120,7 +120,7 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
         generated_at = datetime.fromisoformat(raw_generated)
     else:
         msg = f"run_surface_snapshot.generated_at must be a datetime or ISO string, got {type(raw_generated).__name__}"
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     return SurfaceSnapshot(
         snapshot_id=str(data["snapshot_id"]),

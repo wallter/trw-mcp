@@ -217,27 +217,26 @@ def surface_diff(
     removed = sorted(ids_a - ids_b)
     changed = sorted(sid for sid in (ids_a & ids_b) if arts_a[sid] != arts_b[sid])
 
-    changes: list[SurfaceChange] = []
-    for surface_id in added:
-        changes.append(
-            {
-                "surface_id": surface_id,
-                "change_type": "added",
-                "before_hash": None,
-                "after_hash": arts_b[surface_id],
-                "content_diff_summary": f"surface added with content_hash {arts_b[surface_id]}",
-            }
-        )
-    for surface_id in removed:
-        changes.append(
-            {
-                "surface_id": surface_id,
-                "change_type": "removed",
-                "before_hash": arts_a[surface_id],
-                "after_hash": None,
-                "content_diff_summary": f"surface removed; prior content_hash was {arts_a[surface_id]}",
-            }
-        )
+    changes: list[SurfaceChange] = [
+        {
+            "surface_id": surface_id,
+            "change_type": "added",
+            "before_hash": None,
+            "after_hash": arts_b[surface_id],
+            "content_diff_summary": f"surface added with content_hash {arts_b[surface_id]}",
+        }
+        for surface_id in added
+    ]
+    changes.extend(
+        {
+            "surface_id": surface_id,
+            "change_type": "removed",
+            "before_hash": arts_a[surface_id],
+            "after_hash": None,
+            "content_diff_summary": f"surface removed; prior content_hash was {arts_a[surface_id]}",
+        }
+        for surface_id in removed
+    )
     for surface_id in changed:
         before_hash = arts_a[surface_id]
         after_hash = arts_b[surface_id]

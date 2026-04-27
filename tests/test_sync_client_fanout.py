@@ -217,7 +217,9 @@ async def test_429_on_one_target_does_not_stop_others(tmp_path) -> None:
 
     primary = MagicMock()
     primary.push_learnings.side_effect = httpx.HTTPStatusError(
-        "429", request=MagicMock(), response=MagicMock(status_code=429),
+        "429",
+        request=MagicMock(),
+        response=MagicMock(status_code=429),
     )
     client._pusher = primary
 

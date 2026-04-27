@@ -62,9 +62,7 @@ class TestMigrateNudgeHistory:
     def test_count_mode_identifies_pathological_entries(self, tmp_path: Path) -> None:
         """--mode count reports the pathological count and does not mutate."""
         state_path = tmp_path / "ceremony-state.json"
-        history = {
-            f"L-bad-{i}": _pathological_entry() for i in range(3)
-        }
+        history = {f"L-bad-{i}": _pathological_entry() for i in range(3)}
         history["L-ok-1"] = _healthy_entry(turn=7)
         history["L-ok-2"] = _healthy_entry(turn=12)
         _write_state(state_path, history)

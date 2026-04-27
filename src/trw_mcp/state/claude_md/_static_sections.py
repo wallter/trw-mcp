@@ -26,7 +26,6 @@ from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_
 from trw_mcp.state.claude_md.sections import (
     _analytics_cache as _analytics_cache,
 )
-from trw_mcp.state.persistence import FileStateReader as FileStateReader
 from trw_mcp.state.claude_md.sections import (
     _format_learning_session_claim as _format_learning_session_claim,
 )
@@ -93,6 +92,7 @@ from trw_mcp.state.claude_md.sections import (
 from trw_mcp.state.claude_md.sections import (
     render_shared_learnings as render_shared_learnings,
 )
+from trw_mcp.state.persistence import FileStateReader as FileStateReader
 
 __all__ = [
     "_SESSION_BOUNDARY_TEXT",
