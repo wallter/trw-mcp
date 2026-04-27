@@ -1,106 +1,149 @@
-"""Unit tests for trw_mcp.security.capability_scope (PRD-INFRA-SEC-001 FR-2)."""
+"""Unit tests for trw_mcp.security.capability_scope (PRD-INFRA-SEC-001 FR-2).
+
+The module was rewritten in commit 43caa7c4 (April 2026): the legacy
+``CapabilityFilter`` / ``default_scopes_for_family`` rate-limiting API was
+removed in favor of a smaller, declarative ``apply_scope`` validator that
+just checks server/tool/phase/scope alignment.  These tests pin the
+current behavior end-to-end.
+"""
 
 from __future__ import annotations
-
-from typing import Any
 
 import pytest
 
 from trw_mcp.security.capability_scope import (
-    CapabilityFilter,
     CapabilityScope,
     CapabilityScopeError,
     apply_scope,
-    default_scopes_for_family,
+    scope_from_allowed_tool,
 )
+from trw_mcp.security.mcp_registry import AllowedTool
 
 
-def test_apply_scope_allows_known_args() -> None:
-    scope = CapabilityScope(
-        tool_name="read_file",
-        allowed_args={"path": None},
+def _make_scope(
+    *,
+    server_name: str = "trw",
+    tool_name: str = "trw_recall",
+    allowed_phases: tuple[str, ...] = ("research", "plan"),
+    allowed_scopes: tuple[str, ...] = ("read",),
+) -> CapabilityScope:
+    return CapabilityScope(
+        server_name=server_name,
+        tool_name=tool_name,
+        allowed_phases=allowed_phases,
+        allowed_scopes=allowed_scopes,
     )
-    call = {"name": "read_file", "args": {"path": "/etc/hosts"}}
-    assert apply_scope(call, scope) is call
 
 
-def test_apply_scope_rejects_extra_args() -> None:
-    scope = CapabilityScope(
-        tool_name="read_file",
-        allowed_args={"path": None},
+def test_apply_scope_happy_path_returns_none() -> None:
+    """When server/tool/phase/scope all match, apply_scope returns silently."""
+    scope = _make_scope()
+    # Returns None on success — no exception.
+    assert (
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="research",
+            requested_scope="read",
+        )
+        is None
     )
-    call = {"name": "read_file", "args": {"path": "/etc/hosts", "follow_symlinks": True}}
-    with pytest.raises(CapabilityScopeError, match="disallowed arg"):
-        apply_scope(call, scope)
 
 
-def test_apply_scope_rate_limits_excess_calls() -> None:
-    scope = CapabilityScope(
-        tool_name="search",
-        allowed_args=None,
-        rate_limit_per_min=2,
-    )
-    now = [0.0]
-
-    def clock() -> float:
-        return now[0]
-
-    def adapter(_name: str, _args: dict[str, Any]) -> str:
-        return "ok"
-
-    flt = CapabilityFilter(adapter, {"search": scope}, clock=clock)
-    assert flt.call("search", {"q": "a"}) == "ok"
-    now[0] = 1.0
-    assert flt.call("search", {"q": "b"}) == "ok"
-    now[0] = 2.0
-    with pytest.raises(CapabilityScopeError, match="rate_limit_per_min"):
-        flt.call("search", {"q": "c"})
-    # After the 60s window rolls over, calls should succeed again.
-    now[0] = 70.0
-    assert flt.call("search", {"q": "d"}) == "ok"
+def test_apply_scope_rejects_server_name_mismatch() -> None:
+    """Calls routed to the wrong server raise CapabilityScopeError."""
+    scope = _make_scope(server_name="trw")
+    with pytest.raises(CapabilityScopeError, match="not authorized for server"):
+        apply_scope(
+            server_name="filesystem",  # mismatch
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="research",
+            requested_scope="read",
+        )
 
 
-def test_apply_scope_rejects_unknown_tool() -> None:
-    def adapter(_name: str, _args: dict[str, Any]) -> str:
-        return "ok"
-
-    flt = CapabilityFilter(adapter, {})
-    with pytest.raises(CapabilityScopeError, match="no registered scope"):
-        flt.call("unlisted_tool", {})
-
-
-def test_capability_filter_wraps_adapter_call() -> None:
-    scope = CapabilityScope(tool_name="echo", allowed_args=None)
-    seen: list[tuple[str, dict[str, Any]]] = []
-
-    def adapter(name: str, args: dict[str, Any]) -> str:
-        seen.append((name, args))
-        return f"called {name}"
-
-    flt = CapabilityFilter(adapter, {"echo": scope})
-    result = flt.call("echo", {"msg": "hi"})
-    assert result == "called echo"
-    assert seen == [("echo", {"msg": "hi"})]
-
-
-def test_apply_scope_name_mismatch_rejected() -> None:
-    scope = CapabilityScope(tool_name="read_file", allowed_args=None)
+def test_apply_scope_rejects_tool_name_mismatch() -> None:
+    """A tool name not matching the registered scope is rejected."""
+    scope = _make_scope(tool_name="trw_recall")
     with pytest.raises(CapabilityScopeError, match="does not match scope"):
-        apply_scope({"name": "write_file", "args": {}}, scope)
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_learn",  # mismatch
+            scope=scope,
+            current_phase="research",
+            requested_scope="read",
+        )
 
 
-def test_apply_scope_non_dict_args_rejected() -> None:
-    scope = CapabilityScope(tool_name="read_file", allowed_args=None)
-    with pytest.raises(CapabilityScopeError, match="must be a dict"):
-        apply_scope({"name": "read_file", "args": "not-a-dict"}, scope)
+def test_apply_scope_rejects_disallowed_phase() -> None:
+    """A current_phase outside scope.allowed_phases triggers rejection."""
+    scope = _make_scope(allowed_phases=("research", "plan"))
+    with pytest.raises(CapabilityScopeError, match="not allowed during phase"):
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="deliver",  # not in allowed_phases
+            requested_scope="read",
+        )
 
 
-def test_default_scopes_for_family_builds_prefixed_scopes() -> None:
-    scopes = default_scopes_for_family(
-        "trw_",
-        ["trw_learn", "trw_recall", "other_tool"],
-        rate_limit_per_min=30,
+def test_apply_scope_rejects_disallowed_requested_scope() -> None:
+    """A requested_scope outside scope.allowed_scopes triggers rejection."""
+    scope = _make_scope(allowed_scopes=("read",))
+    with pytest.raises(CapabilityScopeError, match="not allowed for scope"):
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="research",
+            requested_scope="write",  # not in allowed_scopes
+        )
+
+
+def test_apply_scope_skips_phase_check_when_current_phase_is_none() -> None:
+    """current_phase=None bypasses the phase gate (legacy callers)."""
+    scope = _make_scope(allowed_phases=("research",))
+    apply_scope(
+        server_name="trw",
+        tool_name="trw_recall",
+        scope=scope,
+        current_phase=None,
+        requested_scope="read",
     )
-    assert set(scopes.keys()) == {"trw_learn", "trw_recall"}
-    assert all(s.rate_limit_per_min == 30 for s in scopes.values())
-    assert all(s.allowed_args is None for s in scopes.values())
+
+
+def test_apply_scope_skips_scope_check_when_requested_scope_is_none() -> None:
+    """requested_scope=None bypasses the scope gate (legacy callers)."""
+    scope = _make_scope(allowed_scopes=("read",))
+    apply_scope(
+        server_name="trw",
+        tool_name="trw_recall",
+        scope=scope,
+        current_phase="research",
+        requested_scope=None,
+    )
+
+
+def test_scope_from_allowed_tool_copies_phases_and_scopes() -> None:
+    """scope_from_allowed_tool builds a CapabilityScope from an AllowedTool."""
+    allowed = AllowedTool(
+        name="trw_recall",
+        allowed_phases=("research", "plan", "implement"),
+        allowed_scopes=("read",),
+    )
+    scope = scope_from_allowed_tool("trw", allowed)
+    assert scope.server_name == "trw"
+    assert scope.tool_name == "trw_recall"
+    assert scope.allowed_phases == ("research", "plan", "implement")
+    assert scope.allowed_scopes == ("read",)
+    # And the resulting scope is honored by apply_scope.
+    apply_scope(
+        server_name="trw",
+        tool_name="trw_recall",
+        scope=scope,
+        current_phase="implement",
+        requested_scope="read",
+    )

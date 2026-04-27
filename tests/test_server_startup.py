@@ -113,13 +113,15 @@ class TestMcpInstance:
     async def test_mcp_has_tools(self) -> None:
         from trw_mcp.server._app import mcp
 
-        tools = await mcp.list_tools()
+        # Use _list_tools to bypass the security middleware allowlist filter —
+        # this test verifies *tool registration*, not authorization scope.
+        tools = await mcp._list_tools()
         assert len(tools) > 0, "No tools registered"
 
     async def test_mcp_has_expected_tools(self) -> None:
         from trw_mcp.server._app import mcp
 
-        tools = await mcp.list_tools()
+        tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         expected = {
             "trw_session_start",
@@ -137,7 +139,7 @@ class TestMcpInstance:
     async def test_mcp_registers_review_tool(self) -> None:
         from trw_mcp.server._app import mcp
 
-        tools = await mcp.list_tools()
+        tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         assert {"trw_review"} <= tool_names
 
