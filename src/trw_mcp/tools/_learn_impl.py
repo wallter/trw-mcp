@@ -8,6 +8,8 @@ remain effective without needing to know about this module.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import inspect
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -54,8 +56,51 @@ _LEARN_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 # Per-field caps: chosen to exceed p99 of real engineering notes while
 # preventing wall-of-text prompt-injection payloads.
-_MAX_SUMMARY_CHARS = 500
+_MAX_SUMMARY_CHARS = 2000
 _MAX_DETAIL_CHARS = 4000
+
+
+def _store_accepts_positional_trw_dir(store_fn: Any) -> bool:
+    """Return True if ``store_fn`` appears to accept a positional trw_dir."""
+    try:
+        signature = inspect.signature(store_fn)
+    except (TypeError, ValueError):
+        return True
+    for parameter in signature.parameters.values():
+        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD):
+            return True
+    return False
+
+
+def _append_provenance_signed(
+    *,
+    trw_dir: Path,
+    learning_id: str,
+    summary: str,
+    detail: str,
+    source_identity: str,
+) -> None:
+    """Append a signed provenance-chain record for a learning write.
+
+    Fail-open by design: provenance augments auditability but must not make
+    ``trw_learn`` fail when PyNaCl/key generation/file I/O is unavailable.
+    """
+    try:
+        from trw_memory.security.keys import get_or_create_ed25519_key
+        from trw_memory.security.provenance import ProvenanceEntry, append_signed
+
+        content_hash = hashlib.sha256(f"{summary}{detail}".encode()).hexdigest()
+        append_signed(
+            trw_dir / "memory" / "security" / "provenance.jsonl",
+            ProvenanceEntry(
+                learning_id=learning_id,
+                content_hash=content_hash,
+                source_identity=source_identity or "agent",
+            ),
+            get_or_create_ed25519_key(trw_dir),
+        )
+    except Exception:  # justified: fail-open, provenance is advisory
+        logger.debug("learn_provenance_append_failed", learning_id=learning_id, exc_info=True)
 
 
 def _content_policy_reject(summary: str, detail: str) -> dict[str, object] | None:
@@ -215,7 +260,7 @@ def execute_learn(
     from trw_mcp.state.memory_adapter import store_learning as _default_store
     from trw_mcp.tools._learning_helpers import check_and_handle_dedup as _default_dedup
 
-    store_fn = _adapter_store or _default_store
+    store_fn: Any = _adapter_store or _default_store
     gen_id_fn = _generate_learning_id or _default_gen_id
     save_entry_fn = _save_learning_entry or _default_save
     update_analytics_fn = _update_analytics or _default_update_a
@@ -419,42 +464,55 @@ def execute_learn(
         except Exception:  # justified: fail-open, validity computation is best-effort
             logger.debug("anchor_validity_computation_skipped", exc_info=True)
 
-    # Store via SQLite adapter (primary path)
-    store_result = store_fn(
-        trw_dir,
-        learning_id=learning_id,
-        summary=summary,
-        detail=detail,
-        tags=safe_tags,
-        evidence=safe_evidence,
-        impact=calibrated_impact,
-        shard_id=shard_id,
-        source_type=source_type,
-        source_identity=source_identity,
-        client_profile=client_profile,
-        model_id=model_id,
-        assertions=assertions,
-        type=type,
-        nudge_line=nudge_line,
-        expires=expires,
-        confidence=confidence,
-        task_type=task_type,
-        domain=domain,
-        phase_origin=phase_origin,
-        phase_affinity=phase_affinity,
-        team_origin=team_origin,
-        protection_tier=protection_tier,
-        anchors=anchors,
-        anchor_validity=anchor_validity,
-        session_id=session_id,
-    )
-    if store_result.get("status") == "quarantined":
+    # Store via SQLite adapter (primary path).  Preserve compatibility with
+    # older injected test doubles that either take ``trw_dir`` positionally or
+    # accept only ``**kwargs``.
+    store_kwargs: dict[str, object] = {
+        "learning_id": learning_id,
+        "summary": summary,
+        "detail": detail,
+        "tags": safe_tags,
+        "evidence": safe_evidence,
+        "impact": calibrated_impact,
+        "shard_id": shard_id,
+        "source_type": source_type,
+        "source_identity": source_identity,
+        "client_profile": client_profile,
+        "model_id": model_id,
+        "assertions": assertions,
+        "type": type,
+        "nudge_line": nudge_line,
+        "expires": expires,
+        "confidence": confidence,
+        "task_type": task_type,
+        "domain": domain,
+        "phase_origin": phase_origin,
+        "phase_affinity": phase_affinity,
+        "team_origin": team_origin,
+        "protection_tier": protection_tier,
+        "anchors": anchors,
+        "anchor_validity": anchor_validity,
+        "session_id": session_id,
+    }
+    if _store_accepts_positional_trw_dir(store_fn):
+        store_result = store_fn(trw_dir, **store_kwargs)
+    else:
+        store_result = store_fn(trw_dir=trw_dir, **store_kwargs)
+    store_result_dict = store_result if isinstance(store_result, dict) else {}
+    if store_result_dict.get("status") == "quarantined":
         return {
             "learning_id": learning_id,
-            "path": str(store_result.get("path", f"sqlite://{learning_id}")),
+            "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
             "status": "quarantined",
             "distribution_warning": "",
         }
+    _append_provenance_signed(
+        trw_dir=trw_dir,
+        learning_id=learning_id,
+        summary=summary,
+        detail=detail,
+        source_identity=source_identity or source_type,
+    )
 
     # PRD-FIX-052-FR04: Auto-obsolete superseded entries
     _handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
@@ -515,7 +573,7 @@ def execute_learn(
     result_dict: LearnResultDict = {
         "learning_id": learning_id,
         "path": str(entry_path),
-        "status": str(store_result.get("status", "recorded")) if store_result is not None else "recorded",
+        "status": str(store_result_dict.get("status", "recorded")),
         "distribution_warning": distribution_warning,
     }
     if distribution_soft_cap_warning:

@@ -102,8 +102,17 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, str]:
         """Create a run directory and register it as the active run.
 
+        Use when:
+        - Starting a new task, sprint, or investigation that needs persistent TRW state.
+        - You need run metadata, framework assets, and active-run pinning before work begins.
+
         Bootstraps state, run metadata, events, framework assets, optional
         wave/artifact metadata, and a trace/profile-aware task_profile.
+
+        Input: task_name plus optional objective, config_overrides, task_root,
+        wave_manifest, complexity signals, artifacts, and protection flag.
+
+        Output: dict with run_id, run_path, task_dir, phase, and status fields.
         """
 
         from trw_mcp.models.run import ComplexityClass
@@ -466,8 +475,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, str]:
         """Append a progress snapshot so work survives context compaction.
 
+        Use when:
+        - You complete a milestone or before context compaction/interruption.
+        - After each meaningful work batch so another agent can resume safely.
+
         Input: optional run_path plus required message. Optional shard_id and
         wave_id annotate delegated or wave-aware progress.
+
+        Output: dict with status, run_path, checkpoint path, and message metadata.
         """
 
         # PRD-CORE-141 FR03: thread ctx into execute_checkpoint so the

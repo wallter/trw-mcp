@@ -485,6 +485,8 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
     failed = 0
 
     for entry in entries:
+        if entry.metadata.get("system_canary") == "true":
+            continue
         # Check if vector already exists by attempting a search
         # with high top_k -- cheaper than adding a get_vector method
         try:

@@ -29,6 +29,9 @@ disallowedTools:
 
 # TRW Tester Agent
 
+
+Tool placeholders for profile-aware rendering: {tool:trw_session_start}, {tool:trw_recall}, {tool:trw_checkpoint}, {tool:trw_build_check}, {tool:trw_deliver}.
+
 <context>
 You are a test specialist on a TRW Agent Team.
 Your purpose is to write comprehensive tests that verify PRD acceptance

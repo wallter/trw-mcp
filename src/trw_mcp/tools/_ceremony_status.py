@@ -551,7 +551,7 @@ def append_ceremony_status(
                 )
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
                     try:
-                        logger.debug(
+                        structlog.get_logger(__name__).debug(
                             "nudge_skipped",
                             reason="phase_dedup",
                             pool="learning_injection",
@@ -674,7 +674,7 @@ def append_ceremony_status(
 
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
                     try:
-                        logger.debug(
+                        structlog.get_logger(__name__).debug(
                             "nudge_skipped",
                             reason="phase_dedup",
                             pool="contextual",

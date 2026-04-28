@@ -123,6 +123,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
 
         Use when:
         - You have a feature request or requirements and need a structured PRD.
+        - Before writing code for a P0/P1/P2 feature or risky behavioral change.
         - You want auto-incremented PRD ID, YAML frontmatter, and catalogue sync.
 
         Produces 12 standard sections, confidence scores, and traceability links.

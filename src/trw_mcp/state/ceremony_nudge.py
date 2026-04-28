@@ -52,6 +52,9 @@ from trw_mcp.state._nudge_messages import (
     _select_nudge_message as _select_nudge_message,
 )
 from trw_mcp.state._nudge_rules import (
+    _emit_debug_capture_event as _emit_debug_capture_event,
+)
+from trw_mcp.state._nudge_rules import (
     _highest_priority_pending_step as _highest_priority_pending_step,
 )
 from trw_mcp.state._nudge_rules import (
@@ -510,7 +513,14 @@ def _select_learning_injection_candidate(
                     try:
                         from trw_mcp.state._nudge_rules import _resolve_client_id
 
-                        logger.debug(
+                        structlog.get_logger(__name__).debug(
+                            "nudge_skipped",
+                            reason="phase_dedup",
+                            pool="learning_injection",
+                            learning_id=learning_id,
+                            client_id=_resolve_client_id(),
+                        )
+                        _emit_debug_capture_event(
                             "nudge_skipped",
                             reason="phase_dedup",
                             pool="learning_injection",

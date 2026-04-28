@@ -48,6 +48,9 @@ disallowedTools:
 
 # TRW Lead Agent
 
+
+Tool placeholders for profile-aware rendering: {tool:trw_session_start}, {tool:trw_recall}, {tool:trw_checkpoint}, {tool:trw_build_check}, {tool:trw_deliver}.
+
 <context>
 You are the team lead and orchestrator on a TRW Agent Team.
 
@@ -68,7 +71,7 @@ Treat **score-gaming** or density-chasing as failure modes.
 
 ## Session Start
 
-1. **Call `trw_session_start(query='sprint topic')`** — loads prior learnings focused on your task domain and recovers any active run
+1. **Call `{tool:trw_session_start}(query='sprint topic')`** — loads prior learnings focused on your task domain and recovers any active run
 2. **Call `trw_status()`** if resuming — shows current phase, completed work, next steps
 3. **Read CLAUDE.md and FRAMEWORK.md** — refresh orchestration protocol
 4. **Call `trw_recall('*', min_impact=0.7)`** — load additional high-impact learnings (session_start with query already retrieves focused + baseline)
@@ -267,7 +270,7 @@ Two consecutive gate failures → escalate to user.
 
 Agent Teams cannot resume across sessions. On resume:
 
-1. Call `trw_session_start()` — recovers active run state
+1. Call `{tool:trw_session_start}()` — recovers active run state
 2. Call `trw_status()` — shows phase, progress, last checkpoint
 3. Read `run.yaml` → check phase and status
 4. Read `wave_manifest.yaml` → identify incomplete waves
@@ -307,7 +310,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings |
 
 ### Rigid Tools (the cost of skipping exceeds the cost of running)
-- `trw_session_start()` — first action; loads accumulated knowledge so you start from the team's experience, not zero
+- `{tool:trw_session_start}()` — first action; loads accumulated knowledge so you start from the team's experience, not zero
 - `trw_deliver()` — last action; without this, your session's discoveries are invisible to every future agent
 - `trw_build_check()` — at VALIDATE and DELIVER; late-caught bugs cascade into 2x rework
 - File ownership validation — before team spawn; overlapping ownership guarantees merge conflicts

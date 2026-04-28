@@ -58,10 +58,14 @@ def _find_active_run_compat(ctx: Context | None) -> Path | None:
     Production code now prefers the ctx-aware signature, but sprint-close build
     gates still need those patches to work without TypeError.
     """
+    call_ctx = _build_call_context(ctx)
     try:
-        return find_active_run(context=_build_call_context(ctx))
+        return find_active_run(context=call_ctx)
     except TypeError:
-        return find_active_run()
+        try:
+            return find_active_run(session_id=call_ctx.session_id)
+        except TypeError:
+            return find_active_run()  # compat: legacy zero-argument test doubles
 
 
 def register_build_tools(server: FastMCP) -> None:

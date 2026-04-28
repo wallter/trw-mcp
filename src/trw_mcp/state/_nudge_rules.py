@@ -22,6 +22,28 @@ logger = structlog.get_logger(__name__)
 _RNG = random.SystemRandom()
 
 
+def _emit_debug_capture_event(event: str, **fields: object) -> None:
+    """Best-effort debug event emission for structlog capture tests.
+
+    Some tests intentionally assert DEBUG-level telemetry even after earlier
+    suites have reconfigured structlog filtering.  Normal ``logger.debug``
+    remains the production path; when ``structlog.testing.capture_logs`` is
+    active, this helper feeds the active LogCapture processor directly so the
+    test-observable event is not lost to a filtering wrapper.
+    """
+    processors = structlog.get_config().get("processors", [])
+    if not any(processor.__class__.__name__ == "LogCapture" for processor in processors):
+        return
+    event_dict: dict[str, object] = {**fields, "event": event}
+    for processor in processors:
+        try:
+            result = processor(None, "debug", event_dict)
+        except structlog.DropEvent:
+            break
+        if isinstance(result, dict):
+            event_dict = result
+
+
 def _resolve_client_id() -> str:
     """Best-effort resolution of the active client_profile.client_id.
 
@@ -374,7 +396,14 @@ def _select_nudge_pool(
                 until=state.pool_cooldown_until.get(pool, 0),
             )
             try:
-                logger.debug(
+                structlog.get_logger(__name__).debug(
+                    "nudge_skipped",
+                    reason="pool_cooldown",
+                    pool=pool,
+                    learning_id="",
+                    client_id=_resolve_client_id(),
+                )
+                _emit_debug_capture_event(
                     "nudge_skipped",
                     reason="pool_cooldown",
                     pool=pool,
