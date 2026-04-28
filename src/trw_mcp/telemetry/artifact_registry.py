@@ -465,7 +465,13 @@ class SurfaceRegistry(BaseModel):
                 reproducible snapshots).
         """
         resolved_data_root = data_root if data_root is not None else _resolve_data_root()
-        resolved_repo_root = repo_root if repo_root is not None else _resolve_repo_root()
+        # Test and tooling callers often pass a synthetic data_root to inspect
+        # only bundled-data behavior. In that mode, do not implicitly pull in
+        # the live repository's root CLAUDE.md/FRAMEWORK.md. Production
+        # resolvers pass repo_root explicitly when they want repo surfaces.
+        resolved_repo_root = (
+            repo_root if repo_root is not None else (_resolve_repo_root() if data_root is None else None)
+        )
         pkg_ver = _package_version()
         fw_ver = _framework_version()
         ts = now or datetime.now(tz=timezone.utc)
@@ -512,11 +518,12 @@ class SurfaceRegistry(BaseModel):
 
 
 @lru_cache(maxsize=8)
-def _cached_registry(cache_key: str, data_root_str: str | None) -> SurfaceRegistry:
+def _cached_registry(cache_key: str, data_root_str: str | None, repo_root_str: str | None) -> SurfaceRegistry:
     """Cached registry resolver keyed on a caller-supplied cache key."""
     del cache_key  # present only for lru_cache keying
     root = Path(data_root_str) if data_root_str else None
-    return SurfaceRegistry.build(data_root=root)
+    repo_root = Path(repo_root_str) if repo_root_str else None
+    return SurfaceRegistry.build(data_root=root, repo_root=repo_root)
 
 
 def resolve_surface_registry(*, refresh: bool = False) -> SurfaceRegistry:
@@ -526,8 +533,9 @@ def resolve_surface_registry(*, refresh: bool = False) -> SurfaceRegistry:
         refresh: Bypass the per-process cache to force re-walk.
     """
     data_root = _resolve_data_root()
+    repo_root = _resolve_repo_root()
     cache_key = f"refresh-{datetime.now(tz=timezone.utc).isoformat()}" if refresh else ""
-    return _cached_registry(cache_key, str(data_root) if data_root else None)
+    return _cached_registry(cache_key, str(data_root) if data_root else None, str(repo_root) if repo_root else None)
 
 
 def resolve_surface_snapshot(*, refresh: bool = False) -> SurfaceSnapshot:

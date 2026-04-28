@@ -59,3 +59,25 @@ def cache_build_status(trw_dir: Path, status: BuildStatus) -> Path:
     cache_path = context_dir / "build-status.yaml"
     writer.write_yaml(cache_path, model_to_dict(status))
     return cache_path
+
+
+def persist_build_progress_state(trw_dir: Path, status: BuildStatus, *, scope: str) -> None:
+    """Best-effort persistence of build outcome to ceremony progress state."""
+    try:
+        from trw_mcp.state._ceremony_progress_state import mark_build_check
+
+        passed = status.tests_passed and status.mypy_clean
+        mark_build_check(trw_dir, passed)
+        logger.info(
+            "build_check_state_persisted",
+            passed=passed,
+            scope=scope,
+            outcome="success",
+        )
+    except Exception as exc:  # justified: best-effort progress-state persistence
+        logger.warning(
+            "build_check_state_persist_failed",
+            scope=scope,
+            outcome="error",
+            error=f"{type(exc).__name__}: {str(exc)[:200]}",
+        )

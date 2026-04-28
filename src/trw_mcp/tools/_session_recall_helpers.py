@@ -200,21 +200,30 @@ def perform_session_recalls(
 
             bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
             cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
-            fresh = adapter_recall(
-                trw_dir,
-                query="*",
-                min_impact=bypass_min,
-                max_results=effective_max * 2,
-                compact=True,
-            )
-            seen_ids = {str(e.get("id", "")) for e in baseline}
-            fresh_additions = [
-                e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
-            ]
-            # Fresh entries are highest-priority context for the current session —
-            # surface them before the high-impact baseline.
-            learnings = fresh_additions + learnings
-            learnings = learnings[:effective_max]
+            try:
+                fresh = adapter_recall(
+                    trw_dir,
+                    query="*",
+                    min_impact=bypass_min,
+                    max_results=effective_max * 2,
+                    compact=True,
+                )
+            except Exception:  # justified: fail-open, recent-bypass recall must not block session start
+                logger.warning(
+                    "session_recent_bypass_recall_failed",
+                    op="session_recall",
+                    outcome="fail_open",
+                    exc_info=True,
+                )
+            else:
+                seen_ids = {str(e.get("id", "")) for e in baseline}
+                fresh_additions = [
+                    e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
+                ]
+                # Fresh entries are highest-priority context for the current
+                # session; surface them before the high-impact baseline.
+                learnings = fresh_additions + learnings
+                learnings = learnings[:effective_max]
 
     try:
         log_ranked_selections(
