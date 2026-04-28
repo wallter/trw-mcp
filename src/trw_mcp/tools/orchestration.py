@@ -236,7 +236,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_signals=parsed_signals,
             complexity_override=complexity_override_val,
             phase_requirements=phase_reqs_val,
-            task_profile=task_profile.model_dump(mode="json"),
+            task_profile=task_profile,
             artifacts=resolved_artifacts,
             protected=protected,
         )
