@@ -31,59 +31,6 @@ _project_root="$(get_repo_root)" || exit 0
 _build_status="$_project_root/.trw/context/build-status.yaml"
 
 if [ ! -f "$_build_status" ]; then
-  # PRD-FIX-077-FR03: Fallback to .trw/context/ceremony-state.json when
-  # build-status.yaml is missing (e.g., post container migration). Reads the
-  # "build_check_result" and "last_build_check_ts" fields set by
-  # mark_build_check() in trw_mcp/state/_ceremony_progress_state.py.
-  _state_file="$_project_root/.trw/context/ceremony-state.json"
-  _freshness="${TRW_BUILD_FRESHNESS_SECS:-1800}"
-  case "$_freshness" in
-    ''|*[!0-9]*) _freshness=1800 ;;
-    *)
-      if [ "$_freshness" -lt 60 ] || [ "$_freshness" -gt 86400 ]; then
-        _freshness=1800
-      fi
-      ;;
-  esac
-
-  if [ -f "$_state_file" ] && command -v jq >/dev/null 2>&1; then
-    _state_result=$(jq -r '.build_check_result // empty' "$_state_file" 2>/dev/null || printf '')
-    _state_ts=$(jq -r '.last_build_check_ts // empty' "$_state_file" 2>/dev/null || printf '')
-
-    if [ "$_state_result" = "failed" ]; then
-      cat >&2 <<'MSG'
-BLOCKED: Build check failed — tests did not pass.
-
-WHY: Delivering code that fails its own tests breaks the user's project.
-
-ACTION: Fix failing tests, re-run trw_build_check(scope='full').
-MSG
-      log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:build-failed"
-      _trw_intentional_exit=1
-      exit 2
-    fi
-
-    if [ "$_state_result" = "passed" ] && [ -n "$_state_ts" ]; then
-      _now_epoch=$(date -u +%s 2>/dev/null || printf '')
-      _then_epoch=$(date -u -d "$_state_ts" +%s 2>/dev/null || printf '')
-      if [ -n "$_now_epoch" ] && [ -n "$_then_epoch" ]; then
-        _delta=$(( _now_epoch - _then_epoch ))
-        if [ "$_delta" -ge 0 ] && [ "$_delta" -le "$_freshness" ]; then
-          log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "0:state-fallback-passed"
-          exit 0
-        fi
-        cat >&2 <<MSG
-BLOCKED: Build verification is stale (${_delta}s old, window ${_freshness}s).
-
-ACTION: Re-run trw_build_check(scope='full') before trw_deliver.
-MSG
-        log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:stale-build"
-        _trw_intentional_exit=1
-        exit 2
-      fi
-    fi
-  fi
-
   cat >&2 <<'MSG'
 BLOCKED: No build record exists yet.
 
