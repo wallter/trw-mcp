@@ -24,6 +24,9 @@ from trw_mcp.scoring._complexity import (
     _TIER_EXPECTATIONS as _TIER_EXPECTATIONS,
 )
 from trw_mcp.scoring._complexity import (
+    CeremonyDepthContract as CeremonyDepthContract,
+)
+from trw_mcp.scoring._complexity import (
     _TierExpectation as _TierExpectation,
 )
 from trw_mcp.scoring._complexity import (
@@ -31,6 +34,9 @@ from trw_mcp.scoring._complexity import (
 )
 from trw_mcp.scoring._complexity import (
     compute_tier_ceremony_score as compute_tier_ceremony_score,
+)
+from trw_mcp.scoring._complexity import (
+    get_ceremony_depth_contract as get_ceremony_depth_contract,
 )
 from trw_mcp.scoring._complexity import (
     get_phase_requirements as get_phase_requirements,
@@ -160,6 +166,7 @@ def __getattr__(name: str) -> object:
 __all__ = [
     "EVENT_ALIASES",
     "REWARD_MAP",
+    "CeremonyDepthContract",
     "RecallContext",
     "apply_impact_decay",
     "apply_time_decay",
@@ -175,6 +182,7 @@ __all__ = [
     "correlate_recalls",
     "detect_proximal_signals",
     "enforce_tier_distribution",
+    "get_ceremony_depth_contract",
     "get_phase_requirements",
     "infer_domains",
     "process_outcome",

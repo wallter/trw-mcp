@@ -20,6 +20,7 @@ from trw_mcp.scoring import (
     compute_impact_distribution,
     compute_tier_ceremony_score,
     compute_utility_score,
+    get_ceremony_depth_contract,
     get_phase_requirements,
     update_q_value,
 )
@@ -547,6 +548,37 @@ class TestPhaseRequirements:
             reqs = get_phase_requirements(tier)
             assert "IMPLEMENT" not in reqs.skipped
             assert "DELIVER" not in reqs.skipped
+
+
+class TestCeremonyDepthContract:
+    """PRD-CORE-155: normalized tier-to-depth contract."""
+
+    def test_minimal_depth_keeps_validate_mandatory(self) -> None:
+        contract = get_ceremony_depth_contract(ComplexityClass.MINIMAL)
+
+        assert contract.ceremony_depth == "light"
+        assert contract.trace_depth == "minimal"
+        assert contract.nudge_policy == "sparse"
+        assert contract.validation_required is True
+        assert "VALIDATE" in contract.mandatory_phases
+        assert "IMPLEMENT" in contract.mandatory_phases
+        assert "DELIVER" in contract.mandatory_phases
+
+    def test_standard_depth_matches_standard_phase_contract(self) -> None:
+        contract = get_ceremony_depth_contract(ComplexityClass.STANDARD)
+
+        assert contract.ceremony_depth == "standard"
+        assert contract.trace_depth == "standard"
+        assert contract.nudge_policy == "standard"
+        assert contract.mandatory_phases == tuple(get_phase_requirements(ComplexityClass.STANDARD).mandatory)
+
+    def test_comprehensive_depth_is_causal_and_all_phases(self) -> None:
+        contract = get_ceremony_depth_contract(ComplexityClass.COMPREHENSIVE)
+
+        assert contract.ceremony_depth == "comprehensive"
+        assert contract.trace_depth == "causal"
+        assert contract.nudge_policy == "dense"
+        assert contract.mandatory_phases == tuple(get_phase_requirements(ComplexityClass.COMPREHENSIVE).mandatory)
 
 
 class TestTierCeremonyScore:

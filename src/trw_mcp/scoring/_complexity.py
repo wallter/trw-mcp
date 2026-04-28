@@ -7,6 +7,8 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import (
     ComplexityClass,
@@ -120,6 +122,51 @@ def get_phase_requirements(tier: ComplexityClass) -> PhaseRequirements:
         mandatory=["RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"],
         optional=[],
         skipped=[],
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CeremonyDepthContract:
+    """Canonical phase/trace/nudge contract for a complexity tier."""
+
+    tier: ComplexityClass
+    ceremony_depth: str
+    mandatory_phases: tuple[str, ...]
+    nudge_policy: str
+    trace_depth: str
+    validation_required: bool = True
+
+
+def get_ceremony_depth_contract(tier: ComplexityClass) -> CeremonyDepthContract:
+    """Return the normalized ceremony-depth contract for a tier.
+
+    This keeps public ``ceremony_mode`` values (``full``/``light``) separate
+    from task-level depth resolution. Even MINIMAL tasks still require
+    validation; light means fewer prompts and a shallower trace, not no tests.
+    """
+    requirements = get_phase_requirements(tier)
+    if tier == ComplexityClass.MINIMAL:
+        return CeremonyDepthContract(
+            tier=tier,
+            ceremony_depth="light",
+            mandatory_phases=tuple(requirements.mandatory),
+            nudge_policy="sparse",
+            trace_depth="minimal",
+        )
+    if tier == ComplexityClass.COMPREHENSIVE:
+        return CeremonyDepthContract(
+            tier=tier,
+            ceremony_depth="comprehensive",
+            mandatory_phases=tuple(requirements.mandatory),
+            nudge_policy="dense",
+            trace_depth="causal",
+        )
+    return CeremonyDepthContract(
+        tier=tier,
+        ceremony_depth="standard",
+        mandatory_phases=tuple(requirements.mandatory),
+        nudge_policy="standard",
+        trace_depth="standard",
     )
 
 
@@ -365,5 +412,6 @@ __all__ = [
     "_TierExpectation",
     "classify_complexity",
     "compute_tier_ceremony_score",
+    "get_ceremony_depth_contract",
     "get_phase_requirements",
 ]
