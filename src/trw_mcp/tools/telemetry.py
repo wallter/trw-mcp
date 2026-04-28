@@ -256,6 +256,7 @@ def _write_tool_event(
     except TypeError:
         run_dir = _get_cached_run_dir()
     phase = "unknown"
+    task_profile_hash = ""
     if run_dir is not None:
         run_yaml = run_dir / "meta" / "run.yaml"
         if run_yaml.exists():
@@ -265,11 +266,17 @@ def _write_tool_event(
                 reader = FileStateReader()
                 run_data = reader.read_yaml(run_yaml)
                 phase = str(run_data.get("phase", "unknown"))
+                task_profile = run_data.get("task_profile")
+                if isinstance(task_profile, dict):
+                    task_profile_hash = str(task_profile.get("profile_hash", ""))
             except Exception:  # justified: fail-open telemetry, phase read failure uses fallback
                 logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
 
-    merge_trace_fields(cast("dict[str, object]", event_data), trace_fields)
+    merged_trace_fields = dict(trace_fields or {})
+    if task_profile_hash and not merged_trace_fields.get("task_profile_hash"):
+        merged_trace_fields["task_profile_hash"] = task_profile_hash
+    merge_trace_fields(cast("dict[str, object]", event_data), merged_trace_fields)
 
     if error is not None:
         event_data["error"] = error

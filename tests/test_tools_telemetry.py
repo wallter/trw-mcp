@@ -873,6 +873,26 @@ class TestToolTraceFields:
         assert event["causal_relation"] == "root"
         assert "do-not-log" not in str(event)
 
+    def test_tool_invocation_reads_task_profile_hash_from_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "phase: implement\ntask_profile:\n  profile_hash: abc123profile\n",
+            encoding="utf-8",
+        )
+
+        @log_tool_call
+        def profiled_tool() -> str:
+            return "ok"
+
+        assert profiled_tool() == "ok"
+        [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
+        assert event["task_profile_hash"] == "abc123profile"
+
     def test_nested_tool_invocation_sets_parent_event_id(
         self,
         monkeypatch: pytest.MonkeyPatch,

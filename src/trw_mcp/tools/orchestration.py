@@ -19,6 +19,7 @@ from trw_mcp.models.run import (
     RunState,
     RunStatus,
 )
+from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._paths import (
@@ -101,43 +102,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, str]:
         """Create a run directory and register it as the active run.
 
-        Use when:
-        - Starting any task beyond a trivial one-file edit (PRDs, features, sprints).
-        - You need a place for checkpoints, events, and telemetry to land.
-        - You want trw_status / trw_deliver / trw_checkpoint to have a pinned run.
-
-        Bootstraps .trw/ directories, run.yaml, and events.jsonl. Without a
-        run, checkpoint/status/deliver have nowhere to write.
-
-        Output: dict with fields {run_id: str, run_path: str, phase: str,
-        task: str, status: "active"}.
-
-        Example:
-            trw_init(task_name="docstring-uplift",
-                     objective="Uplift MCP tool docstrings",
-                     prd_scope=["PRD-QUAL-074"])
-            → {"run_id": "20260423...-abcd", "run_path": "...",
-               "phase": "RESEARCH", "task": "docstring-uplift", "status": "active"}
-
-        Args:
-            task_name: Name of the task — becomes the directory name and appears in status reports.
-            objective: Optional objective description for the run.
-            config_overrides: Optional config values to override defaults.
-            prd_scope: Optional list of PRD IDs governing this run (e.g. ["PRD-CORE-009"]).
-            run_type: Run type — "implementation" (default) or "research". Research runs skip PRD enforcement.
-            task_root: Optional task directory root (default: config field or "docs").
-            wave_manifest: Optional wave plan definitions. When provided, delegates to
-                trw_wave_plan after run scaffolding for one-step initialization.
-            complexity_signals: Optional complexity signals dict for adaptive ceremony depth.
-                When provided, classifies task complexity into MINIMAL/STANDARD/COMPREHENSIVE tier.
-            artifacts: Optional list of artifact file paths (PRDs, exec plans, sprint docs)
-                to scan for knowledge requirements (PRD-CORE-106). Extracted domains and
-                learning IDs are stored in run metadata for recall boosting.
-            complexity_hint: Optional hint to force a ceremony tier (EASY=MINIMAL, etc).
-            protected: When True, mark this run as protected — the stale-run sweep
-                (PRD-CORE-141 FR09/FR10) preserves protected runs regardless of age.
-                Useful for long-running trw-eval campaigns and multi-day workflows.
+        Bootstraps state, run metadata, events, framework assets, optional
+        wave/artifact metadata, and a trace/profile-aware task_profile.
         """
+
         from trw_mcp.models.run import ComplexityClass
 
         # Input validation (PRD-QUAL-042-FR01).  ``task_name`` defaults to ""
@@ -244,9 +212,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_override_val = override
             phase_reqs_val = get_phase_requirements(tier)
 
-        # PRD-CORE-106: Resolve artifact paths for storage
-        resolved_artifacts = [str(p) for p in (artifacts or [])]
+        task_profile_tier = complexity_class_val or ComplexityClass.STANDARD
+        task_profile = resolve_task_profile(
+            client_profile=config.client_profile,
+            model_tier=config.client_profile.default_model_tier,
+            complexity_class=task_profile_tier,
+            complexity_signals=parsed_signals,
+        )
 
+        resolved_artifacts = [str(p) for p in (artifacts or [])]
         run_state = RunState(
             run_id=run_id,
             task=task_name,
@@ -262,6 +236,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_signals=parsed_signals,
             complexity_override=complexity_override_val,
             phase_requirements=phase_reqs_val,
+            task_profile=task_profile.model_dump(mode="json"),
             artifacts=resolved_artifacts,
             protected=protected,
         )
@@ -352,6 +327,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
+
+        result["task_profile_hash"] = task_profile.profile_hash
 
         _apply_ceremony_status(
             cast("dict[str, object]", result),
@@ -489,24 +466,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, str]:
         """Append a progress snapshot so work survives context compaction.
 
-        Use when:
-        - You just finished a milestone (file saved, test passing, feature wired).
-        - A shard or wave completed and you want attribution in the audit log.
-        - Context feels near-full and you want a safe resume point on disk.
-
-        Appends an atomic snapshot to checkpoints.jsonl with timestamp. The
-        message becomes your resumption point — future sessions read it to
-        understand where you left off and what to work on next.
-
-        Input:
-        - run_path: path to the run directory. Auto-detects when None.
-        - message: what you accomplished + what comes next (required for resume quality).
-        - shard_id: optional shard identifier for sub-agent attribution.
-        - wave_id: optional wave identifier for wave-aware progress tracking.
-
-        Output: dict with fields {status: "checkpointed"|"error", timestamp: str,
-        checkpoint_file: str, error?: str}.
+        Input: optional run_path plus required message. Optional shard_id and
+        wave_id annotate delegated or wave-aware progress.
         """
+
         # PRD-CORE-141 FR03: thread ctx into execute_checkpoint so the
         # underlying resolve_run_path call is ctx-aware.
         result = execute_checkpoint(
