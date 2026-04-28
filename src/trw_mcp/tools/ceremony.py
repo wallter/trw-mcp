@@ -104,7 +104,10 @@ def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
     try:
         return find_active_run(context=call_ctx)
     except TypeError:
-        return find_active_run()
+        try:
+            return find_active_run(session_id=call_ctx.session_id)
+        except TypeError:
+            return find_active_run()  # compat: legacy zero-argument test doubles
 
 
 def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:

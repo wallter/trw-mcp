@@ -19,6 +19,7 @@ This module is the public facade -- all external imports should come here.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -394,14 +395,13 @@ def recall_learnings(
                 continue
             raise
 
+    public_entries = [entry for entry in entries if entry.metadata.get("system_canary") != "true"]
     filter_result = (
-        filter_recall_window(entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
+        filter_recall_window(public_entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
     )
     results: list[dict[str, object]] = []
-    filtered_entries = filter_result.accepted if filter_result is not None else entries
+    filtered_entries = filter_result.accepted if filter_result is not None else public_entries
     for entry in filtered_entries:
-        if entry.metadata.get("system_canary") == "true":
-            continue
         # Wildcard path: list_entries doesn't filter by tags/impact, so apply
         # _apply_entry_filters (AND semantics) to match the search path.
         # Search path already applies these filters internally.
@@ -452,7 +452,7 @@ def update_learning(
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, str | float | list[str]] = {}
+    fields: dict[str, str | float | list[str] | dict[str, str]] = {}
     changes: list[str] = []
 
     if status is not None:
@@ -519,6 +519,16 @@ def update_learning(
     if tags is not None:
         fields["tags"] = tags
         changes.append("tags updated")
+
+    if summary is not None or detail is not None:
+        new_content = summary if summary is not None else existing.content
+        new_detail = detail if detail is not None else existing.detail
+        if existing.metadata.get("provenance_content_hash") or existing.metadata.get("content_hash"):
+            new_metadata = dict(existing.metadata)
+            new_metadata["provenance_content_hash"] = hashlib.sha256(
+                f"{new_content}{new_detail}".encode()
+            ).hexdigest()
+            fields["metadata"] = new_metadata
 
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}
@@ -591,7 +601,9 @@ def list_entries_by_status(
         limit=limit,
     )
     results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry) for entry in entries if entry.importance >= min_impact
+        _memory_to_learning_dict(entry)
+        for entry in entries
+        if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
     ]
     return results
 

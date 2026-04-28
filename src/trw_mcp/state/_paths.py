@@ -17,7 +17,6 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import get_config
 from trw_mcp.state._pin_store import (
     get_pin_entry,
     remove_pin_entry,
@@ -31,6 +30,13 @@ logger = structlog.get_logger(__name__)
 def _runtime_logger() -> Any:
     """Return a fresh logger so structlog test capture sees late-bound events."""
     return structlog.get_logger(__name__)
+
+
+def _get_config() -> Any:
+    """Lazy-load TRWConfig to avoid import cycles during path-only imports."""
+    from trw_mcp.models.config import get_config
+
+    return get_config()
 
 
 # Explicit public surface — keeps static analyzers (Pyright) from inferring
@@ -249,7 +255,7 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     """
     # Kill switch — skip ctx isolation entirely when operators disable it.
     try:
-        kill_switch_enabled = not bool(get_config().ctx_isolation_enabled)
+        kill_switch_enabled = not bool(_get_config().ctx_isolation_enabled)
     except Exception:  # justified: config unavailable must not break pin resolution
         kill_switch_enabled = False
         _runtime_logger().debug("ctx_isolation_config_unavailable", exc_info=True)
@@ -426,8 +432,9 @@ def resolve_memory_store_path() -> Path:
     Returns:
         Absolute path to the sqlite-vec database file.
     """
-    config = get_config()
-    return resolve_trw_dir() / config.memory_store_path.removeprefix(".trw/")
+    config = _get_config()
+    memory_store_path = str(config.memory_store_path)
+    return resolve_trw_dir() / memory_store_path.removeprefix(".trw/")
 
 
 def resolve_project_root() -> Path:
@@ -452,8 +459,8 @@ def resolve_trw_dir() -> Path:
     Returns:
         Absolute path to the .trw directory (project_root / config.trw_dir).
     """
-    config = get_config()
-    return resolve_project_root() / config.trw_dir
+    config = _get_config()
+    return resolve_project_root() / str(config.trw_dir)
 
 
 def iter_run_dirs(runs_root: Path) -> Iterator[tuple[Path, Path]]:
@@ -552,7 +559,7 @@ def find_active_run(
         return None
 
     try:
-        config = get_config()
+        config = _get_config()
         reader = FileStateReader()
         project_root = resolve_project_root()
         runs_root = project_root / config.runs_root
@@ -633,7 +640,7 @@ def resolve_run_path(
             )
         return resolved
 
-    config = get_config()
+    config = _get_config()
     project_root = resolve_project_root()
     runs_dir = project_root / config.runs_root
     if not runs_dir.exists():
@@ -690,7 +697,7 @@ def resolve_installation_id() -> str:
     """
     import hashlib
 
-    cfg = get_config()
+    cfg = _get_config()
     iid = cfg.installation_id.strip() if cfg.installation_id else ""
     if iid:
         return iid

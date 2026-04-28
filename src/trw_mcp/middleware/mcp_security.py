@@ -25,7 +25,7 @@ from trw_mcp.security.capability_scope import (
     apply_scope,
     scope_from_allowed_tool,
 )
-from trw_mcp.security.mcp_registry import MCPAllowlist, MCPRegistry, RegistryDecision
+from trw_mcp.security.mcp_registry import ALL_PHASES, ALL_SCOPES, MCPAllowlist, MCPRegistry, RegistryDecision
 from trw_mcp.telemetry.event_base import MCPSecurityEvent
 from trw_mcp.telemetry.unified_events import emit as emit_unified_event
 
@@ -295,6 +295,29 @@ class MCPSecurityMiddleware(Middleware):
             return None
         return scope_from_allowed_tool(server_name, allowed_tool)
 
+    def _first_party_tool_scope(self, *, server_name: str, tool_name: str) -> CapabilityScope | None:
+        """Return a scope for bundled TRW tools omitted from the signed seed allowlist.
+
+        The signed allowlist intentionally moves slowly; the live in-process
+        TRW server can grow new first-party tools faster than that file is
+        re-signed.  For the trusted default server only, bridge that drift from
+        ``TOOL_PRESETS["all"]`` so advertisements and direct calls stay aligned
+        with the configured first-party surface while non-TRW/unknown tools
+        remain denied.
+        """
+        if server_name != self.default_server_name:
+            return None
+        from trw_mcp.models.config._defaults import TOOL_PRESETS
+
+        if tool_name not in TOOL_PRESETS["all"]:
+            return None
+        return CapabilityScope(
+            server_name=server_name,
+            tool_name=tool_name,
+            allowed_phases=ALL_PHASES,
+            allowed_scopes=ALL_SCOPES,
+        )
+
     def _record_anomalies(
         self,
         *,
@@ -359,6 +382,11 @@ class MCPSecurityMiddleware(Middleware):
                 tool_name=runtime_peer.tool,
                 auth=auth,
             )
+            if scope is None and auth.allowed:
+                scope = self._first_party_tool_scope(
+                    server_name=resolved_server,
+                    tool_name=runtime_peer.tool,
+                )
             try:
                 if auth.allowed and scope is not None:
                     apply_scope(
@@ -447,6 +475,11 @@ class MCPSecurityMiddleware(Middleware):
             tool_name=runtime_peer.tool,
             auth=auth,
         )
+        if scope is None and auth.allowed:
+            scope = self._first_party_tool_scope(
+                server_name=resolved_server,
+                tool_name=runtime_peer.tool,
+            )
         try:
             if auth.allowed and scope is not None:
                 apply_scope(

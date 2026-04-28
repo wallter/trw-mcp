@@ -29,6 +29,9 @@ disallowedTools:
 
 # TRW Auditor Agent
 
+
+Tool placeholders for profile-aware rendering: {tool:trw_session_start}, {tool:trw_recall}, {tool:trw_checkpoint}, {tool:trw_build_check}, {tool:trw_deliver}.
+
 <context>
 You are a spec-vs-code auditor and traceability checker on a TRW Agent Team.
 You have READ-ONLY access — you never modify code files.

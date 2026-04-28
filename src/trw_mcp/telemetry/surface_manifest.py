@@ -99,18 +99,18 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
         msg = f"run_surface_snapshot payload must be a mapping, got {type(data).__name__}"
-        raise TypeError(msg)
+        raise ValueError(msg)  # noqa: TRY004 - public loader contract raises ValueError for schema errors.
 
     artifacts_raw = data.get("artifacts", [])
     if not isinstance(artifacts_raw, list):
         msg = "run_surface_snapshot.artifacts must be a list"
-        raise TypeError(msg)
+        raise ValueError(msg)  # noqa: TRY004 - public loader contract raises ValueError for schema errors.
 
     artifacts: list[SurfaceArtifact] = []
     for idx, entry in enumerate(artifacts_raw):
         if not isinstance(entry, dict):
             msg = f"run_surface_snapshot.artifacts[{idx}] must be a mapping"
-            raise TypeError(msg)
+            raise ValueError(msg)  # noqa: TRY004 - public loader contract raises ValueError for schema errors.
         artifacts.append(_artifact_from_dict(entry))
 
     raw_generated = data.get("generated_at")
@@ -120,7 +120,7 @@ def yaml_to_snapshot(raw: str) -> SurfaceSnapshot:
         generated_at = datetime.fromisoformat(raw_generated)
     else:
         msg = f"run_surface_snapshot.generated_at must be a datetime or ISO string, got {type(raw_generated).__name__}"
-        raise TypeError(msg)
+        raise ValueError(msg)  # noqa: TRY004 - public loader contract raises ValueError for schema errors.
 
     return SurfaceSnapshot(
         snapshot_id=str(data["snapshot_id"]),

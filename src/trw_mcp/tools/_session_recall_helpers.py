@@ -206,7 +206,7 @@ def perform_session_recalls(
                     query="*",
                     min_impact=bypass_min,
                     max_results=effective_max * 2,
-                    compact=True,
+                    compact=False,
                 )
             except Exception:  # justified: fail-open, recent-bypass recall must not block session start
                 logger.warning(

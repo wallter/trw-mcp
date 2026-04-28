@@ -50,7 +50,14 @@ def _resolve_repo_anchored_path(path_value: str) -> Path:
     if path.is_absolute():
         return path.resolve()
     if path.parts and path.parts[0] == ".trw":
-        return (_resolve_security_anchor() / path).resolve()
+        # Local/offline subcommands may run before a project is initialized
+        # (no .git/.trw anchor yet). Treat .trw-relative runtime/security
+        # paths as cwd-relative so ``trw-mcp local ...`` can bootstrap the
+        # project; arbitrary relative paths still require an anchor below.
+        try:
+            return (_resolve_security_anchor() / path).resolve()
+        except MCPSecurityConfigError:
+            return (Path.cwd().resolve() / path).resolve()
     if path.parts and path.parts[0] == "data":
         return (bundled_allowlist_path().parent / path.relative_to("data")).resolve()
     return (_resolve_security_anchor() / path).resolve()

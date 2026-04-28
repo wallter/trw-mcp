@@ -189,21 +189,32 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Use when:
         - You just found a root cause, gotcha, or durable pattern worth remembering.
-        - You validated an approach that changes how similar work should be done.
+        - Capture at the moment you validated an approach that prevents repeated mistakes.
         - You hit an architecture constraint that is not obvious from reading the code.
 
-        Skip for routine observations ("I read the file", "the test passed") —
+        Only record learnings that:
+        - prevent repeated mistakes;
+        - change future implementation, debugging, or review behavior;
+        - are specific enough to be useful when recalled later.
+
+        Routine observations ("I read the file", "the test passed") are skipped —
         those degrade recall quality.
 
-        Input:
+        Required:
         - summary: one-line headline (required).
         - detail: the full finding with context, symptoms, and why-it-matters (required).
+
+        Recommended:
         - tags: keywords used by trw_recall filtering (recommended).
         - impact: 0.0-1.0; high values surface the entry more often.
+
+        Advanced (auto-detected if omitted):
         - other fields (shard_id, source_*, client_profile, model_id,
           consolidated_from, assertions, type, nudge_line, expires, confidence,
           task_type, domain, phase_origin, phase_affinity, team_origin,
           protection_tier): auto-detected when omitted.
+          Most learnings need only summary and detail. Adding tags and impact
+          improves recall precision. All other fields are auto-detected.
 
         Output: LearnResultDict with fields
         {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
@@ -489,6 +500,8 @@ def register_learning_tools(server: FastMCP) -> None:
         - You suspect a bug has been seen before and want prior root-cause notes.
         - You want a narrow tag/impact slice before spawning a subagent.
 
+        See Also: trw_learn, trw_session_start.
+
         Results are ranked by combined relevance (query match on summary/tags/detail)
         and utility (impact, type-aware recency decay, prior feedback). Context
         boosts prioritize entries matching your current domain, phase, and team.
@@ -564,7 +577,7 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Sync TRW protocol + ceremony guidance into the client's instruction file.
+        """Sync TRW protocol and ceremony guidance into the client's instruction file.
 
         Use when:
         - Onboarding a new project and the instruction file (CLAUDE.md / AGENTS.md)
@@ -574,8 +587,8 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Renders behavioral protocol and ceremony guidance into the auto-generated
         block of whichever client surface is present (``CLAUDE.md``, ``AGENTS.md``,
-        ``.codex/INSTRUCTIONS.md``). Learnings are NOT promoted into the instruction
-        file — trw_session_start recall handles that (PRD-CORE-093).
+        ``.codex/INSTRUCTIONS.md``). Learnings are not promoted into the instruction file —
+        trw_session_start() recall handles that (PRD-CORE-093).
 
         Output: ClaudeMdSyncResultDict with fields
         {status: "success"|"error", files_written: list[str], sections_synced: int}.

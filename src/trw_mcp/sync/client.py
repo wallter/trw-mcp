@@ -78,6 +78,10 @@ class BackendSyncClient:
     """
 
     def __init__(self, config: TRWConfig, trw_dir: Path) -> None:
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
         self._config = config
         self._trw_dir = trw_dir
         self._client_id = resolve_sync_client_id()

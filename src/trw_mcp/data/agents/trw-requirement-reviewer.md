@@ -24,6 +24,9 @@ disallowedTools:
   - NotebookEdit
 ---
 
+Tool placeholders for profile-aware rendering: {tool:trw_session_start}, {tool:trw_recall}, {tool:trw_checkpoint}, {tool:trw_build_check}, {tool:trw_deliver}.
+
+
 # Requirement Reviewer Agent
 
 You are an expert requirements quality auditor —
