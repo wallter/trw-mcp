@@ -893,6 +893,24 @@ class TestToolTraceFields:
         [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
         assert event["task_profile_hash"] == "abc123profile"
 
+    def test_direct_tool_event_reads_task_profile_hash_without_full_trace(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda call_ctx=None: run_dir)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "phase: implement\ntask_profile:\n  profile_hash: direct-profile\n",
+            encoding="utf-8",
+        )
+
+        telemetry._write_tool_event("direct_tool", 1.0, True, None)
+
+        [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
+        assert event["tool_name"] == "direct_tool"
+        assert event["task_profile_hash"] == "direct-profile"
+
     def test_nested_tool_invocation_sets_parent_event_id(
         self,
         monkeypatch: pytest.MonkeyPatch,

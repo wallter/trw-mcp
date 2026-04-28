@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from trw_mcp.telemetry.event_base import ToolCallEvent
+from trw_mcp.telemetry.event_base import ToolCallEvent, validate_parent_within_run
 from trw_mcp.telemetry.tool_call_timing import (
     _usd_cost_estimate,
     build_tool_call_event,
@@ -161,3 +161,18 @@ def test_build_tool_call_event_includes_canonical_trace_fields() -> None:
     assert isinstance(ev.payload["output_hash"], str)
     assert ev.payload["task_profile_hash"] == "profile123"
     assert ev.payload["causal_relation"] == "nested"
+
+
+def test_tool_call_events_validate_parent_chain() -> None:
+    start = datetime(2026, 4, 23, 12, 0, 0, tzinfo=timezone.utc)
+    root = build_tool_call_event(tool="root", start_ts=start, end_ts=start, session_id="s1", run_id="r1")
+    child = build_tool_call_event(
+        tool="child",
+        start_ts=start,
+        end_ts=start,
+        session_id="s1",
+        run_id="r1",
+        parent_event_id=root.event_id,
+    )
+
+    assert validate_parent_within_run([root, child], run_id="r1") == []

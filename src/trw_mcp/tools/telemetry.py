@@ -14,7 +14,7 @@ import functools
 import hashlib
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import ParamSpec, TypeVar, cast
 from uuid import uuid4
@@ -24,10 +24,17 @@ import structlog.contextvars
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import TelemetryRecordDict, ToolEventDataDict
-from trw_mcp.state._paths import find_active_run, resolve_trw_dir
+from trw_mcp.state._paths import TRWCallContext, find_active_run, resolve_trw_dir
 from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
-from trw_mcp.telemetry.trace_context import build_tool_trace_fields, merge_trace_fields, new_trace_event_id
+from trw_mcp.telemetry.trace_context import (
+    ToolTraceFields,
+    build_tool_trace_fields,
+    merge_trace_fields,
+    new_trace_event_id,
+    task_profile_trace_field,
+    with_task_profile_hash,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +49,7 @@ _cached_run_dir_lock = threading.Lock()
 _RUN_DIR_CACHE_TTL: float = 5.0
 
 
-def _get_cached_run_dir(call_ctx: object | None = None) -> Path | None:
+def _get_cached_run_dir(call_ctx: TRWCallContext | None = None) -> Path | None:
     """Return cached active run directory, refreshing if TTL expired.
 
     PRD-CORE-141 FR03: when *call_ctx* is provided (ctx-aware tool handler),
@@ -56,7 +63,7 @@ def _get_cached_run_dir(call_ctx: object | None = None) -> Path | None:
         # Some tests monkeypatch find_active_run with the legacy zero-arg shape,
         # so keep a compatibility fallback instead of surfacing TypeError.
         try:
-            return find_active_run(context=call_ctx)  # type: ignore[arg-type]
+            return find_active_run(context=call_ctx)
         except TypeError:
             return find_active_run()
 
@@ -75,7 +82,7 @@ def _get_cached_run_dir(call_ctx: object | None = None) -> Path | None:
         return run_dir
 
 
-def _extract_call_ctx(kwargs: dict[str, object]) -> object | None:
+def _extract_call_ctx(kwargs: dict[str, object]) -> TRWCallContext | None:
     """Build a TRWCallContext from a wrapped handler's ctx kwarg (FR03).
 
     Returns None when no ctx was supplied (legacy/stdio callers) so the
@@ -86,7 +93,7 @@ def _extract_call_ctx(kwargs: dict[str, object]) -> object | None:
     if ctx is None:
         return None
     try:
-        from trw_mcp.state._paths import TRWCallContext, resolve_pin_key
+        from trw_mcp.state._paths import resolve_pin_key
 
         pin_key = resolve_pin_key(ctx=ctx, explicit=None)
         raw_session = getattr(ctx, "session_id", None)
@@ -231,8 +238,8 @@ def _write_tool_event(
     error: str | None,
     error_type: str | None = None,
     *,
-    call_ctx: object | None = None,
-    trace_fields: Mapping[str, object] | None = None,
+    call_ctx: TRWCallContext | None = None,
+    trace_fields: ToolTraceFields | None = None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
@@ -273,9 +280,11 @@ def _write_tool_event(
                 logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
 
-    merged_trace_fields = dict(trace_fields or {})
-    if task_profile_hash and not merged_trace_fields.get("task_profile_hash"):
-        merged_trace_fields["task_profile_hash"] = task_profile_hash
+    merged_trace_fields = (
+        with_task_profile_hash(trace_fields, task_profile_hash)
+        if trace_fields
+        else task_profile_trace_field(task_profile_hash)
+    )
     merge_trace_fields(cast("dict[str, object]", event_data), merged_trace_fields)
 
     if error is not None:

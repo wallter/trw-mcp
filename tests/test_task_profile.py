@@ -63,3 +63,41 @@ def test_complexity_signals_are_classified() -> None:
 
     assert profile.complexity_class == "COMPREHENSIVE"
     assert profile.trace_depth == "causal"
+
+
+def test_task_profile_exposes_profile_id_and_client_alias() -> None:
+    profile = resolve_task_profile(client_profile=resolve_client_profile("claude-code"))
+
+    assert profile.profile_id == "claude-code"
+    assert profile.client_id == profile.profile_id
+
+
+def test_task_profile_accepts_typed_config_overrides() -> None:
+    from trw_mcp.models.task_profile_types import TaskProfileOverrides
+
+    profile = resolve_task_profile(
+        client_profile=resolve_client_profile("claude-code"),
+        complexity_class=ComplexityClass.STANDARD,
+        config_overrides=TaskProfileOverrides(
+            ceremony_depth="light",
+            mandatory_phases=("IMPLEMENT", "VALIDATE", "DELIVER"),
+            exposed_tool_preset="core",
+            nudge_policy="sparse",
+            trace_depth="minimal",
+            instruction_budget_lines=120,
+        ),
+    )
+
+    assert profile.ceremony_depth == "light"
+    assert profile.mandatory_phases == ("IMPLEMENT", "VALIDATE", "DELIVER")
+    assert profile.exposed_tool_preset == "core"
+    assert profile.nudge_policy == "sparse"
+    assert profile.trace_depth == "minimal"
+    assert profile.instruction_budget_lines == 120
+
+
+def test_run_state_accepts_missing_task_profile() -> None:
+    from trw_mcp.models.run import RunState
+
+    state = RunState(run_id="r1", task="legacy")
+    assert state.task_profile is None
