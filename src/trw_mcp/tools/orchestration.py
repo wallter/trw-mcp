@@ -78,11 +78,7 @@ def _build_call_context(ctx: Context | None) -> TRWCallContext:
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
-    """Register orchestration tools on the MCP server.
-
-    Args:
-        server: FastMCP server instance to register tools on.
-    """
+    """Register orchestration tools on the MCP server."""
 
     @server.tool(output_schema=None)
     @log_tool_call
@@ -485,8 +481,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Output: dict with status, run_path, checkpoint path, and message metadata.
         """
 
-        # PRD-CORE-141 FR03: thread ctx into execute_checkpoint so the
-        # underlying resolve_run_path call is ctx-aware.
         result = execute_checkpoint(
             run_path,
             message,

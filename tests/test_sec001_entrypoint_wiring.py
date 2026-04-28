@@ -72,7 +72,7 @@ class _FakeServer:
         return decorator
 
 
-def test_trw_learn_live_path_wires_session_id_and_avoids_advisory_chain(tmp_path: Path, monkeypatch) -> None:
+def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, monkeypatch) -> None:
     import trw_mcp.tools.learning as learning_mod
 
     trw_dir = tmp_path / ".trw"
@@ -99,4 +99,6 @@ def test_trw_learn_live_path_wires_session_id_and_avoids_advisory_chain(tmp_path
     assert entry is not None
     assert entry.metadata["provenance_session_id"] == "mcp-session-456"
     assert (trw_dir / "memory" / "security" / "observe_start.yaml").exists()
-    assert not (trw_dir / "memory" / "security" / "provenance.jsonl").exists()
+    chain = trw_dir / "memory" / "security" / "provenance.jsonl"
+    assert chain.exists()
+    assert len([line for line in chain.read_text().splitlines() if line.strip()]) == 1

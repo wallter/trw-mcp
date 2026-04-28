@@ -39,6 +39,12 @@ def _get_config() -> Any:
     return get_config()
 
 
+# Backward-compatible patch point for tests and integrations that monkeypatch
+# trw_mcp.state._paths.get_config directly. Runtime code should still call
+# _get_config() so config import remains lazy at module import time.
+get_config = _get_config
+
+
 # Explicit public surface — keeps static analyzers (Pyright) from inferring
 # imported symbols as ``object`` via the module-level ``__getattr__`` shim
 # below.  Must list every name callers ``from trw_mcp.state._paths import …``.
@@ -255,7 +261,7 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     """
     # Kill switch — skip ctx isolation entirely when operators disable it.
     try:
-        kill_switch_enabled = not bool(_get_config().ctx_isolation_enabled)
+        kill_switch_enabled = not bool(get_config().ctx_isolation_enabled)
     except Exception:  # justified: config unavailable must not break pin resolution
         kill_switch_enabled = False
         _runtime_logger().debug("ctx_isolation_config_unavailable", exc_info=True)
@@ -432,7 +438,7 @@ def resolve_memory_store_path() -> Path:
     Returns:
         Absolute path to the sqlite-vec database file.
     """
-    config = _get_config()
+    config = get_config()
     memory_store_path = str(config.memory_store_path)
     return resolve_trw_dir() / memory_store_path.removeprefix(".trw/")
 
@@ -459,7 +465,7 @@ def resolve_trw_dir() -> Path:
     Returns:
         Absolute path to the .trw directory (project_root / config.trw_dir).
     """
-    config = _get_config()
+    config = get_config()
     return resolve_project_root() / str(config.trw_dir)
 
 
@@ -559,7 +565,7 @@ def find_active_run(
         return None
 
     try:
-        config = _get_config()
+        config = get_config()
         reader = FileStateReader()
         project_root = resolve_project_root()
         runs_root = project_root / config.runs_root
@@ -640,7 +646,7 @@ def resolve_run_path(
             )
         return resolved
 
-    config = _get_config()
+    config = get_config()
     project_root = resolve_project_root()
     runs_dir = project_root / config.runs_root
     if not runs_dir.exists():
@@ -697,7 +703,7 @@ def resolve_installation_id() -> str:
     """
     import hashlib
 
-    cfg = _get_config()
+    cfg = get_config()
     iid = cfg.installation_id.strip() if cfg.installation_id else ""
     if iid:
         return iid

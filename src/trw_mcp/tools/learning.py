@@ -189,42 +189,28 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Use when:
         - You just found a root cause, gotcha, or durable pattern worth remembering.
-        - Capture at the moment you validated an approach that prevents repeated mistakes.
+        - Capture it the moment you validate an approach that prevents repeated mistakes.
         - You hit an architecture constraint that is not obvious from reading the code.
 
-        Only record learnings that:
-        - prevent repeated mistakes;
-        - change future implementation, debugging, or review behavior;
-        - are specific enough to be useful when recalled later.
-
-        Routine observations ("I read the file", "the test passed") are skipped —
-        those degrade recall quality.
+        Only record learnings that prevent repeat mistakes, change future
+        implementation/debugging/review behavior, and are specific enough to
+        recall later. Skip routine observations ("I read the file",
+        "the test passed") because they degrade recall quality.
 
         Required:
-        - summary: one-line headline (required).
-        - detail: the full finding with context, symptoms, and why-it-matters (required).
+        - summary: one-line headline.
+        - detail: full finding with context, symptoms, and why it matters.
 
         Recommended:
-        - tags: keywords used by trw_recall filtering (recommended).
-        - impact: 0.0-1.0; high values surface the entry more often.
+        - tags: keywords for trw_recall filtering.
+        - impact: 0.0-1.0; high values surface more often.
 
-        Advanced (auto-detected if omitted):
-        - other fields (shard_id, source_*, client_profile, model_id,
-          consolidated_from, assertions, type, nudge_line, expires, confidence,
-          task_type, domain, phase_origin, phase_affinity, team_origin,
-          protection_tier): auto-detected when omitted.
-          Most learnings need only summary and detail. Adding tags and impact
-          improves recall precision. All other fields are auto-detected.
+        Advanced fields (shard/source/client/model/type/domain/phase/team/
+        protection metadata) are auto-detected when omitted; most calls need
+        only summary, detail, tags, and impact.
 
-        Output: LearnResultDict with fields
+        Output: LearnResultDict with
         {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
-
-        Example:
-            trw_learn(summary="CI flake on macOS sqlite_vec load",
-                      detail="macOS system Python lacks SQLITE_ENABLE_LOAD_EXTENSION; "
-                             "trap AttributeError not sqlite3.Error",
-                      tags=["macos","sqlite","flake"], impact=0.8)
-            → {"id": "L-abc12345", "status": "saved"}
 
         See Also: trw_recall, trw_learn_update
         """
