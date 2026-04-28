@@ -27,7 +27,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Protocol, cast
 
 import structlog
 import yaml
@@ -37,7 +37,18 @@ from trw_mcp.telemetry.trace_context import build_tool_trace_fields, new_trace_e
 
 logger = structlog.get_logger(__name__)
 
-_PRICING_CACHE: dict[str, Any] | None = None
+
+class _WrappedToolMarker(Protocol):
+    __trw_tool_call_wrapped__: bool
+
+
+def _mark_tool_call_wrapped(fn: Callable[..., object]) -> Callable[..., object]:
+    marked = cast("_WrappedToolMarker", fn)
+    marked.__trw_tool_call_wrapped__ = True
+    return fn
+
+
+_PRICING_CACHE: dict[str, object] | None = None
 _PRICING_PATH_CACHE: Path | None = None
 
 
@@ -74,7 +85,7 @@ def _resolve_pricing_path() -> Path | None:
         return None
 
 
-def _load_pricing() -> dict[str, Any]:
+def _load_pricing() -> dict[str, object]:
     """Resolve + cache ``pricing.yaml`` from the bundled data package.
 
     Uses ``importlib.resources`` traversable API + ``as_file`` to survive
@@ -138,7 +149,7 @@ def clear_pricing_cache() -> None:
     _PRICING_PATH_CACHE = None
 
 
-def _bind_call_args(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> dict[str, Any]:
+def _bind_call_args(fn: Callable[..., object], *args: object, **kwargs: object) -> dict[str, object]:
     """Best-effort binding of invocation args for security/audit metadata."""
     try:
         bound = inspect.signature(fn).bind_partial(*args, **kwargs)
@@ -147,13 +158,12 @@ def _bind_call_args(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> dict[s
     return {name: value for name, value in bound.arguments.items() if name not in {"self", "ctx", "context"}}
 
 
-def _extract_ctx(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> object | None:
+def _extract_ctx(fn: Callable[..., object], *args: object, **kwargs: object) -> object | None:
     """Return the bound FastMCP context-like arg when present."""
     try:
         bound = inspect.signature(fn).bind_partial(*args, **kwargs)
     except (TypeError, ValueError):
-        raw = kwargs.get("ctx") or kwargs.get("context")
-        return cast("object | None", raw)
+        return kwargs.get("ctx") or kwargs.get("context")
     for name in ("ctx", "context"):
         if name in bound.arguments:
             return cast("object | None", bound.arguments[name])
@@ -179,7 +189,7 @@ def _build_call_context(ctx: object | None) -> object | None:
         return None
 
 
-def _resolve_session_id(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> str:
+def _resolve_session_id(fn: Callable[..., object], *args: object, **kwargs: object) -> str:
     """Resolve the effective session_id for a wrapped production tool call."""
     ctx = _extract_ctx(fn, *args, **kwargs)
     try:
@@ -191,7 +201,7 @@ def _resolve_session_id(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> st
         return str(os.environ.get("TRW_SESSION_ID", ""))
 
 
-def _resolve_run_dir(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Path | None:
+def _resolve_run_dir(fn: Callable[..., object], *args: object, **kwargs: object) -> Path | None:
     """Resolve the active run directory from explicit args, pin store, or ctx."""
     bound_args = _bind_call_args(fn, *args, **kwargs)
     explicit_run = bound_args.get("run_path")
@@ -319,14 +329,14 @@ def build_tool_call_event(
 
 
 def wrap_tool(
-    fn: Callable[..., Any],
+    fn: Callable[..., object],
     *,
     tool_name: str | None = None,
     session_id_resolver: Callable[[], str] | None = None,
     run_dir_resolver: Callable[[], Path | None] | None = None,
     fallback_dir_resolver: Callable[[], Path | None] | None = None,
-    security_consult: Callable[[str, dict[str, Any] | None, str, str | None], None] | None = None,
-) -> Callable[..., Any]:
+    security_consult: Callable[[str, dict[str, object] | None, str, str | None], None] | None = None,
+) -> Callable[..., object]:
     """Return a wrapped copy of ``fn`` that emits a :class:`ToolCallEvent` per call.
 
     Args:
@@ -346,7 +356,7 @@ def wrap_tool(
     recorded_name: str = tool_name or str(getattr(fn, "__name__", "unknown_tool"))
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: object, **kwargs: object) -> object:
         start = time.monotonic()
         start_ts = datetime.now(tz=timezone.utc)
         outcome = "success"
@@ -449,8 +459,7 @@ def wrap_tool(
                 except Exception:  # justified: fail-open, event construction must not leak
                     logger.warning("tool_call_timing_failed", tool=recorded_name, exc_info=True)
 
-    wrapper.__trw_tool_call_wrapped__ = True  # type: ignore[attr-defined]
-    return wrapper
+    return _mark_tool_call_wrapped(wrapper)
 
 
 __all__ = [

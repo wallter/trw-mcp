@@ -104,6 +104,16 @@ class TestTrwInit:
         assert run_yaml["task_profile"]["complexity_class"] == "STANDARD"
         assert len(run_yaml["task_profile"]["profile_hash"]) == 16
 
+    def test_init_easy_hint_persists_minimal_task_profile(self, orch_tools: dict[str, Any]) -> None:
+        result = orch_tools["trw_init"].fn(task_name="easy-task", complexity_hint="EASY")
+
+        reader = FileStateReader()
+        run_yaml = reader.read_yaml(Path(result["run_path"]) / "meta" / "run.yaml")
+        assert run_yaml["complexity_class"] == "MINIMAL"
+        assert run_yaml["task_profile"]["complexity_class"] == "MINIMAL"
+        assert run_yaml["task_profile"]["ceremony_depth"] == "light"
+        assert "VALIDATE" in run_yaml["task_profile"]["mandatory_phases"]
+
 
 class TestTrwStatus:
     """Tests for trw_status tool."""
