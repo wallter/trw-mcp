@@ -33,6 +33,7 @@ import structlog
 import yaml
 
 from trw_mcp.telemetry.event_base import ToolCallEvent
+from trw_mcp.telemetry.trace_context import build_tool_trace_fields, new_trace_event_id
 
 logger = structlog.get_logger(__name__)
 
@@ -265,6 +266,11 @@ def build_tool_call_event(
     model_id: str | None = None,
     outcome: str = "success",
     error_class: str | None = None,
+    parent_event_id: str | None = None,
+    tool_call_id: str | None = None,
+    input_data: object | None = None,
+    output_data: object | None = None,
+    task_profile_hash: str = "",
 ) -> ToolCallEvent:
     """Assemble a :class:`ToolCallEvent` for a completed tool invocation.
 
@@ -279,11 +285,24 @@ def build_tool_call_event(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
+    event_id = new_trace_event_id()
+    trace_fields = build_tool_trace_fields(
+        tool_name=tool,
+        event_id=event_id,
+        parent_event_id=parent_event_id,
+        tool_call_id=tool_call_id,
+        input_data=input_data,
+        output_data=output_data,
+        task_profile_hash=task_profile_hash,
+    )
     return ToolCallEvent(
+        event_id=event_id,
         session_id=session_id,
         run_id=run_id,
         surface_snapshot_id=surface_snapshot_id,
+        parent_event_id=parent_event_id,
         payload={
+            **trace_fields,
             "tool": tool,
             "start_ts": start_ts.isoformat(),
             "end_ts": end_ts.isoformat(),

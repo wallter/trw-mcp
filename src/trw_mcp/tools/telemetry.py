@@ -14,7 +14,7 @@ import functools
 import hashlib
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ParamSpec, TypeVar, cast
 from uuid import uuid4
@@ -27,6 +27,7 @@ from trw_mcp.models.typed_dicts import TelemetryRecordDict, ToolEventDataDict
 from trw_mcp.state._paths import find_active_run, resolve_trw_dir
 from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+from trw_mcp.telemetry.trace_context import build_tool_trace_fields, merge_trace_fields, new_trace_event_id
 
 logger = structlog.get_logger(__name__)
 
@@ -145,6 +146,11 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             tool_call_id = uuid4().hex[:8]
             structlog.contextvars.bind_contextvars(tool_call_id=tool_call_id)
 
+        parent_event_raw = existing_ctx.get("tool_trace_event_id")
+        parent_event_id = parent_event_raw if isinstance(parent_event_raw, str) else None
+        trace_event_id = new_trace_event_id()
+        structlog.contextvars.bind_contextvars(tool_trace_event_id=trace_event_id)
+
         start = time.monotonic()
         success = True
         error_msg: str | None = None
@@ -162,6 +168,17 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         finally:
             duration_ms = round((time.monotonic() - start) * 1000, 2)
             try:
+                current_ctx = structlog.contextvars.get_contextvars()
+                current_tool_call_id = current_ctx.get("tool_call_id")
+                output_data: object = result_val if success else {"error": error_msg, "error_type": error_type_name}
+                trace_fields = build_tool_trace_fields(
+                    tool_name=func.__name__,
+                    event_id=trace_event_id,
+                    parent_event_id=parent_event_id,
+                    tool_call_id=current_tool_call_id if isinstance(current_tool_call_id, str) else None,
+                    input_data={"args": args, "kwargs": kwargs},
+                    output_data=output_data,
+                )
                 _write_tool_event(
                     func.__name__,
                     duration_ms,
@@ -169,6 +186,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                     error_msg,
                     error_type_name,
                     call_ctx=call_ctx,
+                    trace_fields=trace_fields,
                 )
             except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
@@ -195,7 +213,11 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                 except Exception as exc:  # justified: fail-open telemetry, never blocks tool execution
                     logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
-            # FR01: Clean up correlation ID (only if we bound it)
+            # FR01: Clean up correlation ID (only if we bound it).
+            if parent_event_id is not None:
+                structlog.contextvars.bind_contextvars(tool_trace_event_id=parent_event_id)
+            else:
+                structlog.contextvars.unbind_contextvars("tool_trace_event_id")
             if not is_nested:
                 structlog.contextvars.unbind_contextvars("tool_call_id")
 
@@ -210,6 +232,7 @@ def _write_tool_event(
     error_type: str | None = None,
     *,
     call_ctx: object | None = None,
+    trace_fields: Mapping[str, object] | None = None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
@@ -245,6 +268,8 @@ def _write_tool_event(
             except Exception:  # justified: fail-open telemetry, phase read failure uses fallback
                 logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
+
+    merge_trace_fields(cast("dict[str, object]", event_data), trace_fields)
 
     if error is not None:
         event_data["error"] = error

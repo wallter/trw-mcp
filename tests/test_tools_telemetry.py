@@ -843,3 +843,56 @@ class TestTelemetryIntegration:
         # Must not raise — tool returns normally despite missing meta/
         result = resilient_tool()
         assert result == "still works"
+
+
+class TestToolTraceFields:
+    """PRD-CORE-154: legacy tool_invocation events carry DAG trace fields."""
+
+    def test_tool_invocation_includes_trace_fields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
+
+        @log_tool_call
+        def traced_tool(secret: str) -> str:
+            return f"processed:{len(secret)}"
+
+        assert traced_tool("do-not-log") == "processed:10"
+        [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
+
+        assert isinstance(event["event_id"], str)
+        assert event["parent_event_id"] is None
+        assert isinstance(event["tool_call_id"], str)
+        assert isinstance(event["turn_index"], int)
+        assert isinstance(event["input_hash"], str)
+        assert isinstance(event["output_hash"], str)
+        assert event["task_profile_hash"] == ""
+        assert event["causal_relation"] == "root"
+        assert "do-not-log" not in str(event)
+
+    def test_nested_tool_invocation_sets_parent_event_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
+
+        @log_tool_call
+        def inner_tool() -> str:
+            return "inner"
+
+        @log_tool_call
+        def outer_tool() -> str:
+            return f"outer:{inner_tool()}"
+
+        assert outer_tool() == "outer:inner"
+        events = _read_jsonl(run_dir / "meta" / "events.jsonl")
+        by_tool = {str(event["tool_name"]): event for event in events}
+
+        assert by_tool["outer_tool"]["parent_event_id"] is None
+        assert by_tool["inner_tool"]["parent_event_id"] == by_tool["outer_tool"]["event_id"]
+        assert by_tool["inner_tool"]["causal_relation"] == "nested"

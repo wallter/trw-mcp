@@ -293,7 +293,7 @@ class ToolEventDataDict(TypedDict, total=False):
 
     Always-present keys: ``tool_name``, ``duration_ms``, ``success``,
     ``status``, ``agent_id``, ``agent_role``, ``phase``.
-    Optional: ``error``, ``error_type`` (present only when the tool call raised).
+    Optional: trace fields plus ``error``, ``error_type`` (present only when the tool call raised).
     """
 
     tool_name: str
@@ -305,6 +305,14 @@ class ToolEventDataDict(TypedDict, total=False):
     phase: str
     error: str
     error_type: str
+    event_id: str
+    parent_event_id: str | None
+    tool_call_id: str
+    turn_index: int
+    input_hash: str
+    output_hash: str
+    task_profile_hash: str
+    causal_relation: str
 
 
 class TelemetryRecordDict(TypedDict):
