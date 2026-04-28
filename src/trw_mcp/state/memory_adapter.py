@@ -525,9 +525,7 @@ def update_learning(
         new_detail = detail if detail is not None else existing.detail
         if existing.metadata.get("provenance_content_hash") or existing.metadata.get("content_hash"):
             new_metadata = dict(existing.metadata)
-            new_metadata["provenance_content_hash"] = hashlib.sha256(
-                f"{new_content}{new_detail}".encode()
-            ).hexdigest()
+            new_metadata["provenance_content_hash"] = hashlib.sha256(f"{new_content}{new_detail}".encode()).hexdigest()
             fields["metadata"] = new_metadata
 
     if not changes:
