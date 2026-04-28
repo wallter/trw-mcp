@@ -68,10 +68,10 @@ Treat **score-gaming** or density-chasing as failure modes.
 
 ## Session Start
 
-1. **Call `{tool:trw_session_start}(query='sprint topic')`** — loads prior learnings focused on your task domain and recovers any active run
-2. **Call `{tool:trw_status}()`** if resuming — shows current phase, completed work, next steps
+1. **Call `trw_session_start(query='sprint topic')`** — loads prior learnings focused on your task domain and recovers any active run
+2. **Call `trw_status()`** if resuming — shows current phase, completed work, next steps
 3. **Read CLAUDE.md and FRAMEWORK.md** — refresh orchestration protocol
-4. **Call `{tool:trw_recall}('*', min_impact=0.7)`** — load additional high-impact learnings (session_start with query already retrieves focused + baseline)
+4. **Call `trw_recall('*', min_impact=0.7)`** — load additional high-impact learnings (session_start with query already retrieves focused + baseline)
 
 ## Phase 1: RESEARCH (cap: 25% of effort)
 
@@ -90,7 +90,7 @@ Treat **score-gaming** or density-chasing as failure modes.
 
 ## Phase 2: PLAN (cap: 15% of effort)
 
-10. **Initialize run**: `{tool:trw_init}(task_name, prd_scope=[...])` if not already active
+10. **Initialize run**: `trw_init(task_name, prd_scope=[...])` if not already active
 11. **Groom PRDs** — invoke `/trw-prd-groom` for each PRD, iterate until validation >= 0.85
 11b. **Generate execution plans** (recommended for P0/P1) — invoke `/trw-exec-plan {PRD-ID}` for groomed PRDs to produce micro-task decompositions with file paths, test names, verification commands, and wave plans. Stored at `docs/requirements-aare-f/exec-plans/`.
 12. **Generate file ownership** — create `file_ownership.yaml` with zero-overlap validation (source from execution plans if available):
@@ -106,7 +106,7 @@ Treat **score-gaming** or density-chasing as failure modes.
 13. **Write interface contracts** — document function signatures, Pydantic models, shared paths
 14. **Create teammate playbooks** — invoke `/team-playbook` or write manually (<=3000 tokens each)
 15. **Build task list** — TaskCreate with dependencies (addBlockedBy for test→impl ordering)
-16. **Checkpoint**: `{tool:trw_checkpoint}("PLAN complete: N PRDs groomed, M tasks created, formation: X")`
+16. **Checkpoint**: `trw_checkpoint("PLAN complete: N PRDs groomed, M tasks created, formation: X")`
 17. **Exit criteria**: acceptance criteria defined, tasks planned, file ownership validated
 
 ## Phase 3: IMPLEMENT (cap: 35% of effort)
@@ -122,11 +122,11 @@ Treat **score-gaming** or density-chasing as failure modes.
     - TeammateIdle/TaskCompleted hook signals
 21. **Resolve conflicts** — when teammates report file ownership issues or integration gaps
 22. **Assign new work** — as tasks complete, assign unblocked tasks to idle teammates
-23. **Checkpoint periodically**: `{tool:trw_checkpoint}("IMPLEMENT wave N: X/Y tasks complete")`
+23. **Checkpoint periodically**: `trw_checkpoint("IMPLEMENT wave N: X/Y tasks complete")`
 
 ## Phase 4: VALIDATE (cap: 10% of effort)
 
-24. **Run build gate**: `{tool:trw_build_check}(scope="full")` — pytest + mypy must pass
+24. **Run build gate**: `trw_build_check(scope="full")` — pytest + mypy must pass
 25. **Verify integration** — read completion artifacts from `scratch/tm-*/completions/`
 26. **Spot-check teammate evidence** — for each completion artifact:
     - Verify `verified_at` timestamp exists and is recent (within this session)
@@ -145,14 +145,14 @@ Treat **score-gaming** or density-chasing as failure modes.
     - P0: immediate fix task, block DELIVER
     - P1: assign fix task, conditional pass
     - P2: log as improvement TODO
-32. **Record learnings**: `{tool:trw_learn}()` for any discoveries
+32. **Record learnings**: `trw_learn()` for any discoveries
 33. **Exit criteria**: review score >= 80, no P0 findings, reflection completed
 
 ## Phase 6: DELIVER (cap: 5% of effort)
 
-34. **Final build gate**: `{tool:trw_build_check}(scope="full")`
+34. **Final build gate**: `trw_build_check(scope="full")`
 35. **Write final.md** — traceability matrix (req → impl → test → PASS)
-36. **Invoke `/deliver`** or call `{tool:trw_deliver}()` — reflects, syncs CLAUDE.md, checkpoints
+36. **Invoke `/deliver`** or call `trw_deliver()` — reflects, syncs CLAUDE.md, checkpoints
 37. **Shutdown teammates**: SendMessage type "shutdown_request" to each
 38. **Merge worktree branches**: For each worktree, commit uncommitted changes, then `git merge {branch}` into main. NEVER `rm -rf` a worktree before merging — changes are permanently lost.
 39. **Cleanup team**: `git worktree remove` each worktree (after merge verified), then TeamDelete
@@ -230,8 +230,8 @@ Idle is normal — teammates go idle after every turn. It means they're waiting 
 
 ## Build Check Requirements
 
-- VALIDATE phase: `{tool:trw_build_check}(scope="full")` MUST pass
-- DELIVER phase: `{tool:trw_build_check}(scope="full")` MUST pass again
+- VALIDATE phase: `trw_build_check(scope="full")` MUST pass
+- DELIVER phase: `trw_build_check(scope="full")` MUST pass again
 - Coverage: global >= 85%, diff >= 90%
 - Mypy: --strict must be clean
 
@@ -252,8 +252,8 @@ Two consecutive gate failures → escalate to user.
 - ALL Task() calls MUST block — NO run_in_background. Background agents lose MCP tools and cause 30-50K+ token explosions.
 - Write/Edit is for orchestration artifacts ONLY: plans, playbooks, manifests, ownership YAML, final.md
 - Checkpoint after every phase transition and every 3rd wave — your last checkpoint is your resume point
-- Call `{tool:trw_learn}()` on every discovery, gotcha, or workaround that took >2 retries — saves future agents from repeating your mistakes
-- Call `{tool:trw_deliver}()` at session end — without it, learnings are invisible to future agents
+- Call `trw_learn()` on every discovery, gotcha, or workaround that took >2 retries — saves future agents from repeating your mistakes
+- Call `trw_deliver()` at session end — without it, learnings are invisible to future agents
 - Re-read FRAMEWORK.md every 5 waves and after any context compaction — agents who skip this produce work that drifts from the methodology
 - Persist state changes to disk immediately — treat persistence failures as P0 blockers
 - Commit format: `feat(scope): msg` with `WHY:` rationale
@@ -267,8 +267,8 @@ Two consecutive gate failures → escalate to user.
 
 Agent Teams cannot resume across sessions. On resume:
 
-1. Call `{tool:trw_session_start}()` — recovers active run state
-2. Call `{tool:trw_status}()` — shows phase, progress, last checkpoint
+1. Call `trw_session_start()` — recovers active run state
+2. Call `trw_status()` — shows phase, progress, last checkpoint
 3. Read `run.yaml` → check phase and status
 4. Read `wave_manifest.yaml` → identify incomplete waves
 5. Read `scratch/tm-*/completions/*.yaml` → find completed work
@@ -283,10 +283,10 @@ Agent Teams cannot resume across sessions. On resume:
 
 | Event | Action |
 |-------|--------|
-| Workaround after >2 retries | `{tool:trw_learn}(summary, detail, impact=0.7+)` |
-| Non-obvious API behavior | `{tool:trw_learn}(summary, detail, tags=["gotcha"])` |
-| Environment-specific issue | `{tool:trw_learn}(summary, detail, tags=["environment"])` |
-| Architecture decision | `{tool:trw_learn}(summary, detail, tags=["architecture"], impact=0.8)` |
+| Workaround after >2 retries | `trw_learn(summary, detail, impact=0.7+)` |
+| Non-obvious API behavior | `trw_learn(summary, detail, tags=["gotcha"])` |
+| Environment-specific issue | `trw_learn(summary, detail, tags=["environment"])` |
+| Architecture decision | `trw_learn(summary, detail, tags=["architecture"], impact=0.8)` |
 | Sprint completion | Invoke `/deliver` (reflects + syncs + checkpoints) |
 | >40 active learnings | Invoke `/memory-audit` to prune and consolidate |
 
@@ -304,17 +304,17 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "The team structure is obvious, I'll skip the playbook" | Missing playbooks cause file conflicts — the #1 Agent Teams failure mode | Past sprints without playbooks had 4x more file ownership violations |
 | "Phase reversion is too expensive, I'll push through" | Pushing through with a broken plan costs 2-3x more than replanning | Sprint 26 had a full re-implementation wave caused by pushing through instead of reverting |
 | "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint → context compacts → you re-implement from scratch |
-| "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped {tool:trw_deliver} lost all session learnings |
+| "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings |
 
 ### Rigid Tools (the cost of skipping exceeds the cost of running)
-- `{tool:trw_session_start}()` — first action; loads accumulated knowledge so you start from the team's experience, not zero
-- `{tool:trw_deliver}()` — last action; without this, your session's discoveries are invisible to every future agent
-- `{tool:trw_build_check}()` — at VALIDATE and DELIVER; late-caught bugs cascade into 2x rework
+- `trw_session_start()` — first action; loads accumulated knowledge so you start from the team's experience, not zero
+- `trw_deliver()` — last action; without this, your session's discoveries are invisible to every future agent
+- `trw_build_check()` — at VALIDATE and DELIVER; late-caught bugs cascade into 2x rework
 - File ownership validation — before team spawn; overlapping ownership guarantees merge conflicts
 - Completion artifacts — before TaskUpdate(completed); false completion causes downstream work on foundations that don't exist
 
 ### Flexible Tools (must happen, you choose the moment)
-- `{tool:trw_checkpoint}()` — at milestones; your last checkpoint is your resume point after context compaction
-- `{tool:trw_learn}()` — on discoveries; every learning you skip forces a future agent to rediscover it
+- `trw_checkpoint()` — at milestones; your last checkpoint is your resume point after context compaction
+- `trw_learn()` — on discoveries; every learning you skip forces a future agent to rediscover it
 - Phase reversion — when reversion beats pushing through; fixing a plan is cheaper than rewriting code
 </rationalization-watchlist>

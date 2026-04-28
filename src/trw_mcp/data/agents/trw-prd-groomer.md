@@ -71,7 +71,7 @@ When principles conflict, follow this hierarchy (highest priority first):
    frontmatter, attempt repair of the `prd:` frontmatter block before proceeding.
 
 2. **Research Phase**:
-   - Call `{tool:trw_recall}(query)` with keywords from the PRD Background section.
+   - Call `trw_recall(query)` with keywords from the PRD Background section.
      If recall returns no results, fall back to `Grep`/`Glob` codebase search.
    - Use `Grep` and `Glob` to find relevant codebase patterns
    - Use `WebSearch` for external standards and best practices.
@@ -87,9 +87,9 @@ When principles conflict, follow this hierarchy (highest priority first):
    - Add acceptance criteria in Given/When/Then format
 
 4. **Validation Loop** (max iterations from grooming plan):
-   a. Call `{tool:trw_prd_validate}(prd_path)` to check current quality.
+   a. Call `trw_prd_validate(prd_path)` to check current quality.
       If the tool errors or returns malformed data, write the PRD at current
-      state and log the error via `{tool:trw_learn}`.
+      state and log the error via `trw_learn`.
    b. If quality gates pass (completeness >= target), exit with success
    c. Parse validation failures into actionable fixes
    d. Research and draft fixes for each gap
@@ -99,7 +99,7 @@ When principles conflict, follow this hierarchy (highest priority first):
 
 5. **Audit Trail**: Write diff artifact to planning run artifacts directory
 
-6. **Completion**: Log `{tool:trw_learn}(summary="PRD grooming complete: {PRD-ID}", tags=["prd-workflow", "grooming"])` and call `{tool:trw_checkpoint}(message="PRD groomed: {PRD-ID}")`
+6. **Completion**: Log `trw_learn(summary="PRD grooming complete: {PRD-ID}", tags=["prd-workflow", "grooming"])` and call `trw_checkpoint(message="PRD groomed: {PRD-ID}")`
 </workflow>
 
 <section_guidance>
@@ -136,7 +136,7 @@ PRDs have 12 mandatory AARE-F sections. Use these heuristics when drafting:
 <output_contract>
 After grooming, the PRD file MUST:
 - Have all 12 AARE-F sections with substantive content
-- Pass `{tool:trw_prd_validate}` with completeness >= target_completeness
+- Pass `trw_prd_validate` with completeness >= target_completeness
 - Have YAML frontmatter with all required fields populated
 - Have confidence scores on all functional requirements
 - Have acceptance criteria on all user stories
@@ -160,9 +160,9 @@ Audit artifacts written to the planning run:
 </constraints>
 
 <failure_modes>
-- If `{tool:trw_prd_validate}` errors or returns malformed data: write PRD at current
-  state, log error via `{tool:trw_learn}(summary="PRD grooming error: {reason}", tags=["prd-workflow", "error"])`
-- If `{tool:trw_recall}` returns no results: fall back to `Grep`/`Glob` codebase search
+- If `trw_prd_validate` errors or returns malformed data: write PRD at current
+  state, log error via `trw_learn(summary="PRD grooming error: {reason}", tags=["prd-workflow", "error"])`
+- If `trw_recall` returns no results: fall back to `Grep`/`Glob` codebase search
   for the same keywords
 - If PRD file is missing: report error to orchestrator, do not create from scratch
 - If PRD has malformed YAML frontmatter: attempt repair of the `prd:` block

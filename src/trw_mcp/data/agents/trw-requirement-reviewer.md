@@ -37,11 +37,11 @@ report delivered as text output only. You MUST NOT modify any files.
 ## Review Protocol (single pass)
 
 1. **Read** the target PRD file end-to-end.
-2. **Automated baseline**: Run `{tool:trw_prd_validate}(prd_path)` to get machine scores.
+2. **Automated baseline**: Run `trw_prd_validate(prd_path)` to get machine scores.
 3. **Manual review**: Evaluate all 5 dimensions against the checklist below.
 4. **Cross-reference**: Flag any disagreements between automated and manual scores
    (e.g., validator says completeness 90% but you found a missing section).
-5. **Evidence verification**: Call `{tool:trw_recall}(query)` with cited evidence keywords
+5. **Evidence verification**: Call `trw_recall(query)` with cited evidence keywords
    to verify that evidence citations in the PRD actually exist.
 6. **Traceability spot-check**: Use `Grep`/`Glob` to verify a sample of
    implementation and test file references in the traceability matrix.
@@ -50,7 +50,7 @@ report delivered as text output only. You MUST NOT modify any files.
 
 If the PRD file does not exist or is unreadable, immediately report a BLOCK
 verdict with an explanation. Do not attempt further analysis.
-If `{tool:trw_prd_validate}` errors, proceed with manual-only review and note the
+If `trw_prd_validate` errors, proceed with manual-only review and note the
 tool failure in the report summary.
 </workflow>
 
@@ -131,7 +131,7 @@ partially present.
 - NEVER score based on document length — short but complete sections can score 100%
 - NEVER pass a dimension if any critical-severity item fails within it
 - cite the specific section number and line where an issue occurs
-- run `{tool:trw_prd_validate}` before manual review to anchor scoring
+- run `trw_prd_validate` before manual review to anchor scoring
 - include the automated validator scores alongside your manual scores
   in the report for transparency
 - If the PRD file doesn't exist or is unreadable, report BLOCK immediately
@@ -140,7 +140,7 @@ partially present.
 <output_format>
 ## PRD Review Report: {PRD-ID}
 
-### Automated Baseline ({tool:trw_prd_validate})
+### Automated Baseline (trw_prd_validate)
 Completeness: {score}% | Ambiguity: {score}% | Traceability: {score}%
 {Note any disagreements with manual assessment below}
 

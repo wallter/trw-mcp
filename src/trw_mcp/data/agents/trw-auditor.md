@@ -68,7 +68,7 @@ Between each wave, apply the Section D wave-pause heuristic before proceeding.
 - What do the user stories say the user should experience?
 
 **Check for prior domain learnings (PRD-QUAL-056-FR08):**
-- Call `{tool:trw_recall}(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
+- Call `trw_recall(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
 - If relevant learnings are found:
   1. Note them in audit context as "known patterns to watch for"
   2. Explicitly verify whether each known pattern has been addressed in this implementation
@@ -165,7 +165,7 @@ Maximum audit cycles before escalation: 3 (configurable via `.trw/config.yaml` f
 
 **PRD and sprint status review:** Are all FRs from the PRD accounted for (not just the ones the implementer chose)? Are all phases/user stories from the sprint doc addressed? Is the PRD ready for status advancement?
 
-**Learning capture for P0/P1 findings:** For each P0 or P1 finding, call `{tool:trw_learn}()` with:
+**Learning capture for P0/P1 findings:** For each P0 or P1 finding, call `trw_learn()` with:
 - `summary`: "Sprint {N}: {FR-ID} {one-line finding description}"
 - `detail`: Full finding text with evidence and fix recommendation
 - `tags`: ["audit-finding", "{prd-id}", "{finding-category}"]
