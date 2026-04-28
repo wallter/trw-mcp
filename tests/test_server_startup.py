@@ -8,6 +8,8 @@ bug that caused the v0.11.3 silent startup failure on fresh installs.
 from __future__ import annotations
 
 import io
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,22 @@ class TestModuleImports:
         import trw_mcp.server
 
         assert trw_mcp.server is not None
+
+    def test_import_server_package_in_clean_interpreter(self, tmp_path: Path) -> None:
+        """Catch fresh-process circular imports that in-process pytest can mask."""
+        env = os.environ.copy()
+        env["TRW_PROJECT_ROOT"] = str(tmp_path)
+        result = subprocess.run(
+            [sys.executable, "-c", "import trw_mcp.server; print('ok')"],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "ok"
 
     def test_import_app(self) -> None:
         from trw_mcp._logging import configure_logging

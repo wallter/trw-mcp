@@ -2,6 +2,15 @@
 
 All notable changes to the TRW MCP server package.
 
+## Unreleased
+
+### Fixed
+
+- **MCP startup no longer fails during initialize** when the server is imported in a fresh process.
+  The meta-tune package now exposes convenience symbols lazily and its startup error types no longer
+  import the full telemetry package, avoiding the `state._paths` circular import that closed the
+  stdio connection before Codex could complete the MCP handshake.
+
 ## [0.47.0] — 2026-04-26
 
 ### Quality

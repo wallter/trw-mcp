@@ -1,8 +1,13 @@
-"""Typed SAFE-001 error classes."""
+"""Typed SAFE-001 error classes.
+
+This module is imported on the MCP server startup path via
+``meta_tune.boot_checks``.  Keep it independent from ``trw_mcp.telemetry``'s
+package initializer: importing the telemetry package eagerly pulls in the
+client/state/model/scoring stack and can re-enter ``state._paths`` while it is
+still partially initialized.
+"""
 
 from __future__ import annotations
-
-from trw_mcp.telemetry.event_base import DefaultResolutionError
 
 
 class MetaTuneSafetyUnavailableError(RuntimeError):
@@ -14,7 +19,7 @@ class MetaTuneSafetyUnavailableError(RuntimeError):
         super().__init__(f"{dependency_id}: {activation_gate_blocked_reason}")
 
 
-class MetaTuneBootValidationError(DefaultResolutionError):
+class MetaTuneBootValidationError(RuntimeError):
     """Raised when SAFE-001 boot-time defaults do not resolve to reality."""
 
 
