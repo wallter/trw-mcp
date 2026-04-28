@@ -60,6 +60,7 @@ from trw_mcp.models.run import (
     WaveEntry,
     WaveManifest,
 )
+from trw_mcp.models.task_profile import TaskProfile, resolve_task_profile
 from trw_mcp.models.typed_dicts import (
     AutoProgressStepResult,
     CeremonyFeedbackEntry,
@@ -160,6 +161,7 @@ __all__ = [
     "SessionStartResultDict",
     "ShardCard",
     "TRWConfig",
+    "TaskProfile",
     "TelemetryStepResult",
     "TierDistribution",
     "TierSweepStepResult",
@@ -172,5 +174,6 @@ __all__ = [
     "ValidationResult",
     "WaveEntry",
     "WaveManifest",
+    "resolve_task_profile",
     "typed_dicts",
 ]

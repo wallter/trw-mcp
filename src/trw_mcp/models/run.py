@@ -193,6 +193,7 @@ class RunState(BaseModel):
     complexity_signals: ComplexitySignals | None = None
     complexity_override: ComplexityOverride | None = None
     phase_requirements: PhaseRequirements | None = None
+    task_profile: dict[str, object] | None = None
     owner_session_id: str | None = None
     # PRD-CORE-106: Artifact paths scanned for knowledge requirements
     artifacts: list[str] = Field(default_factory=list)

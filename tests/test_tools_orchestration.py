@@ -70,6 +70,7 @@ class TestTrwInit:
         assert "run_id" in result
         assert "run_path" in result
         assert result["status"] == "initialized"
+        assert len(result["task_profile_hash"]) == 16
 
         trw_dir = tmp_path / ".trw"
         assert trw_dir.exists()
@@ -100,6 +101,8 @@ class TestTrwInit:
         assert run_yaml["framework"] == FRAMEWORK_VERSION
         assert run_yaml["status"] == "active"
         assert run_yaml["phase"] == "research"
+        assert run_yaml["task_profile"]["complexity_class"] == "STANDARD"
+        assert len(run_yaml["task_profile"]["profile_hash"]) == 16
 
 
 class TestTrwStatus:
