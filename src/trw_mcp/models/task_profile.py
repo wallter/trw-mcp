@@ -49,7 +49,11 @@ def _resolve_complexity(
     complexity_signals: ComplexitySignals | None,
 ) -> tuple[ComplexityClass, tuple[str, ...]]:
     if complexity_class is not None:
-        tier = complexity_class if isinstance(complexity_class, ComplexityClass) else ComplexityClass(str(complexity_class).upper())
+        tier = (
+            complexity_class
+            if isinstance(complexity_class, ComplexityClass)
+            else ComplexityClass(str(complexity_class).upper())
+        )
         return tier, (f"complexity supplied as {tier.value}",)
     if complexity_signals is not None:
         tier, raw_score, override = classify_complexity(complexity_signals)
@@ -92,7 +96,9 @@ def _coerce_trace_depth(trace_depth: str) -> TraceDepth:
     return "standard"
 
 
-def _extend_rationale(profile: ClientProfile, mandatory_phases: tuple[str, ...], base: tuple[str, ...]) -> tuple[str, ...]:
+def _extend_rationale(
+    profile: ClientProfile, mandatory_phases: tuple[str, ...], base: tuple[str, ...]
+) -> tuple[str, ...]:
     extra: list[str] = []
     if profile.ceremony_mode == "light" and "VALIDATE" in mandatory_phases:
         extra.append("light ceremony preserves VALIDATE as mandatory")
