@@ -6,9 +6,6 @@ from typing import Literal
 
 from pydantic import Field
 
-# PRD-CORE-145: Supported messenger strategies for ceremony nudges.
-# "contextual_distress": Shows rich nudge ONLY if stalled/failing (Iter-25 primary).
-# "silent_flow": Pure silence unless in distress; eliminates cognitive tax during flow.
 NudgeMessengerLiteral = Literal[
     "standard",
     "minimal",
@@ -28,8 +25,6 @@ NudgeMessengerLiteral = Literal[
 class _CeremonyFields:
     """Ceremony domain mixin — mixed into _TRWConfigFields via MI."""
 
-    # -- Documentation generation --
-
     claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
     max_auto_lines: int = 300
@@ -45,12 +40,8 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    # -- Framework version & AARE-F --
-
     framework_version: str = "v24.6_TRW"
     aaref_version: str = "v2.0.0"
-
-    # -- PRD quality gates & semantic validation --
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -73,8 +64,6 @@ class _CeremonyFields:
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
 
-    # -- Risk-based validation & phase gates --
-
     risk_scaling_enabled: bool = True
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     prd_min_content_density: float = 0.30
@@ -83,34 +72,24 @@ class _CeremonyFields:
     index_auto_sync_on_status_change: bool = True
     strict_input_criteria: bool = False
 
-    # -- PRD grooming --
-
     grooming_max_iterations: int = 5
     grooming_target_completeness: float = 0.85
     grooming_research_scope: Literal["full", "codebase", "minimal"] = "full"
     grooming_placeholder_density_threshold: float = 0.10
     grooming_partial_density_threshold: float = 0.20
 
-    # -- Research findings --
-
     finding_dedup_threshold: float = 0.6
     findings_dir: str = "findings"
     findings_entries_dir: str = "entries"
     findings_registry_file: str = "registry.yaml"
-
-    # -- Reflection & patterns --
 
     reflect_sequence_lookback: int = 3
     reflect_max_positive_learnings: int = 5
     reflect_max_success_patterns: int = 5
     reflect_q_value_threshold: float = 0.6
 
-    # -- Phase reversion --
-
     reversion_rate_elevated: float = 0.15
     reversion_rate_concerning: float = 0.30
-
-    # -- Technical debt --
 
     debt_registry_filename: str = "debt-registry.yaml"
     debt_id_prefix: str = "DEBT"
@@ -123,8 +102,6 @@ class _CeremonyFields:
     debt_budget_critical_ratio: float = 0.20
     debt_budget_high_ratio: float = 0.15
     debt_default_wave_size: int = 5
-
-    # -- Compliance --
 
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
@@ -139,8 +116,6 @@ class _CeremonyFields:
     provenance_enabled: bool = True
     confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
-    # -- ATDD, hooks, enforcement, validation, compaction, progressive --
-
     atdd_enabled: bool = True
     test_skeleton_dir: str = ""
     completion_hooks_blocking: bool = False
@@ -152,8 +127,6 @@ class _CeremonyFields:
     pause_after_compaction: bool = False
     progressive_disclosure: bool = False
 
-    # -- Ceremony alert & feedback --
-
     ceremony_alert_threshold: int = 40
     ceremony_alert_consecutive: int = 3
     ceremony_feedback_min_samples: int = 10
@@ -162,16 +135,12 @@ class _CeremonyFields:
     ceremony_feedback_escalation_threshold: float = 60.0
     ceremony_feedback_escalation_window: int = 5
 
-    # -- Semantic checks & assertions --
-
     semantic_checks_enabled: bool = True
     assertion_failure_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
     assertion_stale_threshold_days: int = Field(default=30, ge=1)
     observation_masking: bool = True
     compact_after_turns: int = 10
     minimal_after_turns: int = 30
-
-    # -- Migration gate & DRY check --
 
     migration_gate_enabled: bool = True
     dry_check_enabled: bool = True
@@ -180,52 +149,28 @@ class _CeremonyFields:
     agent_learning_max: int = 5
     agent_learning_min_impact: float = 0.5
 
-    # -- PRD-QUAL-056 audit quality fields --
-
     max_audit_cycles: int = Field(default=3, ge=1, le=10, description="Maximum audit cycles before escalation")
     audit_pattern_promotion_threshold: int = Field(
         default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
     )
 
-    # -- Nudge control (S4, PRD-CORE-125) --
-
     nudge_enabled: bool | None = None
     nudge_urgency_mode: Literal["adaptive", "always_low", "always_high", "off"] = "adaptive"
     nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_dedup_enabled: bool = True
-    # PRD-CORE-145 FR01: messenger variant — selects which content-generator
-    # strategy produces the nudge text. "standard" preserves pre-PRD pool-based
-    # dispatch. "minimal" routes through compute_nudge_minimal (compressed).
-    # "learning_injection" surfaces task-relevant prior learnings via the
-    # ceremony-status nudge surface. "contextual" preserves the workflow
-    # scaffold but adds one phase-aware next-step instruction plus an optional
-    # "contextual_action"
-    # keeps the action-oriented scaffold but omits the caution line so evals
-    # can isolate whether the recalled warning itself is causing execution drag.
-    # "silent_flow" (Iter-25) is the zero-tax variant that only triggers on distress.
-    # Default None resolves to "standard" so behavior is byte-identical to
-    # pre-PRD until operators explicitly opt in.
     nudge_messenger: NudgeMessengerLiteral | None = None
 
-    # PRD-CORE-146 FR04: nudge injection density lever. ``None`` defers to
-    # profile default (currently ``None`` for all profiles, resolving to
-    # "medium" behavior). Explicit "low" / "medium" / "high" biases nudge
-    # injection frequency and pool cooldown. Surface-isolation eval variants
-    # toggle this via config_overlay — see _variant._KNOWN_SURFACE_FLAGS.
     nudge_density: Literal["low", "medium", "high"] | None = Field(
         default=None,
         description="Nudge injection density: low=less frequent, high=more frequent; None defers to profile default.",
     )
 
-    # -- Nudge pool tuning (PRD-CORE-129) --
     nudge_pool_weight_workflow: int = 40
     nudge_pool_weight_learnings: int = 30
     nudge_pool_weight_ceremony: int = 20
     nudge_pool_weight_context: int = 10
     nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
     nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
-    # PRD-CORE-144 FR03: wall-clock cap on pool cooldown so the primary
-    # ("learnings") pool cannot remain indefinitely cooled out of rotation.
     nudge_pool_cooldown_wall_clock_max_hours: int = Field(
         default=24,
         ge=1,
@@ -233,15 +178,9 @@ class _CeremonyFields:
         description="Maximum wall-clock hours a nudge pool may remain in cooldown before forced re-engagement.",
     )
 
-    # -- Hook control (S9, PRD-CORE-125) --
-
     hooks_enabled: bool | None = None
 
-    # -- Framework reference (S12, PRD-CORE-125) --
-
     framework_md_enabled: bool | None = None
-
-    # -- Skills & Agents (S10, S11, PRD-CORE-125) --
 
     skills_enabled: bool | None = None
     agents_enabled: bool | None = None

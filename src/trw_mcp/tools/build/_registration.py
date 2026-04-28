@@ -25,6 +25,7 @@ from trw_mcp.state._paths import (
 )
 from trw_mcp.tools.build._core import (
     cache_build_status,
+    persist_build_progress_state,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -137,26 +138,8 @@ def register_build_tools(server: FastMCP) -> None:
 
         cache_path = cache_build_status(trw_dir, status)
 
-        # PRD-FIX-077-FR01: Persist build_check_result to ceremony-state.json
-        # so pre-tool-deliver-gate.sh fallback path recognizes the outcome.
-        try:
-            from trw_mcp.state._ceremony_progress_state import mark_build_check
-
-            _bc_passed = status.tests_passed and status.mypy_clean
-            mark_build_check(trw_dir, _bc_passed)
-            logger.info(
-                "build_check_state_persisted",
-                passed=_bc_passed,
-                scope=scope,
-                outcome="success",
-            )
-        except Exception as _persist_exc:  # justified: best-effort persistence
-            logger.warning(
-                "build_check_state_persist_failed",
-                scope=scope,
-                outcome="error",
-                error=f"{type(_persist_exc).__name__}: {str(_persist_exc)[:200]}",
-            )
+        # PRD-FIX-077-FR01: persist build outcome for delivery-gate fallback.
+        persist_build_progress_state(trw_dir, status, scope=scope)
 
         # FIX-035-FR01: Auto-detect active run when not explicitly provided
         from trw_mcp.models.run import Phase
