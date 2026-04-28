@@ -192,10 +192,12 @@ def register_learning_tools(server: FastMCP) -> None:
         - Capture it the moment you validate an approach that prevents repeated mistakes.
         - You hit an architecture constraint that is not obvious from reading the code.
 
-        Only record learnings that prevent repeat mistakes, change future
-        implementation/debugging/review behavior, and are specific enough to
-        recall later. Skip routine observations ("I read the file",
-        "the test passed") because they degrade recall quality.
+        Only record learnings that:
+        - prevent repeated mistakes,
+        - change future implementation/debugging/review behavior,
+        - are specific enough to recall later.
+        Routine observations ("I read the file", "the test passed") degrade
+        recall quality.
 
         Required:
         - summary: one-line headline.
@@ -205,9 +207,10 @@ def register_learning_tools(server: FastMCP) -> None:
         - tags: keywords for trw_recall filtering.
         - impact: 0.0-1.0; high values surface more often.
 
-        Advanced fields (shard/source/client/model/type/domain/phase/team/
-        protection metadata) are auto-detected when omitted; most calls need
-        only summary, detail, tags, and impact.
+        Advanced (auto-detected if omitted):
+        - shard/source/client/model/type/domain/phase/team/protection metadata.
+        Most learnings need only summary and detail. Adding tags and impact
+        improves recall precision. All other fields are auto-detected.
 
         Output: LearnResultDict with
         {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
