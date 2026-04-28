@@ -18,7 +18,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from structlog.testing import capture_logs
+
+from tests._structlog_capture import captured_structlog  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Helpers + fixture
@@ -422,6 +423,7 @@ def test_adopt_refuses_live_owner_without_force(
 
 def test_adopt_succeeds_on_live_owner_with_force(
     isolated_project: Path,
+    captured_structlog: list[dict[str, object]],
 ) -> None:
     from trw_mcp.state._paths import TRWCallContext, pin_active_run
 
@@ -436,17 +438,16 @@ def test_adopt_succeeds_on_live_owner_with_force(
 
     server = _make_server()
     adopt = _adopt(server)
-    with capture_logs() as logs:
-        result = adopt(
-            ctx=SimpleNamespace(session_id="sess-force-B"),
-            run_path=str(run),
-            force=True,
-        )
+    result = adopt(
+        ctx=SimpleNamespace(session_id="sess-force-B"),
+        run_path=str(run),
+        force=True,
+    )
 
     assert result["force_used"] is True
     assert result["from_owner_was_live"] is True
-    conflict = [e for e in logs if e.get("event") == "run_adopted_potential_writer_conflict"]
-    assert conflict, f"expected conflict warning; logs={logs!r}"
+    conflict = [e for e in captured_structlog if e.get("event") == "run_adopted_potential_writer_conflict"]
+    assert conflict, f"expected conflict warning; logs={captured_structlog!r}"
 
 
 def test_adopt_run_adopted_event_carries_audit_fields(
