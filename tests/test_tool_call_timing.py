@@ -136,3 +136,28 @@ class TestWrapTool:
         # Should NOT raise — wrapped tool's result is returned even if
         # session resolution blows up.
         assert wrapped() == 1
+
+
+def test_build_tool_call_event_includes_canonical_trace_fields() -> None:
+    start = datetime(2026, 4, 23, 12, 0, 0, tzinfo=timezone.utc)
+    ev = build_tool_call_event(
+        tool="trw_checkpoint",
+        start_ts=start,
+        end_ts=start + timedelta(milliseconds=10),
+        session_id="s1",
+        parent_event_id="evt_parent",
+        tool_call_id="call-1",
+        input_data={"message": "hello"},
+        output_data={"ok": True},
+        task_profile_hash="profile123",
+    )
+
+    assert ev.parent_event_id == "evt_parent"
+    assert ev.payload["event_id"] == ev.event_id
+    assert ev.payload["parent_event_id"] == "evt_parent"
+    assert ev.payload["tool_call_id"] == "call-1"
+    assert isinstance(ev.payload["turn_index"], int)
+    assert isinstance(ev.payload["input_hash"], str)
+    assert isinstance(ev.payload["output_hash"], str)
+    assert ev.payload["task_profile_hash"] == "profile123"
+    assert ev.payload["causal_relation"] == "nested"
