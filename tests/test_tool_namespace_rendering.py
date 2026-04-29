@@ -3,7 +3,7 @@
 Verifies:
 - ClientProfile.tool_namespace_prefix field + per-profile values (FR01)
 - render_tool_name() + {tool:...} placeholder substitution (FR02)
-- messages.yaml / behavioral_protocol.yaml / trw_readme.md converted (FR03)
+- messages.yaml / behavioral_protocol.yaml converted (FR03)
 - Agent definition files converted (FR04)
 - Per-profile regression (FR05)
 """
@@ -28,7 +28,6 @@ from trw_mcp.prompts.messaging import (
 _AGENTS_DIR = Path(__file__).parent.parent / "src/trw_mcp/data/agents"
 _MESSAGES_YAML = Path(__file__).parent.parent / "src/trw_mcp/data/messages/messages.yaml"
 _BP_YAML = Path(__file__).parent.parent / "src/trw_mcp/data/behavioral_protocol.yaml"
-_README = Path(__file__).parent.parent / "src/trw_mcp/data/trw_readme.md"
 
 _ALL_PROFILES = [
     "claude-code",
@@ -123,7 +122,7 @@ def test_format_directive_placeholder_not_expanded() -> None:
     assert result == "{tool:trw_learn!r}"
 
 
-# --- FR03: messages.yaml / behavioral_protocol.yaml / trw_readme.md ----------
+# --- FR03: messages.yaml / behavioral_protocol.yaml -------------------------
 
 
 def test_messages_yaml_uses_placeholders() -> None:
@@ -142,14 +141,6 @@ def test_behavioral_protocol_uses_placeholders() -> None:
     assert "{tool:trw_learn}" in joined
     assert "{tool:trw_session_start}" in joined
     assert "{tool:trw_deliver}" in joined
-
-
-def test_trw_readme_converted_prose_references() -> None:
-    text = _README.read_text()
-    # A sampling of converted prose references
-    assert "{tool:trw_build_check}" in text
-    assert "{tool:trw_session_start}" in text
-    assert "{tool:trw_instructions_sync}" in text
 
 
 # --- FR04: agent files -------------------------------------------------------

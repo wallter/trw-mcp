@@ -293,8 +293,6 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
     ("gitignore.txt", ".trw/.gitignore"),
     ("settings.json", ".claude/settings.json"),
-    ("trw_readme.md", "docs/TRW_README.md"),
-    ("config_reference.md", "docs/CONFIG-REFERENCE.md"),
 ]
 
 __all__ = [

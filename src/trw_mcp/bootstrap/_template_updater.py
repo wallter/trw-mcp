@@ -47,8 +47,6 @@ _ALWAYS_UPDATE: list[tuple[str, str]] = [
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
-    ("trw_readme.md", "docs/TRW_README.md"),
-    ("config_reference.md", "docs/CONFIG-REFERENCE.md"),
 ]
 
 # Files that are never overwritten during update (user-customized).
