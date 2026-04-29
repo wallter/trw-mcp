@@ -25,6 +25,7 @@ import structlog
 if TYPE_CHECKING:
     from trw_memory.embeddings.local import LocalEmbeddingProvider
 
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
@@ -59,8 +60,20 @@ _CORRUPTION_MARKERS = (
 
 def _is_corruption_error(exc: BaseException) -> bool:
     """Return True when *exc* looks like SQLite corruption."""
+    if isinstance(exc, CorruptDatabaseUnsalvageableError):
+        return False
     message = str(exc).lower()
     return any(marker in message for marker in _CORRUPTION_MARKERS)
+
+
+def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError) -> None:
+    """Log strict recovery refusal before surfacing it to the caller."""
+    logger.error(
+        "memory_recovery_terminal",
+        db=str(db_path),
+        backup_path=exc.backup_path,
+        action="raise",
+    )
 
 
 def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBackend:
@@ -126,6 +139,9 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             backend_kwargs["concurrent_writer_warn_threshold"] = mem_cfg.memory_concurrent_writer_warn_threshold
         try:
             backend = _create_backend(db_path, backend_kwargs)
+        except CorruptDatabaseUnsalvageableError as exc:
+            _log_terminal_recovery(db_path, exc)
+            raise
         except Exception as exc:  # justified: boundary, retry recovery only for SQLite corruption on backend init
             if not _is_corruption_error(exc):
                 logger.exception("backend_init_failed", db=str(db_path), action="raise")
@@ -134,9 +150,17 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             # force-recover and retry once for corruption-like failures.
             logger.warning("backend_init_retry_after_corruption", db=str(db_path), exc_info=True)
             if db_path.exists():
-                conn = SQLiteBackend.recover_db(db_path)
+                try:
+                    conn = SQLiteBackend.recover_db(db_path)
+                except CorruptDatabaseUnsalvageableError as recover_exc:
+                    _log_terminal_recovery(db_path, recover_exc)
+                    raise
                 conn.close()
-            backend = _create_backend(db_path, backend_kwargs)
+            try:
+                backend = _create_backend(db_path, backend_kwargs)
+            except CorruptDatabaseUnsalvageableError as retry_exc:
+                _log_terminal_recovery(db_path, retry_exc)
+                raise
 
         if backend.recovered:
             # Remove migration sentinel so ensure_migrated re-runs the
