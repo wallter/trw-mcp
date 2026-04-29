@@ -4,12 +4,48 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.0] — 2026-04-29
+
+### Removed (BREAKING)
+
+- **Bundled `docs/TRW_README.md` and `docs/CONFIG-REFERENCE.md` no longer copied into user projects.**
+  Both files are superseded by https://trwframework.com/docs. `init-project` and `update-project`
+  no longer write `docs/TRW_README.md` or `docs/CONFIG-REFERENCE.md` into the target tree;
+  existing files in user projects are left in place (no automatic deletion). Bundled data
+  sources (`trw_mcp/data/trw_readme.md`, `trw_mcp/data/config_reference.md`) removed from the
+  wheel; `_DATA_FILE_MAP` (`bootstrap/__init__.py`) and `_ALWAYS_UPDATE`
+  (`bootstrap/_template_updater.py`) no longer reference them. Inventory tracking entries
+  in `scripts/sync_markdown_counts.py` and `scripts/docs-inventory.sh` updated, and the
+  `test_trw_readme_converted_prose_references` regression test is retired (FR03 still
+  covered by `messages.yaml` + `behavioral_protocol.yaml` placeholder asserts).
+
+### Added
+
+- **Adaptive task profiles resolved end-to-end** (commit `828503d87`).
+- **Ceremony depth contracts normalized** so phase gates report consistent depth across tools
+  (commit `f0f02d1b7`).
+- **Tool trace fields** added for downstream telemetry (commit `410ecbec0`).
+
 ### Fixed
 
-- **MCP startup no longer fails during initialize** when the server is imported in a fresh process.
-  The meta-tune package now exposes convenience symbols lazily and its startup error types no longer
-  import the full telemetry package, avoiding the `state._paths` circular import that closed the
-  stdio connection before Codex could complete the MCP handshake.
+- **MCP startup no longer fails during initialize** when the server is imported in a fresh
+  process. The meta-tune package now exposes convenience symbols lazily and its startup error
+  types no longer import the full telemetry package, avoiding the `state._paths` circular
+  import that closed the stdio connection before Codex could complete the MCP handshake
+  (commit `e8aaa868c`).
+- **Repository gate / static-check regressions cleared** (commits `0249f144a`, `e7df5242d`,
+  `fa2eb16cb`).
+- **Learning tool guidance preserved** through ceremony updates so `trw_learn` continues to
+  surface the correct nudge wording (commit `6d806ce3a`).
+- **Typed task profile state preserved** across reloads (commit `3945d21b7`).
+- **Adaptive task profile sprint hardened** against partial-failure cases (commit `0506cd78f`).
+- **Strict recovery fallback hardened** in trw-memory consumer code (commit `c4d417349`).
+
+### Internal
+
+- Bundled hooks and agents resynced from canonical sources (commit `e802b7d6c`).
+- Memory adapter and task profile formatting normalized (commits `353b51970`, `b347f64cf`).
+- Adopt-warning capture isolated in tests (commit `79987e6ee`).
 
 ## [0.47.0] — 2026-04-26
 
