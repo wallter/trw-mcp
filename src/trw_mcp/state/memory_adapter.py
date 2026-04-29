@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
-from trw_memory.exceptions import StorageError
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
 from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
 from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
@@ -171,8 +171,20 @@ _MALFORMED_MARKERS = ("malformed", "database disk image", "not a database", "fil
 
 def _is_corruption_error(exc: BaseException) -> bool:
     """Return True if *exc* indicates SQLite database corruption."""
+    if isinstance(exc, CorruptDatabaseUnsalvageableError):
+        return False
     msg = str(exc).lower()
     return any(m in msg for m in _MALFORMED_MARKERS)
+
+
+def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError) -> None:
+    """Log strict recovery refusal before surfacing it to the caller."""
+    logger.error(
+        "memory_recovery_terminal",
+        db=str(db_path),
+        backup_path=exc.backup_path,
+        action="raise",
+    )
 
 
 def _recover_and_reset_backend(trw_dir: Path) -> None:
@@ -186,7 +198,11 @@ def _recover_and_reset_backend(trw_dir: Path) -> None:
     if db_path.exists():
         from trw_memory.storage.sqlite_backend import SQLiteBackend
 
-        conn = SQLiteBackend.recover_db(db_path)
+        try:
+            conn = SQLiteBackend.recover_db(db_path)
+        except CorruptDatabaseUnsalvageableError as exc:
+            _log_terminal_recovery(db_path, exc)
+            raise
         conn.close()
     # Remove migration sentinel so ensure_migrated re-runs the YAML backfill.
     # This restores any entries that were in YAML but lost from SQLite.
@@ -194,7 +210,11 @@ def _recover_and_reset_backend(trw_dir: Path) -> None:
     if sentinel.exists():
         sentinel.unlink()
     # Re-open via the normal singleton path — triggers ensure_migrated (YAML backfill).
-    _get_backend(trw_dir)
+    try:
+        _get_backend(trw_dir)
+    except CorruptDatabaseUnsalvageableError as exc:
+        _log_terminal_recovery(db_path, exc)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +318,9 @@ def store_learning(
             backend.store(decision.entry)
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries storage before surfacing failure
+            if isinstance(exc, CorruptDatabaseUnsalvageableError):
+                _log_terminal_recovery(trw_dir / "memory" / "memory.db", exc)
+                raise
             if attempt == 0 and _is_corruption_error(exc):
                 logger.warning(
                     "memory_store_retry_after_corruption",
@@ -384,6 +407,9 @@ def recall_learnings(
                 )
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
+            if isinstance(exc, CorruptDatabaseUnsalvageableError):
+                _log_terminal_recovery(trw_dir / "memory" / "memory.db", exc)
+                raise
             if attempt == 0 and _is_corruption_error(exc):
                 logger.warning(
                     "memory_recall_retry_after_corruption",

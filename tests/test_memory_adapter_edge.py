@@ -22,8 +22,10 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
+from trw_mcp.state import memory_adapter as memory_adapter_module
 from trw_mcp.state.memory_adapter import (
     _learning_to_memory_entry,
     _memory_to_learning_dict,
@@ -564,6 +566,57 @@ class TestRecallLearningsBoundary:
         mock_recover.assert_called_once_with(trw_dir)
         backend_second.store.assert_called_once()
         mock_warning.assert_called_once()
+
+    def test_store_learning_does_not_retry_after_strict_refusal(self, trw_dir: Path) -> None:
+        """Strict recovery refusal is terminal, not a generic retryable corruption."""
+        terminal = CorruptDatabaseUnsalvageableError(
+            "database disk image is malformed and salvage yielded 0 rows",
+            backup_path=str(trw_dir / "memory" / "memory.db.corrupt.test.bak"),
+        )
+        backend = MagicMock()
+        backend.store.side_effect = terminal
+
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=backend),
+            patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
+            patch("trw_mcp.state.memory_adapter._embed_and_store"),
+            patch("trw_mcp.state.memory_adapter.logger.error") as mock_error,
+        ):
+            with pytest.raises(CorruptDatabaseUnsalvageableError):
+                store_learning(trw_dir, "L-strict-refuse", "Strict summary", "Strict detail")
+
+        mock_recover.assert_not_called()
+        mock_error.assert_called_once()
+        assert mock_error.call_args.args == ("memory_recovery_terminal",)
+        assert mock_error.call_args.kwargs["backup_path"] == terminal.backup_path
+        backend.store.assert_called_once()
+
+    def test_recover_and_reset_backend_propagates_strict_refusal(self, trw_dir: Path) -> None:
+        """Runtime recovery reset must not reopen a fresh backend after strict refusal."""
+        db_path = trw_dir / "memory" / "memory.db"
+        db_path.write_bytes(b"corrupt")
+        terminal = CorruptDatabaseUnsalvageableError(
+            "database disk image is malformed and salvage yielded 0 rows",
+            backup_path=str(trw_dir / "memory" / "memory.db.corrupt.test.bak"),
+        )
+
+        with (
+            patch("trw_mcp.state._memory_connection.reset_backend") as mock_reset,
+            patch("trw_mcp.state._memory_connection.get_backend") as mock_get_backend,
+            patch("trw_memory.storage.sqlite_backend.SQLiteBackend.recover_db", side_effect=terminal),
+            patch("trw_mcp.state.memory_adapter.logger.error") as mock_error,
+        ):
+            with pytest.raises(CorruptDatabaseUnsalvageableError):
+                memory_adapter_module._recover_and_reset_backend(trw_dir)
+
+        mock_reset.assert_called_once()
+        mock_get_backend.assert_not_called()
+        mock_error.assert_any_call(
+            "memory_recovery_terminal",
+            db=str(db_path),
+            backup_path=terminal.backup_path,
+            action="raise",
+        )
 
     def test_recall_learnings_retries_once_after_corruption(self, trw_dir: Path) -> None:
         """Corruption on first recall attempt triggers recovery + retry with logging."""
