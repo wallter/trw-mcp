@@ -1,11 +1,18 @@
 ---
 name: trw-team-playbook
-description: "Generate structured teammate playbooks with file ownership and YAML interface contracts for Codex subagent teams. Produces per-teammate playbook files and a validated file_ownership.yaml. Use: /trw-team-playbook [sprint-doc-path]\n"
+description: >
+  Generate structured teammate playbooks with file ownership and YAML interface
+  contracts for subagents. Produces per-teammate playbook files and a validated
+  file_ownership.yaml. Use: /trw-team-playbook [sprint-doc-path]
+user-invocable: true
+argument-hint: "[sprint-doc-path or structured args]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Team Playbook Generation Skill
+
+Use when: generating file ownership, interface contracts, and per-teammate playbooks for a sprint team.
 
 Generate structured artifacts for subagents: file ownership maps, interface contracts, and per-teammate playbooks. These artifacts prevent the #1 subagents failure mode (file conflicts) and ensure consistent teammate coordination from sprint context through teammate spawn.
 
@@ -64,7 +71,7 @@ Group the extracted FRs by teammate based on the sprint doc's PRD assignments.
 For each teammate, derive their exclusive file set:
 
 - **Implementer**: source files from the PRD's Key Files table or Technical Approach section. If no files are listed explicitly, use Glob to find files matching the module paths mentioned in the PRD, then assign by functional area.
-- **Tester**: test files corresponding to the implementer's source files. Convention: `tests/test_{module_name}.py` for each `src/trw_mcp/{module_name}.py`.
+- **Tester**: test files corresponding to the implementer's source files. Infer the mapping from project conventions (`tests/test_*.py`, `*.test.ts`, `*.spec.tsx`, `*_test.go`, `*_test.rs`, colocated tests, e2e folders, etc.) and existing config. Use Python paths only when the scoped package is Python.
 - **Reviewer**: no owned files -- read-only access to all in-scope files.
 - **Researcher**: no owned files -- read-only access to all in-scope files.
 
@@ -92,19 +99,19 @@ teammates:
   implementer-1:
     role: implementer
     owns:
-      - src/trw_mcp/tools/example_tool.py
-      - src/trw_mcp/state/example_state.py
+      - src/{domain}/example_module.{ext}
+      - packages/{package}/example_component.{ext}
     test_owns:
-      - tests/test_example_tool.py
+      - {test_root}/example_module.test.{test_ext}
     does_not_own:
-      - src/trw_mcp/tools/other_tool.py
-      - tests/test_other_tool.py
+      - src/{domain}/other_module.{ext}
+      - {test_root}/other_module.test.{test_ext}
   tester-1:
     role: tester
     owns:
-      - tests/test_integration_example.py
+      - {test_root}/integration_example.test.{test_ext}
     does_not_own:
-      - src/trw_mcp/tools/example_tool.py
+      - src/{domain}/example_module.{ext}
   reviewer:
     role: reviewer
     owns: []
@@ -122,7 +129,7 @@ The `does_not_own` list for each teammate is the union of all other teammates' `
 
 For each shared boundary between teammates (implementer-to-tester, implementer-to-implementer if they share a module), document the contract.
 
-Use Grep to find actual function signatures and Pydantic model definitions in the relevant files. Do not fabricate -- use real patterns from the codebase.
+Use Grep to find actual public signatures, exported components, schemas, typed models, interfaces, API routes, CLI commands, or event contracts in the relevant files. Do not fabricate -- use real patterns from the codebase.
 
 Write `scratch/team-playbooks/interface-contract.yaml`:
 
@@ -133,14 +140,14 @@ generated: '{ISO 8601 timestamp}'
 contracts:
   - boundary: "implementer-1 -> tester-1"
     description: "Functions and models that tester-1 will call or validate"
-    functions:
-      - name: example_function
-        module: src/trw_mcp/tools/example_tool.py
-        signature: "def example_function(arg: str, config: TRWConfig) -> ExampleResult"
-        notes: "Returns ExampleResult -- do not call with raw dict"
-    schemas:
-      - name: ExampleResult
-        module: src/trw_mcp/models/run.py
+	    functions:
+	      - name: example_function
+	        module: src/{domain}/example_module.{ext}
+	        signature: "{actual signature/export/command shape from code}"
+	        notes: "Returns ExampleResult -- do not call with raw dict"
+	    schemas:
+	      - name: ExampleResult
+	        module: src/{domain}/models.{ext}
         fields:
           - name: status
             type: str
@@ -150,9 +157,9 @@ contracts:
             required: true
     shared_paths:
       - .trw/config.yaml
-    negative_constraints:
-      - "DO NOT return raw dict -- use typed Pydantic model"
-      - "DO NOT change ExampleResult field names without notifying tester-1"
+	    negative_constraints:
+	      - "DO NOT bypass the typed/schema-backed contract used by this package"
+	      - "DO NOT change ExampleResult field names without notifying tester-1"
 ```
 
 If a boundary has no shared functions or schemas (e.g., reviewer is read-only), omit the contract entry for that boundary.
@@ -191,14 +198,14 @@ the tester to validate that all 14 hook events fire in the correct sequence."}
 You own these files exclusively -- only you may modify them:
 
 ### Source files
-- `src/trw_mcp/tools/example_tool.py`
+- `src/{domain}/example_module.{ext}`
 
 ### Test files
-- `tests/test_example_tool.py`
+- `{test_root}/example_module.test.{test_ext}`
 
 ### DO NOT modify (owned by other teammates)
-- `src/trw_mcp/tools/other_tool.py` -- owned by implementer-2
-- `tests/test_other_tool.py` -- owned by tester-1
+- `src/{domain}/other_module.{ext}` -- owned by implementer-2
+- `{test_root}/other_module.test.{test_ext}` -- owned by tester-1
 ```
 
 **Section 3: Interface Contracts**
@@ -232,7 +239,7 @@ If the teammate is a reviewer or researcher with no contracts, write: "No interf
 - [ ] {criterion 1}
 - [ ] {criterion 2}
 
-**Files to modify**: `src/trw_mcp/tools/example_tool.py`
+**Files to modify**: `{actual owned source/test paths from file_ownership.yaml}`
 
 ---
 
@@ -246,7 +253,7 @@ List tasks in priority order (P0 first). Each task maps to exactly one FR ID.
 ```markdown
 ## CONTEXT ISOLATION
 
-Do NOT read implementation files (*.py source files in src/ or app/) before writing your tests. Read ONLY:
+Do NOT read implementation files (source files in repo-detected implementation roots such as `src/`, `app/`, `packages/`, `cmd/`, or `crates/`) before writing your tests. Read ONLY:
 1. PRD FR acceptance criteria from the execution plan
 2. Test skeleton functions from the test skeleton files
 
@@ -270,17 +277,17 @@ Your tests must verify the specification, not the implementation. Write tests th
 ### Self-review checklist (complete before marking any task done)
 
 1. Re-read assigned FRs -- verify every requirement is implemented, not just the easy ones
-2. Check integration -- new functions are imported and called from existing code
+2. Check integration -- new public symbols/interfaces/components/commands are exported, registered, or called from existing code
 3. Review your diff for DRY (no duplicated logic), KISS (minimum viable), SOLID (single responsibility)
-4. Run `trw_build_check(scope="full")` -- pytest + mypy must pass across the full codebase
+4. Run `trw_build_check(scope="full")` after the project-appropriate test/type/lint command has passed (for example pytest/mypy, Vitest/tsc, cargo test, go test, or Makefile targets)
 5. Write a completion checkpoint: which FRs implemented, test count, integration points touched
 
 ### Test expectations
 
 - Coverage target: >=90% for new code
 - All edge cases covered: empty inputs, missing files, invalid config
-- mypy --strict must pass with no new errors
-- Test file: `tests/test_{module}.py`
+- Project type/static checks must pass with no new errors
+- Test file naming follows the repo's convention (`tests/test_*.py`, `*.test.ts`, `*_test.go`, `*_test.rs`, etc.)
 ```
 
 **Section 6: Shard Protocol**
@@ -308,7 +315,7 @@ If the teammate is a tester, reviewer, or researcher, omit this section entirely
 
 ### Message these teammates when:
 
-- **tester-1**: when you change a function signature, model field, or file path they test
+- **tester-1**: when you change a public signature, schema/interface field, component contract, command output, or file path they test
 - **reviewer** (if present): when a task is complete and ready for review
 
 ### Receive messages from:
@@ -359,16 +366,7 @@ For each teammate:
 
 If `agent_learning_injection` is `false` in config, skip this step entirely. If no learnings are found for a teammate, skip injection for that teammate (do not add an empty section).
 
-The injected section looks like:
-
-```markdown
-## Task-Relevant Learnings (auto-injected)
-
-The following learnings from prior sessions are relevant to your current task. Treat them as high-priority constraints.
-
-- **[L-042]** require_org_admin must accept both admin and owner roles (impact: 0.9, tags: auth, admin)
-- **[L-089]** Pydantic v2: use_enum_values=True breaks comparison (impact: 0.8, tags: pydantic)
-```
+Injected section format: `## Task-Relevant Learnings (auto-injected)` plus up to N bullet learnings with impact and tags.
 
 Configuration controls (from `.trw/config.yaml`):
 - `agent_learning_injection`: toggle on/off (default: true)

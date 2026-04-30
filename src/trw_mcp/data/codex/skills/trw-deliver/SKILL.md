@@ -1,25 +1,32 @@
 ---
 name: trw-deliver
-description: "Persist your session's work so future agents inherit your discoveries. Runs build check (catches bugs before they ship), synthesizes teammate learnings (resolves duplicates/conflicts), then trw_deliver. Use: /trw-deliver\n"
+description: >
+  Persist your session's work so future agents inherit your discoveries.
+  Runs build check (catches bugs before they ship), synthesizes teammate
+  learnings (resolves duplicates/conflicts), then trw_deliver. Use: /trw-deliver
+user-invocable: true
+disable-model-invocation: true
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Enhanced Delivery Skill
+
+Use when: ending an implementation or research session and you need build evidence plus durable TRW delivery.
 
 Run a complete delivery ceremony with pre-flight build verification and post-team learning synthesis. This ensures the codebase is clean and that any duplicate or conflicting learnings from teammate agents are consolidated before delivery artifacts are generated.
 
 ## Workflow
 
-1. **Pre-flight build check**: Call `trw_build_check(scope="full")` to run pytest + mypy.
+1. **Pre-flight build check**: Run the project-appropriate full verification command (Makefile target, pytest/mypy, npm/Vitest/tsc, cargo, go test, etc.), then call `trw_build_check(scope="full")` with the observed result.
 
 2. **Gate check**:
-   - If build **fails**: Report failures with details (test count, failures, mypy errors). Do NOT proceed to delivery. Suggest fixing the issues first.
+      - If build **fails**: Report failures with details (test count, failures, type/lint errors). Do NOT proceed to delivery. Suggest fixing the issues first.
    - If build **passes**: Continue to step 3.
 
 3. **Team learning synthesis** (run before delivery):
 
-   a. **Check for active team**: Call `task tracking in the current session` to check for tasks with team-assigned owners. If no tasks exist or all are owned by the current agent, skip to step 4. (Do not rely on filesystem paths like `~/.claude/teams/` which are CLI-specific.)
+   a. **Check for active team**: Call `TaskList` to check for tasks with team-assigned owners. If no tasks exist or all are owned by the current agent, skip to step 4. (Do not rely on filesystem paths like `~/.claude/teams/` which are CLI-specific.)
 
    b. **If a team was active**, synthesize learnings:
       - Call `trw_recall("*", max_results=200)` to retrieve all current learnings.
@@ -34,13 +41,13 @@ Run a complete delivery ceremony with pre-flight build verification and post-tea
 4. **Run delivery ceremony**: Call `trw_deliver()` which executes:
    - `trw_reflect` — extract learnings from session events
    - `trw_checkpoint` — atomic state snapshot
-   - instruction sync — promote high-impact learnings into AGENTS.md as part of delivery
+   - `trw_deliver` — promote high-impact learnings to AGENTS.md
    - `trw_index_sync` — update INDEX.md and ROADMAP.md from PRD frontmatter
 
 5. **Report summary**:
    - Test results: total tests, passed, failed
    - Coverage: percentage and pass/fail vs threshold
-   - mypy: clean or error count
+   - Type/lint checks: clean or error count
    - Team learning synthesis results (if a team was active)
    - Delivery steps completed
    - Learnings promoted (if any)

@@ -11,9 +11,9 @@ allowed-tools: Read, Glob, Grep, Bash, mcp__trw__trw_build_check
 # OpenCode Test Strategy Skill
 
 1. Determine the module or project scope.
-2. Call `trw_build_check(scope="pytest")` when available.
-3. Inspect source and test files for missing coverage, weak assertions, and missing edge cases.
-4. Report coverage gaps and the highest-priority tests to add next.
+2. Run the project-appropriate test/coverage command when it is evident, then call `trw_build_check(scope="{actual command}")` with the observed result.
+3. Inspect source and test files using the project's layout and test conventions for missing coverage, weak assertions, missing edge cases, and absent vertical-slice proof.
+4. Report coverage gaps, public-boundary/deep-module coverage, and the highest-priority tests to add next.
 
 Constraints:
 - Read-only analysis only.

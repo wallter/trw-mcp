@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.1] — 2026-04-30
+
+### Changed
+
+- **TRW skill prompts are now language-agnostic and PRD-preflight aware** (PRD-QUAL-077..079). Bundled Claude/Cursor/Codex/Copilot/OpenCode skill assets now avoid Python-only defaults, infer project test/type/security tooling, add one-question-at-a-time PRD drill preflight with duplicate-PRD reuse guards, and encode deep-module plus vertical tracer-bullet planning guidance.
+
 ## [0.48.0] — 2026-04-29
 
 ### Removed (BREAKING)

@@ -1,11 +1,19 @@
 ---
 name: trw-sprint-team
-description: "Automate Codex subagent setup from a sprint plan. Reads sprint doc, analyzes PRDs, proposes team structure with file ownership, and spawns teammates with generated playbooks. Use: /trw-sprint-team [sprint-doc-path]\n"
+description: >
+  Automate subagents setup from a sprint plan. Reads sprint doc, analyzes PRDs,
+  proposes team structure with file ownership, and spawns teammates with generated
+  playbooks. Use: /trw-sprint-team [sprint-doc-path]
+user-invocable: true
+disable-model-invocation: true
+argument-hint: "[sprint-doc-path]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Sprint Team Automation Skill
+
+Use when: turning a sprint plan into an approved subagent team structure with playbooks and tasks.
 
 Automate subagents setup from a sprint plan. This skill reads the sprint document, analyzes PRD scope and complexity, proposes a team structure with file ownership, gets user approval, generates playbooks via `/trw-team-playbook`, creates the team, spawns teammates, and assigns tasks. This is the highest-leverage sprint automation — turning 30 minutes of manual team setup into a single command.
 
@@ -61,13 +69,13 @@ Based on PRD count and complexity, propose a team composition using these rules:
 | 7+        | 3           | 1       | 1         | 5     |
 
 Model selection:
-- **Implementers**: `claude-sonnet-4-6` (cost-effective for focused coding)
-- **Testers**: `claude-sonnet-4-6` (cost-effective for focused testing)
-- **Reviewers**: `claude-sonnet-4-6` (rubric-scored review with structured output)
+- **Implementers**: `sonnet` (cost-effective for focused coding)
+- **Testers**: `sonnet` (cost-effective for focused testing)
+- **Reviewers**: `sonnet` (rubric-scored review with structured output)
 
 For each teammate, assign:
 - PRDs from the sprint (distribute evenly across implementers, group by track where possible)
-- Key files based on the Technical Approach sections of assigned PRDs
+- Key files based on the Technical Approach sections of assigned PRDs, existing execution plans, and repo-detected source/test conventions. Do not assume Python layouts unless the sprint scope is Python.
 
 Present the proposal as a formatted table:
 
@@ -78,9 +86,9 @@ Team name: {team-name}
 
 | Teammate      | Role        | Model  | PRDs            | Key Files                  |
 |---------------|-------------|--------|-----------------|----------------------------|
-| implementer-1 | implementer | claude-sonnet-4-6 | PRD-CORE-035    | src/trw_mcp/tools/learn.py |
-| tester-1      | tester      | claude-sonnet-4-6 | PRD-CORE-035    | tests/test_tools_learn*.py |
-| reviewer      | reviewer    | claude-sonnet-4-6 | All (read-only) | (read-only)                |
+| implementer-1 | implementer | sonnet | PRD-CORE-035    | src/{domain}/{module}.{ext} |
+| tester-1      | tester      | sonnet | PRD-CORE-035    | {test_root}/{module}.test.{test_ext} |
+| reviewer      | reviewer    | sonnet | All (read-only) | (read-only)                |
 
 ## PRD Dependencies
 
@@ -88,8 +96,8 @@ Team name: {team-name}
 
 ## File Ownership Summary
 
-- implementer-1: src/trw_mcp/tools/learn.py, src/trw_mcp/state/recall_search.py
-- tester-1: tests/test_tools_learning.py, tests/test_recall_search.py
+- implementer-1: src/{domain}/{module}.{ext}, packages/{pkg}/{component}.{ext}
+- tester-1: {test_root}/{module}.test.{test_ext}, {test_root}/{component}.spec.{test_ext}
 - reviewer: read-only access to src/**
 ```
 
@@ -180,7 +188,7 @@ For each approved teammate (in this order: implementers first, then testers, the
      - tester -> `trw-tester`
      - reviewer -> `trw-reviewer`
      - researcher -> `trw-researcher`
-   - `model`: as proposed (claude-sonnet-4-6/claude-opus-4-6/claude-haiku-4-5-20251001)
+   - `model`: as proposed (sonnet/opus/haiku)
    - `prompt`: full playbook content from `tm-{name}.md`
 
 Spawn one teammate at a time and confirm each spawn before proceeding to the next.
@@ -204,7 +212,7 @@ For each PRD in the sprint, create a structured task set:
 
 **Review task** (one for the whole sprint):
 - Subject: `Review sprint: {team-name}`
-- Description: Quality review across all implemented PRDs. Check DRY/KISS/SOLID, integration gaps, coverage, and mypy.
+- Description: Quality review across all implemented PRDs. Check DRY/KISS/SOLID, integration gaps, coverage, and project type/static checks.
 - Blocked by: ALL implementation and test tasks via `addBlockedBy`
 - Assign to: the reviewer teammate (if one exists), otherwise omit
 
@@ -214,7 +222,7 @@ Set `addBlockedBy` in `TaskCreate` or via `TaskUpdate` after creation to enforce
 
 After all teammates are spawned and tasks assigned:
 - The lead (you) stays in coordination mode — do NOT implement code directly.
-- Monitor progress via `task tracking in the current session` when teammates report completion.
+- Monitor progress via `TaskList` when teammates report completion.
 - Respond to teammate messages and redirect approaches that are not working.
 - Synthesize findings as they come in.
 
@@ -259,7 +267,7 @@ See: scratch/team-playbooks/file_ownership.yaml
 
 When all tasks are complete:
 
-1. **Verify all tasks** show `completed` status via `task tracking in the current session`
+1. **Verify all tasks** show `completed` status via `TaskList`
 
 2. **Run build check**: `trw_build_check(scope="full")` to validate integration
 

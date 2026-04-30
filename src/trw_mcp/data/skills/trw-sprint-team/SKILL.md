@@ -39,10 +39,10 @@ Extract sprint name, goals (1-3 bullets), PRD assignments per track, existing ow
 
 For each PRD listed in the sprint:
 - Read the full PRD file (locate via `prds_relative_path` + PRD ID).
-- Extract FR count, Technical Approach (affected modules/files), Dependencies.
+- Extract FR count, Technical Approach (affected modules/interfaces/seams/source and test conventions), Dependencies.
 - Estimate complexity: Low (1-3 FRs), Medium (4-7), High (8+).
 - If an execution plan exists at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`, use its wave plan and file ownership mapping instead of estimating from the PRD alone.
-- List key files likely to be created or modified.
+- List key files, interfaces, schemas, commands, components, or tests likely to be created or modified. Do not assume Python layouts unless the sprint scope is Python.
 - Note prerequisites.
 
 If a PRD file cannot be found, log a warning and continue.
@@ -51,7 +51,7 @@ If a PRD file cannot be found, log a warning and continue.
 
 Use the defaults from `trw-mcp/src/trw_mcp/data/playbook-template.yaml` (section: team-composition) for implementer/tester/reviewer counts. Model selection: `sonnet` for all roles (cost-effective for focused coding/testing/review).
 
-For each teammate, assign PRDs (distribute evenly across implementers, group by track where possible) and key files (from Technical Approach).
+For each teammate, assign PRDs (distribute evenly across implementers, group by track where possible) and key files from the Technical Approach/execution plan plus repo-detected source/test conventions. Favor end-to-end vertical slices over horizontal layer-only ownership unless a dependency requires a shared foundation first.
 
 Present the proposal as a formatted table with columns: Teammate | Role | Model | PRDs | Key Files. Also print a PRD Dependencies list and a File Ownership Summary.
 
@@ -119,7 +119,7 @@ Per PRD, create three tasks:
 - **Test**: `Test {PRD-ID}: {title}` → owner: tester, `addBlockedBy` the implementation task.
 - **Review** (sprint-level, one total): `Review sprint: {team-name}` → owner: reviewer, `addBlockedBy` ALL implementation + test tasks.
 
-Each description includes specific FRs, files, and acceptance criteria. Reference PRD ID explicitly.
+Each description includes specific FRs, files/interfaces, vertical slice boundaries, and acceptance criteria. Reference PRD ID explicitly.
 
 ### Step 10: Enter Delegate Mode
 
@@ -135,7 +135,7 @@ When all tasks are complete:
 
 1. Verify all tasks show `completed` via `TaskList`.
 2. Run `trw_build_check(scope="full")`.
-3. Spawn integration reviewer using the Explore prompt at `trw-mcp/src/trw_mcp/data/playbook-template.yaml` (section: integration-review-prompt). Wait up to 120s; on timeout, log `[WARN] Integration reviewer timed out.` and proceed.
+3. Spawn integration reviewer using the Explore prompt at `trw-mcp/src/trw_mcp/data/playbook-template.yaml` (section: integration-review-prompt). Ask it to run project-appropriate static/test gates (not Python-only checks). Wait up to 120s; on timeout, log `[WARN] Integration reviewer timed out.` and proceed.
 4. `SendMessage(shutdown_request)` to each teammate.
 5. Merge worktree branches — CRITICAL, changes are lost if skipped:
    a. Enumerate via `git worktree list --porcelain`.

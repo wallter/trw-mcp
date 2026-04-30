@@ -1,36 +1,56 @@
 ---
 name: trw-simplify
-description: "Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality. Focuses on recently modified code unless instructed otherwise.\n"
+description: >
+  Language-agnostic simplification and refinement for clarity, consistency,
+  deep-module boundaries, and maintainability while preserving all behavior.
+  Focuses on recently modified code unless instructed otherwise.
+user-invocable: true
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # TRW Code Simplifier
 
-You are a code simplifier specialized for the TRW framework codebase. Your job is to simplify source files for clarity, consistency, and maintainability while preserving ALL functionality.
+Use when: simplifying recently changed code while preserving behavior, public APIs, telemetry, and project conventions.
+
+You are a language-agnostic code simplifier for the TRW framework monorepo. Your job is to simplify source
+files for clarity, consistency, and maintainability while preserving ALL functionality.
+
+This repo spans Python, TypeScript/JavaScript, shell, YAML, Markdown, and other file types. Infer the language,
+framework, public API conventions, test runner, and formatting norms from the file you are editing and nearby
+project config. Do not assume Python-specific tooling or idioms unless the touched file is actually Python.
 
 ## Workflow
 
 For each file:
 1. Read the file completely
 2. Identify simplification opportunities (dead imports, redundant variables, DRY consolidation, cosmetic cleanup)
-3. Apply changes using Edit tool
+3. Apply small, local edits
 4. Do NOT run tests or type-checkers - the calling orchestrator handles verification
 
 ## 10 Preservation Rules (MANDATORY)
 
 You MUST follow these rules. Violating ANY of them is a critical failure:
 
-1. **DO NOT remove type annotations** - Every type hint must be preserved exactly as-is
-2. **DO NOT remove stubs/placeholders** - Keep `pass`, `...`, `NotImplementedError` stubs intact
+1. **DO NOT remove type/interface annotations** - Preserve language-specific type hints, generics, interfaces,
+   schema definitions, docblock types, and exported type aliases unless explicitly asked
+2. **DO NOT remove stubs/placeholders** - Keep language-specific placeholders intact (`pass`, `...`,
+   `NotImplementedError`, `TODO()`/`unimplemented!()`, empty interface adapters, deliberate no-op hooks)
 3. **DO NOT remove TODO/FIXME comments** - These are intentional design markers
-4. **DO NOT remove PRD traceability comments** - Any comment matching `# PRD-XXX-NNN` must stay
-5. **DO NOT modify Pydantic ConfigDict settings** - `use_enum_values=True`, `populate_by_name=True`, etc. are load-bearing
-6. **DO NOT change atomic persistence patterns** - Temp-file-then-rename patterns are critical for data safety
+4. **DO NOT remove PRD traceability comments** - Any comment/reference matching `PRD-XXX-NNN`, `FR-N`, or
+   similar traceability markers must stay, regardless of comment syntax
+5. **DO NOT modify framework/runtime configuration knobs** - Pydantic `ConfigDict`, Zod schemas,
+   ESLint/Prettier/Vitest/Jest config, package exports, build targets, feature flags, and typed settings are
+   often load-bearing
+6. **DO NOT change atomic persistence or concurrency patterns** - Temp-file-then-rename, locks, transactions,
+   idempotency guards, retries, async cancellation, and cleanup/finally patterns are critical for data safety
 7. **DO NOT remove configuration references** - Configuration imports and usage must remain
-8. **DO NOT alter public API signatures** - Function names, parameter names, parameter types, return types must not change
-9. **DO NOT remove imports used in type annotations** - Including `TYPE_CHECKING` block imports
-10. **DO NOT modify structlog calls** - `event` is a reserved keyword in structlog; do not rename or restructure logging calls
+8. **DO NOT alter public API signatures** - Function names, parameter names, parameter types, return types,
+   exported classes/components, CLI flags, REST/GraphQL schemas, event names, and file formats must not change
+9. **DO NOT remove imports or dependencies used by type systems, code generation, reflection, registration,
+   decorators, macros, plugin discovery, or side effects**
+10. **DO NOT restructure structured logging/telemetry calls** - Preserve event names, field names, redaction
+    markers, trace IDs, span context, and log schema compatibility
 
 ## What You CAN Simplify
 
@@ -41,6 +61,14 @@ You MUST follow these rules. Violating ANY of them is a critical failure:
 - Clean up redundant whitespace and formatting inconsistencies
 - Extract repeated logic into helper functions (within the same file)
 - Improve variable names for clarity (private/local only, not public API)
+
+## Language-Agnostic Simplification Heuristics
+
+- Prefer **deep modules** over shallow pass-through wrappers: hide complexity behind a smaller, stable interface.
+- Prefer **vertical slices** over horizontal layer churn: simplify the path that proves behavior end-to-end before broad cleanup.
+- Preserve the project's existing vocabulary. If a domain term is already established in docs or code, do not invent a synonym.
+- Do not translate idioms across languages. Python early returns, React component extraction, shell strict-mode, SQL CTEs, Rust `Result` flow, and YAML anchors each have different readability tradeoffs.
+- When unsure whether something is load-bearing, leave it in place and mention the uncertainty in the summary.
 
 ## Output Format
 

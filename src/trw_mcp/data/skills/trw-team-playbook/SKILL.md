@@ -46,7 +46,7 @@ If roles are not assigned in the sprint doc, apply the defaults from the templat
 For each assigned PRD, read the PRD file and extract:
 
 - **Functional requirements**: FR ID, priority (P0/P1/P2/P3), description (1-sentence summary)
-- **Technical Approach section**: Any file paths, module names, or class names mentioned
+- **Technical Approach section**: Any file paths, modules, packages, components, commands, schemas, events, types, interfaces, or public contracts mentioned
 - **Key Files table** (if present): explicit source-to-test file mappings
 - **Acceptance criteria**: per-FR success conditions
 - **Dependencies**: other PRDs or external components this PRD depends on
@@ -59,8 +59,8 @@ Group the extracted FRs by teammate based on the sprint doc's PRD assignments.
 
 For each teammate, derive their exclusive file set:
 
-- **Implementer**: source files from the PRD's Key Files table or Technical Approach section. If no files are listed explicitly, use Glob to find files matching the module paths mentioned in the PRD, then assign by functional area.
-- **Tester**: test files corresponding to the implementer's source files. Convention: `tests/test_{module_name}.py` for each `src/trw_mcp/{module_name}.py`.
+- **Implementer**: source files and owned public contracts from the PRD's Key Files table or Technical Approach section. If no files are listed explicitly, use Glob to find files matching the named modules/components/commands/contracts, then assign by functional area and stable interface.
+- **Tester**: test files corresponding to the implementer's vertical slice. Infer the project convention first (`tests/test_*.py`, `*.test.ts(x)`, `*_test.go`, `*_test.rs`, colocated tests, e2e folders, etc.) instead of assuming a Python path.
 - **Reviewer / Researcher**: no owned files -- read-only access to all in-scope files.
 
 Validate zero overlap (source AND test files):
@@ -87,7 +87,7 @@ The `does_not_own` list for each teammate is the union of all other teammates' `
 
 For each shared boundary between teammates (implementer-to-tester, implementer-to-implementer if they share a module), document the contract.
 
-Use Grep to find actual function signatures and Pydantic model definitions in the relevant files. Do not fabricate -- use real patterns from the codebase.
+Use Grep to find actual public signatures, exports, schemas, typed models, components, commands, events, or data contracts in the relevant files. Do not fabricate -- use real patterns from the codebase.
 
 Write `scratch/team-playbooks/interface-contract.yaml` using the shape from `trw-mcp/src/trw_mcp/data/playbook-template.yaml` (section: interface-contract). Customize `boundary`, `functions`, `schemas`, `shared_paths`, and `negative_constraints` per contract. Omit contract entries for read-only roles (reviewer, researcher).
 
@@ -100,8 +100,8 @@ Section order:
 1. `section-1-identity-and-mission` — role, sprint, model recommendation, working directory, 1-2 sentence mission.
 2. `section-2-file-ownership` — render owns / test_owns / does_not_own from Step 5.
 3. `section-3-interface-contracts` — paste the relevant blocks from Step 6.
-4. `section-4-tasks` — one task per assigned FR, in priority order (P0 first). For testers, prepend `section-4-tester-prefix` (context isolation). For implementers, append `section-4-implementer-coord-addendum` to their coordination section.
-5. `section-5-quality-standards` — self-review checklist + test expectations.
+4. `section-4-tasks` — one task per assigned FR, in priority order (P0 first), shaped as end-to-end vertical tracer bullets where possible. For testers, prepend `section-4-tester-prefix` (context isolation). For implementers, append `section-4-implementer-coord-addendum` to their coordination section.
+5. `section-5-quality-standards` — self-review checklist + project-appropriate test/type/lint expectations.
 6. `section-6-shard-protocol` — include ONLY for implementers with 3+ tasks. Omit for testers, reviewers, researchers.
 7. `section-7-coordination` — message directives, file-conflict escalation, completion promise.
 
@@ -178,5 +178,5 @@ If you catch yourself thinking any of these, stop and follow the process:
 - Token estimation: `word_count * 1.33 ~= token_count`. Count words in the rendered markdown, not the raw template.
 - Playbooks are markdown -- they are designed to be pasted directly into teammate spawn prompts (via the `Task` tool's `prompt` parameter). Keep prose tight and imperative.
 - Never fabricate code patterns. Use Grep to verify real function signatures and model field names before writing them into contracts.
-- If a PRD has no Key Files table and no explicit file paths in Technical Approach, use Glob to find candidate files by module name, then confirm with the user before assigning ownership.
+- If a PRD has no Key Files table and no explicit file paths in Technical Approach, use Glob to find candidate files by module/component/command/contract name, then confirm with the user before assigning ownership.
 - Reviewers and researchers never appear in `owns` lists -- listing them there would create a false file lock. Their `read_only` list can be a glob pattern (`src/**`) rather than explicit paths.

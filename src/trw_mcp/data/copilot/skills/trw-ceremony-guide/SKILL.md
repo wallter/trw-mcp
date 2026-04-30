@@ -10,6 +10,8 @@ argument-hint: ""
 
 # TRW Ceremony Guide
 
+Use when: you need a compact reference for which TRW ceremony tool to call and when.
+
 Complete reference for TRW lifecycle tools, execution phases, and workflow patterns.
 
 ## Execution Phases
@@ -37,9 +39,9 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | Any | `trw_checkpoint` | After milestones -- preserves progress across compactions | Atomic state snapshot | `trw_checkpoint(message='...')` |
 | PLAN | `trw_prd_create` | When defining requirements | Generate AARE-F PRD | `trw_prd_create(input_text='...')` |
 | PLAN | `trw_prd_validate` | Before implementation | PRD quality gate | `trw_prd_validate(prd_path='...')` |
-| VALIDATE | `trw_build_check` | After implementation -- runs pytest + mypy, verifies integration | Run pytest + mypy | `trw_build_check(scope='full')` |
+| VALIDATE | `trw_build_check` | After implementation -- records project-appropriate test/type/lint verification | Run the repo's verification command, then record results | `trw_build_check(scope='full')` |
 | REVIEW | `review diff` | After VALIDATE -- check quality (DRY/KISS/SOLID), fix gaps, record learnings | Review diff, fix incomplete integrations | `Read diff, fix gaps, trw_learn(summary='...')` |
-| DELIVER | `trw_instructions_sync` | At delivery -- refreshes the client instruction file | Refresh client instruction file (CLAUDE.md/AGENTS.md/etc.) | `trw_instructions_sync()` |
+| DELIVER | `trw_deliver` | At delivery -- promotes learnings to AGENTS.md | Promote learnings to AGENTS.md | `trw_deliver()` |
 | DELIVER | `trw_deliver` | At task completion -- persists everything in one call | reflect+sync+checkpoint+index | `trw_deliver()` |
 
 ## Example Flows
@@ -66,7 +68,7 @@ TRW adapts ceremony depth based on task complexity:
 |------|------|----------|
 | MINIMAL | Trivial tasks (1-2 files, bug fix) | trw_session_start + trw_learn (if discovery) |
 | STANDARD | Normal tasks (3-5 files, feature) | Full lifecycle: init, checkpoint, build_check, deliver |
-| COMPREHENSIVE | Complex tasks (6+ files, sprint) | Agent Teams, playbooks, full phase gates |
+| COMPREHENSIVE | Complex tasks (6+ files, sprint) | subagents, playbooks, full phase gates |
 
 See `/trw-sprint-init` for sprint-level orchestration.
 
