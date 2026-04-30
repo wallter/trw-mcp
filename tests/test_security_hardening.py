@@ -273,12 +273,15 @@ class TestMandatoryChecksum:
         # The function has a try/except that catches all exceptions,
         # but ValueError from the checksum check should happen before download.
         # We mock the download to isolate the checksum check.
-        with patch("trw_mcp.state.auto_upgrade.urllib.request.urlopen") as mock_urlopen:
+        with patch("trw_mcp.state.auto_upgrade.httpx.Client") as mock_client_cls:
             mock_resp = MagicMock()
-            mock_resp.read.return_value = b"fake archive content"
-            mock_resp.__enter__ = lambda s: s
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
+            mock_resp.content = b"fake archive content"
+            mock_resp.raise_for_status = MagicMock()
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.__exit__.return_value = False
+            mock_client.get.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
 
             # download_release_artifact wraps in broad except -> returns None
             result = download_release_artifact(
@@ -295,8 +298,12 @@ class TestMandatoryChecksum:
 
         # The function will fail on actual download, but the point is it
         # doesn't raise ValueError when checksum is provided
-        with patch("trw_mcp.state.auto_upgrade.urllib.request.urlopen") as mock_urlopen:
-            mock_urlopen.side_effect = ConnectionError("no network")
+        with patch("trw_mcp.state.auto_upgrade.httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.__exit__.return_value = False
+            mock_client.get.side_effect = ConnectionError("no network")
+            mock_client_cls.return_value = mock_client
             result = download_release_artifact(
                 "http://example.com/release.tar.gz",
                 expected_checksum="abc123",
