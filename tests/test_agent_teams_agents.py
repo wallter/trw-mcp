@@ -1,174 +1,12 @@
-"""Tests for retired beta team compatibility shims, hooks, rendering, and settings."""
+"""Tests for bundled and root agent-definition compatibility contracts."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
 import pytest
 
-# ── Shared path resolution ──────────────────────────────────────────────
-# Package data lives in src/trw_mcp/data/ (canonical source).
-# The monorepo also copies these to .claude/ at root. Tests prefer
-# package data so they work in both monorepo and standalone contexts.
-
-_TESTS_DIR = Path(__file__).parent
-_PKG_DATA = _TESTS_DIR.parent / "src" / "trw_mcp" / "data"
-_MONOREPO_CLAUDE = _TESTS_DIR.parent.parent / ".claude"
-
-
-def _resolve_data_path(pkg_subdir: str, monorepo_subdir: str) -> Path:
-    """Resolve a data path, preferring package data over monorepo location."""
-    pkg = _PKG_DATA / pkg_subdir
-    if pkg.exists():
-        return pkg
-    mono = _MONOREPO_CLAUDE / monorepo_subdir
-    if mono.exists():
-        return mono
-    pytest.skip(f"{pkg_subdir} not found in package data or monorepo")
-
-
-from tests.conftest import get_tools_sync
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.claude_md import (
-    render_agent_teams_protocol,
-    render_template,
-)
-
-_CFG = TRWConfig()
-
-
-@pytest.fixture(autouse=True)
-def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Set TRW_PROJECT_ROOT to temp directory for all tests."""
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    return tmp_path
-
-
-def _get_tools() -> dict[str, Any]:
-    """Create fresh server and return tool map."""
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.learning import register_learning_tools
-
-    srv = FastMCP("test")
-    register_learning_tools(srv)
-    return get_tools_sync(srv)
-
-
-class TestRenderAgentTeamsProtocol:
-    """Tests for the retired beta team compatibility shim."""
-
-    @pytest.mark.parametrize("enabled", [True, False])
-    def test_shim_is_empty_even_if_legacy_flag_is_set(self, enabled: bool) -> None:
-        """v25 keeps the public symbol but emits no beta protocol body."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=enabled)
-        ):
-            result = render_agent_teams_protocol()
-
-        assert result == ""
-
-
-class TestAgentTeamsTemplateIntegration:
-    """Tests for legacy template placeholder behavior."""
-
-    def test_template_placeholder_replaced(self) -> None:
-        """{{agent_teams_section}} placeholder is correctly replaced by supplied context."""
-        template = "before\n{{agent_teams_section}}after"
-        context = {"agent_teams_section": ""}
-        result = render_template(template, context)
-        assert "{{agent_teams_section}}" not in result
-        assert result == "before\nafter"
-
-    def test_bundled_template_has_placeholder_support(self) -> None:
-        """Bundled claude_md.md template keeps compact placeholders for renderer compatibility."""
-        data_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "templates"
-        bundled = data_dir / "claude_md.md"
-        assert bundled.exists(), "Bundled template must exist"
-        content = bundled.read_text(encoding="utf-8")
-        assert "{{imperative_opener}}" in content
-
-    def test_full_sync_succeeds_without_beta_agent_teams(self, tmp_path: Path) -> None:
-        """trw_claude_md_sync succeeds and omits retired beta team protocol content."""
-        trw_dir = tmp_path / _CFG.trw_dir
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
-
-        tools = _get_tools()
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = tools["trw_claude_md_sync"].fn(scope="root")
-
-        assert result["status"] == "synced"
-        content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-        assert "trw:start" in content
-        assert "beta team Protocol" not in content
-        assert "TeamCreate" not in content
-
-
-class TestAgentTeamsConfig:
-    """Tests for agent_teams_enabled compatibility field."""
-
-    def test_default_disabled(self) -> None:
-        """agent_teams_enabled defaults to False in v25."""
-        config = TRWConfig()
-        assert config.agent_teams_enabled is False
-
-    def test_env_override_still_parses(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """TRW_AGENT_TEAMS_ENABLED remains accepted for legacy config compatibility."""
-        monkeypatch.setenv("TRW_AGENT_TEAMS_ENABLED", "true")
-        config = TRWConfig()
-        assert config.agent_teams_enabled is True
-
-
-class TestSettingsJson:
-    """Tests for .claude/settings.json hook registrations.
-
-    These tests validate the monorepo's settings.json. When running in the
-    standalone public repo (no .claude/settings.json at repo root), tests
-    are skipped — the equivalent validation happens in test_bootstrap.py
-    via init-project.
-    """
-
-    @pytest.fixture()
-    def settings_path(self) -> Path:
-        """Return path to settings.json (monorepo only — skips in standalone)."""
-        path = _MONOREPO_CLAUDE / "settings.json"
-        if not path.exists():
-            pytest.skip("settings.json not present (standalone repo — tested via init-project)")
-        return path
-
-    def test_settings_exists(self, settings_path: Path) -> None:
-        """settings.json exists."""
-        assert settings_path.exists()
-
-    def test_settings_valid_json(self, settings_path: Path) -> None:
-        """settings.json is valid JSON."""
-        import json
-
-        content = settings_path.read_text(encoding="utf-8")
-        data = json.loads(content)
-        assert isinstance(data, dict)
-
-    def test_beta_agent_team_hooks_not_registered(self, settings_path: Path) -> None:
-        """v25 settings do not register retired beta team hook events."""
-        import json
-
-        data = json.loads(settings_path.read_text(encoding="utf-8"))
-        hooks = data.get("hooks", {})
-        assert "TeammateIdle" not in hooks
-        assert "TaskCompleted" not in hooks
-
-    def test_agent_teams_env_var_not_set(self, settings_path: Path) -> None:
-        """v25 settings do not opt into the retired beta team env var."""
-        import json
-
-        data = json.loads(settings_path.read_text(encoding="utf-8"))
-        env = data.get("env", {})
-        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in env
+from tests._test_agent_teams_support import _MONOREPO_CLAUDE, _resolve_data_path
 
 
 class TestAgentDefinitions:
@@ -202,10 +40,7 @@ class TestAgentDefinitions:
     @staticmethod
     def _variant_paths(agents_dir: Path, root_agents_dir: Path, agent_name: str) -> dict[str, Path]:
         """Return bundled/root paths for an audit agent pair."""
-        return {
-            "bundled": agents_dir / agent_name,
-            "root": root_agents_dir / agent_name,
-        }
+        return {"bundled": agents_dir / agent_name, "root": root_agents_dir / agent_name}
 
     @staticmethod
     def _assert_variants_include_snippets(variant_paths: dict[str, Path], required_snippets: list[str]) -> None:
@@ -218,10 +53,10 @@ class TestAgentDefinitions:
         """
         import re as _re
 
-        _marker_re = _re.compile(r"\{tool:(trw_\w+)\}")
+        marker_re = _re.compile(r"\{tool:(trw_\w+)\}")
         for variant_name, path in variant_paths.items():
             raw = path.read_text(encoding="utf-8")
-            content = _marker_re.sub(lambda m: m.group(1), raw)
+            content = marker_re.sub(lambda m: m.group(1), raw)
             for snippet in required_snippets:
                 assert snippet in content, f"{variant_name} {path.name} missing snippet: {snippet}"
 
@@ -326,7 +161,6 @@ class TestAgentDefinitions:
         agent_name: str,
     ) -> None:
         """Root and bundled audit agents retain the FR08 prior learning recall contract."""
-
         required_snippets = [
             "**Check for prior domain learnings (PRD-QUAL-056-FR08):**",
             "Call `trw_recall(query='<prd-domain> audit-finding')`",
@@ -350,7 +184,6 @@ class TestAgentDefinitions:
         agent_name: str,
     ) -> None:
         """Root and bundled audit agents retain the FR03/FR05 preflight verification contract."""
-
         required_snippets = [
             "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
             "preflight_verification:",
@@ -370,7 +203,6 @@ class TestAgentDefinitions:
         agent_name: str,
     ) -> None:
         """Root and bundled audit agents retain the FR06 learning-capture contract."""
-
         required_snippets = [
             "For each P0 or P1 finding, call `trw_learn()` with:",
             '- `tags`: ["audit-finding", "{prd-id}", "{finding-category}"]',
@@ -392,10 +224,7 @@ class TestAgentDefinitions:
         Note: trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
         The checklist guidance itself remains in the agent prompt.
         """
-
-        required_snippets = [
-            "Pre-Implementation Checklist (PRD-QUAL-056-FR03)",
-        ]
+        required_snippets = ["Pre-Implementation Checklist (PRD-QUAL-056-FR03)"]
 
         self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, "trw-implementer.md"),
@@ -445,15 +274,12 @@ class TestAgentDefinitions:
         meta = yaml.safe_load(frontmatter)
         assert meta["model"] == expected_model
 
-    @pytest.mark.parametrize(
-        "agent_name",
-        ["trw-auditor.md", "trw-reviewer.md", "trw-researcher.md"],
-    )
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-reviewer.md", "trw-researcher.md"])
     def test_readonly_agents_no_write(self, agents_dir: Path, agent_name: str) -> None:
         """Read-only agents have Write and Edit in disallowedTools."""
-        content = (agents_dir / agent_name).read_text(encoding="utf-8")
         import yaml
 
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         disallowed = meta.get("disallowedTools", [])
@@ -462,9 +288,9 @@ class TestAgentDefinitions:
 
     def test_implementer_has_edit(self, agents_dir: Path) -> None:
         """Implementer agent has Edit and Write in tools list."""
-        content = (agents_dir / "trw-implementer.md").read_text(encoding="utf-8")
         import yaml
 
+        content = (agents_dir / "trw-implementer.md").read_text(encoding="utf-8")
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         tools = meta.get("tools", [])
@@ -484,11 +310,9 @@ class TestAgentDefinitions:
     def test_agent_no_stray_tags(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definitions must not contain stray XML closing tags."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        # Check for orphan </output> tags outside of code blocks
         lines = content.split("\n")
         for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped == "</output>":
+            if line.strip() == "</output>":
                 raise AssertionError(f"{agent_name} line {i + 1}: stray </output> tag")
 
     @pytest.mark.parametrize(
@@ -503,9 +327,9 @@ class TestAgentDefinitions:
     )
     def test_agent_has_required_frontmatter(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definitions must have name, description, model in frontmatter."""
-        content = (agents_dir / agent_name).read_text(encoding="utf-8")
         import yaml
 
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
         _, frontmatter, _ = content.split("---", 2)
         meta = yaml.safe_load(frontmatter)
         assert "name" in meta, f"{agent_name}: missing 'name'"
@@ -513,97 +337,3 @@ class TestAgentDefinitions:
         assert "model" in meta, f"{agent_name}: missing 'model'"
         valid_models = ("frontier", "balanced", "local-large", "local-small")
         assert meta["model"] in valid_models, f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
-
-
-class TestSkillDefinitions:
-    """Tests for flywheel skill contract alignment across root and bundled copies."""
-
-    @pytest.fixture()
-    def skills_dir(self) -> Path:
-        """Return path to bundled skill definitions."""
-        return _resolve_data_path("skills", "skills")
-
-    @pytest.fixture()
-    def root_skills_dir(self) -> Path:
-        """Return path to monorepo root skill definitions when available."""
-        skills_dir = _MONOREPO_CLAUDE / "skills"
-        if not skills_dir.exists():
-            pytest.skip("root .claude/skills not available in this environment")
-        return skills_dir
-
-    def test_exec_plan_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Bundled exec-plan skill stays byte-for-byte aligned with root source."""
-        assert (skills_dir / "trw-exec-plan" / "SKILL.md").read_text(encoding="utf-8") == (
-            root_skills_dir / "trw-exec-plan" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-
-    def test_self_review_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Bundled self-review skill stays byte-for-byte aligned with root source."""
-        assert (skills_dir / "trw-self-review" / "SKILL.md").read_text(encoding="utf-8") == (
-            root_skills_dir / "trw-self-review" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-
-    def test_audit_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Bundled audit skill stays byte-for-byte aligned with root source."""
-        assert (skills_dir / "trw-audit" / "SKILL.md").read_text(encoding="utf-8") == (
-            root_skills_dir / "trw-audit" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-
-    def test_sprint_finish_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Bundled sprint-finish skill stays byte-for-byte aligned with root source."""
-        assert (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8") == (
-            root_skills_dir / "trw-sprint-finish" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-
-    def test_skill_variants_include_preflight_logging_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Root and bundled skill variants retain the pre-implementation checklist/self-review contract.
-
-        Note: trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
-        Tests verify the checklist concept and self-review structure remain, not the removed tool call.
-        """
-        variant_paths = {
-            "root_exec_plan": root_skills_dir / "trw-exec-plan" / "SKILL.md",
-            "bundled_exec_plan": skills_dir / "trw-exec-plan" / "SKILL.md",
-            "codex_exec_plan": _PKG_DATA / "codex" / "skills" / "trw-exec-plan" / "SKILL.md",
-            "root_self_review": root_skills_dir / "trw-self-review" / "SKILL.md",
-            "bundled_self_review": skills_dir / "trw-self-review" / "SKILL.md",
-            "root_audit": root_skills_dir / "trw-audit" / "SKILL.md",
-            "bundled_audit": skills_dir / "trw-audit" / "SKILL.md",
-            "codex_audit": _PKG_DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
-            "copilot_audit": _PKG_DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
-            "root_sprint_finish": root_skills_dir / "trw-sprint-finish" / "SKILL.md",
-            "bundled_sprint_finish": skills_dir / "trw-sprint-finish" / "SKILL.md",
-            "codex_sprint_finish": _PKG_DATA / "codex" / "skills" / "trw-sprint-finish" / "SKILL.md",
-        }
-        required_snippets = {
-            "exec_plan": [
-                "Pre-Implementation Checklist (PRD-QUAL-056-FR03)",
-            ],
-            "self_review": [
-                "Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)",
-            ],
-            "audit": [
-                "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
-                "preflight_verification:",
-                "self_review_alignment: matches|underreported|missing",
-                "prior_learning_verification:",
-            ],
-            "sprint_finish": [
-                "Delivery ceremony",
-                "Learnings promoted",
-            ],
-        }
-
-        for variant_name, path in variant_paths.items():
-            content = path.read_text(encoding="utf-8")
-            skill_kind = (
-                "exec_plan"
-                if "exec_plan" in variant_name
-                else "self_review"
-                if "self_review" in variant_name
-                else "sprint_finish"
-                if "sprint_finish" in variant_name
-                else "audit"
-            )
-            for snippet in required_snippets[skill_kind]:
-                assert snippet in content, f"{variant_name} missing snippet: {snippet}"
