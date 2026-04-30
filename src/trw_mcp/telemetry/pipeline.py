@@ -11,8 +11,7 @@ import collections
 import json
 import threading
 import time
-import urllib.error
-import urllib.request
+import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
@@ -342,8 +341,11 @@ class TelemetryPipeline:
     ) -> bool:
         """Send a batch to the first accepting backend URL with retry.
 
-        Follows the BatchSender._send_batch_to pattern: urllib POST with
+        Follows the BatchSender._send_batch_to pattern: httpx POST with
         exponential backoff. Returns True if any URL accepts the batch.
+
+        PRD-DIST-124 (2026-04-30): migrated from urllib to httpx for
+        consistency with the rest of trw-mcp.
 
         Args:
             events: List of event dicts to transmit.
@@ -357,20 +359,17 @@ class TelemetryPipeline:
             endpoint = f"{url.rstrip('/')}/v1/telemetry"
             for attempt in range(self._max_retries):
                 try:
-                    data = json.dumps({"events": events}, default=str).encode("utf-8")
                     headers: dict[str, str] = {"Content-Type": "application/json"}
                     if api_key:
                         headers["Authorization"] = f"Bearer {api_key}"
-                    req = urllib.request.Request(  # noqa: S310 — endpoint is built from cfg.effective_platform_urls (operator config, not user input)
-                        endpoint,
-                        data=data,
-                        headers=headers,
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
-                        if 200 <= response.status < 300:
-                            return True
-                except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+                    # endpoint is built from cfg.effective_platform_urls
+                    # (operator config, not user input).
+                    payload = json.loads(json.dumps({"events": events}, default=str))
+                    with httpx.Client(timeout=30.0) as client:
+                        response = client.post(endpoint, json=payload, headers=headers)
+                    if 200 <= response.status_code < 300:
+                        return True
+                except (httpx.HTTPError, OSError):
                     logger.debug(
                         "pipeline_batch_retry",
                         attempt=attempt + 1,
