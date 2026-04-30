@@ -218,8 +218,21 @@ _UNIT_FILES: frozenset[str] = frozenset(
 _SLOW_FILES: frozenset[str] = frozenset(
     {
         "test_consolidation.py",
-        "test_bootstrap.py",
         "test_bootstrap_branches.py",
+        "test_bootstrap_claude_md_sync_split.py",
+        "test_bootstrap_codex_split.py",
+        "test_bootstrap_cursor_split.py",
+        "test_bootstrap_ide_detection.py",
+        "test_bootstrap_init_content.py",
+        "test_bootstrap_merge_metadata.py",
+        "test_bootstrap_multi_ide_detection.py",
+        "test_bootstrap_multi_ide_init.py",
+        "test_bootstrap_multi_ide_preservation.py",
+        "test_bootstrap_opencode_split.py",
+        "test_bootstrap_update_cleanup.py",
+        "test_bootstrap_update_core.py",
+        "test_bootstrap_update_migration.py",
+        "test_bootstrap_version_utils.py",
         # PRD-CORE-146-NFR01: 1000-iteration latency benchmark (~1-3s)
         "test_nudge_performance.py",
     }
