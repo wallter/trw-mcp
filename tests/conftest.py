@@ -241,7 +241,7 @@ def pytest_collection_modifyitems(
         filename = Path(item.fspath).name
 
         # Assign slow marker (additive — a test can be both integration and slow)
-        if filename in _SLOW_FILES:
+        if filename in _SLOW_FILES or filename.startswith("test_consolidation"):
             item.add_marker(pytest.mark.slow)
 
         if filename in _UNIT_FILES:
