@@ -120,7 +120,7 @@ class TestGeminiProfile:
         assert profile.mcp_instructions_enabled is True
 
     def test_gemini_agent_teams_disabled(self) -> None:
-        """Gemini uses native .gemini/agents/ instead of Agent Teams."""
+        """Gemini uses native .gemini/agents/ helper definitions."""
         profile = _PROFILES["gemini"]
         assert profile.include_agent_teams is False
 
@@ -164,12 +164,12 @@ class TestGeminiProfileWiring:
         claude = resolve_client_profile("claude-code")
         assert gemini.context_window_tokens > claude.context_window_tokens
 
-    def test_gemini_differs_from_copilot_agent_teams(self) -> None:
-        """Gemini disables Agent Teams; Copilot enables them."""
+    def test_gemini_and_copilot_disable_beta_team_surface(self) -> None:
+        """v25 disables the retired beta team surface for all built-in profiles."""
         gemini = resolve_client_profile("gemini")
         copilot = resolve_client_profile("copilot")
         assert gemini.include_agent_teams is False
-        assert copilot.include_agent_teams is True
+        assert copilot.include_agent_teams is False
 
 
 # =====================================================================

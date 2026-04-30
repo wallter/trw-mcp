@@ -1,4 +1,4 @@
-"""Tests for Agent Teams integration — hooks, claude_md rendering, settings."""
+"""Tests for retired beta team compatibility shims, hooks, rendering, and settings."""
 
 from __future__ import annotations
 
@@ -58,118 +58,40 @@ def _get_tools() -> dict[str, Any]:
 
 
 class TestRenderAgentTeamsProtocol:
-    """Tests for render_agent_teams_protocol()."""
+    """Tests for the retired beta team compatibility shim."""
 
-    def test_renders_when_enabled(self) -> None:
-        """Agent Teams section renders when agent_teams_enabled=True."""
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_shim_is_empty_even_if_legacy_flag_is_set(self, enabled: bool) -> None:
+        """v25 keeps the public symbol but emits no beta protocol body."""
         with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = render_agent_teams_protocol()
-
-        assert "## TRW Agent Teams Protocol" in result
-        assert "Dual-Mode Orchestration" in result
-        assert "Teammate Lifecycle" in result
-        assert "Quality Gate Hooks" in result
-        assert "File Ownership" in result
-        assert "Teammate Roles" in result
-
-    def test_empty_when_disabled(self) -> None:
-        """Agent Teams section is empty when agent_teams_enabled=False."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)
+            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=enabled)
         ):
             result = render_agent_teams_protocol()
 
         assert result == ""
 
-    def test_contains_all_five_roles(self) -> None:
-        """All five teammate roles appear in the rendered table."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = render_agent_teams_protocol()
-
-        assert "trw-lead" in result
-        assert "trw-implementer" in result
-        assert "trw-tester" in result
-        assert "trw-reviewer" in result
-        assert "trw-researcher" in result
-
-    def test_contains_hook_names(self) -> None:
-        """TeammateIdle and TaskCompleted hooks are documented."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = render_agent_teams_protocol()
-
-        assert "TeammateIdle" in result
-        assert "TaskCompleted" in result
-
-    def test_contains_dual_mode_table(self) -> None:
-        """Dual-mode table lists both Subagents and Agent Teams."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = render_agent_teams_protocol()
-
-        assert "Subagents" in result
-        assert "Agent Teams" in result
-        assert "TeamCreate" in result
-
-    def test_lifecycle_steps_ordered(self) -> None:
-        """Lifecycle steps appear in correct order (1-6)."""
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=True)
-        ):
-            result = render_agent_teams_protocol()
-
-        positions = []
-        for i in range(1, 7):
-            pos = result.find(f"{i}.")
-            assert pos != -1, f"Step {i} must exist"
-            positions.append(pos)
-        # Verify strict ordering: each step appears after the previous
-        for i in range(1, len(positions)):
-            assert positions[i] > positions[i - 1], (
-                f"Step {i + 1} (pos {positions[i]}) must appear after step {i} (pos {positions[i - 1]})"
-            )
-
 
 class TestAgentTeamsTemplateIntegration:
-    """Tests for Agent Teams section in the CLAUDE.md template pipeline."""
+    """Tests for legacy template placeholder behavior."""
 
     def test_template_placeholder_replaced(self) -> None:
-        """{{agent_teams_section}} placeholder is correctly replaced."""
-        template = "before\n{{agent_teams_section}}after"
-        context = {"agent_teams_section": "TEAMS_CONTENT\n"}
-        result = render_template(template, context)
-        assert "TEAMS_CONTENT" in result
-        assert "{{agent_teams_section}}" not in result
-
-    def test_template_placeholder_empty_when_disabled(self) -> None:
-        """Disabled agent_teams produces empty replacement, no blank sections."""
+        """{{agent_teams_section}} placeholder is correctly replaced by supplied context."""
         template = "before\n{{agent_teams_section}}after"
         context = {"agent_teams_section": ""}
         result = render_template(template, context)
-        assert "before\n" in result
-        assert "after" in result
+        assert "{{agent_teams_section}}" not in result
+        assert result == "before\nafter"
 
-    def test_bundled_template_has_placeholder(self) -> None:
-        """Bundled claude_md.md template includes CORE-093 compact placeholders."""
+    def test_bundled_template_has_placeholder_support(self) -> None:
+        """Bundled claude_md.md template keeps compact placeholders for renderer compatibility."""
         data_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "templates"
         bundled = data_dir / "claude_md.md"
         assert bundled.exists(), "Bundled template must exist"
         content = bundled.read_text(encoding="utf-8")
-        # CORE-093 FR07: template reduced to 4 compact variables
         assert "{{imperative_opener}}" in content
 
-    def test_full_sync_includes_agent_teams(self, tmp_path: Path) -> None:
-        """trw_claude_md_sync completes successfully when agent_teams_enabled=True.
-
-        PRD-CORE-061: Agent Teams content is suppressed from CLAUDE.md (moved to
-        /trw-ceremony-guide skill), but the sync should still succeed.
-        """
+    def test_full_sync_succeeds_without_beta_agent_teams(self, tmp_path: Path) -> None:
+        """trw_claude_md_sync succeeds and omits retired beta team protocol content."""
         trw_dir = tmp_path / _CFG.trw_dir
         trw_dir.mkdir(parents=True, exist_ok=True)
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
@@ -181,110 +103,25 @@ class TestAgentTeamsTemplateIntegration:
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
         assert result["status"] == "synced"
-
-        claude_md = tmp_path / "CLAUDE.md"
-        assert claude_md.exists()
-        content = claude_md.read_text(encoding="utf-8")
+        content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
         assert "trw:start" in content
-
-    def test_full_sync_excludes_agent_teams_when_disabled(self, tmp_path: Path) -> None:
-        """trw_claude_md_sync omits Agent Teams section when disabled."""
-        trw_dir = tmp_path / _CFG.trw_dir
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
-
-        tools = _get_tools()
-        with patch(
-            "trw_mcp.state.claude_md._static_sections.get_config", return_value=TRWConfig(agent_teams_enabled=False)
-        ):
-            result = tools["trw_claude_md_sync"].fn(scope="root")
-
-        assert result["status"] == "synced"
-
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        assert "Agent Teams Protocol" not in content
+        assert "beta team Protocol" not in content
+        assert "TeamCreate" not in content
 
 
 class TestAgentTeamsConfig:
-    """Tests for agent_teams_enabled config field."""
+    """Tests for agent_teams_enabled compatibility field."""
 
-    def test_default_enabled(self) -> None:
-        """agent_teams_enabled defaults to True."""
-        config = TRWConfig()
-        assert config.agent_teams_enabled is True
-
-    def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """TRW_AGENT_TEAMS_ENABLED env var overrides default."""
-        monkeypatch.setenv("TRW_AGENT_TEAMS_ENABLED", "false")
+    def test_default_disabled(self) -> None:
+        """agent_teams_enabled defaults to False in v25."""
         config = TRWConfig()
         assert config.agent_teams_enabled is False
 
-
-class TestHookScripts:
-    """Tests for Agent Teams hook script structure (static analysis)."""
-
-    @pytest.fixture()
-    def hooks_dir(self) -> Path:
-        """Return path to bundled hook scripts."""
-        return _resolve_data_path("hooks", "hooks")
-
-    @pytest.mark.parametrize(
-        "script_name",
-        ["teammate-idle.sh", "task-completed.sh"],
-    )
-    def test_hook_exists(self, hooks_dir: Path, script_name: str) -> None:
-        """Hook script file exists."""
-        assert (hooks_dir / script_name).exists(), f"{script_name} must exist"
-
-    @pytest.mark.parametrize(
-        "script_name",
-        ["teammate-idle.sh", "task-completed.sh"],
-    )
-    def test_hook_is_posix_shell(self, hooks_dir: Path, script_name: str) -> None:
-        """Hook script starts with #!/bin/sh (POSIX)."""
-        content = (hooks_dir / script_name).read_text(encoding="utf-8")
-        assert content.startswith("#!/bin/sh")
-
-    @pytest.mark.parametrize(
-        "script_name",
-        ["teammate-idle.sh", "task-completed.sh"],
-    )
-    def test_hook_fail_open(self, hooks_dir: Path, script_name: str) -> None:
-        """Hook script has fail-open trap (exit 0 on unexpected error)."""
-        content = (hooks_dir / script_name).read_text(encoding="utf-8")
-        # Hooks use conditional fail-open: intentional exits (exit 2 for blocking)
-        # are allowed, but unexpected errors silently exit 0.
-        assert "exit 0" in content and "trap" in content
-
-    @pytest.mark.parametrize(
-        "script_name",
-        ["teammate-idle.sh", "task-completed.sh"],
-    )
-    def test_hook_sources_lib(self, hooks_dir: Path, script_name: str) -> None:
-        """Hook script sources lib-trw.sh."""
-        content = (hooks_dir / script_name).read_text(encoding="utf-8")
-        assert "lib-trw.sh" in content
-
-    def test_teammate_idle_extracts_teammate_name(self, hooks_dir: Path) -> None:
-        """teammate-idle.sh extracts teammate_name from JSON payload."""
-        content = (hooks_dir / "teammate-idle.sh").read_text(encoding="utf-8")
-        assert "teammate_name" in content
-
-    def test_task_completed_extracts_task_subject(self, hooks_dir: Path) -> None:
-        """task-completed.sh extracts task_subject from JSON payload."""
-        content = (hooks_dir / "task-completed.sh").read_text(encoding="utf-8")
-        assert "task_subject" in content
-
-    def test_teammate_idle_prd_reference(self, hooks_dir: Path) -> None:
-        """teammate-idle.sh references PRD-INFRA-010."""
-        content = (hooks_dir / "teammate-idle.sh").read_text(encoding="utf-8")
-        assert "PRD-INFRA-010" in content
-
-    def test_task_completed_prd_reference(self, hooks_dir: Path) -> None:
-        """task-completed.sh references PRD-INFRA-004."""
-        content = (hooks_dir / "task-completed.sh").read_text(encoding="utf-8")
-        assert "PRD-INFRA-004" in content
+    def test_env_override_still_parses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """TRW_AGENT_TEAMS_ENABLED remains accepted for legacy config compatibility."""
+        monkeypatch.setenv("TRW_AGENT_TEAMS_ENABLED", "true")
+        config = TRWConfig()
+        assert config.agent_teams_enabled is True
 
 
 class TestSettingsJson:
@@ -316,39 +153,26 @@ class TestSettingsJson:
         data = json.loads(content)
         assert isinstance(data, dict)
 
-    def test_teammate_idle_hook_registered(self, settings_path: Path) -> None:
-        """TeammateIdle hook is registered in settings.json."""
+    def test_beta_agent_team_hooks_not_registered(self, settings_path: Path) -> None:
+        """v25 settings do not register retired beta team hook events."""
         import json
 
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         hooks = data.get("hooks", {})
-        assert "TeammateIdle" in hooks
-        entries = hooks["TeammateIdle"]
-        assert len(entries) >= 1
-        assert "teammate-idle.sh" in entries[0]["hooks"][0]["command"]
+        assert "TeammateIdle" not in hooks
+        assert "TaskCompleted" not in hooks
 
-    def test_task_completed_hook_registered(self, settings_path: Path) -> None:
-        """TaskCompleted hook is registered in settings.json."""
-        import json
-
-        data = json.loads(settings_path.read_text(encoding="utf-8"))
-        hooks = data.get("hooks", {})
-        assert "TaskCompleted" in hooks
-        entries = hooks["TaskCompleted"]
-        assert len(entries) >= 1
-        assert "task-completed.sh" in entries[0]["hooks"][0]["command"]
-
-    def test_agent_teams_env_var(self, settings_path: Path) -> None:
-        """CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 is set in env."""
+    def test_agent_teams_env_var_not_set(self, settings_path: Path) -> None:
+        """v25 settings do not opt into the retired beta team env var."""
         import json
 
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         env = data.get("env", {})
-        assert env.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS") == "1"
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in env
 
 
 class TestAgentDefinitions:
-    """Tests for .claude/agents/ teammate definitions.
+    """Tests for .claude/agents/ helper definitions.
 
     Adding a new agent? Update these locations in order:
     1. Create `.claude/agents/{name}.md` (YAML frontmatter + markdown body)
@@ -358,8 +182,8 @@ class TestAgentDefinitions:
        test_agent_no_stray_tags, test_agent_has_required_frontmatter) + role-specific tests
     4. Add to `TestAgents.EXPECTED_AGENTS` in `test_bootstrap.py`
     5. Update agent count in `test_manifest_lists_all_bundled_artifacts` in `test_bootstrap.py`
-    6. Add to `render_agent_teams_protocol()` table in `state/claude_md.py`
-    7. Add to FRAMEWORK.md agents table (root + `.trw/frameworks/` copy)
+    6. Keep bundled/root variants aligned via scripts/sync-agents.py
+    7. Use capability-tier frontmatter labels (`frontier`, `balanced`, `local-small`) in v25
     """
 
     @pytest.fixture()
@@ -605,11 +429,11 @@ class TestAgentDefinitions:
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
         [
-            ("trw-auditor.md", "sonnet"),
-            ("trw-implementer.md", "opus"),
-            ("trw-prd-groomer.md", "opus"),
-            ("trw-reviewer.md", "sonnet"),
-            ("trw-researcher.md", "sonnet"),
+            ("trw-auditor.md", "balanced"),
+            ("trw-implementer.md", "frontier"),
+            ("trw-prd-groomer.md", "frontier"),
+            ("trw-reviewer.md", "balanced"),
+            ("trw-researcher.md", "balanced"),
         ],
     )
     def test_agent_model_assignment(self, agents_dir: Path, agent_name: str, expected_model: str) -> None:
@@ -687,14 +511,7 @@ class TestAgentDefinitions:
         assert "name" in meta, f"{agent_name}: missing 'name'"
         assert "description" in meta, f"{agent_name}: missing 'description'"
         assert "model" in meta, f"{agent_name}: missing 'model'"
-        valid_models = (
-            "opus",
-            "sonnet",
-            "haiku",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-        )
+        valid_models = ("frontier", "balanced", "local-large", "local-small")
         assert meta["model"] in valid_models, f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
 
 
@@ -772,8 +589,8 @@ class TestSkillDefinitions:
                 "prior_learning_verification:",
             ],
             "sprint_finish": [
-                'memory_consolidate(namespace="team:*")',
-                "Team memory promotion summary",
+                "Delivery ceremony",
+                "Learnings promoted",
             ],
         }
 

@@ -62,7 +62,7 @@ Or apply selectively using `trw_learn_update()` for individual entries.
 
 ### Step 5: Sync
 
-Call `trw_instructions_sync()` to refresh the client instruction file (CLAUDE.md / AGENTS.md / etc.) with the optimized learning set context.
+Call `trw_instructions_sync()` to refresh the client instruction file (client instruction file (for example AGENTS.md, CLAUDE.md, GEMINI.md, or .codex/INSTRUCTIONS.md)) with the optimized learning set context.
 
 ### Step 6: Report
 

@@ -150,7 +150,7 @@ class TestRealPriorInstall:
 
     def test_reuses_prior_targets_without_prompt(self, tmp_path: Path) -> None:
         (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v24.6_TRW\n")
+        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
 
         result, is_update = _resolve_client_targets(
             target_dir=tmp_path,
@@ -168,7 +168,7 @@ class TestRealPriorInstall:
     def test_meta_present_but_no_prior_targets_still_prompts(self, tmp_path: Path) -> None:
         """Edge: legacy install left meta but no target_platforms field."""
         (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v24.6_TRW\n")
+        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
 
         result, is_update = _resolve_client_targets(
             target_dir=tmp_path,
@@ -244,7 +244,7 @@ class TestExplicitIDEFlag:
     @pytest.mark.parametrize("interactive", [True, False])
     def test_ide_override_wins(self, tmp_path: Path, interactive: bool) -> None:
         (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v24.6_TRW\n")
+        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
 
         result, _ = _resolve_client_targets(
             target_dir=tmp_path,

@@ -6,11 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from trw_memory.models.memory import MemoryEntry
+
+from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics, set_project_root  # noqa: F401
 from trw_mcp.state.claude_md import (
     CEREMONY_TOOLS,
     load_claude_md_template,
     render_ceremony_flows,
-    render_ceremony_quick_ref,
     render_ceremony_table,
     render_closing_reminder,
     render_delegation_protocol,
@@ -21,7 +22,6 @@ from trw_mcp.state.claude_md import (
     render_template,
 )
 
-from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics, set_project_root
 
 class TestClaudeMdTemplate:
     """Tests for the CLAUDE.md template system (PRD-CORE-002 Phase 1)."""
@@ -227,12 +227,12 @@ class TestCeremonyRendering:
         assert "delegate" in result.lower()
         assert "verify" in result.lower()
         # Decision tree keywords
-        assert "Trivial?" in result
-        assert "Subagent" in result
-        assert "Agent Team" in result
+        assert "Task arrives" in result
         assert "Self-implement" in result
+        assert "helper" in result.lower()
+        assert "sequentially" in result.lower()
         # Role-focused framing (not CRITICAL/ALWAYS/NEVER)
-        assert "teammates do the implementation" in result
+        assert "Delegation is optional" in result
 
     def test_bundled_template_has_ceremony_placeholders(self) -> None:
         """Bundled template contains CORE-093 compact placeholder tokens."""

@@ -29,7 +29,7 @@ class _CeremonyFields:
     sub_claude_md_max_lines: int = 50
     max_auto_lines: int = 300
     agents_md_enabled: bool = True
-    agent_teams_enabled: bool = True
+    agent_teams_enabled: bool = False
     target_platforms: list[str] = Field(
         default_factory=lambda: ["claude-code"],
         description="Platforms to sync instruction files for.",
@@ -40,7 +40,7 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v24.6_TRW"
+    framework_version: str = "v25_TRW"
     aaref_version: str = "v2.0.0"
 
     ambiguity_rate_max: float = 0.05

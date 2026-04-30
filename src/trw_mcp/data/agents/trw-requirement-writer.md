@@ -7,7 +7,7 @@ description: >
   invoked after grooming identifies requirement gaps. Not for writing
   full PRDs from scratch (use trw-prd-groomer) or quality review (use
   trw-requirement-reviewer).
-model: sonnet
+model: balanced
 effort: medium
 maxTurns: 30
 memory: project

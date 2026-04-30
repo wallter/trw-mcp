@@ -4,8 +4,8 @@ messages:
   - id: read_test_first
     text: "Read the failing test to understand expected behavior before writing the fix."
     phase_hint: early
-  - id: verify_with_pytest
-    text: "Run the specific test to verify your fix before moving on."
+  - id: verify_with_targeted_check
+    text: "Run the targeted project-native check to verify your fix before moving on."
     phase_hint: validate
   - id: minimize_changes
     text: "Make minimal changes to non-test files — smaller patches are more likely correct."

@@ -27,6 +27,11 @@ Generate a structured execution plan that bridges a groomed PRD to concrete impl
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs. Execution plans are stored in a sibling `exec-plans/` directory.
 
+
+## Pre-Implementation Checklist (PRD-QUAL-056-FR03)
+
+Before writing the execution plan, confirm the PRD is valid, source/test seams are identified, and the project-native verification command is known or explicitly uncertain. Record checklist completion in the plan metadata so downstream review can verify planning discipline.
+
 ## Workflow
 
 ### Step 1: Resolve PRD
@@ -182,47 +187,40 @@ Write test skeleton to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{P
 
 If the repo has no safe standard skeleton format for the target language/framework, write a framework-neutral `TEST-SKELETON-{PRD-ID}.md` containing the test names, acceptance criteria, fixtures/setup, and exact verification commands instead of fabricating executable code.
 
-**Example for Python projects (pytest):**
+**Framework-neutral skeleton pattern:**
 
-```python
-"""
-Test skeletons for {PRD-ID}: {PRD title}
-Generated from PRD acceptance criteria — all tests MUST FAIL before implementation.
-"""
-import pytest
+```text
+TEST SUITE: {PRD-ID}: {PRD title}
+SOURCE: generated from PRD acceptance criteria; executable tests should fail before implementation.
 
+FR01: {FR title}
+  CASE happy
+    Given {precondition}
+    When {action}
+    Then {expected result}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
-# --- FR01: {FR title} ---
+  CASE edge
+    Given {edge case}
+    When {action}
+    Then {expected boundary behavior}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
-def test_fr01_happy():
-    """Given {precondition}, When {action}, Then {expected result}."""
-    assert False, "TODO: implement — {acceptance criterion summary}"
+  CASE error
+    Given {error condition}
+    When {action}
+    Then {error response}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
+  CASE table_driven
+    Inputs/expected outputs: {case list}
+    Placeholder: framework-appropriate parametrized/table-driven assertion
 
-def test_fr01_edge():
-    """Given {edge case}, When {action}, Then {expected boundary behavior}."""
-    assert False, "TODO: implement — {edge case summary}"
-
-
-def test_fr01_error():
-    """Given {error condition}, When {action}, Then {error response}."""
-    assert False, "TODO: implement — {error case summary}"
-
-
-@pytest.mark.parametrize("input_val,expected", [
-    # (case_1_input, case_1_expected),
-    # (case_2_input, case_2_expected),
-])
-def test_fr01_parametrized(input_val, expected):
-    """Parametrized cases for FR01 acceptance criteria."""
-    assert False, "TODO: implement parametrized assertion"
-
-
-# --- FR02: {FR title} ---
-# ... repeat for each FR
+FR02: {FR title}
+  ...repeat for each FR...
 ```
 
-Adapt the skeleton to the project's language and test framework (e.g., Vitest/Jest `it()`/`expect()` for TypeScript, `#[test]` for Rust, `Test...` functions for Go, `it do` blocks for Ruby).
+Adapt the skeleton to the project's language and test framework (examples include pytest, Vitest/Jest, Rust test functions, Go table tests, Ruby specs, shell bats tests, or another project-native harness).
 
 Write manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`:
 

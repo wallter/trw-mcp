@@ -10,7 +10,8 @@ import pytest
 from trw_mcp.bootstrap import _DATA_DIR, init_project
 from trw_mcp.models.config import TRWConfig
 
-from ._bootstrap_test_support import fake_git_repo
+from ._bootstrap_test_support import fake_git_repo  # noqa: F401
+
 
 class TestInitProjectStructure:
     """Test that init_project creates all expected directories and files."""
@@ -200,6 +201,8 @@ class TestHooks:
     """Test hook script copying."""
 
     EXPECTED_HOOKS = [
+        "completion-gate.sh",
+        "helper-idle.sh",
         "lib-ide-adapter.sh",
         "lib-trw.sh",
         "phase-cycle-stop.sh",
@@ -211,8 +214,6 @@ class TestHooks:
         "stop-ceremony.sh",
         "subagent-start.sh",
         "subagent-stop.sh",
-        "task-completed.sh",
-        "teammate-idle.sh",
         "user-prompt-submit.sh",
         "validate-prd-write.sh",
     ]

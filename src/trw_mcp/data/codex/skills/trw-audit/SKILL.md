@@ -31,6 +31,17 @@ Sprint 29 proved that "all tests pass" is insufficient:
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs. Audit reports are stored in `scratch/audits/`.
 
+
+## Preflight Verification Contract
+
+Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`. Include these fields in audit output when applicable:
+
+```yaml
+preflight_verification: present|missing|not_applicable
+self_review_alignment: matches|underreported|missing
+prior_learning_verification: checked|missing|not_applicable
+```
+
 ## Workflow
 
 ### Step 1: Resolve PRD

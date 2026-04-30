@@ -19,5 +19,5 @@ Fallbacks:
 - If the PRD cannot reach readiness without new user input, stop and list the blocking questions.
 
 Constraints:
-- Do not assume subagents or Agent Teams are available.
+- Do not assume helpers are available.
 - Prefer direct tool orchestration over client-specific workflow shortcuts.

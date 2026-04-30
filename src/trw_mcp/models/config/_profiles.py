@@ -42,13 +42,23 @@ _LIGHT_SCORING = ScoringDimensionWeights(
 )
 _LIGHT_PHASES = ["implement", "deliver"]
 
-# Model tier adjustments for resolve_client_profile (F06 -- model_copy, not mutate)
-# NOTE: This is a merged type for pydantic fields (int, str, bool) - but we only use int/string fields
+# Capability tier adjustments for resolve_client_profile (F06 -- model_copy, not mutate).
+# Legacy names remain aliases so existing configs do not break during the v25 transition.
+_TIER_ALIASES: dict[ModelTier, ModelTier] = {
+    "cloud-opus": "frontier",
+    "cloud-sonnet": "balanced",
+    "local-30b": "local-large",
+    "local-8b": "local-small",
+    "frontier": "frontier",
+    "balanced": "balanced",
+    "local-large": "local-large",
+    "local-small": "local-small",
+}
 _TIER_OVERRIDES: dict[ModelTier, dict[str, object]] = {
-    "cloud-opus": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
-    "cloud-sonnet": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
-    "local-30b": {"context_window_tokens": 128_000, "instruction_max_lines": 350},
-    "local-8b": {"context_window_tokens": 32_000, "instruction_max_lines": 200},
+    "frontier": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
+    "balanced": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
+    "local-large": {"context_window_tokens": 128_000, "instruction_max_lines": 350},
+    "local-small": {"context_window_tokens": 32_000, "instruction_max_lines": 200},
 }
 
 
@@ -65,7 +75,7 @@ def _light_profile(client_id: str, display_name: str, instruction_path: str) -> 
         nudge_pool_weights=NudgePoolWeights(workflow=60, learnings=30, ceremony=0, context=10),
         mandatory_phases=_LIGHT_PHASES,
         scoring_weights=_LIGHT_SCORING,
-        default_model_tier="local-8b",
+        default_model_tier="local-small",
         hooks_enabled=False,
         agents_md_enabled=True,
         include_framework_ref=False,
@@ -90,7 +100,7 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),  # defaults = claude-code
         hooks_enabled=True,
         include_framework_ref=True,
-        include_agent_teams=True,
+        include_agent_teams=False,
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,
@@ -157,7 +167,7 @@ _PROFILES: dict[str, ClientProfile] = {
             ceremony=0.05,
             knowledge=0.15,
         ),
-        default_model_tier="cloud-sonnet",
+        default_model_tier="balanced",
         response_format="json",
         hooks_enabled=True,
         agents_md_enabled=True,
@@ -188,7 +198,7 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,
-        include_agent_teams=True,
+        include_agent_teams=False,
         tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
@@ -213,7 +223,7 @@ _PROFILES: dict[str, ClientProfile] = {
         hooks_enabled=True,
         agents_md_enabled=True,
         include_framework_ref=True,
-        include_agent_teams=False,  # uses native .gemini/agents/ instead
+        include_agent_teams=False,
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,
@@ -257,8 +267,11 @@ def resolve_client_profile(
             )
         profile = _PROFILES["claude-code"]
 
-    if model_tier is not None and model_tier in _TIER_OVERRIDES:
-        overrides = _TIER_OVERRIDES[model_tier]
-        profile = profile.model_copy(update=overrides)
+    if model_tier is not None:
+        normalized_tier = _TIER_ALIASES.get(model_tier, model_tier)
+        if normalized_tier in _TIER_OVERRIDES:
+            profile = profile.model_copy(
+                update={**_TIER_OVERRIDES[normalized_tier], "default_model_tier": normalized_tier}
+            )
 
     return profile

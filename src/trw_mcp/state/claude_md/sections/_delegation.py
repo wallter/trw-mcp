@@ -1,4 +1,4 @@
-"""Delegation, watchlist, agent-teams, and AGENTS.md section renderers.
+"""Delegation, watchlist, coordination, and AGENTS.md section renderers.
 
 PRD-CORE-149-FR01: extracted from ``_static_sections.py`` facade.
 """
@@ -12,10 +12,7 @@ from trw_mcp.state.claude_md.sections._memory_routing import _load_analytics_cou
 
 
 def render_delegation_protocol() -> str:
-    """Render delegation discipline section for CLAUDE.md auto-generation.
-
-    PRD-CORE-125-FR10: Gated by ``include_delegation`` on client profile.
-    """
+    """Render model- and harness-neutral delegation discipline guidance."""
     config = _facade.get_config()
     if not config.client_profile.include_delegation:
         return ""
@@ -24,26 +21,26 @@ def render_delegation_protocol() -> str:
         "## TRW Delegation & Orchestration (Auto-Generated)\n"
         "\n"
         "As orchestrator, your responsibilities are: (1) assess and decompose tasks, "
-        "(2) delegate to focused agents, (3) verify integration and quality, "
-        "(4) maintain strategic oversight, (5) preserve knowledge via TRW tools. "
-        "Direct implementation is reserved for trivial edits only.\n"
+        "(2) use focused helpers only when the active harness supports them, "
+        "(3) verify integration and quality, (4) maintain strategic oversight, "
+        "and (5) preserve knowledge via TRW tools. Direct implementation is reserved "
+        "for small or tightly coupled edits.\n"
         "\n"
         "### When to Delegate\n"
         "\n"
         "```\n"
-        "Task arrives → Assess scope\n"
-        "├── Trivial? (≤3 lines, 1 file) → Self-implement\n"
-        "├── Research/read-only?          → Subagent (Explore/Plan type)\n"
-        "├── Single-scope? (≤3 files)     → Subagent (general-purpose)\n"
-        "├── Multi-scope? (4+ files)\n"
-        "│   ├── Independent tracks?      → Batched subagents\n"
-        "│   └── Interdependent?          → Agent Team\n"
-        "└── Sprint-scale? (4+ PRDs)      → Agent Team + playbooks\n"
+        "Task arrives → Assess scope and harness\n"
+        "├── Trivial or tightly coupled?   → Self-implement with checkpoint\n"
+        "├── Research/read-only?           → Focused helper if available; otherwise sequential shard\n"
+        "├── Single-scope? (≤3 files)      → One helper or one local pass\n"
+        "├── Multi-scope? (4+ files)       → Split by explicit file ownership\n"
+        "└── Interdependent/high-risk?     → Plan contracts first, then implement/review in stages\n"
         "```\n"
         "\n"
-        "**Default: subagents.** Use Agent Teams when teammates need peer communication "
-        "or when tasks span 2+ modules with shared interfaces. As team lead, you "
-        "orchestrate, monitor, and validate — teammates do the implementation.\n"
+        "Delegation is optional. The invariant is focused context, explicit file "
+        "ownership, persisted findings, and final integration by the orchestrator. "
+        "If the client has no safe delegation surface, execute the same shards "
+        "sequentially in the current session.\n"
         "\n"
     )
 
@@ -58,92 +55,46 @@ def render_rationalization_watchlist() -> str:
         "| Thought | Why it's wrong | Consequence |\n"
         "|---------|---------------|-------------|\n"
         '| "This is too simple for ceremony" '
-        "| Simple tasks compound into gaps when 10 agents skip in parallel "
+        "| Simple tasks still lose state when sessions skip persistence "
         "| You skip checkpoint → context compacts → you re-implement from scratch |\n"
         '| "I\'ll checkpoint/deliver after I finish this part" '
         "| Context compaction erases uncheckpointed work permanently "
-        "| Past agents who skipped trw_deliver lost all session learnings |\n"
+        "| Prior sessions that skipped trw_deliver lost reusable learnings |\n"
         '| "I already know the codebase" '
         "| Prior learnings contain gotchas for exactly this area "
-        "| Agents who skip recall consistently re-discover known gotchas, spending 2-3x the time |\n"
+        "| Skipping recall causes known gotchas to be rediscovered instead of reused |\n"
         '| "I can implement directly, delegation is overhead" '
-        "| Focused subagents are expected to produce fewer defects (operational heuristic, not measured on TRW's eval bench) "
-        "| Your focused context is valuable — subagents get deeper context per task |\n"
+        "| Focused helper shards can preserve context when the harness supports them "
+        "| Your focused context is valuable — split only when ownership is clear |\n"
         '| "The build check can wait until the end" '
         "| Late build failures cascade into multi-file rework "
         "| 2x rework when caught at DELIVER vs catching at VALIDATE |\n"
         "\n"
         "### Rigid Tools (unconditional — the cost of skipping exceeds the cost of running)\n"
         "\n"
-        "- `trw_session_start()` — first action; loads accumulated knowledge so you start from the team's experience, not zero\n"
-        "- `trw_deliver()` — last action; without this, your session's discoveries are invisible to every future agent\n"
+        "- `trw_session_start()` — first action; loads accumulated knowledge so you start from the project's accumulated experience, not zero\n"
+        "- `trw_deliver()` — last action; without this, your session's discoveries are invisible to every future session\n"
         "- `trw_build_check()` — at VALIDATE and before DELIVER; late-caught bugs cascade into 2x rework\n"
         "- Completion artifacts — before marking complete; false completion reports cause downstream work to build on a foundation that doesn't exist\n"
         "\n"
         "### Flexible Tools (must happen, you choose the moment)\n"
         "\n"
         "- `trw_checkpoint()` — at milestones; your last checkpoint is your resume point after context compaction\n"
-        "- `trw_learn()` — on discoveries; every learning you skip forces a future agent to rediscover it\n"
+        "- `trw_learn()` — on discoveries; every learning you skip forces a future session to rediscover it\n"
         "- `trw_recall()` — at start; prior agents already found the gotchas for your current task\n"
         "\n"
     )
 
 
 def render_agent_teams_protocol() -> str:
-    """Render Agent Teams protocol section for CLAUDE.md auto-generation.
+    """Compatibility shim for the retired beta coordination section.
 
-    PRD-CORE-125-FR10: Also gated by ``include_agent_teams`` on client profile.
+    v25 keeps this public symbol so older imports do not break, but the
+    provider-specific peer-team protocol is no longer emitted into generic
+    instruction files. Use ``render_delegation_protocol`` for portable
+    coordination guidance.
     """
-    config = _facade.get_config()
-
-    if not config.agent_teams_enabled:
-        return ""
-
-    if not config.client_profile.include_agent_teams:
-        return ""
-
-    return (
-        "## TRW Agent Teams Protocol (Auto-Generated)\n"
-        "\n"
-        "### Dual-Mode Orchestration\n"
-        "\n"
-        "| Mode | When | How |\n"
-        "|------|------|-----|\n"
-        "| Subagents | Focused tasks, research, cost-sensitive | `Task` tool with `subagent_type` |\n"
-        "| Agent Teams | Complex multi-file, peer coordination | `TeamCreate` + `Task` with `team_name` |\n"
-        "\n"
-        "### Teammate Lifecycle\n"
-        "\n"
-        "1. LEAD calls `TeamCreate` and `TaskCreate` for work items\n"
-        "2. LEAD spawns teammates via `Task` tool with `team_name` parameter\n"
-        "3. Teammates claim tasks via `TaskUpdate` (set `owner`)\n"
-        "4. Teammates work autonomously, using `trw_learn`/`trw_checkpoint` for ceremony\n"
-        "5. Teammates mark tasks `completed` via `TaskUpdate` when done\n"
-        "6. LEAD sends `shutdown_request` when all tasks complete\n"
-        "\n"
-        "### Quality Gate Hooks\n"
-        "\n"
-        "- **TeammateIdle**: Fires when teammate goes idle — soft gate, logs for monitoring\n"
-        "- **TaskCompleted**: Fires when task marked complete — extension point for validation\n"
-        "\n"
-        "### File Ownership\n"
-        "\n"
-        "Each teammate owns exclusive files to prevent write conflicts. "
-        "LEAD assigns ownership via playbook. Never edit files outside your assignment.\n"
-        "\n"
-        # Adding a new agent? See TestAgentDefinitions in test_agent_teams.py
-        # for the full 7-location update sequence.
-        "### Teammate Roles\n"
-        "\n"
-        "| Agent | Model | Purpose |\n"
-        "|-------|-------|---------|\n"
-        "| `trw-lead` | opus | Team lead, 6-phase orchestrator, quality gates |\n"
-        "| `trw-implementer` | sonnet | Code implementation, TDD |\n"
-        "| `trw-tester` | sonnet | Test coverage, edge cases |\n"
-        "| `trw-reviewer` | opus | Code review, security audit |\n"
-        "| `trw-researcher` | sonnet | Codebase research, docs |\n"
-        "\n"
-    )
+    return ""
 
 
 def render_agents_trw_section(
@@ -201,7 +152,7 @@ def render_codex_trw_section(
         "\n"
         "1. Start with `trw_session_start()`\n"
         "2. Keep the working set small and call `trw_checkpoint()` before context-heavy turns or major pivots\n"
-        "3. Run tests and review the diff before completion\n"
+        "3. Run project-native validation and review the diff before completion\n"
         "4. Use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
         "5. Finish with `trw_deliver()` so future sessions inherit the result\n"
         "\n"

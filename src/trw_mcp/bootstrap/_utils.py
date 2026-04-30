@@ -112,7 +112,7 @@ def _default_config(
         lines.append(f"tests_relative_path: {test_path}")
 
     # Target platforms -- controls which instruction files are written
-    # (CLAUDE.md, AGENTS.md, .cursorrules, etc.) during deliver/sync.
+    # (client instruction file, AGENTS.md, .cursorrules, etc.) during deliver/sync.
     # Supported: claude-code, opencode, cursor, codex, copilot, gemini, aider
     lines.append("")
     lines.append("# Target platforms for instruction file sync")
@@ -245,7 +245,7 @@ def _verify_installation(
     """Run lightweight post-update health checks.
 
     Verifies hooks are executable, .mcp.json has trw entry, and
-    CLAUDE.md has TRW markers.  Adds warnings for any failures.
+    client instruction file has TRW markers.  Adds warnings for any failures.
     """
     # Check hooks are executable
     hooks_dir = target_dir / ".claude" / "hooks"
@@ -279,14 +279,14 @@ def _verify_installation(
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 
-    # Check CLAUDE.md has TRW markers
+    # Check client instruction file has TRW markers
     from trw_mcp.bootstrap._update_project import _TRW_END_MARKER, _TRW_START_MARKER
 
     claude_md = target_dir / "CLAUDE.md"
     if claude_md.exists():
         content = claude_md.read_text(encoding="utf-8")
         if _TRW_START_MARKER not in content or _TRW_END_MARKER not in content:
-            result["warnings"].append("CLAUDE.md missing TRW auto-generated markers")
+            result["warnings"].append("client instruction file missing TRW auto-generated markers")
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:
@@ -423,7 +423,7 @@ def resolve_ide_targets(
 
 
 # ---------------------------------------------------------------------------
-# CLAUDE.md content generators
+# client instruction file content generators
 # ---------------------------------------------------------------------------
 
 
@@ -455,11 +455,11 @@ def _minimal_review_md() -> str:
 
 
 def _minimal_claude_md() -> str:
-    """Generate ``CLAUDE.md`` with behavioral protocol and tool reference."""
+    """Generate a minimal Claude-compatible instruction file with TRW protocol."""
     return """\
-# CLAUDE.md
+# Project Instructions
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to AI coding clients when working with code in this repository.
 
 ## What This Is
 
@@ -487,7 +487,7 @@ TRW tools help you build effectively and preserve your work across sessions:
 
 **Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology your tools implement.
 
-The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and Agent Teams protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
+The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and portable coordination protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
 
 ## TRW Behavioral Protocol (Auto-Generated)
 

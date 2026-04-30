@@ -1,18 +1,20 @@
-v24.5_TRW — CLAUDE CODE ORCHESTRATED AGILE SWARM
-Slim-Persist | Parallel-First | Formation-Driven | Interrupt-Safe | CLI/TDD | YAML-First | Sensible Defaults | MCP-Integrated | Skills-Driven | Agent-Teams
-Version date: 2026-04-08 | Model: Opus 4.6
+v25_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
+Version date: 2026-04-30 | Model policy: capability-based, never provider-bound
+
+> **v25 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning.
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v24.5_TRW | Opus 4.6 | 6 phases | 4+5 formations | 3 confidence levels | 11 MCP tools | 10 skills | 10 agents | Agent Teams**
+**v25_TRW | model-agnostic | language-agnostic | 6 phases | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
-All Task() calls block. Multiple in ONE message = parallel. Background agents = FORBIDDEN.
-MCP_MODE: tool → use trw-mcp tools. MCP_MODE: manual → bash fallbacks.
-Principles: P1 Behavioral > Structural. P2 Prevention > Detection. P3 External > Internal. P4 Focused Context > Shared. P5 Coordinate > Command. P6 PRD-to-Code Traceability.
-Agent Teams: LEAD coordinates teammates via shared task list. Subagents for RESEARCH, Agent Teams for IMPLEMENT+.
+Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
+TRW tools are the canonical interface. Client commands, slash commands, hooks, skills, and custom agents are convenience adapters only.
+Parallel work is OPTIONAL and harness-dependent. If a client cannot delegate, run the same protocol in one session with smaller checkpoints.
+Principles: P1 Evidence > assertion. P2 Prevention > detection. P3 External checks > self-belief. P4 Small context > overloaded context. P5 Coordinate by contracts. P6 PRD-to-code traceability.
 </execution-summary>
 
 <standards>
@@ -22,8 +24,9 @@ RFC 2119/8174: MUST, MUST NOT, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED
 <variables>
 TASK       := task_short_desc
 TASK_DIR   := ./docs/{TASK}
+RUNS_ROOT  := ./.trw/runs
 RUN_ID     := {utc_ts}-{short_id}
-RUN_ROOT   := {TASK_DIR}/runs/{RUN_ID}
+RUN_ROOT   := {RUNS_ROOT}/{TASK}/{RUN_ID}
 REPO_ROOT  := $(git rev-parse --show-toplevel)
 BRANCH     := feat/{TASK}-{short_id}
 ORC        := Orchestrator
@@ -34,27 +37,29 @@ ORC        := Orchestrator
 ## DEFAULTS
 
 ```yaml
-PARALLELISM_MAX: 10          # max concurrent shards
-MIN_SHARDS_TARGET: 3         # minimum parallel (adaptive)
-MIN_SHARDS_FLOOR: 2          # hard floor
-CONSENSUS_QUORUM: 0.67       # 2/3 judges agree
-CORRELATION_MIN: 0.7         # inter-judge agreement
+PARALLELISM_MAX: 6           # max concurrent delegate shards when the harness supports it
+MIN_SHARDS_TARGET: 3         # preferred independent evidence axes for non-trivial work
+MIN_SHARDS_FLOOR: 1          # single-session fallback is always valid
+CONSENSUS_QUORUM: 0.67       # 2/3 reviewers or checks agree
+CORRELATION_MIN: 0.7         # inter-reviewer agreement when multiple reviewers exist
 TIMEBOX_HOURS: 8
-MAX_CHILD_DEPTH: 2           # max self-decomposition recursion
+MAX_CHILD_DEPTH: 1           # avoid recursive delegation unless the user explicitly asks
 MAX_RESEARCH_WAVES: 3
 ```
+
+Defaults are not laws. Use fewer shards when the task is small, the harness cannot delegate, or file ownership would be unclear.
 
 ---
 
 ## CONFIDENCE
 
-| Level | AARE-F Equivalent | Gate |
+| Level | Evidence Standard | Gate |
 |-------|-------------------|------|
-| `high` | >=85% confidence | Pass |
-| `medium` | 70-85% | Review |
-| `low` | <70% | Block -> Critic |
+| `high` | Direct source evidence + passing verification | Pass |
+| `medium` | Plausible source evidence, partial verification, or known residual risk | Review |
+| `low` | Assumption, stale memory, unverified output, or conflicting evidence | Block → investigate |
 
-Shard-to-run rollup: run confidence = lowest shard confidence in active wave.
+Run confidence = the lowest confidence among active requirements. Do not average away a blocking gap.
 
 ---
 
@@ -62,13 +67,13 @@ Shard-to-run rollup: run confidence = lowest shard confidence in active wave.
 
 | File | Update When | Failure |
 |------|-------------|---------|
-| `reports/plan.md` | Plan changes | Block IMPLEMENT |
-| `reports/final.md` | Run completes | Block DELIVER |
-| `meta/run.yaml` | Phase/status | Invalid state |
-| `meta/events.jsonl` | Significant event | Lost audit |
-| `shards/wave_manifest.yaml` | Wave status changes | Lost wave state |
+| `reports/plan.md` | Plan changes or scope decisions | Block IMPLEMENT for STANDARD+ work |
+| `reports/final.md` | Run completes | Block DELIVER for STANDARD+ work |
+| `meta/run.yaml` | Phase/status changes | Invalid state |
+| `meta/events.jsonl` | Significant event | Lost audit trail |
+| `scratch/**/findings.yaml` | Delegate or wave findings | Lost resume point |
 
-Write every state change to disk immediately, verify the write succeeded, then proceed. Treat persistence failures as P0 blockers.
+Write important state to disk before relying on it. Treat persistence failures as P0 blockers unless the task is explicitly throwaway.
 
 ---
 
@@ -78,366 +83,373 @@ Write every state change to disk immediately, verify the write succeeded, then p
 RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 ```
 
-| Phase | Exit Criteria | Skills | Cap |
-|-------|---------------|--------|-----|
-| RESEARCH | plan.md draft, >=3 evidence paths, formation selected. | `/trw-framework-check` | 25% |
-| PLAN | Acceptance criteria, shards planned, wave_manifest.yaml created. | `/trw-sprint-init`, `/trw-prd-new`, `/trw-prd-ready` | 15% |
-| IMPLEMENT | Shards/waves complete OR checkpointed, tests written. | `/trw-test-strategy` | 35% |
-| VALIDATE | Coverage >= target, gates pass, no P0. Run `trw_build_check(scope="full")`. | `/trw-test-strategy` | 10% |
-| REVIEW | Critic reviewed, simplifications applied, reflection completed. | `/trw-memory-audit` | 10% |
-| DELIVER | PR created OR archived, final.md, CLAUDE.md synced. | `/trw-deliver`, `/trw-sprint-finish` | 5% |
+| Phase | Exit Criteria | Recommended Surface | Cap |
+|-------|---------------|---------------------|-----|
+| RESEARCH | Source/acceptance identified, evidence paths collected, open questions explicit | `trw_recall`, repo search, read-only delegates | 25% |
+| PLAN | Acceptance criteria, change scope, verification method, ownership boundaries | PRD/issue/request + `reports/plan.md` when needed | 15% |
+| IMPLEMENT | Changes complete or checkpointed; tests or validation assets updated where warranted | source edits, focused commits | 35% |
+| VALIDATE | Targeted tests/checks pass; no known P0; `trw_build_check` recorded | project-native test/lint/type/build/security checks | 10% |
+| REVIEW | Diff inspected against requirements; STANDARD+ uses independent review when available | `trw_review` or manual rubric | 10% |
+| DELIVER | Final summary, committed/archived artifacts, learnings preserved, `trw_deliver` called | client instruction sync + final checkpoint | 5% |
 
-ORC tracks elapsed wall-clock against TIMEBOX_HOURS. ORC MUST NOT advance until exit criteria met OR cap exceeded with rationale. Refine plan until stable — fixing a plan is cheaper than rewriting code.
+ORC MUST NOT advance until exit criteria are met OR a cap is exceeded with written rationale. Fix the phase, not the narrative.
 
 ### Dynamic Research
 
-After each RESEARCH wave, ORC evaluates findings. If >30% have `open_questions`, spawn follow-up wave. If findings contradict, spawn DEBATE reconciliation. Max: MAX_RESEARCH_WAVES. Proven pattern: 3-wave (discovery → deep-dive → synthesis), Wave 3 MUST NOT be parallelized.
+After each RESEARCH wave, evaluate findings. If >30% have `open_questions`, run a follow-up wave. If evidence contradicts, run a reconciliation pass with a critic/reviewer. Max: MAX_RESEARCH_WAVES. Wave 3 is synthesis and SHOULD be single-threaded.
 
 ---
 
 ## RATIONALIZATION WATCHLIST
 
-If you catch yourself thinking any of these, stop and follow the process — these are the exact thoughts that precede ceremony skips:
+If you catch yourself thinking any of these, stop and follow the process — these are the thoughts that precede avoidable rework:
 
-| Thought | Why it's wrong | Consequence |
-|---------|---------------|-------------|
-| "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint → context compacts → you re-implement from scratch |
-| "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings — zero knowledge transfer |
-| "I already know the codebase, I don't need trw_recall" | Prior learnings contain gotchas for exactly this area | Agents who skip recall consistently re-discover known gotchas, spending avoidable time on solved problems |
-| "I can implement directly, delegation is overhead" | Focused subagents get deeper context per task than the parent session can hold | Your focused context is valuable — subagent results return with tighter scope and less distraction |
-| "The build check can wait until the end" | Late build failures cascade into multi-file rework | 2x rework when caught at DELIVER vs catching at VALIDATE |
-| "This refactor is small, I'll inline it" | Small inlined refactors break file ownership in teams | Creates merge conflicts and unreviewed code in teammate files |
+| Thought | Why it is wrong | Consequence |
+|---------|-----------------|-------------|
+| "This is too simple for ceremony" | Small tasks still lose context and repeat known gotchas | No checkpoint → compaction/interruption → rework |
+| "I will checkpoint/deliver after this part" | Unpersisted progress is invisible to future sessions | Learning transfer is lost |
+| "I already know the codebase" | Prior learnings often contain exact repo gotchas | You rediscover old failures |
+| "I can implement directly; delegation is overhead" | Focused review/delegation catches defects when scope is non-trivial | Integration gaps reach VALIDATE |
+| "The build check can wait until the end" | Late failures multiply touched files | Rework grows after assumptions harden |
+| "The model is stronger now, so process matters less" | Stronger models make larger confident mistakes when evidence is thin | False completion at higher velocity |
 
 ---
 
 ## RIGID / FLEXIBLE TOOL CLASSIFICATION
 
-Tools are classified by discretion level. Rigid tools have zero discretion — execute them unconditionally. Flexible tools must happen but you choose the timing.
+Rigid tools have zero discretion. Flexible tools must happen when their trigger is real.
 
-**Rigid (unconditional — never skip, never rationalize):**
-- `trw_session_start()` — always, first action of every session
-- `trw_deliver()` — always, last action of every session
-- `trw_build_check()` — always at VALIDATE and before DELIVER
-- Completion artifacts — always before marking any task complete
-- File ownership validation — always before spawning Agent Teams
+**Rigid (unconditional):**
+- `trw_session_start(query?)` — first TRW action of every session; load memory and active state
+- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state
+- `trw_build_check()` — record project-native validation at VALIDATE and before DELIVER after code/test changes
+- `trw_review()` — before DELIVER for STANDARD+ complexity when the tool is available
+- Completion artifacts — before claiming done
+- Dirty-workspace check — before staging, committing, or delegating write work
 
-**Flexible (must happen, you pick when):**
-- `trw_checkpoint()` — must happen at milestones, you judge which milestones
-- `trw_learn()` — on discoveries, gotchas, errors (you judge significance)
-- `trw_recall()` — recommended at start, skippable for repeat-domain work
-- Phase reversion — you judge when reversion beats pushing through
+**Flexible (triggered):**
+- `trw_checkpoint()` — at milestones and before risky context changes
+- `trw_learn()` — on non-obvious discoveries, gotchas, or validated patterns
+- `trw_recall()` — at start or before unfamiliar/high-risk areas
+- Phase reversion — when evidence invalidates the current phase
 
-Do NOT reason about whether to execute rigid tools. Execute them.
+Do NOT debate rigid tools. Execute or record why the tool was unavailable and use the manual fallback.
 
 ---
 
 ## GATES
 
 ```
-VALIDATE/DELIVER boundary? → FULL GATE (>=quorum judges, pairwise+rubric)
-PLAN/REVIEW decision?      → LIGHT GATE (2 judges, rubric only)
-Quality contested?         → SPAWN CRITIC
-None of the above          → NO GATE (checkpoint only)
+VALIDATE/DELIVER boundary? → FULL GATE (tests + rubric + requirement trace)
+PLAN/REVIEW decision?      → LIGHT GATE (rubric + evidence check)
+Quality contested?         → CRITIC / independent reviewer
+None of the above          → checkpoint only
 ```
 
 Rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
-Pass: `consensus >= quorum` AND `correlation >= CORRELATION_MIN`.
+Pass: `consensus >= quorum` AND `correlation >= CORRELATION_MIN` when multiple reviewers exist. If there is only one reviewer, require explicit evidence and residual-risk notes.
 Fail: document → revert to prior phase → retry. Two consecutive failures → escalate to user.
 
 ---
 
 ## PHASE REVERSION
 
-Agents SHOULD revert to earlier phases when implementation reveals structural gaps.
+Agents SHOULD revert to earlier phases when evidence reveals structural gaps.
 
 | Transition | Revert When | Push Through When |
 |------------|-------------|-------------------|
-| IMPLEMENT → PLAN | Module boundaries need redesign | Local workaround not affecting other modules |
-| IMPLEMENT → RESEARCH | Approach based on incorrect assumptions | Rare — significant planning gap |
-| VALIDATE → IMPLEMENT | Test failures reveal design flaw | Implementation bugs fixable in-phase |
-| VALIDATE → PLAN | Test strategy itself is wrong | Test execution failures |
-| REVIEW → IMPLEMENT | Review requires structural changes | Minor fixes or cosmetic improvements |
+| IMPLEMENT → PLAN | Module boundaries, contracts, or data model need redesign | Local workaround does not affect shared interfaces |
+| IMPLEMENT → RESEARCH | Approach depends on an incorrect or missing fact | Assumption can be verified quickly in phase |
+| VALIDATE → IMPLEMENT | Failures show implementation bugs | Test harness/config issue is isolated |
+| VALIDATE → PLAN | Test strategy or acceptance criteria are wrong | Tests are correct but code is not |
+| REVIEW → IMPLEMENT | Review finds structural or safety issues | Minor docs/style fixes only |
 
-When shards discover structural impediments:
+When structural impediments appear:
 
-|  | Local (no interface change) | Architectural (changes shared interface) |
+|  | Local (no interface change) | Architectural (shared interface change) |
 |---|---|---|
-| **Blocking** | Inline refactor. Separate commit. | Create prerequisite PRD. Phase revert. |
-| **Deferrable** | P2 TODO or QOL fix if <10 lines. | Create P2-P3 PRD. Add to backlog. |
+| **Blocking** | Refactor in a separate commit, then resume | Create/adjust PRD or plan; phase revert |
+| **Deferrable** | Log P2 TODO if truly out of scope | Add backlog PRD/debt entry |
 
 ---
 
 ## ADAPTIVE PLANNING
 
-`reports/plan.md` is NOT frozen. Update on: new info invalidating assumptions, scope +20%, approach failure, user feedback. Add `## Revision [N]`, document change/why/impact, log to events.jsonl.
+`reports/plan.md` is a living artifact, not a contract to preserve a bad idea. Update on: new evidence, scope +20%, approach failure, user feedback, validation failure, or ownership conflict. Record what changed, why, and how verification changes.
 
 ---
 
-## MCP TOOLS (trw-mcp)
+## TRW TOOLS (MCP-FIRST, MANUAL-FALLBACK)
 
-When `MCP_MODE: tool`, use these instead of manual equivalents. When `MCP_MODE: manual`, use bash/YAML fallbacks.
+Use MCP tools when available. If MCP is unavailable, use the equivalent file/CLI workflow and record the gap.
 
 | Tool | Phase | Required | What It Does |
 |------|-------|----------|--------------|
-| `trw_session_start()` | Start | MUST | Recall learnings + check run status |
-| `trw_deliver(run_path?)` | End | MUST | reflect → checkpoint → claude_md_sync → index_sync |
-| `trw_recall(query, min_impact?)` | Any | SHOULD | Search `.trw/learnings/` by keyword |
-| `trw_learn(summary, detail, impact?)` | Any | SHOULD | Record learning entry (0.0-1.0 impact) |
-| `trw_instructions_sync(scope?)` | DELIVER | MUST | Refresh client instruction file (CLAUDE.md/AGENTS.md/etc.) |
-| `trw_init(task_name, prd_scope?)` | RESEARCH | MUST | Bootstrap run directory |
-| `trw_status(run_path?)` | Any | SHOULD | Run state, phase, confidence |
-| `trw_checkpoint(message?)` | Any | SHOULD | Atomic state snapshot (~10min) |
-| `trw_prd_create(input_text)` | PLAN | SHOULD | Generate AARE-F PRD |
-| `trw_prd_validate(prd_path)` | PLAN | MUST | PRD quality gate check |
-| `trw_build_check(scope?)` | VALIDATE | MUST | Run pytest + mypy |
+| `trw_session_start(query?)` | Start | MUST | Recall learnings + check active run state |
+| `trw_deliver(run_path?)` | End | MUST | Reflect, checkpoint, sync instructions/index state |
+| `trw_recall(query, min_impact?)` | Any | SHOULD | Focused memory search |
+| `trw_learn(summary, detail, impact?)` | Any | SHOULD | Persist reusable discoveries |
+| `trw_checkpoint(message?)` | Any | SHOULD | Atomic progress snapshot |
+| `trw_init(task_name, prd_scope?)` | RESEARCH | TASK-DEPENDENT | Bootstrap a run when ceremony tier requires one |
+| `trw_status(run_path?)` | Any | SHOULD | Inspect run state and ceremony health |
+| `trw_prd_create(input_text)` | PLAN | TASK-DEPENDENT | Create PRD when feature work needs one |
+| `trw_prd_validate(prd_path)` | PLAN | TASK-DEPENDENT | Validate PRD structure/readiness |
+| `trw_build_check(scope?)` | VALIDATE | MUST after validation | Record project-native build/test/type/lint/security outcome |
+| `trw_review()` | REVIEW | STANDARD+ | Independent rubric review when available |
 
-Lifecycle: `trw_session_start → /trw-sprint-init → /trw-prd-new (auto-chains: groom → review → exec plan) → work + trw_checkpoint + trw_learn → trw_build_check → /trw-deliver → /trw-sprint-finish`
+Lifecycle: `trw_session_start → research/plan as needed → implement + checkpoint/learn → validate with project-native checks + trw_build_check → review when needed → trw_deliver`.
 
-Quick tasks: `trw_session_start → work → trw_learn [if discovery] → trw_deliver()`
-
-If a tool fails, fall back to manual bash/YAML equivalent and log the error.
+Quick tasks: `trw_session_start → work → targeted project-native validation → trw_learn if discovery → trw_build_check if code changed → trw_deliver`.
 
 ---
 
-## SKILLS & AGENTS
+## SKILLS, COMMANDS, HOOKS, AND CLIENT ADAPTERS
 
-Skills (`.claude/skills/`) are user-invocable workflows costing 0 tokens until triggered. Agents (`.claude/agents/`) are spawned via Task(). ORC MUST invoke skills at phase boundaries instead of manual tool sequences.
+Skills, slash commands, hooks, custom agents, and client config files are adapters. They MAY encapsulate best-practice tool sequences, but they MUST NOT be the only way to perform the work.
 
-| Skill | Phase | What It Does |
-|-------|-------|--------------|
-| `/trw-sprint-init` | PLAN | Survey draft PRDs, create sprint doc, bootstrap run |
-| `/trw-prd-new` | PLAN | Create PRD + auto-chain full pipeline (groom → review → exec plan) |
-| `/trw-prd-ready` | PLAN | Full PRD lifecycle for existing PRDs (groom → review → exec plan) |
-| `/trw-test-strategy` | IMPLEMENT | Audit coverage gaps, suggest targeted tests |
-| `/trw-deliver` | DELIVER | Build gate + `trw_deliver()` in one step |
-| `/trw-sprint-finish` | DELIVER | Validate PRDs, build gate, archive, deliver |
-| `/trw-memory-audit` | ANY | Read-only learning health report |
-| `/trw-framework-check` | ANY | Ceremony compliance, run health, version check |
-| `/trw-commit` | ANY | Convention-enforced git commit |
-
-| Agent | Model | Purpose |
-|-------|-------|---------|
-| `trw-lead` | Opus | **Team lead & orchestrator** — manages 6-phase lifecycle, delegates to teammates, enforces quality gates, preserves knowledge. Spawn as team lead for Agent Teams. |
-| `trw-implementer` | Sonnet | Production code via TDD, honors interface contracts, file ownership |
-| `trw-tester` | Sonnet | Comprehensive tests, >=90% diff coverage, parametrized edge cases |
-| `trw-reviewer` | Opus | Adversarial code review + security audit (read-only, rubric-scored) |
-| `trw-researcher` | Sonnet | Codebase exploration, evidence gathering, structured findings |
-| `trw-requirement-reviewer` | Sonnet | PRD quality review (5-dimension scoring) |
-| `trw-prd-groomer` | Sonnet | Research + draft PRD sections to target quality |
-| `trw-requirement-writer` | Sonnet | Draft EARS-compliant FR/NFRs |
-| `trw-traceability-checker` | Haiku | Bidirectional traceability verification (cost-optimized) |
-| `trw-code-simplifier` | Sonnet | Code simplification (10 preservation rules) |
-
-If a skill fails, ORC MAY fall back to raw MCP tools. Skills encapsulate best-practice sequences — manual equivalents skip validation steps.
+Rules:
+- Every adapter MUST have a tool/manual equivalent.
+- Adapter docs MUST avoid provider-only assumptions unless scoped to that provider's adapter.
+- Hooks are advisory unless the runtime explicitly blocks execution.
+- Skills are optional entrypoints; direct MCP tools remain canonical.
+- Instruction sync targets are profile-driven (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.codex/INSTRUCTIONS.md`, `.cursor/rules/**`, etc.). The framework MUST say "client instruction file" unless a provider-specific adapter is being documented.
 
 ---
 
 ## BOOTSTRAP
 
-1. Call `trw_init(task_name=TASK, objective=...)`.
-2. Success → `MCP_MODE: tool`. Init complete (dirs, run.yaml, events.jsonl created).
-3. Failure → `MCP_MODE: manual`. Run manual fallback (see CLAUDE.md).
+1. Load memory with `trw_session_start(query=TASK_DOMAIN)`.
+2. Read the active client instruction file(s) and this framework.
+3. If the task needs a run directory, call `trw_init(task_name=TASK, objective=...)`.
+4. If tool bootstrap fails, use manual file/YAML fallbacks and log the error.
 
 <bootstrap-rules>
-- ORC MUST log `MCP_MODE` at bootstrap
-- ORC MUST restore latest `{TASK_DIR}/runs/**` or honor `{RUN_ID}` and recreate scaffolding
-- All writes MUST stay within `{REPO_ROOT}/**` and `{TASK_DIR}/**`
-- Run artifacts (`docs/{TASK}/runs/**`, `.ai/**`) MUST NOT be committed
-- `docs/documentation/`, `docs/knowledge-catalogue/`, `docs/requirements-aare-f/` SHOULD be committed
+- ORC MUST identify the active client/harness and its available tool surface.
+- ORC MUST avoid assuming delegation, hooks, skills, background tasks, or fixed context windows.
+- ORC MUST restore latest `{RUNS_ROOT}/{TASK}/**` or honor `{RUN_ID}` when resuming.
+- All writes MUST stay within `{REPO_ROOT}/**`, `{TASK_DIR}/**`, and `{RUNS_ROOT}/**` unless the user explicitly expands scope.
+- Runtime artifacts (`{RUNS_ROOT}/**`, `.trw/memory/**`, `.trw/context/**`, `.ai/**`) SHOULD NOT be mixed into source commits.
 </bootstrap-rules>
 
 ---
 
 ## FORMATIONS
 
-ORC selects formation per wave. Inputs: wave purpose, shard count, prior wave confidence.
-
-### Shard Formations
+ORC selects the simplest formation that fits the evidence and harness.
 
 ```
-Parallelizable without coordination?
-+-- YES → MAP-REDUCE (shards: ceil(subtasks/3))
-+-- NO → Single synthesis from diverse inputs?
-        +-- YES → PLANNER→EXECUTOR→REFLECTOR (3 shards)
-        +-- NO → Quality critical?
-                +-- YES → DEBATE+CRITIC+JUDGE (4 shards)
-                +-- NO → PIPELINE (min(3, stages))
+Can one session do it safely?
++-- YES → SINGLE-TRACK
++-- NO → Are subtasks independent?
+        +-- YES → MAP-REDUCE (parallel delegates if available; sequential otherwise)
+        +-- NO → Is there a staged handoff?
+                +-- YES → PIPELINE
+                +-- NO → Quality/risk contested?
+                        +-- YES → DEBATE + CRITIC + JUDGE
+                        +-- NO → SMALLER PLAN, then SINGLE-TRACK
 ```
 
-### Agent Teams Formations
+| Formation | Use When | Output |
+|-----------|----------|--------|
+| SINGLE-TRACK | Small or tightly coupled task | One diff + validation |
+| MAP-REDUCE | Independent evidence axes or file sets | Findings per shard + synthesis |
+| PIPELINE | Clear stage handoffs | Stage artifact per handoff |
+| DEBATE + CRITIC + JUDGE | Conflicting evidence or high-risk design | Decision record + rejected alternatives |
 
-```
-Multi-module, cross-layer?
-+-- YES → LAYER-SPECIALISTS (1 TM/layer + tester + reviewer)
-+-- NO → Single-module, deep?
-        +-- YES → MAP-REDUCE (2-3 impl TMs + tester + reviewer)
-        +-- NO → Exploratory?
-                +-- YES → RESEARCH-SYNTHESIZE (2-4 researchers + synthesizer)
-                +-- NO → High-risk?
-                        +-- YES → BUILD-REVIEW-ITERATE (2 builders + 2 reviewers)
-                        +-- NO → PIPELINE (2-3 TMs in sequence)
-```
-
-Shard formation scope: within a single wave. Team formation scope: entire team lifetime, persists across task waves.
+No formation requires a specific vendor tool. If parallel delegates are unavailable, execute the same shards sequentially and preserve findings.
 
 ---
 
-## AGENT TEAMS
+## DELEGATION AND FILE OWNERSHIP
 
-When tasks benefit from independent context windows or peer communication, ORC SHOULD use Agent Teams instead of subagent shards. The `trw-lead` agent (`.claude/agents/trw-lead.md`) encapsulates the full orchestrator protocol — spawn it as team lead via `Task(subagent_type="trw-lead")` for structured multi-agent work, or use its workflow as reference when orchestrating manually.
+Delegation is an optimization, not a dependency.
 
-| Criteria | Use Subagents | Use Agent Teams |
-|----------|--------------|-----------------|
-| Communication | Results-only | Peer discussion needed |
-| Context | Shared with parent | Independent windows |
-| Cost sensitivity | Budget-constrained | Quality-prioritized |
-| Task coupling | Independent | Interdependent |
-| Phase | RESEARCH (always) | IMPLEMENT+ |
+Use delegates when:
+- The user explicitly asks for parallel/subagent work, OR
+- The harness provides safe subagents and the task has independent read-only axes, OR
+- STANDARD+ implementation can be split into disjoint file ownership.
 
-### Parallelism Levels
+Do not delegate when:
+- The next critical-path action depends immediately on the result.
+- File ownership cannot be made explicit.
+- The harness has no reliable way to return results or diffs.
+- The task is small enough that coordination dominates.
 
-| Level | Mechanism | Notes |
-|-------|-----------|-------|
-| Subagent | Task() from LEAD | RESEARCH phase, blocking, parallel in ONE message |
-| Agent Team | TeamCreate/SendMessage | IMPLEMENT+, independent sessions, shared task list |
-| TM Shard | Task() from TM | Max 4 shards, depth 1, blocking |
-
-ALL Task() calls MUST block. NO `run_in_background: true`. TM shards MUST NOT spawn sub-shards.
-
-### Team Lifecycle
-
-1. **SPAWN**: TeamCreate, define roles, spawn via Task(team_name, name, subagent_type)
-2. **TASK**: Create shared task list with dependencies (TaskCreate/TaskUpdate addBlockedBy)
-3. **WORK**: Teammates claim tasks, work independently, message peers via SendMessage
-4. **GATE**: TeammateIdle/TaskCompleted hooks enforce quality (exit 2 = keep working/block)
-5. **SYNTHESIZE**: Lead reviews outputs, resolves conflicts
-6. **CLEANUP**: shutdown_request to each teammate → TeamDelete
-
-### File Ownership
-
-Prevents the #1 Agent Teams failure: two teammates editing the same file.
-
-- Each file: at most ONE exclusive owner. Zero overlap. Validate before spawn.
-- New files: creating TM owns them. Shared files: assign to ONE TM, others message.
-- LEAD MUST generate `file_ownership.yaml` during PLAN and validate before TEAM-UP.
-
-### Teammate Playbooks
-
-Each teammate receives a standalone playbook (≤3000 tokens) with: identity/mission, framework essentials, file ownership, tasks with acceptance criteria, interface contracts, shard protocol, coordination rules, output contract schema, quality standards, PRD traceability.
-
-### Session Resume
-
-Agent Teams cannot resume. On resume: read `run.yaml` → `roster.yaml` → `task_plan.yaml` → `scratch/tm-*/result.yaml`, scope new team to incomplete work, regenerate playbooks, NEVER message previous teammates.
-
-<team-rules>
-- LEAD MUST stay in delegate mode during IMPLEMENT. LEAD does NOT code.
-- Preferred lead: spawn `trw-lead` agent as team lead — it carries the full 6-phase orchestration protocol, delegation rules, quality gates, and knowledge preservation workflow. When the ORC is already an Opus session, it MAY self-orchestrate using the same protocol.
-- Teammates read playbooks as FIRST action after spawn.
-- 2-5 teammates optimal. Better decomposition > more headcount.
-- Reviewer/Auditor: Opus model (`trw-reviewer`), read-only tools, adversarial stance.
-- Implementer/Tester: Sonnet model (`trw-implementer`/`trw-tester`), cost-effective execution.
-- Researcher: Sonnet model (`trw-researcher`), read-only, evidence-based findings.
-- Trivial shards: Haiku model (`trw-traceability-checker`) for simple lookups/extraction.
-</team-rules>
+File ownership rules for delegated write work:
+- Each writable file has at most one owner.
+- Test files count as owned source files.
+- Shared files require a single owner and an interface contract.
+- Delegates MUST report changed paths, validation run, and unresolved risks.
+- ORC integrates, verifies, and owns the final result.
 
 ---
 
 ## EXPLORATION & PLANNING
 
-RESEARCH and PLAN phases MUST use parallel blocking shards with persisted findings.
+RESEARCH and PLAN SHOULD use independent evidence axes for non-trivial work.
 
-ORC MUST: identify independent axes → launch parallel blocking Task() in ONE message → each shard writes findings to disk BEFORE returning.
+ORC MUST: identify axes → assign or execute shards → persist findings → synthesize into a plan.
 
-Shard count: `clamp(MIN_SHARDS_FLOOR, axes_of_inquiry, PARALLELISM_MAX)`
+Shard count: `clamp(MIN_SHARDS_FLOOR, axes_of_inquiry, PARALLELISM_MAX)`.
 
-Shard output: `scratch/shard-{id}/findings.yaml` — fields: `shard_id`, `phase` (research|plan), `status` (complete|partial|failed), `summary`, `findings[]` (key, detail, evidence, confidence), `open_questions`, `files_examined`.
+Shard output fields:
+
+```yaml
+shard_id: string
+phase: research|plan|review
+status: complete|partial|failed
+summary: string
+findings:
+  - key: string
+    detail: string
+    evidence: [path-or-command]
+    confidence: high|medium|low
+open_questions: [string]
+files_examined: [path]
+```
 
 <exploration-rules>
-- Shards MUST write findings as LAST action before returning
-- Partial results: `status: partial` on error/timeout
-- ORC reads findings from disk (not Task() return text) for resume safety
-- On resume: scan `scratch/shard-*/findings.yaml`, skip `status: complete`
+- Persist findings before returning from a delegate or ending a wave.
+- Partial results MUST be labeled `status: partial`.
+- ORC reads persisted findings or explicit final outputs, not vibes.
+- On resume, skip completed findings and continue incomplete axes.
 </exploration-rules>
-
----
-
-## PARALLELISM
-
-Heuristic: if shards independent (<=5% file overlap), spawn `clamp(MIN_SHARDS_FLOOR, axes, PARALLELISM_MAX)`. Default: 3. Trivial: 1.
-
-<parallelism-rules>
-- Every Task() MUST block. WHY: background agents lose MCP tools, cause 30-50K+ token explosion, context staleness, file lock deadlocks.
-- Self-check: "Will I wait for this result before my next action?" YES = correct.
-- Test ONE shard first before launching N parallel to validate prompt quality.
-</parallelism-rules>
 
 ---
 
 ## REQUIREMENTS
 
-Before IMPLEMENT: source identified (PRD/issue/request), acceptance criteria in `plan.md`, each REQ has ID + criterion + verification method, refactor prerequisites addressed BEFORE feature work.
+Before IMPLEMENT:
+- Source identified: PRD, issue, user request, incident, or explicit maintenance objective.
+- Acceptance criteria are explicit enough to verify.
+- Each requirement has an ID or stable bullet, evidence path, and verification method.
+- Refactor prerequisites are addressed before feature code.
 
-Before DELIVER: each REQ maps to implementation files and test files with PASS status.
+Before DELIVER:
+- Each requirement maps to implementation files and validation evidence.
+- Any deferred requirement is labeled with severity and owner/backlog path.
+- Final response distinguishes completed work from remaining risk.
 
-PRD lifecycle: `/trw-prd-new "feature"` creates a PRD and automatically runs the full pipeline (groom → review → exec plan). For existing PRDs, use `/trw-prd-ready PRD-ID`. Fallback: `trw_prd_create` + `trw_prd_validate`. Validation MUST pass before IMPLEMENT.
-
-**Execution Plans** (generated automatically by `/trw-prd-new` and `/trw-prd-ready`): Decompose FRs into micro-tasks with file paths, test names, and verification commands. Stored at `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`. Consumed by `/trw-sprint-team` and `/trw-team-playbook` during PLAN phase.
+PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD have PRDs. Small fixes MAY use the user request as the governing requirement.
 
 ---
 
-## TDD & CODE QUALITY
+## LANGUAGE-AGNOSTIC VALIDATION & CODE QUALITY
 
-<tdd-rules>
-- Non-trivial code MUST have tests first
-- `src/**` changes without `tests/**` → validation MUST fail (exception: whitespace/comments/docs only)
-- Coverage: global >=85%, diff >=90%
-- Structured logging: JSONL with `ts`, `level`, `component`, `op`, `outcome`. Redact secrets/PII.
-- Run `trw_build_check(scope="full")` at VALIDATE and DELIVER
-</tdd-rules>
+<trw-validation-rules>
+- Infer the project's language, framework, build system, package manager, and test runner from files and config before choosing commands.
+- Non-trivial production behavior SHOULD have tests first or tests in the same commit, using the project's native test framework.
+- Production behavior changes without nearby tests or an explicit validation rationale SHOULD fail review, regardless of language.
+- Coverage, type-safety, lint, formatting, security, and build targets come from package/repo config; do not invent universal percentages or single-language gates.
+- Run the narrowest meaningful check first, then broaden before delivery when risk warrants it.
+- Record the exact command(s), result, and residual risk with `trw_build_check` after checks run.
+- Examples are illustrative only: choose the test runner, type checker, linter, formatter, security scanner, and build command declared by the repo you are editing; if no safe command is evident, report that uncertainty instead of inventing one.
+</trw-validation-rules>
 
 ---
 
 ## TOOL RETRY
 
-Max: 3 | Backoff: exponential+jitter (immediate → 2s+jitter → 4s+jitter → fail+log+escalate)
+Max: 3 | Backoff: immediate → 2s+jitter → 4s+jitter → fail + log + alternate path.
+
+Retry only when the failure is plausibly transient. Do not retry deterministic schema/path errors without changing the input.
 
 ---
 
 ## ERROR HANDLING
 
-Prevention: validate inputs before launch, set timeouts, use output_contract to catch drift early.
+Prevention: validate inputs, constrain write paths, set timeouts, request structured outputs, and keep diffs small.
 
 | Scenario | Detection | Recovery |
 |----------|-----------|----------|
-| Tool failure | Error return | Retry → alternate tool → log |
-| Shard timeout | >2x expected | Halt, partial commit, decompose smaller |
-| Logic contradiction | Conflicting evidence | Debate+Critic → judges → fix tests then code |
-| Path breach | Write outside boundary | Halt, log, revert, replan |
+| Tool failure | Error return / no output | Retry → alternate tool → log |
+| Delegate timeout | >2x expected or no heartbeat | Mark partial, shrink scope, continue critical path |
+| Logic contradiction | Conflicting evidence | Reconcile with critic/reviewer, then update plan |
+| Path breach | Write outside boundary | Halt, revert, replan |
+| Validation failure | Test/lint/type failure | Fix in IMPLEMENT or revert phase if criteria wrong |
+| Dirty workspace risk | Unexpected modified files | Stop staging; isolate paths; ask if ownership unclear |
 
 ---
 
 ## GIT
 
 ```bash
+git status --short
 git add <specific-paths>
-git commit -m "feat(scope): msg" -m "WHY: rationale" -m "RUN_ID: {RUN_ID}"
-git push -u origin "{BRANCH}"
+git diff --cached --check
+git commit -m "feat(scope): msg" -m "WHY: rationale"
 ```
 
-All paths MUST be absolute (TASK_DIR or REPO_ROOT). Update CHANGELOG.md at DELIVER.
+Stage narrowly. Never sweep unrelated dirty files into a commit. Commit runtime state separately from source when both must be saved.
 
 ---
 
-## MODEL
+## NUDGES AND ADAPTIVE GUIDANCE
 
-Primary: **Opus 4.6**. Child shards (depth >=2), trivial subtasks: Haiku 4.5 / Sonnet 4.5.
-Agents SHOULD act. Chat MUST remain minimal. Artifacts MUST be auditable.
+Nudges are lightweight, evidence-aware reminders surfaced through MCP responses, hooks, or client adapters. They guide behavior; they are not a substitute for tools, tests, or user instructions.
+
+Rules:
+- Nudges MUST be client-, model-, and language-neutral unless emitted by a scoped adapter.
+- Nudges SHOULD point to the next concrete action, not shame, block, or over-explain.
+- Nudges MUST respect configured density, budget, cooldown, and task profile.
+- Nudges SHOULD use current evidence: phase, missing validation, stale checkpoint, relevant learning, dirty workspace, or active PRD.
+- Nudges MUST NOT assert completion, test success, security status, or empirical lift without evidence.
+- Light profiles MAY suppress ceremony nudges when bootstrap instructions already cover them.
+- If repeated nudges are ignored, reduce frequency or change the message; do not escalate into brittle hard blocking unless the adapter explicitly supports it and the risk is high.
+
+Nudge pools:
+
+| Pool | Use For | Example Next Action |
+|------|---------|---------------------|
+| workflow | phase/order gaps | start session, checkpoint, deliver |
+| learnings | relevant prior gotchas | recall or apply known pattern |
+| ceremony | validation/review/delivery gates | run project-native check, record build result |
+| context | scope and evidence hygiene | read source path, shrink prompt, preserve uncertainty |
+
+Nudges are part of the operating layer because they make the right next step cheap across clients. Keep them short, actionable, and grounded in observable state.
 
 ---
 
-## TODO REGISTRY
+## MODEL POLICY
 
-Use `TaskCreate` / `TaskUpdate`. P0: resolve immediately. P1: next wave shard. P2: logged, deferred.
+TRW does not require a named model. Select by capability and risk:
+
+| Role | Required Capability |
+|------|---------------------|
+| Orchestration | strong planning, tool discipline, evidence synthesis |
+| Implementation | reliable code edits, tests, local debugging |
+| Review/Critic | adversarial reasoning, security awareness, diff inspection |
+| Extraction | cheap accurate lookup, schema following |
+
+Rules:
+- Never hardcode provider/model names in core framework guidance.
+- Do not assume a fixed context window; inspect the current harness or keep prompts small.
+- Prefer capability labels (`frontier`, `balanced`, `local-large`, `local-small`) over vendor names in generic configs.
+- Stronger models still need explicit evidence, tests, and persistence.
+- If a model family needs special prompting, put it in that family adapter, not the core framework.
+
+### Eval and Transfer Discipline
+
+TRW claims MUST be stratified before they are generalized. A result from one solver, harness, benchmark family, or prompt variant is evidence for that slice only.
+
+Required reporting for important framework/prompt/eval changes:
+- Show pooled results plus meaningful strata: deep vs shallow adoption, benchmark family, solver/model class, harness/client, and clean vs MCP-filtered runs when applicable.
+- Treat knowledge-quality and ceremony metrics as diagnostics, not promotion proof. Outcome gates still require solved-task or acceptance evidence.
+- Track wall time, timeout rate, tool-call overhead, analyzer failures, and parser failures as first-class costs.
+- When a solver/model changes, verify the analyzer/scorer/parser path too. Silent analyzer mismatch is a validation failure.
+- After repeated non-replication, stop wording tweaks and change the harness, retrieval substrate, ordering, measurement, or task decomposition instead.
+- Broad claims require replication across problem shape and capability class. If evidence is mixed, preserve the uncertainty.
+
+---
+
+## TODO / DEBT REGISTRY
+
+Use the active client todo system when available; otherwise use a checked-in backlog, PRD, issue, or `reports/plan.md`.
+
+Priority:
+- P0: blocks correctness, data loss, security, or delivery truthfulness — resolve immediately.
+- P1: needed for current scope quality — next wave or current sprint.
+- P2: useful but deferrable — backlog with evidence.
 
 ---
 
@@ -445,15 +457,13 @@ Use `TaskCreate` / `TaskUpdate`. P0: resolve immediately. P1: next wave shard. P
 
 | Trigger | Action |
 |---------|--------|
-| Workaround >2 retries | `trw_learn` + CLAUDE.md |
-| Non-obvious API behavior | `trw_learn` |
-| Environment-specific issue | `trw_learn` + root CLAUDE.md |
-| Task/sprint completion | `/trw-deliver` or `/trw-sprint-finish` |
-| >40 active learnings | `/trw-memory-audit` |
+| Workaround >2 retries | `trw_learn` with root cause and fallback |
+| Non-obvious API/runtime behavior | `trw_learn` |
+| Environment-specific issue | `trw_learn` + update relevant client instructions if durable |
+| Task/sprint completion | `trw_deliver` |
+| Repeated noisy/duplicate memory | memory audit/optimization workflow when requested |
 
-Root CLAUDE.md: max 200 lines. Sub-CLAUDE.md: max 50 lines, max depth 3.
-CLAUDE.md MUST be read at: session start, every PLAN phase, after errors, before major refactors.
-THIS FRAMEWORK (`.trw/frameworks/FRAMEWORK.md`) MUST be read at session start. It defines the methodology your tools implement — without it, you have tools but no process.
+Instruction files should stay short and adapter-specific. Durable knowledge belongs in TRW memory first.
 
 ---
 
@@ -461,45 +471,45 @@ THIS FRAMEWORK (`.trw/frameworks/FRAMEWORK.md`) MUST be read at session start. I
 
 | Pattern | Apply To | Why |
 |---------|----------|-----|
-| YAML over JSON | configs | 50% fewer tokens |
-| XML tags | prompt sections | Claude-trained parsing |
-| RFC 2119 caps | requirements | Unambiguous obligation |
-| Tables over prose | comparisons | Dense + scannable |
+| Schema over prose | delegate outputs, findings, plans | Parseable and resumable |
+| File paths over pasted blobs | prompts and handoffs | Keeps context small and evidence inspectable |
+| Small prompts | all harnesses | Survives unknown context limits |
+| Requirement IDs | PRDs/issues/tasks | Enables traceability |
+| Tables for comparisons | design/review | Dense and scannable |
+| Explicit uncertainty | evidence summaries | Prevents false confidence |
 
-<sub-agent-prompts>
-Shard prompts: `<context>`, `<task>`, `<output_contract>`, `<constraints>` XML tags.
-Inputs as file paths (never inlined). Target: <500 tokens. Output: YAML. Write contract file LAST.
-Sub-agents inherit MCP tools. Use Write tool not heredocs (heredocs truncate >500 lines).
-</sub-agent-prompts>
+<delegate-prompts>
+Delegate prompts SHOULD include: context, task, constraints, output contract, and paths to inspect. Keep prompts concise; provide file paths instead of large inline content. Ask for changed paths, validation, and risks in final output.
+</delegate-prompts>
 
 ---
 
 ## FRAMEWORK ADHERENCE
 
-**This document (`.trw/frameworks/FRAMEWORK.md`) is the methodology your tools implement.** Reading it is not optional ceremony — it is the difference between using tools with purpose and using tools without understanding. Agents who skip reading this document produce work that passes tool checks but misses phase gates, skips formations, ignores exit criteria, and creates rework that costs more than the 500 tokens of reading.
+**This document (`.trw/frameworks/FRAMEWORK.md`) is the methodology TRW tools implement.** Reading it is not optional when the task is non-trivial: without it, tools become disconnected rituals.
 
 | Trigger | Action |
 |---------|--------|
-| Session start | Read this entire document before writing any code |
-| Every 5 waves | Re-read framework, log compliance |
-| After compact | IMMEDIATELY re-read this document before resuming work |
-| Phase transition | Re-read relevant section (phases, gates, formations) |
-| Before spawning Agent Teams | Re-read Agent Teams and File Ownership sections |
+| Session start | Read this document before non-trivial edits |
+| After compaction/resume | Reload this document and active client instructions |
+| Phase transition | Re-read relevant phase/gate section |
+| Before delegation | Re-read Delegation and File Ownership |
+| Before delivery | Re-read Rigid Tools, Gates, Requirements, and Git |
 
-On compact: persist state → commit green → **reload this FRAMEWORK.md** + CLAUDE.md → `trw_session_start()` → resume from `wave_manifest.yaml`.
+On compact: checkpoint state → commit green work when safe → reload this framework + active client instructions → `trw_session_start(query=...)` → resume from persisted state.
 
 ### Mid-Stream User Input
 
-| Shard Progress | Action |
-|---------------|--------|
-| <50% | Checkpoint, defer shard, address user |
-| >50% | Complete shard, then address user |
-| P0 request | Micro-commit if green, rollback if red, switch immediately |
+| Progress | Action |
+|----------|--------|
+| <50% through current shard | Checkpoint, defer shard, address user |
+| >50% through current shard | Finish the shard if safe, then address user |
+| P0 request | Micro-commit if green or rollback if red; switch immediately |
 
 ---
 
 ## QOL CHANGES
 
-Shards MAY fix minor issues (<10 lines, already-open files, no behavior change, <=5% effort). Separate commits. When in doubt → P2 TODO.
+QOL fixes are allowed when they are <10 lines, already-open files, behavior-preserving, and <=5% of effort. Separate commit when practical. When in doubt, log a P2 item instead.
 
 </trw-framework>

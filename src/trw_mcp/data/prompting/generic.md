@@ -1,76 +1,63 @@
-# Generic Model Prompting Guide
+# TRW Portable Prompting Guide
 
-This guide provides best practices for generic AI coding models that don't
-specifically map to Qwen, GPT, or Claude families.
+This guide is intentionally model-agnostic. TRW core prompts should work across
+frontier hosted models, local/open-weight coding models, and future coding
+harnesses without relying on provider-specific syntax.
 
-## Key Strengths
+## Core Assumptions
 
-- Base-level coding capabilities
-- Can understand and follow clear instructions
-- May have varying context windows and capabilities
+- Context windows, tool-call formats, and helper-agent support vary by harness.
+- Stronger models still need evidence, project-native validation, nudges, and persistence.
+- Provider-specific tricks belong in adapter notes, not the core workflow.
+- Small, path-based prompts outperform large context dumps for most coding work.
 
 ## Recommended Patterns
 
 ### When to Delegate
-- **Complex multi-file changes** → Use subagents or Agent Teams
-- **Codebase research** → Use explore-type subagent with specific queries
-- **Test-heavy tasks** → Delegate to focused tester subagent
 
-### When Self-Implement
-- **Trivial edits** (≤3 lines, 1 file) → Self-implement directly
-- **Simple bug fixes** → Self-implement with clear scope
-- **Immediate feedback loop needed** → Self-implement, run tests quickly
+- Use focused helpers only when the active client supports them reliably.
+- Split by explicit file ownership and verification boundaries.
+- If helper support is absent, execute the same shards sequentially.
+- Keep the orchestrator responsible for final integration and validation.
 
-### Context Management
+### When to Self-Implement
 
-**Do:**
-- Use `trw_session_start()` at start of each session
-- Call `trw_learn()` when discovering gotchas or patterns
-- Be explicit about file paths and task boundaries
+- Trivial edits (≤3 lines, 1 file)
+- Tightly coupled fixes where handoff would add risk
+- Debug loops where the next command depends on the previous result
 
-### Generic Model Instructions
+### Prompt Shape
 
-When delegating:
-1. **Start with clear task description** - specify what needs to be done
-2. **Provide specific file paths** - don't assume the model knows project structure
-3. **Include test expectations** - specify test names and expected behavior
-4. **Break into bounded tasks** - 1-3 files per subagent task is optimal
+Use concise sections:
 
-Example:
+```text
+Context: repo/path and governing requirement
+Task: exact change or question
+Constraints: files to avoid, compatibility, security, style
+Output: changed paths, validation run, risks
 ```
-Edit `src/auth.py` to add MFA support:
 
-- Add `verify_mfa(user_id, code)` function
-- Add tests: `test_mfa_verification()` and `test_mfa_timeout()`
-- Run `pytest tests/test_auth.py -v` after changes
-- Check that tests pass before committing
-
-When to Delegate:
-- If changes span 2+ files → Use Agent Team
-- If changes are bounded to 1 file → Subagent is sufficient
-```
+Prefer file paths and commands over pasted file bodies. Ask for schema-shaped
+outputs when results must be merged or resumed.
 
 ## Session Protocol
 
-1. **Start**: Call `trw_session_start()` - loads all prior learnings
-2. **Assess**: Determine if delegation or self-implementation is better
-3. **Delegate**: Use focused subagents for bounded tasks
-4. **Verify**: Run tests after each change - fix before moving on
-5. **Learn**: Call `trw_learn(summary, detail)` for reusable insights
-6. **Finish**: Call `trw_deliver()` - persists work for future sessions
+1. **Start**: call `trw_session_start()` to load prior learnings and active state.
+2. **Scope**: identify requirements, files, language/toolchain, and validation commands from repo config.
+3. **Implement**: keep diffs small; checkpoint at milestones.
+4. **Verify**: run targeted project-native checks; broaden when risk warrants.
+5. **Learn**: call `trw_learn(summary, detail)` for reusable discoveries.
+6. **Finish**: call `trw_deliver()` to persist work for future sessions.
 
-## Key Gotchas
+## Portability Gotchas
 
-- **Context compaction**: Always checkpoint before major changes
-- **Test coverage**: Generic models respond better to test-first instructions
-- **File navigation**: Be explicit about file paths, don't assume
-- **Model limitations**: Generic models may have limited context windows (32K)
-- **Unknown capabilities**: Test delegation patterns to understand model strengths
+- Do not assume a fixed token budget; inspect or stay conservative.
+- Do not assume hooks block execution; treat them as advisory unless proven.
+- Do not assume helper agents exist; TRW tools and manual fallbacks are canonical.
+- Do not assume eval results transfer across model class, client, or benchmark family.
+- Preserve uncertainty when evidence is mixed.
 
-## Migration Notes
 
-If migrating from another model family:
-- Update instructions in `.opencode/INSTRUCTIONS.md` to reflect generic patterns
-- Review and update any generic-specific learnings in the knowledge base
-- Test delegation workflows with generic model patterns
-- Add model-specific learnings for your specific model
+## Nudge Policy
+
+Nudges are short, evidence-grounded reminders. Treat them as guidance for the next concrete action, not as proof that work is complete. Respect profile density, budget, and cooldown; if nudges become noisy, tune them rather than adding more prompt text.

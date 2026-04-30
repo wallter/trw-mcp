@@ -252,9 +252,9 @@ def test_unknown_client_id_falls_back_to_claude_code() -> None:
 
 
 @pytest.mark.unit
-def test_model_tier_override_local_30b_adjusts_context() -> None:
-    """resolve_client_profile('opencode', 'local-30b') returns context=128k via model_copy."""
-    profile = resolve_client_profile("opencode", model_tier="local-30b")
+def test_model_tier_override_local_large_adjusts_context() -> None:
+    """resolve_client_profile('opencode', 'local-large') returns context=128k via model_copy."""
+    profile = resolve_client_profile("opencode", model_tier="local-large")
     assert profile.context_window_tokens == 128_000
     assert profile.instruction_max_lines == 350
 
@@ -263,7 +263,7 @@ def test_model_tier_override_local_30b_adjusts_context() -> None:
 def test_model_tier_override_does_not_mutate_registry() -> None:
     """Model tier override returns a NEW profile — does not mutate the registry entry."""
     original = resolve_client_profile("opencode")
-    overridden = resolve_client_profile("opencode", model_tier="local-30b")
+    overridden = resolve_client_profile("opencode", model_tier="local-large")
     # Original should be unchanged
     assert original.context_window_tokens == 32_000
     assert overridden.context_window_tokens == 128_000
@@ -565,7 +565,7 @@ def test_light_profile_values_are_correct() -> None:
     assert profile.ceremony_mode == "light"
     assert profile.instruction_max_lines == 200
     assert profile.context_window_tokens == 32_000
-    assert profile.default_model_tier == "local-8b"
+    assert profile.default_model_tier == "local-small"
     assert profile.hooks_enabled is False
     assert profile.include_framework_ref is False
     assert profile.include_agent_teams is False
@@ -586,7 +586,7 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.write_targets.instruction_path == ".codex/INSTRUCTIONS.md"
     assert profile.context_window_tokens == 32_000
     assert profile.instruction_max_lines == 200
-    assert profile.default_model_tier == "local-8b"
+    assert profile.default_model_tier == "local-small"
     assert _format_ceremony_weights(profile.ceremony_weights) == "30/30/5/20/15/0"
     assert profile.scoring_weights == light_profile.scoring_weights
     assert profile.mandatory_phases == ["implement", "deliver"]
@@ -669,13 +669,13 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "Instructions path": f"`{profile.write_targets.instruction_path}`",
         "Hooks": "Disabled",
         "Framework ref": "Disabled",
-        "Agent teams": "Disabled",
         "Delegation": "Disabled",
         "Skills": "Disabled",
         "Learning recall": "Enabled",
         "MCP instructions": "Disabled",
         "Tool exposure": f"`{profile.tool_exposure_mode}`",
     }
+    assert "Agent teams" not in config_rows
     assert "current Codex runtime surfaces" in codex_section
     assert "shared `_light_profile(...)` contract" in codex_section
     assert (

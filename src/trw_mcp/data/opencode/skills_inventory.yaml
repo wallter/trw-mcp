@@ -3,7 +3,7 @@ skills:
   trw-deliver:
     disposition: portable
     source: variant
-    reason: OpenCode-safe delivery workflow without TaskList or CLAUDE-only references
+    reason: OpenCode-safe delivery workflow without client-specific task-list or instruction-file assumptions
   trw-prd-ready:
     disposition: portable
     source: variant

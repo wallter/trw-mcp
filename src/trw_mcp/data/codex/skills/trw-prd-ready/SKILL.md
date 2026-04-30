@@ -8,7 +8,7 @@ user-invocable: true
 argument-hint: "[feature description or PRD-ID]"
 ---
 
-> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/helper flow instead.
 
 # PRD Ready — Full Lifecycle Skill
 
@@ -91,7 +91,7 @@ If the user is unavailable and evidence is strong enough, proceed with explicit 
 **Entry**: PRD file exists. May be skeleton, draft, or partially groomed.
 **Skip if**: `trw_prd_validate` returns score >= 0.85.
 
-Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) for focused grooming work:
+Delegate to a **trw-prd-groomer** helper for focused grooming work:
 
 1. Resolve PRD path (from Phase 1 output or `$ARGUMENTS`).
 2. Read PRD and call `trw_prd_validate(prd_path)` for baseline score.
@@ -129,7 +129,7 @@ Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) 
 
 **Entry**: PRD score >= 0.85 from Phase 2.
 
-Delegate to a **trw-requirement-reviewer** subagent (`subagent_type: "trw-requirement-reviewer"`) for independent review:
+Delegate to a **trw-requirement-reviewer** helper for independent review:
 
 1. Perform 5-dimension quality assessment:
    - **Structure** — AARE-F section completeness and formatting
@@ -155,7 +155,7 @@ Delegate to a **trw-requirement-reviewer** subagent (`subagent_type: "trw-requir
 
 **Entry**: Review verdict is READY.
 
-**Execution model**: Execute directly (no subagent delegation). The exec plan phase requires codebase exploration and file writing that benefit from the orchestrator's full context.
+**Execution model**: Execute directly (no helper delegation). The exec plan phase requires codebase exploration and file writing that benefit from the orchestrator's full context.
 
 Generate the execution plan:
 

@@ -41,7 +41,7 @@ case "$_phase" in
     echo "  1. Re-read your assigned PRD FRs — verify EVERY requirement is implemented"
     echo "  2. Check integration — new code must be imported and called from existing code"
     echo "  3. Review your diff for DRY/KISS/SOLID quality"
-    echo "  4. Run trw_build_check(scope='full') to confirm pytest + mypy pass"
+    echo "  4. Run project-native validation, then record it with trw_build_check(scope='full')"
     echo "  5. Write a completion summary in trw_checkpoint: FRs implemented, tests, integration points"
     echo "Doing this self-review now saves the project a full rework pass later."
     ;;

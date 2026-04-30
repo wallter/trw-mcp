@@ -26,7 +26,7 @@ if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" 
   exit 0
 fi
 
-# Housekeeping: clean up per-teammate block count files
+# Housekeeping: clean up per-helper block count files
 _project_root="$(get_repo_root)" || true
 if [ -n "$_project_root" ]; then
   cleanup_block_files "$_project_root/.trw/context"

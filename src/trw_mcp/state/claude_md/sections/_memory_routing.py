@@ -130,7 +130,7 @@ def render_memory_harmonization() -> str:
         "| | `trw_learn()` | Native auto-memory |\n"
         "|---|---|---|\n"
         "| Search | `trw_recall(query)` — semantic + keyword | Filename scan only |\n"
-        "| Visibility | All agents, subagents, teammates | Primary session only |\n"
+        "| Visibility | All sessions and configured helpers | Primary session only |\n"
         "| Lifecycle | Impact-scored, recalled at session start | Static until manually edited |\n"
         f"| Scale | {scale_claim}, auto-pruned by staleness | 200-line index cap |\n"
         "\n"

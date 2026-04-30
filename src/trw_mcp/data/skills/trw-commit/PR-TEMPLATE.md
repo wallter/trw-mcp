@@ -2,7 +2,7 @@
 - **Agent Type**: {agent_type}
 - **Run ID**: {run_id}
 - **Sprint**: {sprint_name}
-- **Teammate**: {teammate_name}
+- **Contributor**: {contributor_name}
 
 ## PRD Scope
 | FR | Status |
@@ -11,7 +11,7 @@
 
 ## Automated Checks
 - **Build**: {build_status}
-- **mypy**: {mypy_status}
+- **Type/lint checks**: {type_lint_status}
 - **Coverage**: {coverage_pct}% ({coverage_delta})
 - **Tests Run**: {test_count}
 

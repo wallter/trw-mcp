@@ -124,7 +124,7 @@ case "$_source" in
       echo ""
     fi
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
-    echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
+    echo "For non-trivial tasks (2+ files), use focused helpers when available — focused context produces better outcomes than direct implementation."
     echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
     echo ""
@@ -193,7 +193,7 @@ case "$_source" in
       echo ""
     fi
     echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
-    echo "For non-trivial tasks (2+ files), delegate to Agent Teams or subagents — focused context produces better outcomes than direct implementation."
+    echo "For non-trivial tasks (2+ files), use focused helpers when available — focused context produces better outcomes than direct implementation."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

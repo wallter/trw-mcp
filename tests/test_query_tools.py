@@ -24,7 +24,7 @@ def _make_snapshot(run_dir: Path, snapshot_id: str, artifacts: list[dict[str, ob
     payload = {
         "snapshot_id": snapshot_id,
         "trw_mcp_version": "0.0.0",
-        "framework_version": "v24.6",
+        "framework_version": "v25",
         "generated_at": "2026-04-23T12:00:00+00:00",
         "artifacts": artifacts,
     }

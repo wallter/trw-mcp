@@ -374,9 +374,11 @@ class TestSyncInstructionFileIfNeeded:
         assert synced is True
         instructions_file = tmp_project / ".opencode" / "INSTRUCTIONS.md"
         assert instructions_file.exists()
-        # GPT-family-specific content should be present
+        # Legacy model detection is accepted, but v25 emits portable content.
         content = instructions_file.read_text(encoding="utf-8")
-        assert "GPT" in content
+        assert "# TRW Instructions" in content
+        assert "project-native" in content
+        assert "GPT" not in content
 
     def test_codex_path_inferred_from_instruction_path_for_auto_client(self, tmp_project: Path) -> None:
         """auto client with .codex/ instruction_path → generates codex instructions."""
@@ -482,147 +484,38 @@ class TestSyncIncludesInstructionFile:
 
 
 # ---------------------------------------------------------------------------
-# Tests for FR04: OpenCode Model-Specific Instruction Variants (PRD-CORE-115)
+# Tests for FR04: OpenCode Portable Instruction Variants (PRD-CORE-161)
 # ---------------------------------------------------------------------------
 
 
 class TestRenderOpencodeInstructions:
-    """Unit tests for render_opencode_instructions — FR04 model-specific variants."""
+    """Unit tests for render_opencode_instructions portable v25 output."""
 
     def _render(self, family: str) -> str:
         from trw_mcp.state.claude_md._static_sections import render_opencode_instructions
 
         return render_opencode_instructions(family)
 
-    def test_qwen_content_is_distinct_from_gpt(self) -> None:
-        """Qwen and GPT variants produce materially different content."""
-        qwen = self._render("qwen")
-        gpt = self._render("gpt")
-        assert qwen != gpt
+    def test_legacy_families_emit_identical_portable_content(self) -> None:
+        """Legacy family hints no longer fork core protocol text."""
+        outputs = {family: self._render(family) for family in ("qwen", "gpt", "claude", "generic")}
+        assert len(set(outputs.values())) == 1
 
-    def test_qwen_content_is_distinct_from_claude(self) -> None:
-        """Qwen and Claude variants produce materially different content."""
-        qwen = self._render("qwen")
-        claude = self._render("claude")
-        assert qwen != claude
-
-    def test_gpt_content_is_distinct_from_claude(self) -> None:
-        """GPT and Claude variants produce materially different content."""
-        gpt = self._render("gpt")
-        claude = self._render("claude")
-        assert gpt != claude
-
-    def test_generic_content_is_distinct_from_all_named_families(self) -> None:
-        """Generic variant is distinct from all named family variants."""
-        generic = self._render("generic")
-        for family in ("qwen", "gpt", "claude"):
-            assert generic != self._render(family), f"generic should differ from {family}"
-
-    def test_qwen_contains_context_budget_guidance(self) -> None:
-        """Qwen variant includes 32K context budget guidance."""
+    def test_portable_content_has_core_protocol(self) -> None:
+        """Portable output includes TRW workflow, project-native validation, and nudges."""
         content = self._render("qwen")
-        assert "32K" in content
-
-    def test_qwen_contains_think_tag_guidance(self) -> None:
-        """Qwen variant mentions /think tags for reasoning."""
-        content = self._render("qwen")
-        assert "/think" in content
-
-    def test_qwen_contains_vllm_bug_workaround(self) -> None:
-        """Qwen variant includes vLLM tool-call bug workaround guidance."""
-        content = self._render("qwen")
-        # The known vLLM streaming parser bug must be documented
-        assert "vLLM" in content or "vllm" in content
-
-    def test_gpt_contains_context_budget_guidance(self) -> None:
-        """GPT variant includes 128K+ context budget guidance."""
-        content = self._render("gpt")
-        assert "128K" in content
-
-    def test_gpt_contains_chain_of_thought(self) -> None:
-        """GPT variant mentions chain-of-thought reasoning."""
-        content = self._render("gpt")
-        assert "chain-of-thought" in content.lower() or "chain of thought" in content.lower()
-
-    def test_gpt_mentions_o3_or_o1_models(self) -> None:
-        """GPT variant includes guidance for o3/o1 reasoning models."""
-        content = self._render("gpt")
-        assert "o3" in content or "o1" in content
-
-    def test_claude_contains_200k_context_guidance(self) -> None:
-        """Claude variant includes 200K context budget guidance."""
-        content = self._render("claude")
-        assert "200K" in content
-
-    def test_claude_contains_extended_thinking(self) -> None:
-        """Claude variant mentions extended thinking."""
-        content = self._render("claude")
-        assert "extended thinking" in content.lower()
-
-    def test_claude_contains_xml_tags(self) -> None:
-        """Claude variant mentions XML tag conventions."""
-        content = self._render("claude")
-        assert "XML" in content or "<task>" in content or "xml" in content.lower()
-
-    def test_generic_assumes_32k_budget(self) -> None:
-        """Generic fallback variant assumes 32K context budget."""
-        content = self._render("generic")
-        assert "32K" in content
-
-    def test_generic_contains_explicit_mcp_examples(self) -> None:
-        """Generic variant includes explicit MCP tool examples."""
-        content = self._render("generic")
+        assert "# TRW Instructions" in content
         assert "trw_session_start()" in content
         assert "trw_deliver()" in content
-        assert "trw_checkpoint" in content
+        assert "project-native" in content
+        assert "Nudge Policy" in content
 
-    def test_unknown_family_falls_back_to_generic(self) -> None:
-        """Unknown model family falls back gracefully to generic variant."""
-        generic = self._render("generic")
-        unknown = self._render("llama")
-        assert unknown == generic
-
-    def test_all_variants_contain_trw_session_start(self) -> None:
-        """All variants instruct agents to call trw_session_start()."""
-        for family in ("qwen", "gpt", "claude", "generic"):
-            content = self._render(family)
-            assert "trw_session_start" in content, f"{family} missing trw_session_start"
-
-    def test_all_variants_contain_trw_deliver(self) -> None:
-        """All variants instruct agents to call trw_deliver()."""
-        for family in ("qwen", "gpt", "claude", "generic"):
-            content = self._render(family)
-            assert "trw_deliver" in content, f"{family} missing trw_deliver"
-
-    def test_no_variant_contains_claude_md_reference(self) -> None:
-        """No OpenCode variant references CLAUDE.md — that is Claude Code only."""
-        for family in ("qwen", "gpt", "claude", "generic"):
-            content = self._render(family)
-            assert "CLAUDE.md" not in content, f"{family} contains forbidden CLAUDE.md reference"
-
-    def test_qwen_word_count_within_target(self) -> None:
-        """Qwen variant stays within 2000 words (light-mode target per NFR01)."""
+    def test_portable_content_omits_family_prompt_recipes(self) -> None:
+        """Provider/model prompt recipes live in adapters, not core OpenCode instructions."""
         content = self._render("qwen")
-        word_count = len(content.split())
-        assert word_count <= 2000, f"Qwen variant has {word_count} words (target ≤2000)"
+        for token in ("/think", "vLLM", "chain-of-thought", "extended thinking", "200K", "128K", "32K"):
+            assert token not in content
 
-    def test_gpt_word_count_within_target(self) -> None:
-        """GPT variant stays within 2000 words."""
-        content = self._render("gpt")
-        word_count = len(content.split())
-        assert word_count <= 2000, f"GPT variant has {word_count} words (target ≤2000)"
-
-    def test_claude_word_count_within_target(self) -> None:
-        """Claude variant stays within 4000 words (full-mode target per NFR01)."""
-        content = self._render("claude")
-        word_count = len(content.split())
-        assert word_count <= 4000, f"Claude variant has {word_count} words (target ≤4000)"
-
-    def test_generic_word_count_within_target(self) -> None:
-        """Generic variant stays within 2000 words."""
-        content = self._render("generic")
-        word_count = len(content.split())
-        assert word_count <= 2000, f"Generic variant has {word_count} words (target ≤2000)"
 
 
 # ---------------------------------------------------------------------------

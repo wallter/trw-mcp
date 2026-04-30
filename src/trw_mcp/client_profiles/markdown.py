@@ -47,7 +47,6 @@ def render_surface_matrix() -> str:
             _enabled_label(row.hooks_enabled),
             _enabled_label(row.skills_enabled),
             _enabled_label(row.framework_ref_enabled),
-            _enabled_label(row.agent_teams_enabled),
             _enabled_label(row.delegation_enabled),
         ]
         for row in rows
@@ -62,7 +61,6 @@ def render_surface_matrix() -> str:
             "Hooks",
             "Skills",
             "Framework Ref",
-            "Agent Teams",
             "Delegation",
         ],
         table_rows,

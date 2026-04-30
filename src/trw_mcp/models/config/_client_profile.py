@@ -15,7 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from trw_mcp.models.run import Phase
 
-ModelTier = Literal["cloud-opus", "cloud-sonnet", "local-30b", "local-8b"]
+ModelTier = Literal[
+    "frontier",
+    "balanced",
+    "local-large",
+    "local-small",
+    "cloud-opus",
+    "cloud-sonnet",
+    "local-30b",
+    "local-8b",
+]
 
 _VALID_PHASES: frozenset[str] = frozenset(p.value for p in Phase)
 
@@ -163,8 +172,8 @@ class ClientProfile(BaseModel):
     # Scoring calibration (eval dimensions -- NOT PRD validation dimensions, F13)
     scoring_weights: ScoringDimensionWeights = Field(default_factory=ScoringDimensionWeights)
 
-    # Model tier
-    default_model_tier: ModelTier = "cloud-sonnet"
+    # Capability tier. Legacy cloud/local names remain accepted as compatibility aliases.
+    default_model_tier: ModelTier = "balanced"
 
     # Response format (PRD-CORE-096)
     response_format: Literal["yaml", "json"] = "yaml"
@@ -174,7 +183,7 @@ class ClientProfile(BaseModel):
     agents_md_enabled: bool = False
     review_md_enabled: bool = True
     include_framework_ref: bool = True
-    include_agent_teams: bool = True
+    include_agent_teams: bool = False
     include_delegation: bool = True
 
     # -- Surface control flags (PRD-CORE-125) --

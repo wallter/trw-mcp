@@ -642,8 +642,8 @@ def test_render_agent_teams_disabled_by_profile(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.unit
-def test_render_agent_teams_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """render_agent_teams_protocol() returns content when defaults are active."""
+def test_render_agent_teams_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """render_agent_teams_protocol() is an empty compatibility shim in v25."""
     from trw_mcp.state.claude_md import _static_sections
 
     cfg = TRWConfig()
@@ -652,7 +652,7 @@ def test_render_agent_teams_enabled_by_default(monkeypatch: pytest.MonkeyPatch) 
     from trw_mcp.state.claude_md._static_sections import render_agent_teams_protocol
 
     result = render_agent_teams_protocol()
-    assert "Agent Teams" in result
+    assert result == ""
 
 
 # ---------------------------------------------------------------------------
