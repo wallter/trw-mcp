@@ -67,6 +67,7 @@ MAPPED_FIELDS: frozenset[str] = frozenset(
         "pytest_passed",
         "test_count",
         "coverage_pct",
+        "static_checks_passed",
         "mypy_passed",
         "attributes",
     }

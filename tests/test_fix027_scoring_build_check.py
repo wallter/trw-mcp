@@ -84,6 +84,33 @@ class TestBuildCheckQLearningWiring:
             "Q-learning gets no negative signal from build failures"
         )
 
+    def test_build_check_static_checks_alias_controls_outcome(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Language-neutral static_checks_clean overrides the legacy mypy_clean alias."""
+        called_events: list[str] = []
+
+        monkeypatch.setattr(
+            "trw_mcp.scoring.process_outcome_for_event",
+            lambda event_type: called_events.append(event_type) or [],
+        )
+
+        tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
+        assert tool_fn is not None, "trw_build_check tool not found"
+
+        result = tool_fn(
+            tests_passed=True,
+            static_checks_clean=False,
+            mypy_clean=True,
+            test_count=100,
+            coverage_pct=95.0,
+            scope="full",
+        )
+
+        assert result["static_checks_clean"] is False
+        assert result["mypy_clean"] is True
+        assert "build_failed" in called_events
+
     def test_build_check_q_learning_failure_does_not_block_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -93,7 +93,27 @@ class TestCheckBuildStatus:
         assert len(failed) == 1
         assert "test_foo failed" in failed[0].message
 
-    def test_mypy_not_clean_creates_failure(self, tmp_path: Path) -> None:
+    def test_static_checks_not_clean_creates_failure(self, tmp_path: Path) -> None:
+        config = TRWConfig(build_check_enabled=True, build_gate_enforcement="lenient")
+        trw_dir = tmp_path / ".trw"
+        context_dir = trw_dir / "context"
+        context_dir.mkdir(parents=True)
+        writer = FileStateWriter()
+        writer.write_yaml(
+            context_dir / "build-status.yaml",
+            {
+                "tests_passed": True,
+                "static_checks_clean": False,
+                "mypy_clean": True,
+                "coverage_pct": 90.0,
+                "scope": "full",
+                "timestamp": "2026-01-01T00:00:00",
+            },
+        )
+        result = _check_build_status(trw_dir, config, "validate")
+        assert any(f.rule == "static_checks_clean" for f in result)
+
+    def test_legacy_mypy_not_clean_still_creates_failure(self, tmp_path: Path) -> None:
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="lenient")
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
@@ -110,7 +130,7 @@ class TestCheckBuildStatus:
             },
         )
         result = _check_build_status(trw_dir, config, "validate")
-        assert any(f.rule == "type_check_clean" for f in result)
+        assert any(f.rule == "static_checks_clean" for f in result)
 
     def test_coverage_below_min_fails_at_validate(self, tmp_path: Path) -> None:
         config = TRWConfig(
@@ -219,12 +239,12 @@ class TestCheckBuildStatus:
         )
         result = _check_build_status(trw_dir, config, "implement")
         for failure in result:
-            if failure.rule in ("tests_passed", "mypy_clean"):
+            if failure.rule in ("tests_passed", "static_checks_clean"):
                 assert failure.severity == "warning", (
                     f"Expected warning at implement, got {failure.severity} for {failure.rule}"
                 )
 
-    def test_mypy_scope_only_skips_mypy_check(self, tmp_path: Path) -> None:
+    def test_test_only_scope_skips_static_check(self, tmp_path: Path) -> None:
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         trw_dir = tmp_path / ".trw"
         context_dir = trw_dir / "context"
@@ -241,7 +261,7 @@ class TestCheckBuildStatus:
             },
         )
         result = _check_build_status(trw_dir, config, "validate")
-        assert not any(f.rule == "mypy_clean" for f in result)
+        assert not any(f.rule == "static_checks_clean" for f in result)
 
 
 class TestBestEffortChecks:

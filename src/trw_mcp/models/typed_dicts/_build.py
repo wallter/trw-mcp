@@ -1,12 +1,12 @@
-"""Build check result TypedDicts (pytest, mypy, dep audit, fuzz)."""
+"""Build check result TypedDicts (tests, static checks, dep audit, fuzz)."""
 
 from __future__ import annotations
 
 from typing_extensions import TypedDict
 
 
-class PytestResultDict(TypedDict, total=False):
-    """Result from ``_run_pytest``."""
+class TestResultDict(TypedDict, total=False):
+    """Result from a project-native test/check runner."""
 
     tests_passed: bool
     coverage_pct: float
@@ -16,13 +16,19 @@ class PytestResultDict(TypedDict, total=False):
     timed_out: bool
 
 
-class MypyResultDict(TypedDict, total=False):
-    """Result from ``_run_mypy``."""
+class StaticCheckResultDict(TypedDict, total=False):
+    """Result from a project-native static/type/lint/schema check."""
 
+    static_checks_clean: bool
     mypy_clean: bool
     mypy_error_count: int
     failures: list[str]
     timed_out: bool
+
+
+# Backward-compatible exported names for tests and legacy callers.
+PytestResultDict = TestResultDict
+MypyResultDict = StaticCheckResultDict
 
 
 class PipAuditResult(TypedDict, total=False):

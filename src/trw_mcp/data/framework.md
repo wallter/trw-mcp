@@ -343,6 +343,7 @@ PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD 
 - Coverage, type-safety, lint, formatting, security, and build targets come from package/repo config; do not invent universal percentages or single-language gates.
 - Run the narrowest meaningful check first, then broaden before delivery when risk warrants it.
 - Record the exact command(s), result, and residual risk with `trw_build_check` after checks run.
+- When reporting static/type/lint/schema checks to `trw_build_check`, prefer the language-neutral `static_checks_clean` status. Legacy tool-specific field names are compatibility aliases, not framework concepts.
 - Examples are illustrative only: choose the test runner, type checker, linter, formatter, security scanner, and build command declared by the repo you are editing; if no safe command is evident, report that uncertainty instead of inventing one.
 </trw-validation-rules>
 

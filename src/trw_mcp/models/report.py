@@ -40,6 +40,7 @@ class BuildSummary(BaseModel):
     """Build verification snapshot (from cached build-status.yaml)."""
 
     tests_passed: bool = False
+    static_checks_clean: bool | None = None
     mypy_clean: bool = False
     coverage_pct: float = 0.0
     test_count: int = 0

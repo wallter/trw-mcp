@@ -256,6 +256,9 @@ def assemble_report(
             build_data = reader.read_yaml(build_path)
             build = BuildSummary(
                 tests_passed=bool(build_data.get("tests_passed", False)),
+                static_checks_clean=(
+                    bool(build_data["static_checks_clean"]) if "static_checks_clean" in build_data else None
+                ),
                 mypy_clean=bool(build_data.get("mypy_clean", False)),
                 coverage_pct=safe_float(build_data, "coverage_pct", 0.0),
                 test_count=int(str(build_data.get("test_count", 0))),

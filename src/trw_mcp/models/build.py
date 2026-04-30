@@ -13,19 +13,31 @@ from pydantic import BaseModel, ConfigDict, Field
 class BuildStatus(BaseModel):
     """Build verification result cached to .trw/context/build-status.yaml.
 
-    Captures pytest and mypy results for phase gate consumption.
+    Captures project-native validation results for phase gate consumption.
     Phase gates read this from disk — they never run subprocesses directly.
+
+    ``mypy_clean`` remains as a legacy compatibility field for older clients.
+    New integrations should prefer ``static_checks_clean`` for language-
+    appropriate static analysis, type checking, linting, schema checks, or
+    equivalent configured quality gates.
     """
 
     model_config = ConfigDict(strict=True)
 
     tests_passed: bool = Field(
         default=False,
-        description="True if all pytest tests passed.",
+        description="True if the project-native test/check suite passed.",
+    )
+    static_checks_clean: bool | None = Field(
+        default=None,
+        description=(
+            "True if configured project-native static/type/lint/schema checks passed. "
+            "When omitted, legacy mypy_clean is used for backward compatibility."
+        ),
     )
     mypy_clean: bool = Field(
         default=False,
-        description="True if mypy exited with code 0 (no errors).",
+        description="Legacy compatibility alias for Python mypy/static-check status; prefer static_checks_clean.",
     )
     timed_out: bool = Field(
         default=False,
@@ -35,12 +47,12 @@ class BuildStatus(BaseModel):
         ge=0.0,
         le=100.0,
         default=0.0,
-        description="Coverage percentage from pytest --cov output.",
+        description="Coverage percentage from the configured coverage reporter, when available.",
     )
     test_count: int = Field(
         ge=0,
         default=0,
-        description="Total number of tests collected by pytest.",
+        description="Total number of checks/tests collected or executed.",
     )
     failure_count: int = Field(
         ge=0,
@@ -57,7 +69,7 @@ class BuildStatus(BaseModel):
     )
     scope: str = Field(
         default="full",
-        description="Build check scope: 'full', 'quick', 'pytest', 'mypy'.",
+        description="Build check scope: 'full', 'quick', a tool name, or a project-native command label.",
     )
     duration_secs: float = Field(
         ge=0.0,

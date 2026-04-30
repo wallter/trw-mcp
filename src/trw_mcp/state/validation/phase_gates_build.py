@@ -154,14 +154,31 @@ def _check_build_status(
             )
         )
 
-    # Check mypy results (only if scope includes mypy)
+    # Check static/type/lint results when the reported scope includes them.
+    # ``mypy_clean`` remains a backward-compatible legacy field; new clients
+    # should report ``static_checks_clean`` for language-appropriate checks.
     scope = str(data.get("scope", "full"))
-    if scope in ("full", "mypy") and not data.get("mypy_clean", False):
+    static_scope = scope in {
+        "full",
+        "mypy",
+        "type-check",
+        "typecheck",
+        "static",
+        "static-check",
+        "static_checks",
+        "lint",
+        "quality",
+    }
+    static_checks_clean = data.get("static_checks_clean", data.get("mypy_clean", False))
+    if static_scope and not bool(static_checks_clean):
         failures.append(
             ValidationFailure(
-                field="build_type_check",
-                rule="type_check_clean",
-                message="Type checker reported errors — run trw_build_check() for details",
+                field="build_static_checks",
+                rule="static_checks_clean",
+                message=(
+                    "Project-native static/type/lint/schema checks reported errors — "
+                    "run the configured validation command and record it with trw_build_check()"
+                ),
                 severity=severity,
             )
         )

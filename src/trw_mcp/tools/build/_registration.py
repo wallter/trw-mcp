@@ -32,7 +32,8 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger(__name__)
 
 _BUILD_CHECK_USAGE = (
-    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, mypy_clean=True, scope='full')"
+    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, "
+    "static_checks_clean=True, scope='full')"
 )
 
 
@@ -79,6 +80,7 @@ def register_build_tools(server: FastMCP) -> None:
         test_count: int = 0,
         failure_count: int = 0,
         coverage_pct: float = 0.0,
+        static_checks_clean: bool | None = None,
         mypy_clean: bool = True,
         scope: str = "full",
         failures: list[str] | None = None,
@@ -88,28 +90,30 @@ def register_build_tools(server: FastMCP) -> None:
         """Record build/test results for ceremony tracking and delivery gates.
 
         Use when:
-        - You just ran your test suite (via Bash) and need the outcome logged.
+        - You just ran project-native validation (via shell/CI/script) and need the outcome logged.
         - You want the delivery gate to see the latest pass/fail + coverage.
         - You want Q-learning feedback attached to a phase transition.
 
-        This tool does NOT execute subprocesses — run tests via Bash first,
+        This tool does NOT execute subprocesses — run validation commands first,
         then call this with the results.
 
         Input:
         - tests_passed: True or False — required; no default guess.
-        - test_count: total tests that ran.
+        - test_count: total checks/tests that ran.
         - failure_count: number that failed.
-        - coverage_pct: 0.0-100.0.
-        - mypy_clean: whether mypy type-checking passed.
-        - scope: label like ``full``, ``pytest``, ``mypy``, ``cargo test``.
+        - coverage_pct: 0.0-100.0, if measured.
+        - static_checks_clean: preferred neutral status for configured static/type/lint/schema checks.
+        - mypy_clean: legacy compatibility alias; use only for older clients or Python-specific reports.
+        - scope: label like ``full``, ``quick``, ``type-check``, ``cargo test``, ``npm test``.
         - failures: optional list of up to 10 failure descriptions.
         - run_path: optional run directory for event logging.
         - min_coverage: when set, falls tests_passed to False if coverage_pct
           is below the threshold (adds ``coverage_threshold_failed`` flag).
 
         Output: dict with fields
-        {status, run_id?, outcome, tests_passed, coverage_pct, mypy_clean,
-         coverage_threshold_failed?, gate_effects: list[str]}.
+        {status, run_id?, outcome, tests_passed, coverage_pct,
+         static_checks_clean, mypy_clean, coverage_threshold_failed?,
+         gate_effects: list[str]}.
         """
         reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()
@@ -127,8 +131,11 @@ def register_build_tools(server: FastMCP) -> None:
 
         effective_failures = (failures or [])[:10]
 
+        effective_static_checks_clean = mypy_clean if static_checks_clean is None else static_checks_clean
+
         status = BuildStatus(
             tests_passed=reported_tests_passed,
+            static_checks_clean=effective_static_checks_clean,
             mypy_clean=mypy_clean,
             timed_out=False,
             coverage_pct=coverage_pct,
@@ -166,17 +173,18 @@ def register_build_tools(server: FastMCP) -> None:
         # Process inline so the reported result reflects the persisted Q-update
         # and we never leave a background thread holding the SQLite backend
         # across test/process teardown.
-        event_type = "build_passed" if status.tests_passed and status.mypy_clean else "build_failed"
+        event_type = "build_passed" if status.tests_passed and effective_static_checks_clean else "build_failed"
         _process_q_learning(event_type, scope)
 
         logger.info(
             "build_check_complete",
             scope=scope,
             tests_passed=status.tests_passed,
+            static_checks_clean=effective_static_checks_clean,
             mypy_clean=status.mypy_clean,
             coverage_pct=status.coverage_pct,
         )
-        if not status.tests_passed or not status.mypy_clean:
+        if not status.tests_passed or not effective_static_checks_clean:
             logger.warning(
                 "build_check_failed",
                 exit_code=1,
@@ -185,6 +193,7 @@ def register_build_tools(server: FastMCP) -> None:
 
         result: dict[str, object] = {
             "tests_passed": status.tests_passed,
+            "static_checks_clean": effective_static_checks_clean,
             "mypy_clean": status.mypy_clean,
             "timed_out": status.timed_out,
             "coverage_pct": status.coverage_pct,
@@ -270,6 +279,11 @@ def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> N
         {
             "scope": scope,
             "tests_passed": getattr(status, "tests_passed", False),
+            "static_checks_clean": getattr(
+                status,
+                "static_checks_clean",
+                getattr(status, "mypy_clean", False),
+            ),
             "mypy_clean": getattr(status, "mypy_clean", False),
             "coverage_pct": str(getattr(status, "coverage_pct", 0)),
             "duration_secs": str(getattr(status, "duration_secs", 0)),
