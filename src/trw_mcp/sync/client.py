@@ -10,14 +10,43 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import structlog
 
+from trw_mcp.sync._client_push import (
+    _push_to_target as _push_to_target_impl,
+)
+from trw_mcp.sync._client_push import (
+    fanout_push as _fanout_push_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    apply_sync_hints as _apply_sync_hints_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    coerce_positive_number as _coerce_positive_number_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    consume_next_cycle_force as _consume_next_cycle_force_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    get_dirty_entries as _get_dirty_entries_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    mark_synced as _mark_synced_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    parse_sync_hint_timestamp as _parse_sync_hint_timestamp_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    reset_poll_schedule as _reset_poll_schedule_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    restore_poll_schedule as _restore_poll_schedule_impl,
+)
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
@@ -31,10 +60,6 @@ if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
-
-_MIN_HINT_DELAY_SECONDS = 60
-_MAX_HINT_DELAY_SECONDS = 7200
-_MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
 
 
 @dataclass(frozen=True)
@@ -311,45 +336,16 @@ class BackendSyncClient:
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
-        """Push dirty entries + outcomes to every target with per-target isolation.
-
-        Returns (report, aggregate_push_result, any_target_succeeded). Aggregate
-        result reflects the first successful target (sufficient for push_seq).
-        """
-        report: dict[str, dict[str, object]] = {}
-        aggregate: PushResult = PushResult()
-        any_success = False
-        for target in self._targets:
-            try:
-                result = self._push_to_target(target, dirty, outcomes)
-            except Exception as exc:  # justified: boundary, per-target failure is isolated
-                logger.warning(
-                    "sync_target_failed",
-                    client_id=self._client_id,
-                    label=target.label,
-                    target=target.label,
-                    error_type=type(exc).__name__,
-                    error=str(exc)[:200],
-                    exc_info=True,
-                )
-                report[target.label] = {
-                    "pushed": 0,
-                    "skipped": 0,
-                    "failed": 1,
-                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
-                }
-                continue
-            report[target.label] = {
-                "pushed": result.pushed,
-                "skipped": result.skipped,
-                "failed": result.failed,
-                "error": None,
-            }
-            if result.failed == 0:
-                any_success = True
-                if aggregate.pushed == 0 and aggregate.skipped == 0:
-                    aggregate = result
-        return report, aggregate, any_success
+        return _fanout_push_impl(
+            client_id=self._client_id,
+            targets=self._targets,
+            primary_pusher=self._pusher,
+            pusher_map=self._pushers,
+            batch_size=self._config.sync_push_batch_size,
+            timeout=self._config.sync_push_timeout_seconds,
+            dirty=dirty,
+            outcomes=outcomes,
+        )
 
     def _push_to_target(
         self,
@@ -357,177 +353,66 @@ class BackendSyncClient:
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> PushResult:
-        """Push learnings + outcomes to a single target. Raises on transport failure."""
-        started = perf_counter()
-        # Primary target uses the canonical self._pusher (tests patch this).
-        if self._targets and target.label == self._targets[0].label:
-            pusher = self._pusher
-        else:
-            pusher = self._pushers.get(target.label)
-        if pusher is None:
-            pusher = SyncPusher(
-                backend_url=target.url,
-                api_key=target.api_key,
-                batch_size=self._config.sync_push_batch_size,
-                timeout=self._config.sync_push_timeout_seconds,
-                client_id=self._client_id,
-            )
-            self._pushers[target.label] = pusher
-
-        total = PushResult()
-        if dirty:
-            logger.info(
-                "sync_target_push_start",
-                label=target.label,
-                kind="learnings",
-                client_id=self._client_id,
-            )
-            learning_result = pusher.push_learnings(dirty)
-            total = PushResult(
-                pushed=total.pushed + learning_result.pushed,
-                failed=total.failed + learning_result.failed,
-                skipped=total.skipped + learning_result.skipped,
-            )
-            logger.info(
-                "sync_target_push_complete",
-                label=target.label,
-                kind="learnings",
-                pushed=learning_result.pushed,
-                skipped=learning_result.skipped,
-                failed=learning_result.failed,
-                duration_ms=int((perf_counter() - started) * 1000),
-                client_id=self._client_id,
-            )
-        if outcomes:
-            logger.info(
-                "sync_target_push_start",
-                label=target.label,
-                kind="outcomes",
-                client_id=self._client_id,
-            )
-            outcome_result = pusher.push_outcomes(outcomes)
-            total = PushResult(
-                pushed=total.pushed + outcome_result.pushed,
-                failed=total.failed + outcome_result.failed,
-                skipped=total.skipped + outcome_result.skipped,
-            )
-            logger.info(
-                "sync_target_push_complete",
-                label=target.label,
-                kind="outcomes",
-                pushed=outcome_result.pushed,
-                skipped=outcome_result.skipped,
-                failed=outcome_result.failed,
-                duration_ms=int((perf_counter() - started) * 1000),
-                client_id=self._client_id,
-            )
-        return total
+        return _push_to_target_impl(
+            client_id=self._client_id,
+            target=target,
+            primary_target_label=self._targets[0].label if self._targets else None,
+            primary_pusher=self._pusher,
+            pusher_map=self._pushers,
+            batch_size=self._config.sync_push_batch_size,
+            timeout=self._config.sync_push_timeout_seconds,
+            dirty=dirty,
+            outcomes=outcomes,
+        )
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:
-        """Update the next poll schedule from backend hints."""
-        polling_cap_seconds = self._coerce_positive_number(
-            (sync_hints or {}).get("polling_cap_seconds"),
-        )
-        interval_seconds = self._coerce_positive_number((sync_hints or {}).get("interval_seconds"))
-        delay = interval_seconds
-        if delay is None:
-            delay = float(self._config.sync_interval_seconds)
-        recommended_at = (sync_hints or {}).get("next_poll_recommended_at")
-        parsed_recommended_at = self._parse_sync_hint_timestamp(recommended_at)
-        if interval_seconds is None and parsed_recommended_at is not None:
-            delay = max(0.0, (parsed_recommended_at - datetime.now(tz=timezone.utc)).total_seconds())
-
-        if polling_cap_seconds is not None and delay > 0:
-            delay = max(delay, polling_cap_seconds)
-        if delay > 0:
-            delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
-
-        if (
-            sync_hints
-            and sync_hints.get("significant_updates_available")
-            and self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS
-        ):
-            self._last_applied_schedule_seconds = delay
-            self._next_sleep_seconds = 0.0
-            self._scheduled_interval_seconds = 0.0
-            self._next_cycle_force = True
-            self._consecutive_immediate_repolls += 1
-            logger.info(
-                "sync_hint_applied",
-                client_id=self._client_id,
-                mode="immediate_repoll",
-                polling_cap_seconds=polling_cap_seconds,
-            )
-            return
-
-        self._last_applied_schedule_seconds = delay
-        self._next_sleep_seconds = delay
-        self._scheduled_interval_seconds = delay
-        self._next_cycle_force = False
-        self._consecutive_immediate_repolls = 0
-        logger.info(
-            "sync_hint_applied",
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _apply_sync_hints_impl(
             client_id=self._client_id,
-            mode="scheduled",
-            next_delay_seconds=delay,
-            polling_cap_seconds=polling_cap_seconds,
+            config_sync_interval_seconds=float(self._config.sync_interval_seconds),
+            sync_hints=sync_hints,
+            last_applied_schedule_seconds=self._last_applied_schedule_seconds,
+            consecutive_immediate_repolls=self._consecutive_immediate_repolls,
         )
 
     def _reset_poll_schedule(self) -> None:
-        self._next_sleep_seconds = float(self._config.sync_interval_seconds)
-        self._scheduled_interval_seconds = float(self._config.sync_interval_seconds)
-        self._last_applied_schedule_seconds = float(self._config.sync_interval_seconds)
-        self._next_cycle_force = False
-        self._consecutive_immediate_repolls = 0
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _reset_poll_schedule_impl(float(self._config.sync_interval_seconds))
 
     def _restore_poll_schedule(self) -> None:
-        self._next_sleep_seconds = self._last_applied_schedule_seconds
-        self._scheduled_interval_seconds = self._last_applied_schedule_seconds
-        self._next_cycle_force = False
-        self._consecutive_immediate_repolls = 0
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _restore_poll_schedule_impl(self._last_applied_schedule_seconds)
 
     def _consume_next_cycle_force(self) -> bool:
-        force = self._next_cycle_force
-        self._next_cycle_force = False
+        force, self._next_cycle_force = _consume_next_cycle_force_impl(self._next_cycle_force)
         return force
 
     @staticmethod
     def _parse_sync_hint_timestamp(raw: object) -> datetime | None:
-        if not isinstance(raw, str) or not raw.strip():
-            return None
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-        except ValueError:
-            return None
+        return _parse_sync_hint_timestamp_impl(raw)
 
     @staticmethod
     def _coerce_positive_number(raw: object) -> float | None:
-        if not isinstance(raw, (int, float)):
-            return None
-        value = float(raw)
-        return value if value > 0 else None
+        return _coerce_positive_number_impl(raw)
 
     def _get_dirty_entries(self) -> list[MemoryEntry]:
-        """Get dirty entries from local storage via DeltaTracker."""
-        try:
-            from trw_memory.sync.delta import DeltaTracker
-
-            from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-            backend = _get_backend()
-            return DeltaTracker.get_dirty_entries(backend, since_seq=0)
-        except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
-            logger.debug("sync_get_dirty_failed", client_id=self._client_id, exc_info=True)
-            return []
+        return _get_dirty_entries_impl(client_id=self._client_id)
 
     def _mark_synced(self, entries: list[MemoryEntry]) -> None:
         """Mark entries as synced in local storage."""
-        try:
-            from trw_memory.sync.delta import DeltaTracker
-
-            from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-            backend = _get_backend()
-            DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend)
-        except Exception:  # justified: fail-open, sync bookkeeping must not break successful pushes
-            logger.debug("sync_mark_synced_failed", client_id=self._client_id, exc_info=True)
+        _mark_synced_impl(client_id=self._client_id, entries=entries)
