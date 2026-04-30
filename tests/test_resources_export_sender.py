@@ -11,12 +11,14 @@ Targets:
 from __future__ import annotations
 
 import json
-import urllib.error
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+
+from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
 
 from tests.conftest import get_resources_sync
 from trw_mcp.state.persistence import FileStateWriter
@@ -758,18 +760,15 @@ def _make_sender(
 
 
 class TestHttpPost:
-    """Lines 127-143 — _http_post real urllib branches."""
+    """Lines 127-143 — _http_post httpx branches."""
 
     def test_http_post_returns_true_on_2xx(self, tmp_path: Path) -> None:
-        """Line 141 — 2xx status returns True."""
+        """2xx status returns True."""
         sender, _ = _make_sender(tmp_path)
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        client = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch("httpx.Client", return_value=client):
             result = sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
@@ -778,15 +777,12 @@ class TestHttpPost:
         assert result is True
 
     def test_http_post_returns_false_on_3xx(self, tmp_path: Path) -> None:
-        """Line 141 — non-2xx status (e.g. 301) returns False."""
+        """Non-2xx status (e.g. 301) returns False."""
         sender, _ = _make_sender(tmp_path)
 
-        mock_response = MagicMock()
-        mock_response.status = 301
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        client = _mock_httpx_client(_mock_httpx_response(status_code=301))
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch("httpx.Client", return_value=client):
             result = sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
@@ -795,13 +791,15 @@ class TestHttpPost:
         assert result is False
 
     def test_http_post_returns_false_on_url_error(self, tmp_path: Path) -> None:
-        """Line 142 — urllib.error.URLError is caught and returns False."""
+        """httpx.RequestError is caught and returns False."""
         sender, _ = _make_sender(tmp_path)
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("connection refused"),
-        ):
+        client = MagicMock()
+        client.post.side_effect = httpx.RequestError("connection refused")
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+
+        with patch("httpx.Client", return_value=client):
             result = sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
@@ -810,17 +808,12 @@ class TestHttpPost:
         assert result is False
 
     def test_http_post_returns_false_on_http_error(self, tmp_path: Path) -> None:
-        """Line 142 — urllib.error.HTTPError is caught and returns False."""
+        """5xx status returns False (no exception path)."""
         sender, _ = _make_sender(tmp_path)
 
-        http_err = urllib.error.HTTPError(
-            url="https://api.example.com/v1/telemetry",
-            code=500,
-            msg="Internal Server Error",
-            hdrs=MagicMock(),  # type: ignore[arg-type]
-            fp=None,
-        )
-        with patch("urllib.request.urlopen", side_effect=http_err):
+        client = _mock_httpx_client(_mock_httpx_response(status_code=500))
+
+        with patch("httpx.Client", return_value=client):
             result = sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
@@ -829,13 +822,15 @@ class TestHttpPost:
         assert result is False
 
     def test_http_post_returns_false_on_os_error(self, tmp_path: Path) -> None:
-        """Line 142 — OSError is caught and returns False."""
+        """OSError is caught and returns False."""
         sender, _ = _make_sender(tmp_path)
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=OSError("network unreachable"),
-        ):
+        client = MagicMock()
+        client.post.side_effect = OSError("network unreachable")
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+
+        with patch("httpx.Client", return_value=client):
             result = sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
@@ -844,67 +839,49 @@ class TestHttpPost:
         assert result is False
 
     def test_http_post_sends_json_body(self, tmp_path: Path) -> None:
-        """Lines 131-137 — request body is JSON-encoded with events key."""
+        """Request body is JSON-encoded with events key."""
         sender, _ = _make_sender(tmp_path)
 
-        captured_data: list[bytes] = []
+        client = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
-        def fake_urlopen(req: Any, timeout: int) -> Any:
-            captured_data.append(req.data)
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.__enter__ = MagicMock(return_value=mock_response)
-            mock_response.__exit__ = MagicMock(return_value=False)
-            return mock_response
-
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("httpx.Client", return_value=client):
             sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"tool": "trw_learn", "duration_ms": 42}],
             )
 
-        assert len(captured_data) == 1
-        body = json.loads(captured_data[0].decode("utf-8"))
+        assert client.post.call_count == 1
+        body = client.post.call_args.kwargs.get("json")
+        assert isinstance(body, dict)
         assert "events" in body
         assert body["events"][0]["tool"] == "trw_learn"
 
     def test_http_post_integrated_with_send(self, tmp_path: Path) -> None:
-        """Full integration: send() -> _send_batch() -> _http_post() via real urllib mock."""
+        """Full integration: send() -> _send_batch() -> _http_post() via httpx mock."""
         sender, input_path = _make_sender(tmp_path)
         _write_events(input_path, [{"event_type": "tool_invocation"}])
 
-        mock_response = MagicMock()
-        mock_response.status = 201
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
+        client = _mock_httpx_client(_mock_httpx_response(status_code=201))
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch("httpx.Client", return_value=client):
             result = sender.send()
 
         assert result["sent"] == 1
         assert result["failed"] == 0
 
     def test_http_post_url_construction(self, tmp_path: Path) -> None:
-        """Lines 131-133 — urllib.request.Request is constructed correctly."""
+        """httpx.Client.post receives the constructed URL and the JSON-Content-Type header."""
         sender, _ = _make_sender(tmp_path)
 
-        captured_req: list[Any] = []
+        client = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
-        def fake_urlopen(req: Any, timeout: int) -> Any:
-            captured_req.append(req)
-            mock_response = MagicMock()
-            mock_response.status = 200
-            mock_response.__enter__ = MagicMock(return_value=mock_response)
-            mock_response.__exit__ = MagicMock(return_value=False)
-            return mock_response
-
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("httpx.Client", return_value=client):
             sender._http_post(
                 "https://api.example.com/v1/telemetry",
                 [{"k": "v"}],
             )
 
-        req = captured_req[0]
-        assert req.get_full_url() == "https://api.example.com/v1/telemetry"
-        assert req.get_header("Content-type") == "application/json"
-        assert req.get_method() == "POST"
+        call = client.post.call_args
+        assert call.args[0] == "https://api.example.com/v1/telemetry"
+        headers = call.kwargs.get("headers") or {}
+        assert headers.get("Content-Type") == "application/json"

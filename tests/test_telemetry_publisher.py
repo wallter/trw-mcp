@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
+
+from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
 from trw_mcp.telemetry.publisher import _post_learning, publish_learnings
 
 # ---------------------------------------------------------------------------
@@ -549,59 +551,41 @@ class TestPublishParallelFanout:
 class TestPostLearning:
     def test_post_learning_success(self) -> None:
         """_post_learning returns True on 2xx response."""
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
+        client = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch("httpx.Client", return_value=client):
             result = _post_learning("https://api.example.com", {"summary": "test"})
 
         assert result is True
 
     def test_post_learning_url_error(self) -> None:
-        """_post_learning returns False on URLError."""
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("connection refused"),
-        ):
+        """_post_learning returns False on httpx.RequestError."""
+        client = MagicMock()
+        client.post.side_effect = httpx.RequestError("connection refused")
+        client.__enter__.return_value = client
+        client.__exit__.return_value = False
+
+        with patch("httpx.Client", return_value=client):
             result = _post_learning("https://api.example.com", {"summary": "test"})
 
         assert result is False
 
     def test_post_learning_url_construction(self) -> None:
         """URL is constructed as {platform_url}/v1/learnings."""
-        captured_urls: list[str] = []
+        client = _mock_httpx_client(_mock_httpx_response(status_code=201))
 
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 201
-
-        def fake_urlopen(req: object, timeout: int = 10) -> object:
-            import urllib.request as ur
-
-            if isinstance(req, ur.Request):
-                captured_urls.append(req.full_url)
-            return mock_response
-
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("httpx.Client", return_value=client):
             _post_learning("https://api.example.com/", {"summary": "test"})
 
-        assert captured_urls[0] == "https://api.example.com/v1/learnings"
+        assert client.post.call_args.args[0] == "https://api.example.com/v1/learnings"
 
     def test_post_learning_4xx_returns_false(self) -> None:
-        """_post_learning returns False on 4xx HTTP errors."""
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.HTTPError(
-                url="https://api.example.com/v1/learnings",
-                code=422,
-                msg="Unprocessable Entity",
-                hdrs=MagicMock(),  # type: ignore[arg-type]
-                fp=None,
-            ),
-        ):
+        """_post_learning returns False on 4xx HTTP responses."""
+        client = _mock_httpx_client(
+            _mock_httpx_response(status_code=422, text="bad payload", reason_phrase="Unprocessable Entity")
+        )
+
+        with patch("httpx.Client", return_value=client):
             result = _post_learning("https://api.example.com", {"summary": "test"})
 
         assert result is False

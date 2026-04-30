@@ -400,26 +400,22 @@ class TestFlushNowOnline:
         p.enqueue(_make_event(tool_name="trw_deliver"))
         p.enqueue(_make_event(tool_name="trw_checkpoint"))
 
-        # Mock successful HTTP response
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
+        # Mock successful httpx.Client + 2xx response
+        from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
 
-        # The pipeline uses `import urllib.request` at module level, so the
-        # patch must target the module's bound reference, not the top-level
-        # urllib.request namespace.
+        client_mock = _mock_httpx_client(_mock_httpx_response(status_code=200))
+
         with patch(
-            "trw_mcp.telemetry.pipeline.urllib.request.urlopen",
-            return_value=mock_response,
-        ) as mock_urlopen:
+            "trw_mcp.telemetry.pipeline.httpx.Client",
+            return_value=client_mock,
+        ):
             result = p.flush_now()
 
-        mock_urlopen.assert_called()
+        client_mock.post.assert_called()
         # Verify the POST body contains an "events" key
-        call_args = mock_urlopen.call_args
-        req_obj = call_args[0][0]
-        body = json.loads(req_obj.data.decode("utf-8"))
+        call_args = client_mock.post.call_args
+        body = call_args.kwargs.get("json")
+        assert isinstance(body, dict)
         assert "events" in body
 
     def test_flush_now_clears_jsonl_on_success(
@@ -435,14 +431,13 @@ class TestFlushNowOnline:
 
         p.enqueue(_make_event(tool_name="trw_learn"))
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
+        from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
+
+        client_mock = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
         with patch(
-            "trw_mcp.telemetry.pipeline.urllib.request.urlopen",
-            return_value=mock_response,
+            "trw_mcp.telemetry.pipeline.httpx.Client",
+            return_value=client_mock,
         ):
             p.flush_now()
 
@@ -458,11 +453,16 @@ class TestFlushNowOnline:
         p.enqueue(_make_event(tool_name="trw_learn"))
         p.enqueue(_make_event(tool_name="trw_recall"))
 
-        import urllib.error
+        import httpx
+
+        client_mock = MagicMock()
+        client_mock.post.side_effect = httpx.RequestError("connection refused")
+        client_mock.__enter__.return_value = client_mock
+        client_mock.__exit__.return_value = False
 
         with patch(
-            "trw_mcp.telemetry.pipeline.urllib.request.urlopen",
-            side_effect=urllib.error.URLError("connection refused"),
+            "trw_mcp.telemetry.pipeline.httpx.Client",
+            return_value=client_mock,
         ):
             result = p.flush_now()
 
@@ -757,24 +757,32 @@ class TestRetryWithBackoff:
 
         call_count = 0
 
-        import urllib.error
+        import httpx
 
-        def side_effect_urlopen(req: Any, timeout: float = 30) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                raise urllib.error.URLError("temporary failure")
-            # Third attempt succeeds
-            resp = MagicMock()
-            resp.status = 200
-            resp.__enter__ = lambda s: s
-            resp.__exit__ = MagicMock(return_value=False)
-            return resp
+        from tests._auto_upgrade_test_support import _mock_httpx_response
 
-        # Patch the module-level urllib reference — not the global namespace
+        ok_resp = _mock_httpx_response(status_code=200)
+
+        def make_client(*args: Any, **kwargs: Any) -> Any:
+            """Each `with httpx.Client(...) as client:` creates a fresh mock; the
+            sequence of calls across all three attempts shares ``call_count``."""
+            client = MagicMock()
+
+            def post(*_a: Any, **_kw: Any) -> Any:
+                nonlocal call_count
+                call_count += 1
+                if call_count < 3:
+                    raise httpx.RequestError("temporary failure")
+                return ok_resp
+
+            client.post.side_effect = post
+            client.__enter__.return_value = client
+            client.__exit__.return_value = False
+            return client
+
         with patch(
-            "trw_mcp.telemetry.pipeline.urllib.request.urlopen",
-            side_effect=side_effect_urlopen,
+            "trw_mcp.telemetry.pipeline.httpx.Client",
+            side_effect=make_client,
         ):
             result = p.flush_now()
 
@@ -804,11 +812,16 @@ class TestRetryWithBackoff:
         p = pipeline_cls(max_retries=2, backoff_base=0.0)
         p.enqueue(_make_event(tool_name="trw_fail_test"))
 
-        import urllib.error
+        import httpx
+
+        client_mock = MagicMock()
+        client_mock.post.side_effect = httpx.RequestError("down")
+        client_mock.__enter__.return_value = client_mock
+        client_mock.__exit__.return_value = False
 
         with patch(
-            "trw_mcp.telemetry.pipeline.urllib.request.urlopen",
-            side_effect=urllib.error.URLError("down"),
+            "trw_mcp.telemetry.pipeline.httpx.Client",
+            return_value=client_mock,
         ):
             result = p.flush_now()
 
