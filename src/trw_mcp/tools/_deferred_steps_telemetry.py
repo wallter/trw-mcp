@@ -129,6 +129,10 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
                     summary_data["coverage_pct"] = bs_data["coverage_pct"]
                 if "tests_passed" in bs_data:
                     summary_data["tests_passed"] = bs_data["tests_passed"]
+                if "static_checks_clean" in bs_data:
+                    summary_data["static_checks_clean"] = bs_data["static_checks_clean"]
+                elif "mypy_clean" in bs_data:
+                    summary_data["static_checks_clean"] = bs_data["mypy_clean"]
                 if "mypy_clean" in bs_data:
                     summary_data["mypy_clean"] = bs_data["mypy_clean"]
 

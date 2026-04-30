@@ -61,7 +61,7 @@ _TIPS = [
     "Use trw_recall('topic') to search prior session learnings",
     "Every trw_learn() call compounds across all future sessions",
     "Call trw_session_start() at the beginning of every session",
-    "Use Agent Teams for multi-file implementations \u2014 focused context wins",
+    "Use explicit file ownership for multi-file work \u2014 portable coordination wins",
     "Run /trw-project-health to check your installation's vitals",
     "Use trw_checkpoint() before large operations to save progress",
     "Run trw_deliver() at session end to persist your discoveries",

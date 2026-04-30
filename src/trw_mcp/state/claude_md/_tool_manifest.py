@@ -43,7 +43,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_recall": "Retrieve relevant learnings for a specific topic",
     "trw_learn_update": "Update an existing learning entry with new detail or status",
     # Quality
-    "trw_build_check": "Run lint, type-check, and tests to verify your work",
+    "trw_build_check": "Record project-native test/build/static-check results after you run them",
     "trw_review": "Run code review analysis on changed files",
     "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",

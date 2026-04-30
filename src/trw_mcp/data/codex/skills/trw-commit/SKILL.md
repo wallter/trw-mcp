@@ -61,7 +61,7 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
    PRD-Scope: PRD-{ID}
    Security-Scan: deps={PASS|FAIL|SKIP}, trw-review={PASS|FAIL|SKIP}(confidence={n})
 
-   Co-Authored-By: Claude <noreply@anthropic.com>
+   Co-Authored-By: {name} <{email}>  # optional; use only when configured by the active client
    ```
 
    - The `FR:` and `PRD:` trailers are added when `commit_fr_trailer_enabled` is true (default) in `.trw/config.yaml`

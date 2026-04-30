@@ -266,18 +266,18 @@ def _select_nudge_template(step: str, state: CeremonyState, available_learnings:
             urgency,
             low=(
                 "\u26a1 Verification not run yet — "
-                "tests + type-check catches integration issues before delivery. "
-                "trw_build_check() runs the full gate."
+                "project-native checks catch integration issues before delivery. "
+                "Run the repo's validation command, then record it with trw_build_check()."
             ),
             medium=(
                 "\u26a1 Verification not run — "
-                "type errors and test failures are undetected; delivery ships them as-is. "
-                "trw_build_check() runs the full gate."
+                "test, build, lint, type, or schema failures may be undetected; delivery ships them as-is. "
+                "Run project-native validation, then record it with trw_build_check()."
             ),
             high=(
                 "\u26a1 Verification not run — "
                 "integration issues delivered without verification stay embedded in the result. "
-                "trw_build_check() catches them in under 2 minutes."
+                "Run the narrowest meaningful project-native check now and record the result."
             ),
         )
 

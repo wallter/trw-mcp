@@ -1,7 +1,7 @@
 """LLM-based utility validation for trw_learn.
 
-Provides a lightweight scoring pass using a fast model (e.g. Haiku) to reject
-summaries that offer no durable institutional knowledge.
+Provides a lightweight scoring pass using the configured fast/low-cost model
+to reject summaries that offer no durable institutional knowledge.
 """
 
 from __future__ import annotations

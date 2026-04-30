@@ -353,7 +353,7 @@ def _check_build_and_work_events(
         if not any(_build_passed(e) for e in events):
             build_warning = (
                 "No successful build check found before delivery. "
-                "Run trw_build_check() to verify tests pass and type-check is clean."
+                "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check()."
             )
 
         # Premature delivery guard

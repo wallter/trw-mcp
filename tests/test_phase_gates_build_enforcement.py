@@ -25,13 +25,13 @@ class TestCheckBuildStatusPassingBuild:
         rules = [f.rule for f in result]
         assert "tests_passed" in rules
 
-    def test_mypy_failed_adds_failure(self, tmp_path: Path) -> None:
+    def test_static_checks_failed_adds_failure(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
         _write_build_status(trw_dir, mypy_clean=False)
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         result = _check_build_status(trw_dir, config, "validate")
         rules = [f.rule for f in result]
-        assert "type_check_clean" in rules
+        assert "static_checks_clean" in rules
 
     def test_coverage_low_at_validate_adds_failure(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
@@ -87,18 +87,18 @@ class TestCheckBuildStatusPassingBuild:
         assert tests_failure
         assert tests_failure[0].severity == "error"
 
-    def test_mypy_scope_only_mypy_checked(self, tmp_path: Path) -> None:
+    def test_static_scope_checks_static_status(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
-        _write_build_status(trw_dir, mypy_clean=False, scope="mypy")
+        _write_build_status(trw_dir, mypy_clean=False, scope="static")
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         result = _check_build_status(trw_dir, config, "validate")
         rules = [f.rule for f in result]
-        assert "type_check_clean" in rules
+        assert "static_checks_clean" in rules
 
-    def test_scope_pytest_no_mypy_check(self, tmp_path: Path) -> None:
+    def test_scope_pytest_no_static_check(self, tmp_path: Path) -> None:
         trw_dir = _make_trw_dir(tmp_path)
         _write_build_status(trw_dir, mypy_clean=False, scope="pytest")
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         result = _check_build_status(trw_dir, config, "validate")
         rules = [f.rule for f in result]
-        assert "type_check_clean" not in rules
+        assert "static_checks_clean" not in rules

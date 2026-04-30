@@ -90,7 +90,7 @@ class OrchestrationConfig(BaseModel):
     auto_recall_max_results: int = 3
     auto_recall_max_tokens: int = 100
     auto_recall_min_score: float = 0.7
-    agent_teams_enabled: bool = True
+    agent_teams_enabled: bool = False
 
 
 class ScoringConfig(BaseModel):

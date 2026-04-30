@@ -8,7 +8,7 @@ user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 ---
 
-> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
+> Portable adapter note: use the active client instruction file and available MCP tools. If a step mentions a client-specific workflow, use the equivalent tool/manual flow for the current harness.
 <!-- ultrathink -->
 
 # PRD Grooming Skill

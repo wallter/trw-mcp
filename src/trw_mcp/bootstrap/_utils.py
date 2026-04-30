@@ -517,7 +517,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | RESEARCH | `trw_init` | New tasks — creates run directory for tracking |
 | Any | `trw_learn` | On errors/discoveries — saves for future sessions |
 | Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
-| VALIDATE | `trw_build_check` | Before delivery — runs tests + type-check |
+| VALIDATE | `trw_build_check` | Before delivery — records project-native validation results |
 | DELIVER | `trw_instructions_sync` | At delivery — refreshes the client instruction file |
 | DELIVER | `trw_deliver` | At task completion — persists everything in one call |
 

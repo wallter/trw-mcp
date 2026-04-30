@@ -13,7 +13,7 @@ argument-hint: "[optional message hint]"
 
 Use when: creating a conventional TRW commit with PRD traceability and validation context.
 
-Create a git commit following TRW project conventions: `type(scope): message` format with `WHY:` rationale, PRD-ID linking, and Co-Authored-By trailer.
+Create a git commit following TRW project conventions: `type(scope): message` format with `WHY:` rationale, PRD-ID linking, and optional provenance trailers.
 
 ## Workflow
 
@@ -58,8 +58,6 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
    AI-Provenance: model={model_id}, agent={agent_role}, shard={run_id}
    PRD-Scope: PRD-{ID}
    Security-Scan: deps={PASS|FAIL|SKIP}, trw-review={PASS|FAIL|SKIP}(confidence={n})
-
-   Co-Authored-By: Claude <noreply@anthropic.com>
    ```
 
    - The `FR:` and `PRD:` trailers are added when `commit_fr_trailer_enabled` is true (default) in `.trw/config.yaml`

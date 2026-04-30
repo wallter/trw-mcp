@@ -313,7 +313,7 @@ When the user says any of these, use the corresponding TRW tool:
 
 After completing a non-trivial task, run the verification pass:
 
-1. `trw_build_check(scope="full")` — confirm tests + types pass.
+1. `trw_build_check(scope="full")` — record the project-native validation evidence you already ran.
 2. `trw_review()` — score the diff against quality dimensions.
 3. If PRD-scoped, run `/trw-audit` for spec compliance.
 

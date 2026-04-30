@@ -117,14 +117,14 @@ case "$_source" in
     if _framework_ref_enabled; then
       echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
       echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
-      echo "  exit criteria for each phase, formation selection for parallel work, quality gates with rubric scoring,"
+      echo "  exit criteria for each phase, optional coordination patterns, quality gates with rubric scoring,"
       echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
       echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
       echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
       echo ""
     fi
-    echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
-    echo "For non-trivial tasks (2+ files), use focused helpers when available — focused context produces better outcomes than direct implementation."
+    echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
+    echo "For non-trivial tasks, use helpers only when available and file ownership is clear; otherwise run the same protocol sequentially."
     echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
     echo ""
@@ -152,7 +152,7 @@ case "$_source" in
       echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK.md now, before resuming work."
       echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
       echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
-      echo "  errors from working without phase gates, exit criteria, formation guidance, and quality rubrics."
+      echo "  errors from working without phase gates, exit criteria, coordination guidance, and quality rubrics."
       echo "  Agents who skip this produce work that drifts from the methodology and requires rework."
       echo ""
     fi
@@ -188,12 +188,12 @@ case "$_source" in
     if _framework_ref_enabled; then
       echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
       echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
-      echo "  rules that structure your work. Your tools implement this methodology — without reading it, you will pass"
+      echo "  rules that structure model-, harness-, client-, and language-agnostic work. Your tools implement this methodology — without reading it, you will pass"
       echo "  tool checks while missing the process that prevents rework."
       echo ""
     fi
-    echo "YOUR ROLE: Orchestrate, delegate, verify, and preserve knowledge."
-    echo "For non-trivial tasks (2+ files), use focused helpers when available — focused context produces better outcomes than direct implementation."
+    echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
+    echo "For non-trivial tasks, use helpers only when available and file ownership is clear; otherwise run the same protocol sequentially."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

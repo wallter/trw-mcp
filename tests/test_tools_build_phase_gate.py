@@ -85,13 +85,13 @@ class TestBuildPhaseGate:
         assert len(test_failures) == 1
         assert test_failures[0].severity == "error"
 
-    def test_mypy_errors_detected(self, tmp_path: Path) -> None:
+    def test_static_check_errors_detected(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"
         _write_build_cache(trw_dir, mypy_clean=False)
         config = TRWConfig()
         failures = _check_build_status(trw_dir, config, "validate")
-        mypy_failures = [f for f in failures if f.rule == "type_check_clean"]
-        assert len(mypy_failures) == 1
+        static_failures = [f for f in failures if f.rule == "static_checks_clean"]
+        assert len(static_failures) == 1
 
     def test_coverage_below_min(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"
@@ -134,14 +134,14 @@ class TestBuildPhaseGate:
         assert "FAILED test_a" in test_failures[0].message
         assert "+2 more" in test_failures[0].message
 
-    def test_mypy_only_scope_skips_mypy_check_for_pytest(self, tmp_path: Path) -> None:
-        """When scope='pytest', mypy_clean is not checked."""
+    def test_pytest_scope_skips_static_check_for_test_only_scope(self, tmp_path: Path) -> None:
+        """When scope='pytest', static/type/lint status is not checked."""
         trw_dir = tmp_path / ".trw"
         _write_build_cache(trw_dir, mypy_clean=False, scope="pytest")
         config = TRWConfig()
         failures = _check_build_status(trw_dir, config, "validate")
-        mypy_failures = [f for f in failures if f.rule == "mypy_clean"]
-        assert mypy_failures == []
+        static_failures = [f for f in failures if f.rule == "static_checks_clean"]
+        assert static_failures == []
 
 
 class TestBuildPhaseGateIntegration:

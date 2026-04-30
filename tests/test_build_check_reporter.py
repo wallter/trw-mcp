@@ -117,7 +117,7 @@ class TestBuildCheckReporterAPI:
                 match=(
                     r"tests_passed is required.*"
                     r"trw_build_check\(tests_passed=True, test_count=47, "
-                    r"coverage_pct=92.3, mypy_clean=True, scope='full'\)"
+                    r"coverage_pct=92.3, static_checks_clean=True, scope='full'\)"
                 ),
             ):
                 asyncio.run(server.call_tool("trw_build_check", {}))
