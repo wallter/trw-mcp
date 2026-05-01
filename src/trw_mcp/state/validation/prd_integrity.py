@@ -38,7 +38,25 @@ categories is available via :func:`allowed_prd_categories` for validation.
 
 def allowed_prd_categories() -> frozenset[str]:
     """Return built-in + config-extended PRD categories."""
-    extras = getattr(get_config(), "extra_prd_categories", ()) or ()
+    extras = set(getattr(get_config(), "extra_prd_categories", ()) or ())
+
+    # The MCP server can keep a TRWConfig singleton alive across project/session
+    # transitions.  Re-read the lightweight project config here so category
+    # validation honors repo-local extensions even when the singleton was built
+    # before the current project root/config was available.
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.state.persistence import FileStateReader
+
+        config_path = resolve_project_root() / ".trw" / "config.yaml"
+        if config_path.exists():
+            config_data = FileStateReader().read_yaml(config_path)
+            file_extras = config_data.get("extra_prd_categories", [])
+            if isinstance(file_extras, list):
+                extras.update(str(category) for category in file_extras)
+    except Exception:  # justified: fail-open; config singleton extras still apply
+        logger.debug("extra_prd_categories_file_read_failed", exc_info=True)
+
     return BUILTIN_PRD_CATEGORIES | frozenset(str(c).upper() for c in extras)
 
 

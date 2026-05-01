@@ -102,6 +102,24 @@ class TestTrwPrdCreate:
         )
         assert result["prd_id"] == "PRD-CORE-042"
 
+    def test_accepts_project_extra_category_when_config_singleton_is_stale(self, tmp_path: Path) -> None:
+        """Repo-local extra categories work even if TRWConfig was cached before config read."""
+        from trw_mcp.models.config import TRWConfig, reload_config
+
+        reload_config(TRWConfig(extra_prd_categories=[]))
+        (tmp_path / ".trw" / "config.yaml").write_text("extra_prd_categories:\n- CONTENT\n")
+
+        tools = _get_tools()
+        result = tools["trw_prd_create"].fn(
+            input_text="Content PRD",
+            category="CONTENT",
+            title="Content Category",
+        )
+
+        assert result["prd_id"] == "PRD-CONTENT-001"
+        assert result["category"] == "CONTENT"
+        reload_config(None)
+
 
 class TestTrwPrdValidate:
     """Tests for trw_prd_validate tool."""

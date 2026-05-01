@@ -116,6 +116,22 @@ def test_allowed_prd_categories_unions_extras(_config_with_extras: None) -> None
         assert extra in s
 
 
+def test_allowed_prd_categories_re_reads_project_config_when_singleton_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repo-local category extensions still work if TRWConfig was cached early."""
+    reload_config(TRWConfig(extra_prd_categories=[]))
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    config_dir = tmp_path / ".trw"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text("extra_prd_categories:\n- CONTENT\n")
+
+    assert "CONTENT" in allowed_prd_categories()
+
+    reload_config(None)
+
+
 # --- FR-02: ellipsis-path guard -----------------------------------------------
 
 
