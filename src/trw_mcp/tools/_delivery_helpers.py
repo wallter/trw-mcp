@@ -341,14 +341,32 @@ def _check_build_and_work_events(
             return None, None
 
         # Build gate (RC-003 + RC-006)
+        def _truthy(value: object) -> bool:
+            return value is True or (isinstance(value, str) and value.lower() == "true")
+
+        def _build_event_payload(ev: dict[str, object]) -> dict[str, object]:
+            """Return the build-check payload for nested or flat event records.
+
+            ``FileEventLogger.log_event()`` writes tool payload keys at the top
+            level of the JSONL record (``{"event": "...", "tests_passed": true}``).
+            Some tests and older emitters write a nested ``data`` dict. Delivery
+            gates must accept both shapes or a valid ``trw_build_check`` call is
+            invisible at delivery time.
+            """
+            data = ev.get("data")
+            return data if isinstance(data, dict) else ev
+
         def _build_passed(ev: dict[str, object]) -> bool:
             if str(ev.get("event", "")) != "build_check_complete":
                 return False
-            data = ev.get("data")
-            if isinstance(data, dict):
-                val = data.get("tests_passed")
-                return val is True or (isinstance(val, str) and val.lower() == "true")
-            return False
+            data = _build_event_payload(ev)
+            if not _truthy(data.get("tests_passed")):
+                return False
+            if "static_checks_clean" in data:
+                return _truthy(data.get("static_checks_clean"))
+            if "mypy_clean" in data:
+                return _truthy(data.get("mypy_clean"))
+            return True
 
         if not any(_build_passed(e) for e in events):
             build_warning = (

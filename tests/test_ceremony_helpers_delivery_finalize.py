@@ -6,17 +6,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests._ceremony_helpers_support import (
-    config,
-    event_logger,
-    reader,
-    run_dir,
-    trw_dir,
-    writer,
-)
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_helpers import check_delivery_gates, finalize_run
+
+pytest_plugins = ("tests._ceremony_helpers_support",)
 
 
 class TestCheckDeliveryGates:
@@ -105,6 +99,49 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "build_gate_warning" not in result
+
+    def test_no_build_gate_warning_when_flat_build_event_passed(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """Flat FileEventLogger build_check_complete events satisfy delivery."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events_path.write_text(
+            json.dumps(
+                {
+                    "event": "build_check_complete",
+                    "tests_passed": True,
+                    "static_checks_clean": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = check_delivery_gates(run_dir, reader)
+        assert "build_gate_warning" not in result
+
+    def test_build_gate_warning_when_static_checks_failed(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """tests_passed=True is insufficient when static checks are reported failed."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events_path.write_text(
+            json.dumps(
+                {
+                    "event": "build_check_complete",
+                    "data": {"tests_passed": True, "static_checks_clean": False},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = check_delivery_gates(run_dir, reader)
+        assert "build_gate_warning" in result
 
     def test_premature_delivery_warning_on_ceremony_only_events(
         self,
