@@ -960,6 +960,8 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Added — Code Quality Sprint (PRD-QUAL-047, PRD-QUAL-048, PRD-CORE-089, PRD-QUAL-049)
 
+> **Note (2026-04-30):** PRD-QUAL-047 referenced here was later renumbered to PRD-QUAL-082 to resolve a catalogue ID collision; the canonical PRD-QUAL-047 is "Mypy Strict Mode Completion — Backend & trw-eval" (Sprint 72). The release contents below are unchanged.
+
 - **`create_app()` factory function** — `server/_app.py` now provides `create_app(instructions=..., middleware=...)` for testing and embedding. Module-level `mcp` singleton preserved for backward compatibility.
 - **`py.typed` PEP 561 marker** — enables downstream type checking for library consumers.
 - **`--version` CLI flag** — `trw-mcp -V` prints package version.
