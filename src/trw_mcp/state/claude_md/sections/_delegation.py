@@ -86,17 +86,6 @@ def render_rationalization_watchlist() -> str:
     )
 
 
-def render_agent_teams_protocol() -> str:
-    """Compatibility shim for the retired beta coordination section.
-
-    v25 keeps this public symbol so older imports do not break, but the
-    provider-specific peer-team protocol is no longer emitted into generic
-    instruction files. Use ``render_delegation_protocol`` for portable
-    coordination guidance.
-    """
-    return ""
-
-
 def render_agents_trw_section(
     exposed_tools: frozenset[str] | set[str] | None = None,
 ) -> str:

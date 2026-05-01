@@ -21,7 +21,6 @@ _REQUIRED_PUBLIC_SYMBOLS = frozenset(
         "_load_analytics_counts",
         "_load_prompting_guide",
         "generate_behavioral_protocol_md",
-        "render_agent_teams_protocol",
         "render_agents_trw_section",
         "render_behavioral_protocol",
         "render_ceremony_flows",

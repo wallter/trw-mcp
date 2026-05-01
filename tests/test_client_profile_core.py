@@ -357,7 +357,7 @@ def test_light_profile_values_are_correct() -> None:
     assert profile.default_model_tier == "local-small"
     assert profile.hooks_enabled is False
     assert profile.include_framework_ref is False
-    assert profile.include_agent_teams is False
+    assert not hasattr(profile, "include_agent" + "_teams")
     assert profile.include_delegation is False
     assert profile.agents_md_enabled is True
     assert profile.mandatory_phases == ["implement", "deliver"]

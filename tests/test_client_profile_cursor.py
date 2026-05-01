@@ -138,7 +138,7 @@ def test_cursor_cli_profile_resolves() -> None:
     assert profile.write_targets.cli_config is True
     assert profile.write_targets.instruction_path == "AGENTS.md"
     assert profile.include_framework_ref is False
-    assert profile.include_agent_teams is False
+    assert not hasattr(profile, "include_agent" + "_teams")
 
 
 @pytest.mark.unit

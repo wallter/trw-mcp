@@ -1,6 +1,6 @@
 trw-mcp/tests/test_adaptive_ceremony_logic.py
 trw-mcp/tests/test_agents_md.py
-trw-mcp/tests/test_agent_teams.py
+trw-mcp/tests/test_bundled_agents.py
 trw-mcp/tests/test_analytics_branches.py
 trw-mcp/tests/test_analytics.py
 trw-mcp/tests/test_analytics_report.py

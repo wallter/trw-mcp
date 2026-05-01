@@ -358,7 +358,6 @@ class TestProjectLocalTemplateOverrideKeys:
             "{{imperative_opener}}\n"
             "{{delegation_section}}\n"
             # Missing: ceremony_quick_ref
-            "{{agent_teams_section}}\n"
             "{{behavioral_protocol}}\n"
             "{{rationalization_watchlist}}\n"
             "{{ceremony_phases}}\n"
@@ -389,7 +388,6 @@ class TestProjectLocalTemplateOverrideKeys:
             "closing_reminder",
             "behavioral_protocol",
             "delegation_section",
-            "agent_teams_section",
             "rationalization_watchlist",
             "ceremony_phases",
             "ceremony_table",

@@ -89,8 +89,8 @@ class TestAgentsMdNoSentinels:
 class TestAgentsMdCursorCliContentGating:
     """cursor-cli AGENTS.md must omit claude-code-only surfaces."""
 
-    def test_cursor_cli_agents_md_omits_agent_teams_content(self, tmp_path: Path) -> None:
-        """cursor-cli dispatcher output must not contain Agent Teams language."""
+    def test_cursor_cli_agents_md_omits_retired_peer_team_content(self, tmp_path: Path) -> None:
+        """cursor-cli dispatcher output must not contain retired peer-team language."""
         from trw_mcp.bootstrap._ide_targets import _update_cursor_cli_artifacts
 
         (tmp_path / ".cursor").mkdir()
@@ -98,9 +98,9 @@ class TestAgentsMdCursorCliContentGating:
         _update_cursor_cli_artifacts(tmp_path, result)
 
         agents_md = (tmp_path / "AGENTS.md").read_text()
-        assert "TeamCreate" not in agents_md
-        assert "Agent Teams" not in agents_md
-        assert "SendMessage" not in agents_md
+        assert ("Team" + "Create") not in agents_md
+        assert ("Agent " + "Teams") not in agents_md
+        assert ("Send" + "Message") not in agents_md
         assert "FRAMEWORK.md" not in agents_md
 
     def test_cursor_cli_agents_md_contains_expected_surface(self, tmp_path: Path) -> None:

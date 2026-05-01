@@ -1,4 +1,4 @@
-"""Shared path helpers for split agent-team compatibility tests."""
+"""Shared path helpers for bundled asset contract tests."""
 
 from __future__ import annotations
 

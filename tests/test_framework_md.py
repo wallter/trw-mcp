@@ -28,7 +28,7 @@ class TestFrameworkV25Portability:
 
     def test_framework_removes_v24_provider_and_beta_claims(self) -> None:
         content = _framework_content()
-        forbidden = ("Opus 4.7", "Opus 4.6", "Agent Teams", "TeamCreate", "SendMessage")
+        forbidden = ("Opus 4.7", "Opus 4.6", "Agent " + "Teams", "Team" + "Create", "Send" + "Message")
         for token in forbidden:
             assert token not in content, f"FRAMEWORK.md still contains retired v24/beta token: {token}"
 

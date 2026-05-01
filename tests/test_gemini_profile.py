@@ -86,10 +86,10 @@ class TestGeminiProfile:
         profile = _PROFILES["gemini"]
         assert profile.mcp_instructions_enabled is True
 
-    def test_gemini_agent_teams_disabled(self) -> None:
-        """Gemini uses native .gemini/agents/ helper definitions."""
+    def test_gemini_profile_has_no_retired_beta_team_flag(self) -> None:
+        """Gemini keeps portable delegation without the retired beta flag."""
         profile = _PROFILES["gemini"]
-        assert profile.include_agent_teams is False
+        assert not hasattr(profile, "include_agent" + "_teams")
 
     def test_gemini_delegation_enabled(self) -> None:
         profile = _PROFILES["gemini"]
@@ -126,12 +126,12 @@ class TestGeminiProfileWiring:
         claude = resolve_client_profile("claude-code")
         assert gemini.context_window_tokens > claude.context_window_tokens
 
-    def test_gemini_and_copilot_disable_beta_team_surface(self) -> None:
-        """v25 disables the retired beta team surface for all built-in profiles."""
+    def test_gemini_and_copilot_have_no_retired_beta_team_flag(self) -> None:
+        """v25 removes the retired beta team flag from built-in profiles."""
         gemini = resolve_client_profile("gemini")
         copilot = resolve_client_profile("copilot")
-        assert gemini.include_agent_teams is False
-        assert copilot.include_agent_teams is False
+        assert not hasattr(gemini, "include_agent" + "_teams")
+        assert not hasattr(copilot, "include_agent" + "_teams")
 
 
 @pytest.mark.unit

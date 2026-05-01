@@ -29,7 +29,6 @@ class _CeremonyFields:
     sub_claude_md_max_lines: int = 50
     max_auto_lines: int = 300
     agents_md_enabled: bool = True
-    agent_teams_enabled: bool = False
     target_platforms: list[str] = Field(
         default_factory=lambda: ["claude-code"],
         description="Platforms to sync instruction files for.",

@@ -356,7 +356,7 @@ class TestSimplifySkillContent:
 class TestAgents:
     """Test agent file deployment.
 
-    Adding a new agent? See TestAgentDefinitions docstring in test_agent_teams.py
+    Adding a new agent? See TestAgentDefinitions docstring in test_bundled_agents.py
     for the full update sequence (7 locations).
     """
 

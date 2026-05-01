@@ -160,6 +160,9 @@ class TestBuildCheckReporterAPI:
         assert any(e.get("event") == "build_check_complete" for e in events), (
             f"Expected build_check_complete event, got: {events}"
         )
+        build_event = next(e for e in events if e.get("event") == "build_check_complete")
+        assert build_event["tests_passed"] is True
+        assert build_event["static_checks_clean"] is True
 
     def test_build_check_caches_to_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR02: BuildStatus is cached via cache_build_status."""

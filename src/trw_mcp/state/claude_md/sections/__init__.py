@@ -31,9 +31,6 @@ from trw_mcp.state.claude_md.sections._ceremony_table import (
     render_phase_descriptions as render_phase_descriptions,
 )
 from trw_mcp.state.claude_md.sections._delegation import (
-    render_agent_teams_protocol as render_agent_teams_protocol,
-)
-from trw_mcp.state.claude_md.sections._delegation import (
     render_agents_trw_section as render_agents_trw_section,
 )
 from trw_mcp.state.claude_md.sections._delegation import (
@@ -82,7 +79,6 @@ __all__ = [
     "_load_analytics_counts",
     "_load_prompting_guide",
     "generate_behavioral_protocol_md",
-    "render_agent_teams_protocol",
     "render_agents_trw_section",
     "render_behavioral_protocol",
     "render_ceremony_flows",

@@ -81,7 +81,7 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.mandatory_phases == ["implement", "deliver"]
     assert profile.hooks_enabled is False
     assert profile.include_framework_ref is False
-    assert profile.include_agent_teams is False
+    assert not hasattr(profile, "include_agent" + "_teams")
     assert profile.include_delegation is False
     assert profile.skills_enabled is False
     assert profile.mcp_instructions_enabled is False

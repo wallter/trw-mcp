@@ -165,45 +165,11 @@ def test_render_delegation_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -
     assert "Delegation" in result
 
 
-@pytest.mark.unit
-def test_render_agent_teams_disabled_by_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    """render_agent_teams_protocol() returns '' when include_agent_teams=False."""
-    from trw_mcp.state.claude_md import _static_sections
-
-    cfg = TRWConfig()
-    patched_profile = cfg.client_profile.model_copy(update={"include_agent_teams": False})
-    monkeypatch.setattr(
-        _static_sections,
-        "get_config",
-        lambda: _MockConfigWithProfile(patched_profile),
-    )
-
-    from trw_mcp.state.claude_md._static_sections import render_agent_teams_protocol
-
-    result = render_agent_teams_protocol()
-    assert result == ""
-
-
-@pytest.mark.unit
-def test_render_agent_teams_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """render_agent_teams_protocol() is an empty compatibility shim in v25."""
-    from trw_mcp.state.claude_md import _static_sections
-
-    cfg = TRWConfig()
-    monkeypatch.setattr(_static_sections, "get_config", lambda: cfg)
-
-    from trw_mcp.state.claude_md._static_sections import render_agent_teams_protocol
-
-    result = render_agent_teams_protocol()
-    assert result == ""
-
-
 class _MockConfigWithProfile:
-    """Minimal mock that exposes a client_profile property and agent_teams_enabled."""
+    """Minimal mock that exposes a client_profile property."""
 
     def __init__(self, profile: object) -> None:
         self._profile = profile
-        self.agent_teams_enabled = True
 
     @property
     def client_profile(self) -> object:

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._test_agent_teams_support import _MONOREPO_CLAUDE, _resolve_data_path
+from tests._test_bundle_asset_support import _MONOREPO_CLAUDE, _resolve_data_path
 
 
 class TestAgentDefinitions:

@@ -79,7 +79,6 @@ def _light_profile(client_id: str, display_name: str, instruction_path: str) -> 
         hooks_enabled=False,
         agents_md_enabled=True,
         include_framework_ref=False,
-        include_agent_teams=False,
         include_delegation=False,
         # Surface control (PRD-CORE-125)
         nudge_enabled=False,
@@ -100,7 +99,6 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),  # defaults = claude-code
         hooks_enabled=True,
         include_framework_ref=True,
-        include_agent_teams=False,
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,
@@ -130,7 +128,6 @@ _PROFILES: dict[str, ClientProfile] = {
         hooks_enabled=True,
         agents_md_enabled=True,
         include_framework_ref=True,
-        include_agent_teams=False,
         include_delegation=True,
         nudge_enabled=True,
         tool_exposure_mode="all",
@@ -172,7 +169,6 @@ _PROFILES: dict[str, ClientProfile] = {
         hooks_enabled=True,
         agents_md_enabled=True,
         include_framework_ref=False,
-        include_agent_teams=False,
         include_delegation=False,
         nudge_enabled=True,
         tool_exposure_mode="standard",
@@ -198,7 +194,6 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,
-        include_agent_teams=False,
         tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
@@ -223,7 +218,6 @@ _PROFILES: dict[str, ClientProfile] = {
         hooks_enabled=True,
         agents_md_enabled=True,
         include_framework_ref=True,
-        include_agent_teams=False,
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,

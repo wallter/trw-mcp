@@ -183,7 +183,6 @@ class ClientProfile(BaseModel):
     agents_md_enabled: bool = False
     review_md_enabled: bool = True
     include_framework_ref: bool = True
-    include_agent_teams: bool = False
     include_delegation: bool = True
 
     # -- Surface control flags (PRD-CORE-125) --

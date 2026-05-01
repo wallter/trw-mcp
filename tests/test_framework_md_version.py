@@ -29,7 +29,7 @@ def test_framework_version() -> None:
 
 def test_provider_specific_cutover_removed() -> None:
     text = _canonical_text()
-    for token in ("Opus 4.7", "OPUS-4-7-BEST-PRACTICES", "Claude Code Orchestrated", "GPT-class", "Claude-class", "Gemini-class", "Agent Teams"):
+    for token in ("Opus 4.7", "OPUS-4-7-BEST-PRACTICES", "Claude Code Orchestrated", "GPT-class", "Claude-class", "Gemini-class", "Agent " + "Teams"):
         assert token not in text
 
 

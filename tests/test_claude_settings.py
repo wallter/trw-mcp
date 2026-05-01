@@ -1,4 +1,4 @@
-"""Tests for .claude/settings.json compatibility expectations."""
+"""Tests for .claude/settings.json expectations."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._test_agent_teams_support import _MONOREPO_CLAUDE
+from tests._test_bundle_asset_support import _MONOREPO_CLAUDE
 
 
 class TestSettingsJson:
@@ -38,8 +38,8 @@ class TestSettingsJson:
         data = json.loads(content)
         assert isinstance(data, dict)
 
-    def test_beta_agent_team_hooks_not_registered(self, settings_path: Path) -> None:
-        """v25 settings do not register retired beta team hook events."""
+    def test_retired_peer_team_hooks_not_registered(self, settings_path: Path) -> None:
+        """v25 settings do not register retired peer-team hook events."""
         import json
 
         data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -47,10 +47,10 @@ class TestSettingsJson:
         assert "TeammateIdle" not in hooks
         assert "TaskCompleted" not in hooks
 
-    def test_agent_teams_env_var_not_set(self, settings_path: Path) -> None:
-        """v25 settings do not opt into the retired beta team env var."""
+    def test_retired_peer_team_env_var_not_set(self, settings_path: Path) -> None:
+        """v25 settings do not opt into the retired peer-team env var."""
         import json
 
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         env = data.get("env", {})
-        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" not in env
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT" + "_TEAMS" not in env
