@@ -705,6 +705,14 @@ def _score_assertion_coverage(
     return frs_with_assertion / len(fr_sections)
 
 
+def _validation_profile(frontmatter: dict[str, object]) -> str:
+    """Return the explicit PRD validation profile, if one is declared."""
+    nested = frontmatter.get("prd")
+    nested_profile = nested.get("validation_profile") if isinstance(nested, dict) else None
+    profile = frontmatter.get("validation_profile", nested_profile)
+    return str(profile or "").strip().lower()
+
+
 # ---------------------------------------------------------------------------
 # Dimension Scorers
 # ---------------------------------------------------------------------------
@@ -892,7 +900,7 @@ def score_structural_completeness(
     ]
 
     ai_operational_section_found = False
-    if content is not None:
+    if content is not None and _validation_profile(frontmatter) != "content_docs":
         ai_operational_section_found = _is_ai_agentic_prd(frontmatter, content)
         if ai_operational_section_found:
             present_subsections = _extract_subheadings(content)
@@ -964,6 +972,9 @@ def score_traceability_v2(
     ai_evaluation_score = 0.0
     ai_release_score = 0.0
     ai_monitoring_score = 0.0
+    if _validation_profile(frontmatter) == "content_docs":
+        ai_operational_evidence_detected = False
+
     if ai_operational_evidence_detected:
         ai_evaluation_score, ai_release_score, ai_monitoring_score = _score_ai_operational_evidence(content)
 
@@ -983,6 +994,9 @@ def score_traceability_v2(
         "proof_score": round(proof_score, 4),
         "behavior_switch_score": round(behavior_switch_score, 4),
     }
+    profile = _validation_profile(frontmatter)
+    if profile:
+        details["validation_profile"] = profile
     if ai_operational_evidence_detected:
         details["ai_evaluation_score"] = round(ai_evaluation_score, 4)
         details["ai_release_score"] = round(ai_release_score, 4)
@@ -1094,7 +1108,39 @@ def score_implementation_readiness(
         "completion_ratio": round(completion_ratio, 4),
     }
 
-    if variant in {"feature", "infrastructure"}:
+    profile = _validation_profile(frontmatter)
+    if profile:
+        details["validation_profile"] = profile
+
+    if profile == "content_docs":
+        file_path_ratio = min(impl_refs / fr_count, 1.0)
+        test_ref_ratio = min(test_refs / fr_count, 1.0)
+        assertion_ratio = _score_assertion_coverage(content, fr_sections)
+        verification_ratio = min(verification_commands / fr_count, 1.0)
+        rollout_ratio = (
+            1.0 if "Rollout Plan" in content and "Rollback" in content else 0.5 if "Rollout Plan" in content else 0.0
+        )
+        completion_ratio = (
+            1.0 if "Success Metrics" in content and "Traceability Matrix" in content else completion_ratio
+        )
+        composite = (
+            file_path_ratio * 0.30
+            + max(test_ref_ratio, assertion_ratio) * 0.25
+            + verification_ratio * 0.25
+            + rollout_ratio * 0.10
+            + completion_ratio * 0.10
+        )
+        details.update(
+            {
+                "file_path_ratio": round(file_path_ratio, 4),
+                "test_ref_ratio": round(test_ref_ratio, 4),
+                "assertion_ratio": round(assertion_ratio, 4),
+                "verification_ratio": round(verification_ratio, 4),
+                "rollout_ratio": round(rollout_ratio, 4),
+                "completion_ratio": round(completion_ratio, 4),
+            }
+        )
+    elif variant in {"feature", "infrastructure"}:
         control_point_rows = _count_table_rows(content, "Primary Control Points")
         behavior_switch_rows = _count_table_rows(content, "Behavior Switch Matrix")
         key_files_rows = _count_table_rows(content, "Key Files")

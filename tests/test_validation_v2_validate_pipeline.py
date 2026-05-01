@@ -176,3 +176,79 @@ class TestValidatePrdQualityV2:
         config = TRWConfig(validation_skeleton_threshold=80.0, risk_scaling_enabled=False)
         result = validate_prd_quality_v2(_PARTIAL_PRD, config=config)
         assert result.quality_tier == QualityTier.SKELETON
+
+    def test_content_docs_profile_scores_static_content_without_runtime_switches(self, tmp_path: Path) -> None:
+        for path in (
+            tmp_path / "platform/public/llms.txt",
+            tmp_path / "platform/src/app/(marketing)/page.tsx",
+            tmp_path / "platform/src/app/(marketing)/homepage/data.ts",
+            tmp_path / "platform/public/llms.test.ts",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture\n", encoding="utf-8")
+
+        prd = """---
+prd:
+  id: PRD-QUAL-999
+  title: Content docs profile fixture
+  version: '1.0'
+  status: draft
+  priority: P2
+  category: QUAL
+  validation_profile: content_docs
+  confidence:
+    implementation_feasibility: 0.9
+    requirement_clarity: 0.9
+    estimate_confidence: 0.8
+  traceability:
+    implements: [PRD-QUAL-081]
+    depends_on: [PRD-CORE-080]
+    enables: [PRD-QUAL-083]
+---
+# PRD-QUAL-999: Content docs profile fixture
+## 1. Problem Statement
+Static LLM-facing copy needs content validation for AI agents without runtime switch matrices.
+## 2. Goals & Non-Goals
+Goal: verify source parity. Non-goal: runtime behavior.
+## 3. User Stories
+### US-001
+As a maintainer I want static content checks.
+## 4. Functional Requirements
+### FR01: llms copy
+When platform/public/llms.txt changes, then platform/src/app/(marketing)/page.tsx mirrors the install phrase.
+**Assertions**:
+- `grep_present: "Install TRW Framework" in "platform/public/llms.txt"`
+### FR02: homepage data
+When platform/src/app/(marketing)/homepage/data.ts changes, then platform/public/llms.txt stays in parity.
+**Assertions**:
+- `grep_present: "trw_session_start" in "platform/src/app/(marketing)/homepage/data.ts"`
+## 5. Non-Functional Requirements
+NFR01: No visible layout shift.
+## 6. Technical Approach
+Update platform/public/llms.txt and platform/src/app/(marketing)/page.tsx from platform/src/app/(marketing)/homepage/data.ts.
+## 7. Test Strategy
+Unit Tests: platform/public/llms.test.ts checks parity.
+Verification: npm run test and pytest tests/test_validation_v2_validate_pipeline.py -q.
+## 8. Rollout Plan
+Deploy static content. Rollback by reverting the content commit.
+## 9. Success Metrics
+Both public surfaces contain the same install phrase.
+## 10. Dependencies & Risks
+Risk: hidden content drift.
+## 11. Open Questions
+None.
+## 12. Traceability Matrix
+| Requirement | Implementation | Tests |
+|-------------|----------------|-------|
+| FR01 | `platform/public/llms.txt`, `platform/src/app/(marketing)/page.tsx` | `platform/public/llms.test.ts` |
+| FR02 | `platform/src/app/(marketing)/homepage/data.ts` | `platform/public/llms.test.ts` |
+"""
+
+        result = validate_prd_quality_v2(prd, project_root=str(tmp_path))
+        readiness = next(d for d in result.dimensions if d.name == "implementation_readiness")
+        traceability = next(d for d in result.dimensions if d.name == "traceability")
+
+        assert readiness.details["validation_profile"] == "content_docs"
+        assert readiness.score >= 20.0
+        assert traceability.details["validation_profile"] == "content_docs"
+        assert "ai_operational_evidence_detected" not in traceability.details
