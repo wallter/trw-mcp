@@ -378,11 +378,12 @@ def run_auto_maintenance(
     maintenance: AutoMaintenanceDict = {}
     defer_memory_heavy = False
     writer_pids: list[int] = []
+    defer_reason = "writer_pressure"
     if config.session_start_defer_under_writer_pressure:
         try:
-            from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+            from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
 
-            defer_memory_heavy, writer_pids = should_defer_memory_side_effects(
+            defer_memory_heavy, writer_pids, defer_reason = should_defer_session_start_optional_work(
                 trw_dir,
                 threshold=config.session_start_writer_pressure_threshold,
             )
@@ -397,21 +398,37 @@ def run_auto_maintenance(
 
     # Auto-upgrade check (PRD-INFRA-014)
     try:
-        from trw_mcp.state.auto_upgrade import check_for_update
+        if defer_memory_heavy:
+            maintenance["auto_upgrade_check_deferred"] = {
+                "reason": defer_reason,
+                "writer_pids": writer_pids,
+                "writer_count": len(writer_pids),
+                "threshold": config.session_start_writer_pressure_threshold,
+            }
+            logger.warning(
+                "auto_upgrade_check_deferred",
+                reason=defer_reason,
+                writer_pids=writer_pids,
+                writer_count=len(writer_pids),
+                threshold=config.session_start_writer_pressure_threshold,
+            )
+        else:
+            from trw_mcp.state.auto_upgrade import check_for_update
 
-        update_info = check_for_update()
-        if update_info.get("available"):
-            maintenance["update_advisory"] = str(update_info.get("advisory", ""))
-            if config.auto_upgrade:
-                from trw_mcp.state.auto_upgrade import perform_upgrade
+            update_info = check_for_update()
+            if update_info.get("available"):
+                maintenance["update_advisory"] = str(update_info.get("advisory", ""))
+                if config.auto_upgrade:
+                    from trw_mcp.state.auto_upgrade import perform_upgrade
 
-                upgrade_result = perform_upgrade(update_info)
-                if upgrade_result.get("applied"):
-                    parts: list[str] = []
-                    parts.append(
-                        f"Auto-upgraded to v{upgrade_result.get('version', '?')}: {upgrade_result.get('details', '')}"
-                    )
-                    maintenance["auto_upgrade"] = upgrade_result
+                    upgrade_result = perform_upgrade(update_info)
+                    if upgrade_result.get("applied"):
+                        parts: list[str] = []
+                        parts.append(
+                            f"Auto-upgraded to v{upgrade_result.get('version', '?')}: "
+                            f"{upgrade_result.get('details', '')}"
+                        )
+                        maintenance["auto_upgrade"] = upgrade_result
     except Exception:  # justified: fail-open, auto-upgrade must not block session start
         logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
 
@@ -421,13 +438,14 @@ def run_auto_maintenance(
             if defer_memory_heavy:
                 maintenance["stale_runs_deferred"] = {
                     "reason": "writer_pressure",
+                    "defer_reason": defer_reason,
                     "writer_pids": writer_pids,
                     "writer_count": len(writer_pids),
                     "threshold": config.session_start_writer_pressure_threshold,
                 }
                 logger.warning(
                     "stale_runs_close_deferred",
-                    reason="writer_pressure",
+                    reason=defer_reason,
                     writer_pids=writer_pids,
                     writer_count=len(writer_pids),
                     threshold=config.session_start_writer_pressure_threshold,
@@ -444,29 +462,29 @@ def run_auto_maintenance(
 
     # Embeddings status check + backfill
     try:
-        from trw_mcp.state.memory_adapter import check_embeddings_status
+        if defer_memory_heavy:
+            maintenance["embeddings_backfill_deferred"] = {
+                "reason": defer_reason,
+                "writer_pids": writer_pids,
+                "writer_count": len(writer_pids),
+                "threshold": config.session_start_writer_pressure_threshold,
+            }
+            logger.warning(
+                "embeddings_backfill_deferred",
+                reason=defer_reason,
+                writer_pids=writer_pids,
+                writer_count=len(writer_pids),
+                threshold=config.session_start_writer_pressure_threshold,
+            )
+        else:
+            from trw_mcp.state.memory_adapter import check_embeddings_status
 
-        emb_status = check_embeddings_status()
-        if emb_status.get("advisory"):
-            maintenance["embeddings_advisory"] = str(emb_status["advisory"])
-        elif emb_status.get("enabled") and emb_status.get("available"):
-            from trw_mcp.state.memory_adapter import backfill_embeddings
+            emb_status = check_embeddings_status()
+            if emb_status.get("advisory"):
+                maintenance["embeddings_advisory"] = str(emb_status["advisory"])
+            elif emb_status.get("enabled") and emb_status.get("available"):
+                from trw_mcp.state.memory_adapter import backfill_embeddings
 
-            if defer_memory_heavy:
-                maintenance["embeddings_backfill_deferred"] = {
-                    "reason": "writer_pressure",
-                    "writer_pids": writer_pids,
-                    "writer_count": len(writer_pids),
-                    "threshold": config.session_start_writer_pressure_threshold,
-                }
-                logger.warning(
-                    "embeddings_backfill_deferred",
-                    reason="writer_pressure",
-                    writer_pids=writer_pids,
-                    writer_count=len(writer_pids),
-                    threshold=config.session_start_writer_pressure_threshold,
-                )
-            else:
                 backfill = backfill_embeddings(_resolve_trw_dir_compat())
                 if backfill.get("embedded", 0) > 0:
                     maintenance["embeddings_backfill"] = backfill
@@ -475,23 +493,23 @@ def run_auto_maintenance(
 
     # WAL checkpoint (PRD-QUAL-050-FR05)
     try:
-        from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
         if defer_memory_heavy:
             maintenance["wal_checkpoint_deferred"] = {
-                "reason": "writer_pressure",
+                "reason": defer_reason,
                 "writer_pids": writer_pids,
                 "writer_count": len(writer_pids),
                 "threshold": config.session_start_writer_pressure_threshold,
             }
             logger.warning(
                 "wal_checkpoint_deferred",
-                reason="writer_pressure",
+                reason=defer_reason,
                 writer_pids=writer_pids,
                 writer_count=len(writer_pids),
                 threshold=config.session_start_writer_pressure_threshold,
             )
         else:
+            from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
             wal_result = maybe_checkpoint_wal(trw_dir)
             if wal_result.get("checkpointed"):
                 maintenance["wal_checkpoint"] = wal_result

@@ -91,3 +91,28 @@ def should_defer_memory_side_effects(trw_dir: Path, *, threshold: int) -> tuple[
         threshold = 2
     pids = live_memory_writer_pids(trw_dir)
     return len(pids) >= threshold, pids
+
+
+def should_defer_session_start_optional_work(
+    trw_dir: Path,
+    *,
+    threshold: int,
+) -> tuple[bool, list[int], str]:
+    """Return whether optional session-start work should be skipped/deferred.
+
+    ``should_defer_memory_side_effects`` intentionally models cross-process
+    writer pressure and therefore keeps the default threshold at two writers.
+    The session-start hot path has a stricter requirement: after the first
+    SQLite recall opens the local backend, even this process's own writer
+    registration is enough signal that nonessential receipt logs, maintenance,
+    and nudge decoration should not sit on the response path.
+    """
+
+    if threshold <= 1:
+        threshold = 2
+    pids = live_memory_writer_pids(trw_dir)
+    if len(pids) >= threshold:
+        return True, pids, "writer_pressure"
+    if pids:
+        return True, pids, "writer_present"
+    return False, pids, ""

@@ -23,6 +23,7 @@ class AutoMaintenanceDict(TypedDict, total=False):
     embeddings_backfill_deferred: dict[str, object]
     wal_checkpoint: dict[str, object]  # PRD-QUAL-050-FR05
     wal_checkpoint_deferred: dict[str, object]
+    auto_upgrade_check_deferred: dict[str, object]
 
 
 class DeliveryGatesDict(TypedDict, total=False):
@@ -236,6 +237,7 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     query_matched: int
     total_available: int
     response_compacted: bool
+    side_effects_deferred: dict[str, object]
 
 
 class FinalizeRunResult(TypedDict, total=False):

@@ -76,6 +76,23 @@ def _session_start_writer_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bo
         return False, []
 
 
+def _session_start_optional_work_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bool, list[int], str]:
+    """Return whether optional session-start side effects should leave the hot path."""
+
+    if not config.session_start_defer_under_writer_pressure:
+        return False, [], ""
+    try:
+        from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
+
+        return should_defer_session_start_optional_work(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    except Exception:  # justified: optional-work pressure detection is advisory and fail-open
+        logger.debug("session_start_optional_pressure_check_failed", exc_info=True)
+        return False, [], ""
+
+
 def _phase_to_tags(phase: str) -> list[str]:
     """Map a framework phase to relevant learning tags (PRD-CORE-049 FR02)."""
 
@@ -282,30 +299,52 @@ def perform_session_recalls(
                 learnings = fresh_additions + learnings
                 learnings = learnings[:effective_max]
 
-    try:
-        log_ranked_selections(
-            trw_dir,
-            learnings,
-            context_task_type="session_start",
-            context_session_progress="early",
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.warning(
-            "session_start_propensity_log_failed",
-            op="session_recall",
-            outcome="fail_open",
-            exc_info=True,
-        )
-
-    matched_ids = record_session_start_surfaces(
+    optional_work_deferred, optional_writer_pids, optional_reason = _session_start_optional_work_pressure(
+        config,
         trw_dir,
-        [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
     )
-    log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
-    post_recall_pressure, post_recall_writer_pids = _session_start_writer_pressure(config, trw_dir)
-    if post_recall_pressure:
+    if optional_work_deferred:
         compact_for_pressure = True
-        pressure_writer_pids = post_recall_writer_pids
+        pressure_writer_pids = optional_writer_pids
+        extra["side_effects_deferred"] = {
+            "reason": optional_reason,
+            "writer_pids": optional_writer_pids,
+            "writer_count": len(optional_writer_pids),
+            "threshold": config.session_start_writer_pressure_threshold,
+        }
+        logger.warning(
+            "session_start_side_effects_deferred",
+            reason=optional_reason,
+            writer_pids=optional_writer_pids,
+            writer_count=len(optional_writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(learnings),
+        )
+    else:
+        try:
+            log_ranked_selections(
+                trw_dir,
+                learnings,
+                context_task_type="session_start",
+                context_session_progress="early",
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            logger.warning(
+                "session_start_propensity_log_failed",
+                op="session_recall",
+                outcome="fail_open",
+                exc_info=True,
+            )
+
+        matched_ids = record_session_start_surfaces(
+            trw_dir,
+            [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
+        )
+        log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+        post_recall_pressure, post_recall_writer_pids = _session_start_writer_pressure(config, trw_dir)
+        if post_recall_pressure:
+            compact_for_pressure = True
+            pressure_writer_pids = post_recall_writer_pids
 
     extra["total_available"] = len(learnings)
     logger.debug(

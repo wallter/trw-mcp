@@ -129,6 +129,7 @@ class SessionStartResultDict(TypedDict, total=False):
     query_matched: int
     total_available: int
     response_compacted: bool
+    side_effects_deferred: dict[str, object]
     run: RunStatusDict
     embeddings_advisory: str
     errors: list[str]
@@ -148,9 +149,12 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     stale_runs_deferred: dict[str, object]
+    auto_upgrade_check_deferred: dict[str, object]
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
     wal_checkpoint_deferred: dict[str, object]
+    auto_recall_deferred: dict[str, object]
+    ceremony_status_deferred: dict[str, object]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.

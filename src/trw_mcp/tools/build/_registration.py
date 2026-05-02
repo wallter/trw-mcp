@@ -170,11 +170,20 @@ def register_build_tools(server: FastMCP) -> None:
         _log_build_event(resolved_run, scope, status)
 
         # Q-learning: reward recalled learnings based on build outcome.
-        # Process inline so the reported result reflects the persisted Q-update
-        # and we never leave a background thread holding the SQLite backend
-        # across test/process teardown.
+        # Process inline under normal conditions so existing reporter semantics
+        # stay deterministic. Under live writer pressure, defer instead of
+        # making the MCP response wait on YAML indexing/outcome correlation.
         event_type = "build_passed" if status.tests_passed and effective_static_checks_clean else "build_failed"
-        _process_q_learning(event_type, scope)
+        q_learning_deferred = _q_learning_defer_reason(trw_dir, config)
+        if q_learning_deferred is None:
+            _process_q_learning(event_type, scope)
+        else:
+            logger.warning(
+                "q_learning_deferred",
+                event_type=event_type,
+                scope=scope,
+                **q_learning_deferred,
+            )
 
         logger.info(
             "build_check_complete",
@@ -204,6 +213,8 @@ def register_build_tools(server: FastMCP) -> None:
             "duration_secs": status.duration_secs,
             "cache_path": str(cache_path),
         }
+        if q_learning_deferred is not None:
+            result["q_learning_deferred"] = q_learning_deferred
 
         # Coverage threshold enforcement (sprint-finish anti-regression)
         _finalize_build_result(result, min_coverage)
@@ -251,6 +262,35 @@ def _process_q_learning(event_type: str, scope: str) -> None:
             error_count=_q_learning_error_count,
             exc_info=True,
         )
+
+
+def _q_learning_defer_reason(
+    trw_dir: Path,
+    config: object,
+) -> dict[str, object] | None:
+    """Return a structured reason to skip inline Q-learning on hot MCP paths."""
+
+    if not bool(getattr(config, "session_start_defer_under_writer_pressure", True)):
+        return None
+    try:
+        from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
+
+        threshold = int(getattr(config, "session_start_writer_pressure_threshold", 2))
+        should_defer, writer_pids, reason = should_defer_session_start_optional_work(
+            trw_dir,
+            threshold=threshold,
+        )
+    except Exception:  # justified: pressure detection is advisory; keep legacy behavior if it fails
+        logger.debug("q_learning_pressure_check_failed", exc_info=True)
+        return None
+    if not should_defer:
+        return None
+    return {
+        "reason": reason,
+        "writer_pids": writer_pids,
+        "writer_count": len(writer_pids),
+        "threshold": threshold,
+    }
 
 
 def get_q_learning_health() -> dict[str, object]:

@@ -516,9 +516,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 results["total_available"] = int(str(extra["total_available"]))
             if "response_compacted" in extra:
                 results["response_compacted"] = bool(extra["response_compacted"])
+            if "side_effects_deferred" in extra:
+                results["side_effects_deferred"] = extra["side_effects_deferred"]
             # PRD-CORE-095 FR16: Pre-populate injected IDs so the auto-injection
             # hook doesn't re-inject learnings that session_start already surfaced.
-            _write_session_start_ids(trw_dir, learnings)
+            if "side_effects_deferred" not in extra:
+                _write_session_start_ids(trw_dir, learnings)
         except Exception as exc:  # justified: fail-open, recall failure must not block session start
             errors.append(f"recall: {exc}")
             results["learnings"] = []
@@ -610,6 +613,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             for key in (
                 "update_advisory",
                 "auto_upgrade",
+                "auto_upgrade_check_deferred",
                 "stale_runs_closed",
                 "stale_runs_deferred",
                 "embeddings_advisory",
@@ -624,7 +628,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         try:
-            if config.auto_recall_enabled:
+            if bool(results.get("response_compacted")):
+                results["auto_recall_deferred"] = {
+                    "reason": "session_start_compacted",
+                    "detail": "Phase auto-recall is optional and was left off the hot response path.",
+                }
+            elif config.auto_recall_enabled:
                 trw_dir_ar = resolve_trw_dir()
                 run_status_obj: RunStatusDict | None = results.get("run")
                 phase_recalled = _phase_contextual_recall(
@@ -713,7 +722,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Inject ceremony progress summary when full ceremony mode is active.
         try:
-            step_ceremony_status(cast("dict[str, object]", results))
+            if bool(results.get("response_compacted")):
+                results["ceremony_status_deferred"] = {
+                    "reason": "session_start_compacted",
+                    "detail": "Nudge decoration is optional and was left off the hot response path.",
+                }
+            else:
+                step_ceremony_status(cast("dict[str, object]", results))
         except Exception:  # justified: fail-open, status decoration must not block session start
             logger.debug("session_ceremony_status_failed", exc_info=True)
 

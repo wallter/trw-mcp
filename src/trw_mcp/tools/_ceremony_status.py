@@ -448,22 +448,22 @@ def append_ceremony_status(
 
         if cfg.session_start_defer_under_writer_pressure:
             try:
-                from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+                from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
 
-                defer_nudge, writer_pids = should_defer_memory_side_effects(
+                defer_nudge, writer_pids, defer_reason = should_defer_session_start_optional_work(
                     effective_dir,
                     threshold=cfg.session_start_writer_pressure_threshold,
                 )
                 if defer_nudge:
                     response["nudge_deferred"] = {
-                        "reason": "writer_pressure",
+                        "reason": defer_reason,
                         "writer_pids": writer_pids,
                         "writer_count": len(writer_pids),
                         "threshold": cfg.session_start_writer_pressure_threshold,
                     }
                     logger.warning(
                         "ceremony_nudge_deferred",
-                        reason="writer_pressure",
+                        reason=defer_reason,
                         writer_pids=writer_pids,
                         writer_count=len(writer_pids),
                         threshold=cfg.session_start_writer_pressure_threshold,
