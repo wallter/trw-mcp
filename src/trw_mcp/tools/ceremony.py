@@ -153,6 +153,49 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
     return result
 
 
+def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
+    """Return recent pinned run candidates without adopting any of them."""
+
+    try:
+        from trw_mcp.state._pin_store import load_pin_store
+
+        pins = load_pin_store()
+    except Exception:  # justified: guidance only, never block ceremony tools
+        logger.debug("candidate_run_hints_failed", exc_info=True)
+        return []
+
+    candidates: list[dict[str, object]] = []
+    for pin_key, entry in pins.items():
+        run_path = entry.get("run_path")
+        if not isinstance(run_path, str) or not run_path:
+            continue
+        if not Path(run_path).exists():
+            continue
+        candidates.append(
+            {
+                "run_path": run_path,
+                "pin_key": pin_key,
+                "pid": entry.get("pid"),
+                "last_heartbeat_ts": entry.get("last_heartbeat_ts"),
+                "adopt_command": f'trw_adopt_run(run_path="{run_path}")',
+            }
+        )
+    candidates.sort(key=lambda item: str(item.get("last_heartbeat_ts") or ""), reverse=True)
+    return candidates[:limit]
+
+
+def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
+    """Build actionable no-pin guidance while preserving PRD-CORE-141 isolation."""
+
+    hint = (
+        "No active run for this session. Call trw_init() to create a new run, "
+        "or call trw_adopt_run(run_path=...) to resume an existing run."
+    )
+    if candidate_runs:
+        hint += " Candidate run paths are advisory only; TRW will not auto-adopt another session's run."
+    return hint
+
+
 def _mark_run_complete(run_dir: Path) -> None:
     """Mark a run as complete by updating status in run.yaml."""
     reader = FileStateReader()
@@ -495,12 +538,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     "session_start_no_active_run",
                     pin_key=call_ctx.session_id,
                 )
+                candidate_runs = _candidate_run_hints()
                 results["run"] = {"active_run": None, "status": "no_active_run"}
                 # FR06: surface actionable guidance when no pin exists.
-                results["hint"] = (
-                    "No active run for this session. Call trw_init() to create one, "
-                    "or pass run_path to resume an existing run."
-                )
+                results["hint"] = _no_active_run_hint(candidate_runs)
+                if candidate_runs:
+                    results["candidate_runs"] = candidate_runs
         except Exception as exc:  # justified: fail-open, run status check must not block session start
             errors.append(f"status: {exc}")
             results["run"] = {"active_run": None, "status": "error"}
@@ -568,6 +611,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 "stale_runs_closed",
                 "embeddings_advisory",
                 "embeddings_backfill",
+                "embeddings_backfill_deferred",
+                "wal_checkpoint_deferred",
             ):
                 if key in maintenance:
                     results[key] = maintenance[key]
@@ -745,6 +790,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             resolved_run = _find_active_run_compat(call_ctx)
 
         results["run_path"] = str(resolved_run) if resolved_run else None
+        candidate_runs = _candidate_run_hints() if resolved_run is None else []
+        if candidate_runs:
+            results["candidate_runs"] = candidate_runs
 
         logger.info(
             "deliver_started",
@@ -824,7 +872,18 @@ def register_ceremony_tools(server: FastMCP) -> None:
         if resolved_run is not None:
             _run_step("checkpoint", lambda: _step_checkpoint(resolved_run), _results_view, errors)
         else:
-            results["checkpoint"] = {"status": "skipped", "reason": "no_active_run"}
+            checkpoint_skip: dict[str, object] = {
+                "status": "skipped",
+                "reason": "no_active_run",
+                "detail": (
+                    "Learning persistence can still succeed, but run checkpointing was skipped because "
+                    "this MCP session has no pinned run."
+                ),
+                "hint": _no_active_run_hint(candidate_runs),
+            }
+            if candidate_runs:
+                checkpoint_skip["candidate_runs"] = candidate_runs
+            results["checkpoint"] = checkpoint_skip
 
         # Step 3: CLAUDE.md sync removed (PRD-CORE-093 FR06).
         # Learning promotion no longer rotates CLAUDE.md content, so the prompt

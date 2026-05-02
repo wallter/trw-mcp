@@ -669,7 +669,9 @@ def resolve_run_path(
     # to log again here.
     if context is not None:
         raise StateError(
-            "No active run for this session (pin not found, scan fallback suppressed).",
+            "No active run for this session (pin not found, scan fallback suppressed). "
+            "Call trw_init() to create a run or trw_adopt_run(run_path=...) to resume one.",
+            suggestion="Call trw_init() or trw_adopt_run(run_path=...) before checkpoint/deliver.",
             project_root=str(project_root),
             pin_key=context.session_id,
         )

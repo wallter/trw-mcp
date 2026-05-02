@@ -66,6 +66,8 @@ class TRWConfig(_TRWConfigFields):
         nudge_messenger: NudgeMessengerLiteral | None = None
         nudge_density: Literal["low", "medium", "high"] | None = None
         pricing_table_path: str = ""
+        session_start_defer_under_writer_pressure: bool = True
+        session_start_writer_pressure_threshold: int = 2
 
     # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
     # Nested sub-config (not projected from flat fields) because the meta-

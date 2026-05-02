@@ -85,3 +85,12 @@ class _MemoryFields:
     # (surfaces per-project session context). Set days=0 to disable the bypass.
     session_start_recent_bypass_days: int = Field(default=7, ge=0, le=365)
     session_start_recent_bypass_min_impact: float = Field(default=0.3, ge=0.0, le=1.0)
+
+    # -- Session-start runtime pressure controls (PRD-FIX-080) --
+    # SQLite uses a 30s busy timeout. In shared MCP workspaces, best-effort
+    # session-start writes must not stack several lock waits before returning
+    # learnings to the caller. These defaults preserve normal single-writer
+    # behavior while deferring non-critical side effects when another live MCP
+    # process is already registered against the same memory DB.
+    session_start_defer_under_writer_pressure: bool = True
+    session_start_writer_pressure_threshold: int = Field(default=2, ge=2, le=64)

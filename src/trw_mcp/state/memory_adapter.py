@@ -676,8 +676,24 @@ def count_entries(trw_dir: Path) -> int:
 def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
     """Increment access_count and last_accessed_at for recalled entries."""
     backend = get_backend(trw_dir)
+    unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
+    if not unique_ids:
+        return
     now = datetime.now(timezone.utc)
-    for lid in learning_ids:
+
+    increment_access_counts = getattr(backend, "increment_access_counts", None)
+    if callable(increment_access_counts):
+        try:
+            increment_access_counts(unique_ids, accessed_at=now)
+            return
+        except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
+            logger.warning(
+                "access_tracking_batch_update_failed",
+                exc_info=True,
+                entry_ids=unique_ids,
+            )
+
+    for lid in unique_ids:
         try:
             entry = backend.get(lid)
             if entry is not None:

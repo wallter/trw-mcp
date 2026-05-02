@@ -376,6 +376,18 @@ def run_auto_maintenance(
     All operations are fail-open — individual failures do not affect others.
     """
     maintenance: AutoMaintenanceDict = {}
+    defer_memory_heavy = False
+    writer_pids: list[int] = []
+    if config.session_start_defer_under_writer_pressure:
+        try:
+            from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+
+            defer_memory_heavy, writer_pids = should_defer_memory_side_effects(
+                trw_dir,
+                threshold=config.session_start_writer_pressure_threshold,
+            )
+        except Exception:  # justified: pressure detection must never block maintenance
+            logger.debug("maintenance_writer_pressure_check_failed", exc_info=True)
 
     # Version sentinel check — detect if installer ran since this process started
     try:
@@ -425,9 +437,24 @@ def run_auto_maintenance(
         elif emb_status.get("enabled") and emb_status.get("available"):
             from trw_mcp.state.memory_adapter import backfill_embeddings
 
-            backfill = backfill_embeddings(_resolve_trw_dir_compat())
-            if backfill.get("embedded", 0) > 0:
-                maintenance["embeddings_backfill"] = backfill
+            if defer_memory_heavy:
+                maintenance["embeddings_backfill_deferred"] = {
+                    "reason": "writer_pressure",
+                    "writer_pids": writer_pids,
+                    "writer_count": len(writer_pids),
+                    "threshold": config.session_start_writer_pressure_threshold,
+                }
+                logger.warning(
+                    "embeddings_backfill_deferred",
+                    reason="writer_pressure",
+                    writer_pids=writer_pids,
+                    writer_count=len(writer_pids),
+                    threshold=config.session_start_writer_pressure_threshold,
+                )
+            else:
+                backfill = backfill_embeddings(_resolve_trw_dir_compat())
+                if backfill.get("embedded", 0) > 0:
+                    maintenance["embeddings_backfill"] = backfill
     except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
@@ -435,9 +462,24 @@ def run_auto_maintenance(
     try:
         from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
-        wal_result = maybe_checkpoint_wal(trw_dir)
-        if wal_result.get("checkpointed"):
-            maintenance["wal_checkpoint"] = wal_result
+        if defer_memory_heavy:
+            maintenance["wal_checkpoint_deferred"] = {
+                "reason": "writer_pressure",
+                "writer_pids": writer_pids,
+                "writer_count": len(writer_pids),
+                "threshold": config.session_start_writer_pressure_threshold,
+            }
+            logger.warning(
+                "wal_checkpoint_deferred",
+                reason="writer_pressure",
+                writer_pids=writer_pids,
+                writer_count=len(writer_pids),
+                threshold=config.session_start_writer_pressure_threshold,
+            )
+        else:
+            wal_result = maybe_checkpoint_wal(trw_dir)
+            if wal_result.get("checkpointed"):
+                maintenance["wal_checkpoint"] = wal_result
     except Exception:  # justified: fail-open, WAL checkpoint must not block session start
         logger.warning("maintenance_wal_checkpoint_failed", exc_info=True)
 

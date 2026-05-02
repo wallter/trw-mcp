@@ -120,14 +120,34 @@ def _dedupe_learning_ids(learning_ids: list[str]) -> list[str]:
 def record_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> list[str]:
     """Record shared session-start side effects for surfaced learnings."""
 
+    from trw_mcp.models.config import get_config
     from trw_mcp.state.memory_adapter import increment_session_counts
     from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
+    from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
 
     unique_ids = _dedupe_learning_ids(learning_ids)
     if not unique_ids:
         return []
-    increment_session_counts(trw_dir, unique_ids)
-    adapter_update_access(trw_dir, unique_ids)
+    config = get_config()
+    defer_tracking = False
+    writer_pids: list[int] = []
+    if config.session_start_defer_under_writer_pressure:
+        defer_tracking, writer_pids = should_defer_memory_side_effects(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    if defer_tracking:
+        logger.warning(
+            "session_start_tracking_deferred",
+            reason="writer_pressure",
+            writer_pids=writer_pids,
+            writer_count=len(writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(unique_ids),
+        )
+    else:
+        increment_session_counts(trw_dir, unique_ids)
+        adapter_update_access(trw_dir, unique_ids)
     _log_session_start_surfaces(trw_dir, unique_ids)
     return unique_ids
 

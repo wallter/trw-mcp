@@ -146,10 +146,13 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     embeddings_backfill: dict[str, int]
+    embeddings_backfill_deferred: dict[str, object]
+    wal_checkpoint_deferred: dict[str, object]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
     hint: str
+    candidate_runs: list[dict[str, object]]
     # PRD-HPO-MEAS-001 FR-2: Resolved surface snapshot id for the session.
     # Empty string during Phase 1 when artifact_registry stamping is
     # unavailable or fails open. Every HPOTelemetryEvent emitted during the
@@ -267,6 +270,7 @@ class DeliverResultDict(TypedDict, total=False):
     compliance_dir: str
     reflect: dict[str, object]
     checkpoint: dict[str, object]
+    candidate_runs: list[dict[str, object]]
     claude_md_sync: dict[str, object]
     critical_elapsed_seconds: float
     deferred: str
