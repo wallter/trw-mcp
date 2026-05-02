@@ -129,7 +129,17 @@ def test_append_ceremony_status_defers_nudges_under_writer_pressure(tmp_path: Pa
 
     from trw_mcp.tools._ceremony_status import append_ceremony_status
 
-    response = append_ceremony_status({}, trw_dir=trw_dir)
+    with (
+        patch(
+            "trw_mcp.state._ceremony_progress_state.increment_tool_call_counter",
+            side_effect=AssertionError("counter write must be deferred under writer pressure"),
+        ),
+        patch(
+            "trw_mcp.state._paths.resolve_run_path",
+            side_effect=AssertionError("active run resolution must be deferred under writer pressure"),
+        ),
+    ):
+        response = append_ceremony_status({}, trw_dir=trw_dir)
 
     assert "ceremony_status" in response
     nudge_deferred = response["nudge_deferred"]

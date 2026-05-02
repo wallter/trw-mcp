@@ -441,40 +441,11 @@ def append_ceremony_status(
     Fail-open: if the state cannot be read, the original response is returned.
     """
     try:
-        from trw_mcp.state._ceremony_progress_state import (
-            increment_nudge_count,
-            increment_tool_call_counter,
-            is_nudge_eligible,
-            record_nudge_shown,
-            record_pool_ignore,
-            record_pool_nudge,
-        )
-        from trw_mcp.state.ceremony_nudge import (
-            _compute_urgency,
-            _context_reactive_message,
-            _highest_priority_pending_step,
-            _select_nudge_message,
-            _select_nudge_pool,
-            compute_nudge_minimal,
-            select_contextual_nudge_content,
-            select_learning_injection_content,
-        )
-        from trw_mcp.state.surface_tracking import log_surface_event
-
         effective_dir = trw_dir if trw_dir is not None else resolve_trw_dir()
+        cfg = _load_config_for_trw_dir(effective_dir)
         state = read_ceremony_state(effective_dir)
         response["ceremony_status"] = build_ceremony_status_line(state)
 
-        # Increment tool call counter for cooldown tracking (PRD-CORE-134)
-        try:
-            increment_tool_call_counter(effective_dir)
-            state.tool_call_counter += 1
-        except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
-            logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
-
-        cfg = _load_config_for_trw_dir(effective_dir)
-        if not cfg.effective_nudge_enabled:
-            return response
         if cfg.session_start_defer_under_writer_pressure:
             try:
                 from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
@@ -500,6 +471,36 @@ def append_ceremony_status(
                     return response
             except Exception:  # justified: pressure detection is advisory and fail-open
                 logger.debug("ceremony_nudge_pressure_check_failed", exc_info=True)
+
+        from trw_mcp.state._ceremony_progress_state import (
+            increment_nudge_count,
+            increment_tool_call_counter,
+            is_nudge_eligible,
+            record_nudge_shown,
+            record_pool_ignore,
+            record_pool_nudge,
+        )
+        from trw_mcp.state.ceremony_nudge import (
+            _compute_urgency,
+            _context_reactive_message,
+            _highest_priority_pending_step,
+            _select_nudge_message,
+            _select_nudge_pool,
+            compute_nudge_minimal,
+            select_contextual_nudge_content,
+            select_learning_injection_content,
+        )
+        from trw_mcp.state.surface_tracking import log_surface_event
+
+        # Increment tool call counter for cooldown tracking (PRD-CORE-134)
+        try:
+            increment_tool_call_counter(effective_dir)
+            state.tool_call_counter += 1
+        except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
+            logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
+
+        if not cfg.effective_nudge_enabled:
+            return response
 
         messenger = cfg.effective_nudge_messenger
         client_id = str(getattr(cfg.client_profile, "client_id", ""))
