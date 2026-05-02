@@ -134,6 +134,7 @@ class SessionStartResultDict(TypedDict, total=False):
     success: bool
     framework_reminder: str
     ceremony_status: str
+    nudge_deferred: dict[str, object]
     # Auto-recall (phase-contextual, PRD-CORE-049)
     auto_recalled: list[AutoRecalledItemDict]
     auto_recall_count: int

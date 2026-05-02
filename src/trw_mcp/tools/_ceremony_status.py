@@ -475,6 +475,31 @@ def append_ceremony_status(
         cfg = _load_config_for_trw_dir(effective_dir)
         if not cfg.effective_nudge_enabled:
             return response
+        if cfg.session_start_defer_under_writer_pressure:
+            try:
+                from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+
+                defer_nudge, writer_pids = should_defer_memory_side_effects(
+                    effective_dir,
+                    threshold=cfg.session_start_writer_pressure_threshold,
+                )
+                if defer_nudge:
+                    response["nudge_deferred"] = {
+                        "reason": "writer_pressure",
+                        "writer_pids": writer_pids,
+                        "writer_count": len(writer_pids),
+                        "threshold": cfg.session_start_writer_pressure_threshold,
+                    }
+                    logger.warning(
+                        "ceremony_nudge_deferred",
+                        reason="writer_pressure",
+                        writer_pids=writer_pids,
+                        writer_count=len(writer_pids),
+                        threshold=cfg.session_start_writer_pressure_threshold,
+                    )
+                    return response
+            except Exception:  # justified: pressure detection is advisory and fail-open
+                logger.debug("ceremony_nudge_pressure_check_failed", exc_info=True)
 
         messenger = cfg.effective_nudge_messenger
         client_id = str(getattr(cfg.client_profile, "client_id", ""))

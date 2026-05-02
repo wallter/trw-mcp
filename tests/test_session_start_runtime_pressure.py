@@ -109,3 +109,23 @@ def test_candidate_run_hints_list_live_pinned_runs(tmp_path: Path, monkeypatch: 
     assert candidates
     assert candidates[0]["run_path"] == str(run_dir)
     assert "trw_adopt_run" in str(candidates[0]["adopt_command"])
+
+
+def test_append_ceremony_status_defers_nudges_under_writer_pressure(tmp_path: Path) -> None:
+    trw_dir = _minimal_trw_dir(tmp_path)
+    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "parent.lock", os.getppid())
+    (trw_dir / "config.yaml").write_text(
+        "session_start_defer_under_writer_pressure: true\n"
+        "session_start_writer_pressure_threshold: 2\n"
+        "nudge_enabled: true\n",
+        encoding="utf-8",
+    )
+
+    from trw_mcp.tools._ceremony_status import append_ceremony_status
+
+    response = append_ceremony_status({}, trw_dir=trw_dir)
+
+    assert "ceremony_status" in response
+    assert response["nudge_deferred"]["reason"] == "writer_pressure"
+    assert "nudge_content" not in response
