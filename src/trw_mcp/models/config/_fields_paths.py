@@ -64,6 +64,14 @@ class _PathsFields:
     mcp_transport: str = "stdio"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8100
+    mcp_startup_wait_seconds: int = Field(
+        default=120,
+        ge=1,
+        description=(
+            "Seconds a stdio proxy waits for the shared HTTP MCP server to bind its port. "
+            "Large workspaces can spend 30s+ in boot-time stale-run cleanup before Uvicorn listens."
+        ),
+    )
 
     # -- Pin isolation & stale-run lifecycle (PRD-CORE-141 FR13) --
     # Knobs governing per-connection pin isolation, the boot-time stale-run

@@ -109,7 +109,7 @@ def _wait_for_port(
     port: int,
     *,
     poll_interval: float = 0.5,
-    max_polls: int = 60,
+    max_polls: int = 240,
 ) -> bool:
     """Poll until a TCP port accepts connections or timeout is reached.
 
@@ -117,7 +117,7 @@ def _wait_for_port(
         host: Host address to poll.
         port: Port number to check.
         poll_interval: Seconds between polls (default 0.5s).
-        max_polls: Maximum number of polls (default 60 = 30s total).
+        max_polls: Maximum number of polls (default 240 = 120s total).
 
     Returns:
         True if the port became available, False on timeout.
@@ -179,12 +179,18 @@ def ensure_http_server(
         try:
             pid = _spawn_http_server(config, trw_dir, debug=debug)
 
-            # WSL2 cold starts can take 15-20s due to filesystem I/O latency
-            if _wait_for_port(host, port):
+            # Large workspaces can spend 30s+ in boot-time stale-run cleanup
+            # before Uvicorn binds. Keep the stdio proxy alive long enough for
+            # the shared server to come up instead of falling back to a second
+            # standalone stdio server.
+            startup_wait_secs = max(1, int(config.mcp_startup_wait_seconds))
+            poll_interval = 0.5
+            max_polls = max(1, int(startup_wait_secs / poll_interval))
+            if _wait_for_port(host, port, poll_interval=poll_interval, max_polls=max_polls):
                 log.info("mcp_server_started", pid=pid, url=url)
                 return url
 
-            log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=30)
+            log.warning("mcp_server_start_timeout", host=host, port=port, timeout_secs=startup_wait_secs)
             return None
         except Exception:  # justified: boundary, subprocess spawn can fail in many ways
             log.warning("mcp_server_start_failed", exc_info=True)
