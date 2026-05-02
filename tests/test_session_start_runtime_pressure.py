@@ -11,7 +11,7 @@ import pytest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.memory_pressure import live_memory_writer_pids, should_defer_memory_side_effects
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
-from trw_mcp.tools._session_recall_helpers import record_session_start_surfaces
+from trw_mcp.tools._session_recall_helpers import perform_session_recalls, record_session_start_surfaces
 
 
 def _minimal_trw_dir(tmp_path: Path) -> Path:
@@ -58,6 +58,47 @@ def test_record_session_start_surfaces_defers_sqlite_tracking_under_writer_press
     increment_counts.assert_not_called()
     update_access.assert_not_called()
     log_surfaces.assert_not_called()
+
+
+def test_perform_session_recalls_compacts_response_under_writer_pressure(tmp_path: Path) -> None:
+    trw_dir = _minimal_trw_dir(tmp_path)
+    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "parent.lock", os.getppid())
+    config = TRWConfig.model_validate(
+        {
+            "recall_max_results": 25,
+            "session_start_defer_under_writer_pressure": True,
+            "session_start_writer_pressure_threshold": 2,
+        }
+    )
+    entries = [
+        {
+            "id": f"L-{idx}",
+            "summary": f"Learning {idx}",
+            "impact": 0.9,
+            "status": "active",
+            "tags": ["tag", "mcp", "timeout"],
+            "detail": "verbose detail that should not be returned under writer pressure",
+        }
+        for idx in range(20)
+    ]
+
+    def _recall(*args: object, max_results: int | None = None, **kwargs: object) -> list[dict[str, object]]:
+        return entries[: max_results or len(entries)]
+
+    with (
+        patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_recall) as recall,
+        patch("trw_mcp.models.config.get_config", return_value=config),
+        patch("trw_mcp.tools._session_recall_helpers.log_ranked_selections"),
+        patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+    ):
+        learnings, _auto, extra = perform_session_recalls(trw_dir, "mcp timeout", config, MagicMock())
+
+    assert recall.call_count == 2
+    assert {call.kwargs["max_results"] for call in recall.call_args_list} == {8}
+    assert len(learnings) == 8
+    assert extra["response_compacted"] is True
+    assert all(set(entry) <= {"id", "summary", "impact", "status"} for entry in learnings)
 
 
 def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_path: Path) -> None:

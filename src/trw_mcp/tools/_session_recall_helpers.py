@@ -49,6 +49,32 @@ _SYSTEM_TASK_KEYWORDS: tuple[str, ...] = (
     "registry",
 )
 
+_WRITER_PRESSURE_RECALL_CAP = 8
+_SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status")
+
+
+def _compact_session_start_learning(entry: dict[str, object]) -> dict[str, object]:
+    """Return the minimal learning payload needed for session-start context."""
+
+    return {field: entry[field] for field in _SESSION_START_COMPACT_FIELDS if field in entry}
+
+
+def _session_start_writer_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bool, list[int]]:
+    """Return whether session_start should prefer a small read-only response."""
+
+    if not config.session_start_defer_under_writer_pressure:
+        return False, []
+    try:
+        from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+
+        return should_defer_memory_side_effects(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    except Exception:  # justified: pressure detection is advisory and fail-open
+        logger.debug("session_start_response_pressure_check_failed", exc_info=True)
+        return False, []
+
 
 def _phase_to_tags(phase: str) -> list[str]:
     """Map a framework phase to relevant learning tags (PRD-CORE-049 FR02)."""
@@ -178,11 +204,14 @@ def perform_session_recalls(
     extra: SessionRecallExtrasDict = {}
     learnings: list[dict[str, object]] = []
 
+    compact_for_pressure, pressure_writer_pids = _session_start_writer_pressure(config, trw_dir)
     effective_max = (
         min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)
-        if config.effective_ceremony_mode == "light"
+        if not compact_for_pressure and config.effective_ceremony_mode == "light"
         else config.recall_max_results
     )
+    if compact_for_pressure:
+        effective_max = min(effective_max, _WRITER_PRESSURE_RECALL_CAP)
 
     if is_focused:
         focused = adapter_recall(
@@ -289,6 +318,20 @@ def perform_session_recalls(
             op="session_recall",
             outcome="fail_open",
             exc_info=True,
+        )
+
+    if compact_for_pressure:
+        pre_compact_count = len(learnings)
+        learnings = [_compact_session_start_learning(entry) for entry in learnings[:_WRITER_PRESSURE_RECALL_CAP]]
+        extra["response_compacted"] = True
+        logger.warning(
+            "session_start_response_compacted",
+            reason="writer_pressure",
+            writer_pids=pressure_writer_pids,
+            writer_count=len(pressure_writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            original_count=pre_compact_count,
+            returned_count=len(learnings),
         )
 
     auto_recalled: list[AutoRecalledItemDict] = []

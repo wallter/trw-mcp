@@ -128,6 +128,7 @@ class SessionStartResultDict(TypedDict, total=False):
     query: str
     query_matched: int
     total_available: int
+    response_compacted: bool
     run: RunStatusDict
     embeddings_advisory: str
     errors: list[str]

@@ -235,6 +235,7 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     query: str
     query_matched: int
     total_available: int
+    response_compacted: bool
 
 
 class FinalizeRunResult(TypedDict, total=False):

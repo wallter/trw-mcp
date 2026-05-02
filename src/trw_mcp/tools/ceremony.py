@@ -514,6 +514,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 results["query_matched"] = int(str(extra["query_matched"]))
             if "total_available" in extra:
                 results["total_available"] = int(str(extra["total_available"]))
+            if "response_compacted" in extra:
+                results["response_compacted"] = bool(extra["response_compacted"])
             # PRD-CORE-095 FR16: Pre-populate injected IDs so the auto-injection
             # hook doesn't re-inject learnings that session_start already surfaced.
             _write_session_start_ids(trw_dir, learnings)
@@ -693,7 +695,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results["success"] = len(errors) == 0
 
         # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
-        if config.effective_ceremony_mode == "light":
+        if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
             results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
         else:
             results["framework_reminder"] = (
