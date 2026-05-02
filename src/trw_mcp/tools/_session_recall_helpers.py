@@ -302,6 +302,10 @@ def perform_session_recalls(
         [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
     )
     log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+    post_recall_pressure, post_recall_writer_pids = _session_start_writer_pressure(config, trw_dir)
+    if post_recall_pressure:
+        compact_for_pressure = True
+        pressure_writer_pids = post_recall_writer_pids
 
     extra["total_available"] = len(learnings)
     logger.debug(

@@ -101,6 +101,47 @@ def test_perform_session_recalls_compacts_response_under_writer_pressure(tmp_pat
     assert all(set(entry) <= {"id", "summary", "impact", "status"} for entry in learnings)
 
 
+def test_perform_session_recalls_compacts_if_pressure_appears_after_recall(tmp_path: Path) -> None:
+    trw_dir = _minimal_trw_dir(tmp_path)
+    config = TRWConfig.model_validate(
+        {
+            "recall_max_results": 25,
+            "session_start_defer_under_writer_pressure": True,
+            "session_start_writer_pressure_threshold": 2,
+        }
+    )
+    entries = [
+        {
+            "id": f"L-{idx}",
+            "summary": f"Learning {idx}",
+            "impact": 0.9,
+            "status": "active",
+            "tags": ["tag"],
+        }
+        for idx in range(20)
+    ]
+
+    def _recall(*args: object, max_results: int | None = None, **kwargs: object) -> list[dict[str, object]]:
+        return entries[: max_results or len(entries)]
+
+    with (
+        patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_recall),
+        patch("trw_mcp.models.config.get_config", return_value=config),
+        patch("trw_mcp.tools._session_recall_helpers.record_session_start_surfaces", return_value=[]),
+        patch("trw_mcp.tools._session_recall_helpers.log_ranked_selections"),
+        patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        patch(
+            "trw_mcp.state.memory_pressure.should_defer_memory_side_effects",
+            side_effect=[(False, []), (True, [os.getpid(), os.getppid()])],
+        ),
+    ):
+        learnings, _auto, extra = perform_session_recalls(trw_dir, "mcp timeout", config, MagicMock())
+
+    assert len(learnings) == 8
+    assert extra["response_compacted"] is True
+    assert all("tags" not in entry for entry in learnings)
+
+
 def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_path: Path) -> None:
     trw_dir = _minimal_trw_dir(tmp_path)
     _write_lock(trw_dir, "self.lock", os.getpid())
