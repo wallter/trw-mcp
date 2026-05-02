@@ -14,7 +14,7 @@ import structlog
 
 from trw_mcp import __version__
 from trw_mcp._logging import configure_logging
-from trw_mcp.models.config import TRWConfig, reload_config
+from trw_mcp.models.config import TRWConfig, get_config, reload_config
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 
 
@@ -474,6 +474,26 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
     )
 
 
+def _should_run_boot_sequence(args: argparse.Namespace, config: TRWConfig) -> bool:
+    """Return whether this process should run mutating boot maintenance.
+
+    In shared HTTP mode, the foreground stdio process is only a thin proxy to
+    an already-running or auto-started HTTP server. Running boot GC in every
+    proxy process blocks MCP initialize/reconnect for tens of seconds in large
+    repos and duplicates maintenance that belongs to the shared server.
+
+    Direct server processes still run boot maintenance:
+    - explicit ``--transport streamable-http|sse|stdio``;
+    - default standalone stdio when the project config uses ``mcp_transport:
+      stdio``.
+    """
+
+    requested_transport = getattr(args, "transport", None)
+    if requested_transport is not None:
+        return True
+    return config.mcp_transport == "stdio"
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -542,7 +562,7 @@ def main() -> None:
         _sys.exit(1)
 
     # Default: run MCP server (no subcommand or "serve")
-    config = _apply_cli_security_overrides(TRWConfig(), args)
+    config = _apply_cli_security_overrides(get_config(), args)
     reload_config(config)
     debug = args.debug or config.debug
 
@@ -571,10 +591,21 @@ def main() -> None:
 
     log = structlog.get_logger(__name__)
 
-    # PRD-CORE-141 FR09: boot-time stale-run sweep runs BEFORE FastMCP starts
-    # accepting connections.  Wrapped in try/except (NFR02 fail-open) — sweep
-    # failure MUST NOT block server startup.
-    _boot_sequence(config, log)
+    # PRD-CORE-141 FR09: direct server boot-time stale-run sweep runs BEFORE
+    # FastMCP starts accepting connections. In shared HTTP mode, foreground
+    # stdio processes are proxies and must not block reconnect on this sweep.
+    # Wrapped in try/except (NFR02 fail-open) — sweep failure MUST NOT block
+    # direct server startup.
+    if _should_run_boot_sequence(args, config):
+        _boot_sequence(config, log)
+    else:
+        log.info(
+            "boot_gc_skipped_proxy_mode",
+            reason="stdio_proxy_to_shared_http",
+            target_transport=config.mcp_transport,
+            target_host=config.mcp_host,
+            target_port=config.mcp_port,
+        )
 
     from trw_mcp.server._transport import resolve_and_run_transport
 
