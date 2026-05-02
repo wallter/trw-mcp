@@ -418,12 +418,27 @@ def run_auto_maintenance(
     # Auto-close stale runs
     try:
         if config.run_auto_close_enabled:
-            from trw_mcp.state.analytics._stale_runs import auto_close_stale_runs
+            if defer_memory_heavy:
+                maintenance["stale_runs_deferred"] = {
+                    "reason": "writer_pressure",
+                    "writer_pids": writer_pids,
+                    "writer_count": len(writer_pids),
+                    "threshold": config.session_start_writer_pressure_threshold,
+                }
+                logger.warning(
+                    "stale_runs_close_deferred",
+                    reason="writer_pressure",
+                    writer_pids=writer_pids,
+                    writer_count=len(writer_pids),
+                    threshold=config.session_start_writer_pressure_threshold,
+                )
+            else:
+                from trw_mcp.state.analytics._stale_runs import auto_close_stale_runs
 
-            close_result = auto_close_stale_runs()
-            closed_count = int(str(close_result.get("count", 0)))
-            if closed_count > 0:
-                maintenance["stale_runs_closed"] = close_result
+                close_result = auto_close_stale_runs()
+                closed_count = int(str(close_result.get("count", 0)))
+                if closed_count > 0:
+                    maintenance["stale_runs_closed"] = close_result
     except Exception:  # justified: fail-open, stale run cleanup must not block session start
         logger.warning("maintenance_stale_runs_close_failed", exc_info=True)
 

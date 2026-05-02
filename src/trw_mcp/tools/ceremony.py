@@ -609,6 +609,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 "update_advisory",
                 "auto_upgrade",
                 "stale_runs_closed",
+                "stale_runs_deferred",
                 "embeddings_advisory",
                 "embeddings_backfill",
                 "embeddings_backfill_deferred",

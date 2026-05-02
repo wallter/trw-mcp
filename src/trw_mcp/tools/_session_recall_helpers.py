@@ -145,10 +145,18 @@ def record_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> lis
             threshold=config.session_start_writer_pressure_threshold,
             learning_count=len(unique_ids),
         )
+        logger.warning(
+            "session_start_surface_log_deferred",
+            reason="writer_pressure",
+            writer_pids=writer_pids,
+            writer_count=len(writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(unique_ids),
+        )
     else:
         increment_session_counts(trw_dir, unique_ids)
         adapter_update_access(trw_dir, unique_ids)
-    _log_session_start_surfaces(trw_dir, unique_ids)
+        _log_session_start_surfaces(trw_dir, unique_ids)
     return unique_ids
 
 

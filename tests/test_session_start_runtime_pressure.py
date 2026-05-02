@@ -57,7 +57,7 @@ def test_record_session_start_surfaces_defers_sqlite_tracking_under_writer_press
     assert result == ["L-one", "L-two"]
     increment_counts.assert_not_called()
     update_access.assert_not_called()
-    log_surfaces.assert_called_once_with(trw_dir, ["L-one", "L-two"])
+    log_surfaces.assert_not_called()
 
 
 def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_path: Path) -> None:
@@ -69,8 +69,11 @@ def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_
     backfill = MagicMock(return_value={"embedded": 1, "skipped": 0, "failed": 0})
     wal = MagicMock(return_value={"checkpointed": True})
 
+    stale_close = MagicMock(return_value={"count": 1, "runs_closed": ["stale-run"], "errors": []})
+
     with (
         patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
+        patch("trw_mcp.state.analytics._stale_runs.auto_close_stale_runs", stale_close),
         patch(
             "trw_mcp.state.memory_adapter.check_embeddings_status",
             return_value={"enabled": True, "available": True, "advisory": ""},
@@ -82,6 +85,8 @@ def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_
 
     backfill.assert_not_called()
     wal.assert_not_called()
+    stale_close.assert_not_called()
+    assert result["stale_runs_deferred"]["reason"] == "writer_pressure"
     assert result["embeddings_backfill_deferred"]["reason"] == "writer_pressure"
     assert result["wal_checkpoint_deferred"]["reason"] == "writer_pressure"
 
@@ -127,5 +132,7 @@ def test_append_ceremony_status_defers_nudges_under_writer_pressure(tmp_path: Pa
     response = append_ceremony_status({}, trw_dir=trw_dir)
 
     assert "ceremony_status" in response
-    assert response["nudge_deferred"]["reason"] == "writer_pressure"
+    nudge_deferred = response["nudge_deferred"]
+    assert isinstance(nudge_deferred, dict)
+    assert nudge_deferred["reason"] == "writer_pressure"
     assert "nudge_content" not in response

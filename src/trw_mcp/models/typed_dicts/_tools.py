@@ -146,6 +146,7 @@ class SessionStartResultDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
+    stale_runs_deferred: dict[str, object]
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
     wal_checkpoint_deferred: dict[str, object]
