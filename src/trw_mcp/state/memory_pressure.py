@@ -100,19 +100,29 @@ def should_defer_session_start_optional_work(
 ) -> tuple[bool, list[int], str]:
     """Return whether optional session-start work should be skipped/deferred.
 
-    ``should_defer_memory_side_effects`` intentionally models cross-process
-    writer pressure and therefore keeps the default threshold at two writers.
-    The session-start hot path has a stricter requirement: after the first
-    SQLite recall opens the local backend, even this process's own writer
-    registration is enough signal that nonessential receipt logs, maintenance,
-    and nudge decoration should not sit on the response path.
+    Pressure is measured against PEER writers — pids registered in the writer
+    registry that are NOT the calling process. Self-only registration is the
+    normal steady state for both:
+
+    * stdio per-instance MCP servers (one writer per process), and
+    * the shared HTTP MCP server (one long-lived process owns the backend).
+
+    Treating self-only as "writer_present" pressure (the previous behavior)
+    caused 100% of session-start calls in the shared HTTP server to defer
+    every optional maintenance step — auto-upgrade check, stale-run close,
+    embeddings backfill, and WAL checkpoint — turning the deferral path into
+    a permanent skip and letting the WAL grow unbounded.
     """
 
     if threshold <= 1:
         threshold = 2
     pids = live_memory_writer_pids(trw_dir)
+    peer_pids = [pid for pid in pids if pid != os.getpid()]
+    # Self-only registration is the normal steady state — never defers.
+    if not peer_pids:
+        return False, pids, ""
+    # ``threshold`` counts total writers (including self), matching the
+    # ``should_defer_memory_side_effects`` calibration.
     if len(pids) >= threshold:
         return True, pids, "writer_pressure"
-    if pids:
-        return True, pids, "writer_present"
-    return False, pids, ""
+    return True, pids, "writer_present"

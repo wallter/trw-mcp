@@ -62,13 +62,36 @@ def test_live_memory_writer_pids_ignores_stale_locks(tmp_path: Path) -> None:
     should_defer, pids = should_defer_memory_side_effects(trw_dir, threshold=2)
     assert should_defer is False
     assert pids == [live_pid]
+    # Self-only registration is the steady state for both the stdio per-instance
+    # server and the shared HTTP server — neither should trigger deferral, which
+    # would otherwise turn into a permanent skip and let WAL grow unbounded.
     should_defer_optional, optional_pids, optional_reason = should_defer_session_start_optional_work(
         trw_dir,
         threshold=2,
     )
-    assert should_defer_optional is True
+    assert should_defer_optional is False
     assert optional_pids == [live_pid]
-    assert optional_reason == "writer_present"
+    assert optional_reason == ""
+
+
+def test_should_defer_session_start_optional_work_triggers_on_peer_pid(tmp_path: Path) -> None:
+    """A live peer pid (other than self) is the actual pressure signal."""
+
+    trw_dir = _minimal_trw_dir(tmp_path)
+    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
+
+    pids = live_memory_writer_pids(trw_dir)
+    assert os.getpid() in pids
+    assert os.getppid() in pids
+
+    should_defer, defer_pids, reason = should_defer_session_start_optional_work(
+        trw_dir,
+        threshold=2,
+    )
+    assert should_defer is True
+    assert reason in {"writer_present", "writer_pressure"}
+    assert defer_pids == sorted({os.getpid(), os.getppid()})
 
 
 def test_record_session_start_surfaces_defers_sqlite_tracking_under_writer_pressure(tmp_path: Path) -> None:
@@ -175,7 +198,7 @@ def test_perform_session_recalls_compacts_if_pressure_appears_after_recall(tmp_p
 
 def test_perform_session_recalls_defers_optional_side_effects_on_writer_presence(tmp_path: Path) -> None:
     trw_dir = _minimal_trw_dir(tmp_path)
-    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
     config = TRWConfig.model_validate(
         {
             "recall_max_results": 25,
@@ -254,7 +277,7 @@ def test_run_auto_maintenance_defers_backfill_and_wal_under_writer_pressure(tmp_
 
 def test_run_auto_maintenance_defers_optional_checks_on_writer_presence(tmp_path: Path) -> None:
     trw_dir = _minimal_trw_dir(tmp_path)
-    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
     config = TRWConfig(session_start_defer_under_writer_pressure=True, session_start_writer_pressure_threshold=2)
 
     with (
@@ -343,7 +366,7 @@ def test_append_ceremony_status_defers_nudges_under_writer_pressure(tmp_path: Pa
 
 def test_append_ceremony_status_defers_nudges_on_writer_presence(tmp_path: Path) -> None:
     trw_dir = _minimal_trw_dir(tmp_path)
-    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
     (trw_dir / "config.yaml").write_text(
         "session_start_defer_under_writer_pressure: true\n"
         "session_start_writer_pressure_threshold: 2\n"
@@ -374,7 +397,7 @@ def test_build_check_defers_q_learning_on_writer_presence(
     import trw_mcp.tools.build._registration as reg_mod
 
     trw_dir = _minimal_trw_dir(tmp_path)
-    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
     config = TRWConfig.model_validate(
         {
             "trw_dir": str(trw_dir),
