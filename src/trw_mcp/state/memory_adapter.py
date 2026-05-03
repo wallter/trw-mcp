@@ -78,6 +78,9 @@ from trw_mcp.state._memory_connection import (
     get_embedder as get_embedder,
 )
 from trw_mcp.state._memory_connection import (
+    get_initialized_embedder as get_initialized_embedder,
+)
+from trw_mcp.state._memory_connection import (
     reset_backend as reset_backend,
 )
 from trw_mcp.state._memory_connection import (
@@ -129,13 +132,16 @@ _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 _embed_failures: int | None = None
 
 
-def check_embeddings_status() -> dict[str, object]:
+def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
     Delegates to :func:`_memory_connection.check_embeddings_status`, but
     supports test patches that set ``memory_adapter._embed_failures`` directly.
     """
-    result = _check_embeddings_status_impl()
+    if allow_initialize:
+        result = _check_embeddings_status_impl()
+    else:
+        result = _check_embeddings_status_impl(allow_initialize=False)
     # If a test injected _embed_failures on this facade module, honour it.
     if _embed_failures is not None:
         result["recent_failures"] = _embed_failures
@@ -361,6 +367,7 @@ def recall_learnings(
     status: str | None = None,
     max_results: int = 25,
     compact: bool = False,
+    allow_cold_embedding_init: bool = True,
 ) -> list[dict[str, object]]:
     """Search learnings from SQLite and return dicts matching recall shape.
 
@@ -404,6 +411,7 @@ def recall_learnings(
                     tags=tags,
                     mem_status=mem_status,
                     min_impact=min_impact,
+                    allow_cold_embedding_init=allow_cold_embedding_init,
                 )
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
@@ -752,9 +760,22 @@ def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
 def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
     """Checkpoint the SQLite WAL file if it exceeds a configurable size threshold.
 
-    PRD-QUAL-050-FR05: During ``trw_session_start()`` auto-maintenance, if the
-    WAL file exceeds ``wal_checkpoint_threshold_mb`` (default 10 MB), runs
-    ``PRAGMA wal_checkpoint(TRUNCATE)`` to reclaim space.
+    PRD-QUAL-050-FR05 + PRD-FIX-081: During ``trw_session_start()``
+    auto-maintenance, if the WAL file exceeds ``wal_checkpoint_threshold_mb``
+    (default 10 MB), attempt ``PRAGMA wal_checkpoint(TRUNCATE)`` first to
+    reclaim WAL space, falling back to ``PRAGMA wal_checkpoint(PASSIVE)``
+    when readers hold pages and TRUNCATE returns busy=1.
+
+    PASSIVE alone never shrinks the WAL file -- it only writes frames back
+    to the main DB. With persistent reader connections (the trw-memory
+    backend singleton plus concurrent MCP processes), the autocheckpoint
+    cannot reclaim space either. Result without TRUNCATE: WAL grows
+    unbounded on long-lived servers.
+
+    TRUNCATE is safe under concurrent multi-process access. SQLite uses
+    normal locking; the call returns busy=1 (not corruption) when readers
+    hold frames. The bounded busy_timeout (default 500 ms) ensures the
+    checkpoint never blocks ``trw_session_start`` beyond that window.
 
     Fail-open: checkpoint failure is logged but never propagated. Returns a
     result dict describing what happened.
@@ -764,7 +785,9 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
 
     Returns:
         Dict with either ``{"skipped": True, "reason": ...}`` when under
-        threshold, ``{"checkpointed": True, ...}`` on success, or
+        threshold, ``{"checkpointed": True, "mode": "truncate"|"passive",
+        "wal_size_before_mb": ..., "wal_size_after_mb": ...,
+        "pages_checkpointed": ..., "busy": 0|1, ...}`` on success, or
         ``{"error": True, "reason": ...}`` on failure.
     """
     try:
@@ -789,28 +812,54 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
             threshold_mb=config.wal_checkpoint_threshold_mb,
         )
 
-        # Use a fresh connection with busy_timeout for the checkpoint.
-        # PASSIVE instead of TRUNCATE: TRUNCATE requires exclusive lock
-        # across ALL connections (including other processes), which fails
-        # under concurrent multi-process access and can corrupt the DB.
-        # PASSIVE checkpoints what it can without blocking writers.
-        conn = sqlite3.connect(str(db_path), timeout=5.0)
+        # Use a fresh connection with a short busy_timeout so a TRUNCATE
+        # attempt never blocks session_start beyond ~500 ms even under heavy
+        # writer contention. PASSIVE fallback handles the busy=1 case.
+        conn = sqlite3.connect(str(db_path), timeout=1.0)
+        truncate_busy = False
         try:
-            conn.execute("PRAGMA busy_timeout = 5000")
-            row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-            pages_checkpointed = row[1] if row else 0
+            conn.execute("PRAGMA busy_timeout = 500")
+            # PRAGMA wal_checkpoint(MODE) returns (busy, log_pages, checkpointed).
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            busy = int(row[0]) if row else 1
+            checkpointed = int(row[2]) if row and row[2] is not None else 0
+            mode = "truncate"
+            if busy == 1:
+                # Readers held pages -- fall back to PASSIVE so we still
+                # write frames back to the main DB even though the file
+                # cannot truncate this round.
+                truncate_busy = True
+                logger.info(
+                    "wal_checkpoint_truncate_busy",
+                    detail="readers held pages; falling back to PASSIVE",
+                )
+                row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+                busy = int(row[0]) if row else 1
+                checkpointed = int(row[2]) if row and row[2] is not None else 0
+                mode = "passive"
         finally:
             conn.close()
 
+        wal_size_after = wal_path.stat().st_size if wal_path.exists() else 0
+        wal_size_after_mb = round(wal_size_after / (1024 * 1024), 1)
+
         logger.info(
             "wal_checkpoint_complete",
+            mode=mode,
             wal_size_before_mb=wal_size_mb,
-            pages_checkpointed=pages_checkpointed,
+            wal_size_after_mb=wal_size_after_mb,
+            pages_checkpointed=checkpointed,
+            busy=busy,
+            truncate_busy=truncate_busy,
         )
         return {
             "checkpointed": True,
+            "mode": mode,
             "wal_size_before_mb": wal_size_mb,
-            "pages_checkpointed": pages_checkpointed,
+            "wal_size_after_mb": wal_size_after_mb,
+            "pages_checkpointed": checkpointed,
+            "busy": busy,
+            "truncate_busy": truncate_busy,
         }
     except Exception:  # justified: fail-open, WAL checkpoint must not block session start
         logger.warning("wal_checkpoint_failed", exc_info=True)
