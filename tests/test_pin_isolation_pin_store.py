@@ -240,3 +240,91 @@ def test_load_pin_store_evicts_orphan_pid(tmp_path: Path) -> None:
         assert "orphan" not in result, "Orphan pid entry should have been evicted"
         evicted = [e for e in logs if e.get("event") == "pin_orphan_evicted"]
         assert evicted, f"Expected pin_orphan_evicted, got {logs}"
+
+
+def test_prune_pin_store_orphans_persists_eviction(tmp_path: Path) -> None:
+    """prune_pin_store_orphans removes orphan entries from disk."""
+    if sys.platform == "win32":
+        pytest.skip("orphan pid eviction is POSIX-only without psutil")
+    from trw_mcp.state._pin_store import (
+        invalidate_pin_store_cache,
+        pin_store_path,
+        prune_pin_store_orphans,
+    )
+
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    pins_path.write_text(
+        json.dumps(
+            {
+                "orphan-key": {
+                    "run_path": str(tmp_path),
+                    "created_ts": "t",
+                    "last_heartbeat_ts": "t",
+                    "client_hint": None,
+                    "pid": 99999999,
+                },
+                "live-key": {
+                    "run_path": str(tmp_path),
+                    "created_ts": "t",
+                    "last_heartbeat_ts": "t",
+                    "client_hint": None,
+                    "pid": os.getpid(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalidate_pin_store_cache()
+
+    removed = prune_pin_store_orphans()
+
+    assert removed == 1
+    on_disk = json.loads(pins_path.read_text(encoding="utf-8"))
+    assert "orphan-key" not in on_disk
+    assert "live-key" in on_disk
+
+
+def test_prune_pin_store_orphans_no_op_when_clean(tmp_path: Path) -> None:
+    """prune returns 0 and does not rewrite when nothing is evictable."""
+    from trw_mcp.state._pin_store import (
+        invalidate_pin_store_cache,
+        pin_store_path,
+        prune_pin_store_orphans,
+    )
+
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    pins_path.write_text(
+        json.dumps(
+            {
+                "live-key": {
+                    "run_path": str(tmp_path),
+                    "created_ts": "t",
+                    "last_heartbeat_ts": "t",
+                    "client_hint": None,
+                    "pid": os.getpid(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalidate_pin_store_cache()
+    mtime_before = pins_path.stat().st_mtime_ns
+
+    removed = prune_pin_store_orphans()
+
+    assert removed == 0
+    assert pins_path.stat().st_mtime_ns == mtime_before
+
+
+def test_prune_pin_store_orphans_missing_file_returns_zero(tmp_path: Path) -> None:
+    """prune is a no-op when the pin store file does not exist."""
+    from trw_mcp.state._pin_store import pin_store_path, prune_pin_store_orphans
+
+    pins_path = pin_store_path()
+    if pins_path.exists():
+        pins_path.unlink()
+
+    assert prune_pin_store_orphans() == 0
+    assert not pins_path.exists()

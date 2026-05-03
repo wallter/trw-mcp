@@ -643,11 +643,18 @@ def _boot_sequence(
         from pathlib import Path as _Path
 
         from trw_mcp.state._paths import resolve_project_root
-        from trw_mcp.state._pin_store import load_pin_store
+        from trw_mcp.state._pin_store import load_pin_store, prune_pin_store_orphans
         from trw_mcp.state._run_gc import sweep_stale_runs
 
         project_root = resolve_project_root()
         runs_root = project_root / config.runs_root
+
+        # Persist eviction of orphan-pid / stale-path pins so they stop
+        # firing pin_orphan_evicted warnings on every load.
+        try:
+            prune_pin_store_orphans()
+        except Exception:  # justified: NFR02 — prune failure must never block server start
+            log.warning("boot_pin_prune_failed", exc_info=True)
 
         pin_ttl_seconds = config.pin_ttl_hours * 3600
         now = _time.time()
