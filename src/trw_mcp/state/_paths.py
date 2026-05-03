@@ -729,15 +729,20 @@ def resolve_installation_id() -> str:
 def detect_current_phase() -> str | None:
     """Detect the current phase from the active run.
 
-    Delegates to :func:`find_active_run` for run-directory resolution, then
-    reads the phase from ``run.yaml``.  Only returns a phase when the run's
-    ``status`` is ``"active"``.
+    PRD-FIX-083 / PRD-FIX-084 follow-on: pin-only. Was using
+    :func:`find_active_run` with no context, which fell through to the
+    legacy mtime scan and PyYAML-parsed every ``run.yaml`` (~25 s on
+    ~200 runs). This function fires from the recall-context build path
+    inside ``step_ceremony_status`` on the session_start hot path -- it
+    was the actual cause of the ~27 s ``finalize`` outliers surfaced
+    by PRD-FIX-084 telemetry.
 
     Returns:
-        Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
+        Current phase string (e.g. ``"implement"``), or ``None`` if no
+        pinned run for this session.
     """
     try:
-        active_run = find_active_run()
+        active_run = get_pinned_run()
         if active_run is None:
             return None
 
