@@ -492,14 +492,16 @@ def _select_learning_injection_candidate(
     selected_learning: dict[str, object] | None = None
     seen_ids: set[str] = set()
 
+    # PRD-FIX-085 FR05: use named factory.
+    from trw_mcp.state.recall_factories import recall_for_nudge_pool
+
     for attempt_query, attempt_tags in attempts:
-        learnings = recall_learnings(
+        learnings = recall_for_nudge_pool(
             trw_dir,
             query=attempt_query,
             tags=attempt_tags,
             min_impact=0.5,
             max_results=8,
-            compact=False,
         )
         for learning in learnings:
             learning_id = str(learning.get("id", "")).strip()

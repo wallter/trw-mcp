@@ -315,7 +315,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             is_nudge_eligible,
             record_nudge_shown,
         )
-        from trw_mcp.state.memory_adapter import recall_learnings
+        from trw_mcp.state.recall_factories import recall_for_nudge_pool
         from trw_mcp.state.surface_tracking import log_surface_event
         from trw_mcp.sync.cache import IntelligenceCache
         from trw_mcp.tools._recall_impl import build_recall_context
@@ -325,21 +325,26 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
         model_family = "generic"
 
         try:
-            from trw_mcp.models.config import TRWConfig
+            # PRD-FIX-085 FR03: use the per-process get_config() singleton
+            # instead of constructing a fresh TRWConfig per nudge call.
+            # The prior model_validate path triggered full settings-model
+            # construction (env loading, YAML parsing, profile resolution)
+            # on every call; latent perf regression risk.
+            from trw_mcp.models.config import get_config
 
-            cfg = TRWConfig.model_validate({"trw_dir": str(trw_dir)})
+            cfg = get_config()
             client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
             model_family = cfg.model_family or "generic"
         except Exception:  # justified: config may not be available, use defaults
             logger.debug("ceremony_status_config_defaults", exc_info=True)
 
         # ── Recall candidates ────────────────────────────────────────────────
-        candidates = recall_learnings(
+        # PRD-FIX-085 FR05: use named factory.
+        candidates = recall_for_nudge_pool(
             trw_dir,
             query="*",
             min_impact=0.5,
             max_results=10,
-            compact=False,
         )
         if not candidates:
             return None

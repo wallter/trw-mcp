@@ -230,21 +230,17 @@ def perform_session_recalls(
     if compact_for_pressure:
         effective_max = min(effective_max, _WRITER_PRESSURE_RECALL_CAP)
 
+    # PRD-FIX-085 FR05: use named recall factories instead of direct
+    # adapter_recall calls so the call site declares its intent.
+    from trw_mcp.state.recall_factories import (
+        recall_baseline_high_impact,
+        recall_focused,
+        recall_recent_bypass,
+    )
+
     if is_focused:
-        focused = adapter_recall(
-            trw_dir,
-            query=query,
-            min_impact=0.3,
-            max_results=effective_max,
-            compact=True,
-        )
-        baseline = adapter_recall(
-            trw_dir,
-            query="*",
-            min_impact=0.7,
-            max_results=effective_max,
-            compact=True,
-        )
+        focused = recall_focused(trw_dir, query, max_results=effective_max)
+        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
         extra["query"] = query
         extra["query_matched"] = len(focused)
         seen_ids: set[str] = set()
@@ -255,13 +251,7 @@ def perform_session_recalls(
                 learnings.append(entry)
         learnings = learnings[:effective_max]
     else:
-        baseline = adapter_recall(
-            trw_dir,
-            query="*",
-            min_impact=0.7,
-            max_results=effective_max,
-            compact=True,
-        )
+        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
         # L-fovv fix: union the baseline (high-impact, for cross-session tribal
         # knowledge) with fresh low-impact learnings (for chain-mode + per-
         # project session context). trw_learn defaults new entries to
@@ -275,12 +265,10 @@ def perform_session_recalls(
             bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
             cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
             try:
-                fresh = adapter_recall(
+                fresh = recall_recent_bypass(
                     trw_dir,
-                    query="*",
-                    min_impact=bypass_min,
                     max_results=effective_max * 2,
-                    compact=False,
+                    min_impact=bypass_min,
                 )
             except Exception:  # justified: fail-open, recent-bypass recall must not block session start
                 logger.warning(
@@ -418,6 +406,7 @@ def _phase_contextual_recall(
         min_impact=0.5,
         max_results=config.auto_recall_max_results * 3,
         compact=True,
+        allow_cold_embedding_init=False,
     )
     if not ar_entries:
         return []

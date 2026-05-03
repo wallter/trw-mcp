@@ -13,12 +13,17 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import RecallStats
+from trw_mcp.state._helpers import rotate_jsonl
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
 _TRACKING_FILE = "logs/recall_tracking.jsonl"
+
+# PRD-FIX-085 FR04: rotate at 10 MB matching surface_tracking parity.
+# Pre-fix this file grew unbounded -- observed 52 MB on the dev repo.
+_ROTATION_THRESHOLD_BYTES = 10 * 1024 * 1024
 
 
 def record_recall(learning_id: str, query: str) -> bool:
@@ -30,6 +35,9 @@ def record_recall(learning_id: str, query: str) -> bool:
         trw_dir = resolve_trw_dir()
         tracking_path = trw_dir / _TRACKING_FILE
         tracking_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # PRD-FIX-085 FR04: rotate before append.
+        rotate_jsonl(tracking_path, max_bytes=_ROTATION_THRESHOLD_BYTES)
 
         writer = FileStateWriter()
         entry: dict[str, object] = {
@@ -56,6 +64,9 @@ def record_outcome(learning_id: str, outcome: str) -> bool:
         tracking_path = trw_dir / _TRACKING_FILE
         if not tracking_path.exists():
             return False
+
+        # PRD-FIX-085 FR04: rotate before append.
+        rotate_jsonl(tracking_path, max_bytes=_ROTATION_THRESHOLD_BYTES)
 
         writer = FileStateWriter()
         entry: dict[str, object] = {

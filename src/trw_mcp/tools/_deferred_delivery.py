@@ -197,6 +197,13 @@ def _log_deferred_result(
     """Append deferred step results to an audit log."""
     log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # PRD-FIX-085 FR04: rotate at 10 MB to match surface_tracking parity.
+    # Pre-fix this file grew unbounded -- observed 25 MB on the dev repo.
+    from trw_mcp.state._helpers import rotate_jsonl
+
+    rotate_jsonl(log_path, max_bytes=10 * 1024 * 1024)
+
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "results": {k: v for k, v in results.items() if k != "timestamp"},
