@@ -214,7 +214,11 @@ def _resolve_run_dir(fn: Callable[..., object], *args: object, **kwargs: object)
         call_ctx = cast("TRWCallContext | None", _build_call_context(_extract_ctx(fn, *args, **kwargs)))
         if call_ctx is not None:
             return get_pinned_run(context=call_ctx) or find_active_run(context=call_ctx)
-        return get_pinned_run() or find_active_run()
+        # PRD-FIX-083: no ctx available. Pin-only — never fall through to the
+        # legacy mtime scan from a per-tool-call timing wrapper. Returning None
+        # leaves the timing event unattributed, which is preferable to spending
+        # ~25s on a YAML scan for every untyped call.
+        return get_pinned_run()
     except Exception:  # justified: fail-open
         logger.debug("tool_call_run_dir_resolution_failed", exc_info=True)
         return None

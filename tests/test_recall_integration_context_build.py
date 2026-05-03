@@ -114,10 +114,12 @@ def test_build_recall_context_threads_prd_knowledge_ids(tmp_path: Path) -> None:
     meta_dir.mkdir(parents=True)
     (meta_dir / "knowledge_requirements.yaml").write_text("learning_ids:\n  - L-abc01\n  - L-def02\n")
 
+    # PRD-FIX-083: build_recall_context now uses get_pinned_run() in the
+    # no-ctx fallback path (was find_active_run()). Patch the new resolver.
     with (
         patch("subprocess.run") as mock_run,
         patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
-        patch("trw_mcp.state._paths.find_active_run", return_value=run_dir),
+        patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir),
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="src/auth/login.py\n")
         ctx = build_recall_context(trw_dir, "auth scoring")

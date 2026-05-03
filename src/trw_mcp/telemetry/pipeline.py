@@ -155,10 +155,14 @@ class TelemetryPipeline:
         if "phase" in event:
             return
         try:
-            from trw_mcp.state._paths import find_active_run
+            from trw_mcp.state._paths import get_pinned_run
             from trw_mcp.state.persistence import FileStateReader
 
-            run_dir = find_active_run()
+            # PRD-FIX-083: pin-only — telemetry phase enrichment runs per
+            # event publish on the worker thread. The legacy find_active_run()
+            # scan would PyYAML-parse every run.yaml on each event when no pin
+            # exists. Phase enrichment is best-effort; missing field is fine.
+            run_dir = get_pinned_run()
             if run_dir is not None:
                 run_yaml = run_dir / "meta" / "run.yaml"
                 if run_yaml.exists():

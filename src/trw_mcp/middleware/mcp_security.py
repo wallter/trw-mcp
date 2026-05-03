@@ -143,8 +143,25 @@ def _resolve_runtime_run_dir(
             )
             return get_pinned_run(context=call_ctx) or find_active_run(context=call_ctx)
         if session_id:
-            return get_pinned_run(session_id=session_id) or find_active_run(session_id=session_id)
-        return get_pinned_run() or find_active_run()
+            # Security middleware runs on every MCP dispatch.  A transport
+            # session id is an isolated caller identity, so a missing pin must
+            # not fall through to the legacy filesystem scan.  That scan can
+            # take tens of seconds in busy shared workspaces and blocks the
+            # CallTool hot path before the tool body starts.  Treat explicit
+            # session ids like ctx-aware calls: use a matching pin if present,
+            # otherwise emit security telemetry via the fallback directory.
+            call_ctx = TRWCallContext(
+                session_id=session_id,
+                client_hint=None,
+                explicit=True,
+                fastmcp_session=None,
+            )
+            return get_pinned_run(context=call_ctx) or find_active_run(context=call_ctx)
+        # PRD-FIX-083: no caller identity (neither ctx nor session_id). Pin-only
+        # — never fall through to the legacy mtime scan from middleware that
+        # fires on every dispatch. With no identity we cannot safely attribute
+        # the active run anyway; returning None is the correct semantics.
+        return get_pinned_run()
     except Exception:
         logger.debug("mcp_security_run_dir_resolution_failed", exc_info=True)
         return None

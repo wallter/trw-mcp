@@ -523,6 +523,13 @@ def find_active_run(
 ) -> Path | None:
     """Find the active run directory for a session.
 
+    HOT-PATH RULE (PRD-FIX-083): Callers reachable from ``trw_session_start``
+    or any ceremony middleware MUST pass ``context=`` or use
+    :func:`get_pinned_run` directly. The legacy filesystem scan fallback
+    PyYAML-parses every ``run.yaml`` under ``.trw/runs/`` (~25 s on ~200
+    runs) and silently re-introduces a perf regression. The scan path
+    exists ONLY for one-shot CLI tools that have no session context.
+
     Resolution order:
     1. Per-session pinned run (set by ``pin_active_run`` during ``trw_init``)
     2. Filesystem scan fallback — ONLY when ``context is None`` (legacy /
@@ -598,6 +605,12 @@ def resolve_run_path(
     context: TRWCallContext | None = None,
 ) -> Path:
     """Resolve a run directory from an explicit path or auto-detection.
+
+    HOT-PATH RULE (PRD-FIX-083): Callers reachable from ``trw_session_start``
+    or any ceremony middleware MUST pass ``context=`` or use
+    :func:`get_pinned_run` directly. The legacy mtime-scan fallback (step 3
+    below) PyYAML-parses every ``run.yaml`` under ``.trw/runs/`` (~25 s on
+    ~200 runs).
 
     Unified implementation (PRD-FIX-007) replacing the duplicated private
     ``_resolve_run_path`` helpers in orchestration.py and findings.py.
