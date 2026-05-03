@@ -45,6 +45,12 @@ if TYPE_CHECKING:
 
 _SubT = TypeVar("_SubT")
 
+# Process-local dedup so the multi-platform first-wins WARN does not fire
+# 100+ times per tool call when many config-aware code paths each touch
+# ``self.client_profile``. Keyed by (primary, target_platforms) so a real
+# config change still surfaces a fresh warning.
+_LOGGED_MULTI_PLATFORM: set[tuple[str, tuple[str, ...]]] = set()
+
 
 class TRWConfig(_TRWConfigFields):
     """TRW MCP server configuration.
@@ -351,15 +357,24 @@ class TRWConfig(_TRWConfigFields):
         Uses first platform as primary (F08: first-wins-with-warning for multi-platform).
         Uses @property (not @cached_property) because resolve_client_profile is a
         cheap dict lookup, and caching on a non-frozen BaseSettings risks stale data.
+
+        The first-wins warning is deduplicated per (primary, signature) so a
+        single tool call doesn't spew the same WARN 100+ times when many
+        config reads happen on the hot path.
         """
         primary = self.target_platforms[0] if self.target_platforms else "claude-code"
         if len(self.target_platforms) > 1:
-            structlog.get_logger(__name__).warning(
-                "multi_platform_profile_resolution",
-                primary=primary,
-                all_platforms=self.target_platforms,
-                detail="Using first platform as primary profile; instruction sync writes to all targets",
-            )
+            signature = (primary, tuple(self.target_platforms))
+            if signature not in _LOGGED_MULTI_PLATFORM:
+                _LOGGED_MULTI_PLATFORM.add(signature)
+                structlog.get_logger(__name__).warning(
+                    "multi_platform_profile_resolution",
+                    primary=primary,
+                    all_platforms=self.target_platforms,
+                    detail=(
+                        "Using first platform as primary profile; instruction sync writes to all targets"
+                    ),
+                )
         return resolve_client_profile(primary)
 
     @property
