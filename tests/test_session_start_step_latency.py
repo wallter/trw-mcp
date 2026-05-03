@@ -52,6 +52,9 @@ def test_session_start_emits_step_durations_ms(
         "counter",
         "sanitize_maintain",
         "phase_recall",
+        "embed_health",
+        "assertion_health",
+        "finalize",
         "total",
     }
     present_keys = set(durations.keys())

@@ -688,9 +688,15 @@ def register_ceremony_tools(server: FastMCP) -> None:
             logger.debug("session_auto_recall_failed", exc_info=True)
         _record_step("phase_recall", _phase_recall_started)
 
+        # PRD-FIX-084 follow-on: cover the post-phase-recall tail so total
+        # never has a large unmeasured gap. assertion_health iterates every
+        # learning with an assertion and can dominate the call on big corpora.
+        _embed_health_started = time.monotonic()
         # FR01 (PRD-FIX-053): Embed health advisory for agents.
         results["embed_health"] = step_embed_health()
+        _record_step("embed_health", _embed_health_started)
 
+        _assertion_health_started = time.monotonic()
         # FR07 (PRD-CORE-086): Assertion health summary from cached last_result fields.
         try:
             ah_start = time.monotonic()
@@ -729,7 +735,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
             logger.debug("assertion_health_computed", duration_ms=round(ah_ms, 1))
         except Exception:  # justified: fail-open, assertion health must not block session start
             logger.debug("assertion_health_failed", exc_info=True)
+        _record_step("assertion_health", _assertion_health_started)
 
+        _finalize_started = time.monotonic()
         results["errors"] = errors
         results["success"] = len(errors) == 0
 
@@ -761,6 +769,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 step_ceremony_status(cast("dict[str, object]", results))
         except Exception:  # justified: fail-open, status decoration must not block session start
             logger.debug("session_ceremony_status_failed", exc_info=True)
+
+        _record_step("finalize", _finalize_started)
 
         # PRD-FIX-084: total elapsed time for the entire session_start call.
         _record_step("total", _step_started_at)
