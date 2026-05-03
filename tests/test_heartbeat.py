@@ -62,10 +62,10 @@ class TestTouchHeartbeat:
     """FR-01: touch_heartbeat creates/updates meta/heartbeat in active run dir."""
 
     def test_touch_heartbeat_creates_file(self, tmp_path: Path) -> None:
-        """Heartbeat file is created when touch_heartbeat is called with an active run."""
+        """Heartbeat file is created when touch_heartbeat is called with a pinned run."""
         run_dir = _make_run_dir(tmp_path)
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir):
             touch_heartbeat()
 
         heartbeat = run_dir / "meta" / "heartbeat"
@@ -76,7 +76,7 @@ class TestTouchHeartbeat:
         run_dir = _make_run_dir(tmp_path)
         heartbeat = run_dir / "meta" / "heartbeat"
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir):
             touch_heartbeat()
             first_mtime = heartbeat.stat().st_mtime
 
@@ -89,8 +89,8 @@ class TestTouchHeartbeat:
         assert second_mtime > first_mtime, "mtime should increase on subsequent touch"
 
     def test_touch_heartbeat_no_active_run(self) -> None:
-        """No error is raised when no active run exists."""
-        with patch("trw_mcp.state._paths.find_active_run", return_value=None):
+        """No error is raised when no pinned run exists."""
+        with patch("trw_mcp.state._paths.get_pinned_run", return_value=None):
             # Should not raise
             touch_heartbeat()
 
@@ -99,7 +99,7 @@ class TestTouchHeartbeat:
         run_dir = _make_run_dir(tmp_path)
 
         with (
-            patch("trw_mcp.state._paths.find_active_run", return_value=run_dir),
+            patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir),
             patch("pathlib.Path.touch", side_effect=OSError("disk full")),
         ):
             # Should not raise -- fail-open
@@ -111,7 +111,7 @@ class TestTouchHeartbeat:
 
         with (
             patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir),
-            # find_active_run should NOT be called when pinned run exists
+            # find_active_run should NOT be called -- pin-only, no fallback scan
             patch("trw_mcp.state._paths.find_active_run") as mock_find,
         ):
             touch_heartbeat()
@@ -120,18 +120,23 @@ class TestTouchHeartbeat:
         heartbeat = run_dir / "meta" / "heartbeat"
         assert heartbeat.exists()
 
-    def test_touch_heartbeat_falls_back_to_find_active_run(self, tmp_path: Path) -> None:
-        """When no pinned run, falls back to find_active_run."""
-        run_dir = _make_run_dir(tmp_path)
+    def test_touch_heartbeat_no_scan_fallback_when_pin_missing(self, tmp_path: Path) -> None:
+        """When no pin, touch_heartbeat must NOT scan via find_active_run.
+
+        Regression: the legacy fallback fired on every tool call (via the
+        ceremony middleware) and PyYAML-parsed every run.yaml under
+        .trw/runs/ — observed at 3-5s per call with ~200 run dirs. With
+        no pin there is no session-owned run to heartbeat anyway.
+        """
+        _make_run_dir(tmp_path)
 
         with (
             patch("trw_mcp.state._paths.get_pinned_run", return_value=None),
-            patch("trw_mcp.state._paths.find_active_run", return_value=run_dir),
+            patch("trw_mcp.state._paths.find_active_run") as mock_find,
         ):
             touch_heartbeat()
 
-        heartbeat = run_dir / "meta" / "heartbeat"
-        assert heartbeat.exists()
+        mock_find.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

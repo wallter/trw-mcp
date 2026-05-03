@@ -756,9 +756,13 @@ def touch_heartbeat() -> None:
     PRD-QUAL-050-FR01.
     """
     try:
+        # Pin-only: no scan fallback. touch_heartbeat fires on EVERY tool
+        # call via the ceremony middleware; the legacy find_active_run()
+        # fallback PyYAML-parses every .trw/runs/*/meta/run.yaml on miss
+        # (~3-5s per call with ~200 runs). With no pin there is no
+        # session-owned run to heartbeat anyway -- updating some other
+        # session's run was the wrong semantics.
         run_dir = get_pinned_run()
-        if run_dir is None:
-            run_dir = find_active_run()
         if run_dir is None:
             return
 

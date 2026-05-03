@@ -291,6 +291,21 @@ def _reset_run_pin() -> Iterator[None]:
     invalidate_pin_store_cache()
 
 
+@pytest.fixture(autouse=True)
+def _reset_auto_close_throttle_fixture() -> Iterator[None]:
+    """Reset the per-process auto_close_stale_runs throttle between tests.
+
+    Production code throttles auto_close_stale_runs to once per hour to keep
+    session_start fast; tests need a fresh throttle window per case so they
+    can call the function multiple times without artificially being skipped.
+    """
+    from trw_mcp.state.analytics._stale_runs import _reset_auto_close_throttle
+
+    _reset_auto_close_throttle()
+    yield
+    _reset_auto_close_throttle()
+
+
 def _join_and_reset_deferred() -> None:
     """Wait for any background deliver thread, then clear the reference.
 

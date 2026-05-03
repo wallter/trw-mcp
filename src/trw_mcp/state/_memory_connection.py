@@ -529,13 +529,24 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
         return {"embedded": 0, "skipped": 0, "failed": 0}
 
     backend = get_backend(trw_dir)
-    entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
 
-    # Idempotency: bulk-fetch already-embedded IDs once so repeated calls do
-    # not re-embed the entire corpus. Without this, every session_start that
-    # ran backfill paid the full embedding cost (observed: 6437 entries =
-    # ~23 minutes, blocking other agents on the SQLite write lock).
+    # Idempotency: bulk-fetch already-embedded IDs first. When the vector
+    # count covers (or exceeds) the entry count, there is nothing to do --
+    # short-circuit BEFORE list_entries(), which loads + Pydantic-validates
+    # every MemoryEntry (~27s for 6438 rows). Both checks are O(rows-only)
+    # COUNT/SELECT-ID queries, ~ms even on big corpora.
     already_embedded = backend.existing_vector_ids()
+    entry_count = backend.count(namespace=_NAMESPACE)
+    if entry_count <= len(already_embedded):
+        logger.info(
+            "embeddings_backfill_complete",
+            embedded=0,
+            skipped=entry_count,
+            failed=0,
+        )
+        return {"embedded": 0, "skipped": entry_count, "failed": 0}
+
+    entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
 
     embedded = 0
     skipped = 0

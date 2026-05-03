@@ -17,6 +17,7 @@ correctly intercepts calls from this module.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,22 @@ from trw_mcp.state.analytics import report as _report
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
+
+# Per-process throttle for auto_close_stale_runs. Sweeping every active
+# run.yaml on every session_start cost ~3-5s on a project with ~200 runs;
+# stale-run cleanup is idempotent and not time-critical, so once per hour
+# is plenty.
+_AUTO_CLOSE_MIN_INTERVAL_SECONDS = 3600.0
+_auto_close_state_lock = threading.Lock()
+_auto_close_last_ts: float = 0.0
+
+
+def _reset_auto_close_throttle() -> None:
+    """Test hook: reset the per-process throttle. Never call from production."""
+
+    global _auto_close_last_ts
+    with _auto_close_state_lock:
+        _auto_close_last_ts = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +177,8 @@ def _is_run_stale(
 def auto_close_stale_runs(
     age_days: int | None = None,
     ttl_hours: int | None = None,
+    *,
+    force: bool = False,
 ) -> dict[str, object]:
     """Auto-close active runs older than a configurable threshold.
 
@@ -168,15 +187,45 @@ def auto_close_stale_runs(
     Checkpoint timestamps extend the TTL: the most recent checkpoint
     resets the staleness clock.
 
-    Called automatically during trw_session_start when enabled.
+    Called automatically during trw_session_start when enabled. Throttled
+    per-process to once per hour because sweeping every active run.yaml
+    cost ~3-5s on a project with ~200 runs; the sweep is idempotent and
+    not time-critical, so the previous "every session_start" cadence
+    burned latency for no benefit. Pass ``force=True`` to bypass the
+    throttle (tests, manual repair).
 
     Args:
         age_days: Days of inactivity before closing. Defaults to config value.
         ttl_hours: Hour-level TTL override. Takes precedence when set.
+        force: Skip the per-process throttle (default ``False``).
 
     Returns:
-        Dict with runs_closed list, count, and any errors.
+        Dict with runs_closed list, count, and any errors. When throttled,
+        returns ``{"runs_closed": [], "count": 0, "errors": [],
+        "throttled": True, "next_eligible_in_seconds": <float>}``.
     """
+    global _auto_close_last_ts
+    if not force:
+        import time
+
+        with _auto_close_state_lock:
+            now_mono = time.monotonic()
+            elapsed = now_mono - _auto_close_last_ts
+            if _auto_close_last_ts > 0.0 and elapsed < _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
+                logger.debug(
+                    "auto_close_stale_runs_throttled",
+                    elapsed_seconds=elapsed,
+                    interval_seconds=_AUTO_CLOSE_MIN_INTERVAL_SECONDS,
+                )
+                return {
+                    "runs_closed": [],
+                    "count": 0,
+                    "errors": [],
+                    "throttled": True,
+                    "next_eligible_in_seconds": _AUTO_CLOSE_MIN_INTERVAL_SECONDS - elapsed,
+                }
+            _auto_close_last_ts = now_mono
+
     cfg = _report.get_config()
     reader = FileStateReader()
     writer = FileStateWriter()

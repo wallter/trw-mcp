@@ -41,6 +41,34 @@ class TestBackfillEmbeddings:
             assert result["failed"] == 0
             assert mock_upsert.call_count == 2
 
+    def test_short_circuits_when_all_entries_already_embedded(self, trw_dir: Path) -> None:
+        """When vector count covers all entries, list_entries() is NOT called.
+
+        Regression for the n=6438 case where every entry already had a vector
+        but list_entries(limit=N) still loaded + Pydantic-validated all rows
+        (~27s wasted per session_start). The short-circuit must fire from
+        cheap COUNT/SELECT-id queries alone, never touching list_entries.
+        """
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
+        backend = get_backend(trw_dir)
+
+        with (
+            patch(
+                "trw_mcp.state._memory_connection.get_embedder",
+                return_value=mock_embedder,
+            ),
+            patch.object(backend, "existing_vector_ids", return_value={f"L-{i}" for i in range(5)}),
+            patch.object(backend, "count", return_value=5),
+            patch.object(backend, "list_entries") as mock_list,
+            patch.object(backend, "upsert_vector") as mock_upsert,
+        ):
+            result = backfill_embeddings(trw_dir)
+            assert result == {"embedded": 0, "skipped": 5, "failed": 0}
+            mock_list.assert_not_called()
+            mock_embedder.embed.assert_not_called()
+            mock_upsert.assert_not_called()
+
     def test_skips_already_embedded_entries(self, trw_dir: Path) -> None:
         """Already-embedded entries are skipped without calling embed.
 
