@@ -169,6 +169,13 @@ class SessionStartResultDict(TypedDict, total=False):
     # Absent on success; populated with ``{key, expected, actual, remediation}``
     # entries when any Phase-1 default cannot be resolved.
     boot_audit_failures: list[dict[str, str]]
+    # PRD-FIX-084: Per-step latency telemetry (milliseconds). Keys: recall,
+    # run_resolve, surface_stamp, log_event, telemetry, counter,
+    # sanitize_maintain, phase_recall, total. Absent keys mean the step
+    # did not start (e.g. exited via partial-failure earlier). Future
+    # regressions of the "step accidentally O(corpus)" class are visible
+    # from a single log line via the ``session_start_ok`` event payload.
+    step_durations_ms: dict[str, float]
 
 
 class RunReportResultDict(TypedDict, total=False):

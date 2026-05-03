@@ -491,6 +491,20 @@ def register_ceremony_tools(server: FastMCP) -> None:
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
+        # PRD-FIX-084: Per-step latency telemetry. The five regressions of the
+        # "step in step_sanitize_and_maintain accidentally O(corpus)" class
+        # required py-spy on a live server to diagnose -- which step swallowed
+        # the time was invisible from logs. step_durations_ms makes the slow
+        # step name appear directly on session_start_ok event payloads.
+        _step_started_at = time.monotonic()
+        step_durations_ms: dict[str, float] = {}
+
+        def _record_step(step_key: str, started_at: float) -> None:
+            """Record elapsed milliseconds for a named step."""
+
+            elapsed_ms = (time.monotonic() - started_at) * 1000.0
+            step_durations_ms[step_key] = round(elapsed_ms, 2)
+
         # PRD-HPO-MEAS-001 NFR-12 / FR-13: fail at boot, before any session
         # telemetry or startup artifacts are written.
         from trw_mcp.telemetry.boot_audit import run_boot_audit
@@ -498,6 +512,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         run_boot_audit()
 
         # Step 1: Recall learnings via SQLite adapter (compact mode)
+        _recall_started = time.monotonic()
         try:
             trw_dir = resolve_trw_dir()
             learnings, _auto_recalled, extra = perform_session_recalls(
@@ -526,11 +541,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
             errors.append(f"recall: {exc}")
             results["learnings"] = []
             results["learnings_count"] = 0
+        _record_step("recall", _recall_started)
 
         # Step 2: Check active run status (and pin it for this process).
         # PRD-CORE-141 FR03/FR05/FR06: thread ctx through so fresh ctx-aware
         # sessions do NOT hijack another session's active run via the mtime
         # scan, and surface a structured ``hint`` field in the no-pin case.
+        _run_resolve_started = time.monotonic()
         call_ctx = _build_call_context(ctx)
         run_dir: Path | None = None
         try:
@@ -552,6 +569,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception as exc:  # justified: fail-open, run status check must not block session start
             errors.append(f"status: {exc}")
             results["run"] = {"active_run": None, "status": "error"}
+        _record_step("run_resolve", _run_resolve_started)
 
         # Step 2c: Resolve surface snapshot + stamp run_surface_snapshot.yaml
         # (PRD-HPO-MEAS-001 FR-1 / FR-2).
@@ -561,6 +579,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         #   run_surface_snapshot.yaml frozen copy under <run_dir>/meta/.
         # - Failure is non-fatal by design (fail-open) — the empty-string
         #   Phase-1 default remains available on HPOTelemetryEvent.
+        _surface_stamp_started = time.monotonic()
         surface_snapshot_id: str = ""
         try:
             from trw_mcp.telemetry.artifact_registry import SurfaceRegistry, resolve_surface_registry
@@ -588,26 +607,34 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, surface stamping must not block session start
             logger.debug("surface_snapshot_stamp_failed", exc_info=True)
             results["surface_snapshot_id"] = ""
+        _record_step("surface_stamp", _surface_stamp_started)
 
         # Step 3: Log session_start event (FR01, PRD-CORE-031)
+        _log_event_started = time.monotonic()
         try:
             step_log_session_event(run_dir, cast("dict[str, object]", results), query, is_focused)
         except Exception:  # justified: fail-open, event logging must not block session start
             logger.debug("session_event_write_failed", exc_info=True)
+        _record_step("log_event", _log_event_started)
 
         # Step 3b: Queue SessionStartEvent for telemetry publishing
+        _telemetry_started = time.monotonic()
         try:
             step_telemetry_startup(cast("dict[str, object]", results), run_dir)
         except Exception:  # justified: fail-open, telemetry publish must not block session start
             logger.debug("session_telemetry_failed", exc_info=True)
+        _record_step("telemetry", _telemetry_started)
 
         # Step 3c: Increment sessions_tracked counter (FIX-050-FR06)
+        _counter_started = time.monotonic()
         try:
             step_increment_session_counter()
         except Exception:  # justified: fail-open, counter increment must not block session start
             logger.debug("session_counter_increment_failed", exc_info=True)
+        _record_step("counter", _counter_started)
 
         # Steps 3d, 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings, sanitization)
+        _sanitize_started = time.monotonic()
         try:
             maintenance = step_sanitize_and_maintain(run_dir)
             for key in (
@@ -625,8 +652,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     results[key] = maintenance[key]
         except Exception:  # justified: fail-open, auto-maintenance must not block session start
             logger.debug("session_maintenance_failed", exc_info=True)
+        _record_step("sanitize_maintain", _sanitize_started)
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
+        _phase_recall_started = time.monotonic()
         try:
             if bool(results.get("response_compacted")):
                 results["auto_recall_deferred"] = {
@@ -657,6 +686,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     results["auto_recall_count"] = len(phase_recalled)
         except Exception:  # justified: fail-open, auto-recall must not block session start
             logger.debug("session_auto_recall_failed", exc_info=True)
+        _record_step("phase_recall", _phase_recall_started)
 
         # FR01 (PRD-FIX-053): Embed health advisory for agents.
         results["embed_health"] = step_embed_health()
@@ -732,6 +762,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, status decoration must not block session start
             logger.debug("session_ceremony_status_failed", exc_info=True)
 
+        # PRD-FIX-084: total elapsed time for the entire session_start call.
+        _record_step("total", _step_started_at)
+        results["step_durations_ms"] = step_durations_ms
+
         run_info: RunStatusDict | None = results.get("run")
         _active_run_id = str(run_info.get("active_run", "")) if run_info else ""
         _phase = str(run_info.get("phase", "")) if run_info else ""
@@ -743,6 +777,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             phase=_phase,
             task=_task,
             learnings_count=_learnings_count,
+            step_durations_ms=step_durations_ms,
         )
         logger.debug(
             "session_start_learnings_loaded",
