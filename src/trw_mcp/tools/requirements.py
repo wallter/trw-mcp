@@ -464,6 +464,23 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             "integrity_warnings": v2_result.integrity_warnings,
         }
 
+        # Substrate-First gate (PRD-DIST-218 FR-2). Heuristic check:
+        # flag PRDs that propose module-level hardcoded vocabulary
+        # collections without an acknowledged justification.
+        try:
+            from trw_mcp.tools._substrate_first_check import substrate_first_check
+
+            substrate_result = substrate_first_check(content)
+            validate_result["substrate_first"] = substrate_result.to_payload()
+            if substrate_result.verdict == "fail":
+                logger.warning(
+                    "substrate_first_gate_fail",
+                    prd_id=_prd_id_str,
+                    flagged_count=len(substrate_result.flagged_collections),
+                )
+        except Exception:  # justified: gate must not break prd_validate
+            logger.debug("substrate_first_check_skipped", exc_info=True)
+
         # Inject ceremony progress summary.
         try:
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir

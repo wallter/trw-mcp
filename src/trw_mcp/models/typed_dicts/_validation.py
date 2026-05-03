@@ -111,3 +111,5 @@ class ValidateResultDict(TypedDict, total=False):
     integrity_warnings: list[str]
     # Ceremony
     ceremony_status: str
+    # Substrate-First gate (PRD-DIST-218 FR-2)
+    substrate_first: dict[str, object]
