@@ -33,12 +33,48 @@ class TestBackfillEmbeddings:
                 return_value=mock_embedder,
             ),
             patch.object(backend, "upsert_vector") as mock_upsert,
+            patch.object(backend, "existing_vector_ids", return_value=set()),
         ):
             result = backfill_embeddings(trw_dir)
             assert result["embedded"] == 2
             assert result["skipped"] == 0
             assert result["failed"] == 0
             assert mock_upsert.call_count == 2
+
+    def test_skips_already_embedded_entries(self, trw_dir: Path) -> None:
+        """Already-embedded entries are skipped without calling embed.
+
+        Regression for the bug where backfill_embeddings re-embedded every
+        entry on every call (no idempotency check), causing ~23 min of
+        synchronous work inside trw_session_start on a 6437-entry corpus.
+        """
+        store_learning(trw_dir, "L-already-1", "Existing 1", "Detail 1")
+        store_learning(trw_dir, "L-already-2", "Existing 2", "Detail 2")
+        store_learning(trw_dir, "L-fresh", "Needs embed", "Detail 3")
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
+
+        backend = get_backend(trw_dir)
+
+        with (
+            patch(
+                "trw_mcp.state._memory_connection.get_embedder",
+                return_value=mock_embedder,
+            ),
+            patch.object(backend, "upsert_vector") as mock_upsert,
+            patch.object(
+                backend,
+                "existing_vector_ids",
+                return_value={"L-already-1", "L-already-2"},
+            ),
+        ):
+            result = backfill_embeddings(trw_dir)
+            assert result["embedded"] == 1
+            assert result["skipped"] == 2
+            assert result["failed"] == 0
+            assert mock_embedder.embed.call_count == 1
+            assert mock_upsert.call_count == 1
 
     def test_skips_empty_content(self, trw_dir: Path) -> None:
         """Entries with empty content+detail are skipped (lines 765-767)."""

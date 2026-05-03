@@ -61,13 +61,15 @@ def resolve_effective_session_id(trw_dir: Path | None = None) -> str:
     string is always non-empty.
     """
 
-    # Layer 1 — active run's run_id. Uses find_active_run() which reads
-    # the persistent pin store. No pin -> None -> fall through.
+    # Layer 1 — active run's run_id. Pin-only: avoids the legacy mtime scan
+    # of every run.yaml under .trw/runs/ which dominated session_start cost
+    # (observed ~25-30s for ~200 run dirs via PyYAML). When no pin exists for
+    # the current session, fall through to the env/process layers below.
     try:
-        from trw_mcp.state._paths import find_active_run, resolve_trw_dir
+        from trw_mcp.state._paths import get_pinned_run, resolve_trw_dir
 
         _ = trw_dir or resolve_trw_dir()
-        active = find_active_run()
+        active = get_pinned_run()
         if active is not None:
             run_id = active.name
             if run_id:

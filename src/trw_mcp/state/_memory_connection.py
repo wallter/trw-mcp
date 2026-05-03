@@ -246,6 +246,22 @@ def get_embedder() -> LocalEmbeddingProvider | None:
         return _embedder
 
 
+def get_initialized_embedder() -> LocalEmbeddingProvider | None:
+    """Return the cached embedder without triggering a cold model load.
+
+    ``trw_session_start`` is a latency-sensitive MCP hot path.  The normal
+    :func:`get_embedder` call may import sentence-transformers and load a local
+    model, which can take longer than common MCP client timeouts and can leave
+    heavy torch worker threads behind.  Callers that can tolerate keyword-only
+    recall should use this helper and skip vector search unless an embedder was
+    already initialized by an explicit embedding operation.
+    """
+
+    if not _embedder_checked:
+        return None
+    return _embedder
+
+
 def reset_embedder() -> None:
     """Reset the embedder singleton (for tests)."""
     global _embedder, _embedder_checked, _embedder_unavailable_reason
@@ -344,7 +360,7 @@ def _append_wal_health(result: dict[str, object]) -> None:
         logger.debug("wal_health_check_failed", exc_info=True)
 
 
-def check_embeddings_status() -> dict[str, object]:
+def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
 
     Returns a dict with:
@@ -368,7 +384,18 @@ def check_embeddings_status() -> dict[str, object]:
         _append_wal_health(result)
         return result
 
-    embedder = get_embedder()
+    if not allow_initialize and not _embedder_checked:
+        result = {
+            "enabled": True,
+            "available": False,
+            "advisory": "Embeddings enabled; cold model initialization was deferred on the MCP hot path.",
+            "recent_failures": _embed_failures,
+            "initialization_deferred": True,
+        }
+        _append_wal_health(result)
+        return result
+
+    embedder = get_embedder() if allow_initialize else get_initialized_embedder()
     if embedder is not None:
         result = {
             "enabled": True,
@@ -504,6 +531,12 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
     backend = get_backend(trw_dir)
     entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
 
+    # Idempotency: bulk-fetch already-embedded IDs once so repeated calls do
+    # not re-embed the entire corpus. Without this, every session_start that
+    # ran backfill paid the full embedding cost (observed: 6437 entries =
+    # ~23 minutes, blocking other agents on the SQLite write lock).
+    already_embedded = backend.existing_vector_ids()
+
     embedded = 0
     skipped = 0
     failed = 0
@@ -511,8 +544,9 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
     for entry in entries:
         if entry.metadata.get("system_canary") == "true":
             continue
-        # Check if vector already exists by attempting a search
-        # with high top_k -- cheaper than adding a get_vector method
+        if entry.id in already_embedded:
+            skipped += 1
+            continue
         try:
             text = f"{entry.content} {entry.detail}"
             if not text.strip():

@@ -42,7 +42,7 @@ class TestResolveEffectiveSessionId:
 
     def test_env_var_takes_precedence_over_process_uuid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_SESSION_ID", "operator-forced-id")
-        with patch("trw_mcp.state._paths.find_active_run", return_value=None):
+        with patch("trw_mcp.state._paths.get_pinned_run", return_value=None):
             sid = resolve_effective_session_id(tmp_path)
         assert sid == "operator-forced-id"
 
@@ -51,7 +51,7 @@ class TestResolveEffectiveSessionId:
         fake_run = tmp_path / "task1" / "run-abc123" / "meta"
         fake_run.mkdir(parents=True)
         with patch(
-            "trw_mcp.state._paths.find_active_run",
+            "trw_mcp.state._paths.get_pinned_run",
             return_value=fake_run.parent,
         ):
             sid = resolve_effective_session_id(tmp_path)
@@ -60,7 +60,7 @@ class TestResolveEffectiveSessionId:
     def test_lookup_exception_falls_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TRW_SESSION_ID", raising=False)
         with patch(
-            "trw_mcp.state._paths.find_active_run",
+            "trw_mcp.state._paths.get_pinned_run",
             side_effect=RuntimeError("boom"),
         ):
             sid = resolve_effective_session_id(tmp_path)
@@ -82,11 +82,11 @@ class TestSurfaceEventSessionIdPropagation:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
-        # Patch find_active_run to return a fake run so we get a deterministic id.
+        # Patch get_pinned_run to return a fake run so we get a deterministic id.
         fake_run = trw_dir / "runs" / "task" / "run-XYZ" / "meta"
         fake_run.mkdir(parents=True)
         monkeypatch.setattr(
-            "trw_mcp.state._paths.find_active_run",
+            "trw_mcp.state._paths.get_pinned_run",
             lambda: fake_run.parent,
         )
         monkeypatch.setattr(_recall_impl, "_detect_surface_phase", lambda: "implement")
