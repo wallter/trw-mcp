@@ -65,7 +65,7 @@ def _get_cached_run_dir(call_ctx: TRWCallContext | None = None) -> Path | None:
         try:
             return find_active_run(context=call_ctx)
         except TypeError:
-            return find_active_run()
+            return find_active_run()  # noqa: PRD-FIX-085 — TypeError compat for zero-arg test doubles
 
     global _cached_run_dir
     now = time.monotonic()
@@ -77,7 +77,11 @@ def _get_cached_run_dir(call_ctx: TRWCallContext | None = None) -> Path | None:
         ts, run_dir = _cached_run_dir
         if now - ts < _RUN_DIR_CACHE_TTL:
             return run_dir
-        run_dir = find_active_run()
+        # PRD-FIX-085 FR01: pin-only is the desired behavior here -- this
+        # cache fallback is for legacy callers without ctx; since
+        # find_active_run() is now pin-only by default, we get the pin
+        # (or None) without a YAML scan. 60s cache amortizes any cost.
+        run_dir = find_active_run()  # noqa: PRD-FIX-085 — pin-only via cache, no scan
         _cached_run_dir = (now, run_dir)
         return run_dir
 

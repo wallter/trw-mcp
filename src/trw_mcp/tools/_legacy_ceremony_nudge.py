@@ -24,7 +24,10 @@ def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
     try:
         from trw_mcp.state._paths import find_active_run
 
-        run_dir = find_active_run()
+        # PRD-FIX-085 FR01: this module has no production callers in
+        # trw-mcp/src/ (verified 2026-05-03). Pin-only behavior is fine;
+        # if dead-code-removal lands, the whole file goes.
+        run_dir = find_active_run()  # noqa: PRD-FIX-085 — legacy module, no live callers
         if run_dir is None:
             return
 

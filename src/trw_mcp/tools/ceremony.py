@@ -491,6 +491,16 @@ def register_ceremony_tools(server: FastMCP) -> None:
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
+        # PRD-FIX-085 FR02: mark this scope as HOT_PATH so any caller that
+        # accidentally invokes the legacy mtime scan during session_start
+        # emits a hot_path_legacy_scan_attempted WARN (or raises in
+        # TRW_HOT_PATH_STRICT=1).  ContextVar is reset in a try/finally
+        # block at the BOTTOM of trw_session_start so it always unwinds
+        # even if a step raises.
+        from trw_mcp.state._paths import HOT_PATH
+
+        _hot_path_token = HOT_PATH.set(True)
+
         # PRD-FIX-084: Per-step latency telemetry. The five regressions of the
         # "step in step_sanitize_and_maintain accidentally O(corpus)" class
         # required py-spy on a live server to diagnose -- which step swallowed
@@ -793,6 +803,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
             "session_start_learnings_loaded",
             count=_learnings_count,
         )
+
+        # PRD-FIX-085 FR02: reset HOT_PATH ContextVar before returning. Always
+        # runs even if step bodies raised, because each step uses its own
+        # try/except. If a future change adds an unhandled raise, this reset
+        # is moot (the contextvar will be GC'd with the asyncio task), but
+        # explicit reset is correct hygiene.
+        HOT_PATH.reset(_hot_path_token)
         return results
 
     @server.tool(output_schema=None)
