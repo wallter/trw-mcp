@@ -198,6 +198,9 @@ def auto_close_stale_runs(
     if not runs_root.exists():
         return {"runs_closed": closed, "count": 0, "errors": errors}
 
+    # Lazy import to avoid a cycle with state/_run_gc importing _paths.
+    from trw_mcp.state._run_gc import _prefilter_status
+
     for task_dir in sorted(runs_root.iterdir()):
         if not task_dir.is_dir():
             continue
@@ -205,6 +208,16 @@ def auto_close_stale_runs(
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
                 continue
+
+            # Fast path: regex-prefilter status from the file header so
+            # terminal runs short-circuit without invoking the YAML parser.
+            # A few legacy run.yaml files have grown to multi-MB; full safe
+            # parsing on those takes seconds, and they are typically already
+            # terminal so the parse is wasted work.
+            prefilter_status = _prefilter_status(run_yaml)
+            if prefilter_status is not None and prefilter_status != "active":
+                continue
+
             try:
                 data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", ""))
@@ -260,12 +273,18 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
     if not runs_root.exists():
         return 0
 
+    # Lazy import — see auto_close_stale_runs for rationale.
+    from trw_mcp.state._run_gc import _prefilter_status
+
     for task_dir in sorted(runs_root.iterdir()):
         if not task_dir.is_dir():
             continue
         for run_dir in sorted(task_dir.iterdir()):
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
+                continue
+            prefilter_status = _prefilter_status(run_yaml)
+            if prefilter_status is not None and prefilter_status != "active":
                 continue
             try:
                 data = reader.read_yaml(run_yaml)
