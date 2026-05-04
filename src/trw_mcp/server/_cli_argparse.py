@@ -263,10 +263,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     auth_sub.add_parser("status", help="Show current authentication status")
 
     # uninstall
-    uninstall_parser = subparsers.add_parser(
-        "uninstall",
-        help="Remove TRW files from a project",
-    )
+    uninstall_parser = subparsers.add_parser("uninstall", help="Remove TRW files from a project")
     uninstall_parser.add_argument(
         "target_dir",
         nargs="?",
