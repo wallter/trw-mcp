@@ -64,6 +64,9 @@ from trw_mcp.state.validation._prd_scoring_parsing import (
     _parse_section_content as _parse_section_content,
     _validation_profile as _validation_profile,
 )
+from trw_mcp.state.validation._prd_scoring_structural import (
+    score_structural_completeness as score_structural_completeness,
+)
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _BARE_IMPL_REF_RE as _BARE_IMPL_REF_RE,
     _BARE_TEST_REF_RE as _BARE_TEST_REF_RE,
@@ -80,7 +83,7 @@ from trw_mcp.state.validation._prd_scoring_traceability import (
     _normalize_reference_token as _normalize_reference_token,
     _score_traceability_matrix as _score_traceability_matrix,
 )
-from trw_mcp.state.validation.template_variants import get_required_sections, get_variant_for_category
+from trw_mcp.state.validation.template_variants import get_variant_for_category
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -179,135 +182,6 @@ def score_content_density(
             "avg_density": round(avg_density, 4),
             "sections_scored": len(section_scores),
         },
-    )
-
-
-def score_structural_completeness(
-    frontmatter: dict[str, object],
-    sections: list[str],
-    config: TRWConfig | None = None,
-    category: str | None = None,
-    content: str | None = None,
-) -> DimensionScore:
-    """Score the Structural Completeness dimension (15 points max).
-
-    Checks: category-appropriate sections present, required frontmatter
-    fields, confidence scores present (PRD-CORE-080-FR05).
-
-    The expected section count is derived from the PRD's ``category``
-    field in frontmatter via the category-to-template-variant mapping.
-    Unknown or missing categories default to the 12-section Feature
-    template for backward compatibility.
-
-    For AI/LLM/agentic PRDs, also scores AI/agentic operational subsections
-    in section 7 ("AI/LLM Operational Sections"): Data/Context Provenance,
-    Failure Modes, Human Oversight, Evaluation Plan, Release Gate,
-    Monitoring Plan, and Risk Register By Failure Class.
-
-    Args:
-        frontmatter: Parsed YAML frontmatter.
-        sections: List of section heading names found.
-        config: Optional config for weight override.
-        category: Optional explicit category override. When ``None``,
-            extracted from ``frontmatter["category"]``.
-        content: Full PRD markdown content. Required for structural scoring.
-
-    Returns:
-        DimensionScore for structural completeness.
-    """
-    _config = config or get_config()
-    max_score = _config.validation_structure_weight
-
-    # Resolve category: explicit param > frontmatter field > default (feature=12)
-    resolved_category = category or str(frontmatter.get("category", ""))
-    required_sections = get_required_sections(resolved_category)
-
-    # Section coverage: how many of the category-specific expected sections are present
-    expected = len(required_sections)
-    found = min(len(sections), expected)
-    section_ratio = found / expected
-
-    # Frontmatter field coverage
-    required_fm_fields = ["id", "title", "version", "status", "priority"]
-    fm_present = sum(1 for f in required_fm_fields if frontmatter.get(f))
-    fm_ratio = fm_present / len(required_fm_fields)
-
-    # Confidence scores present
-    confidence = frontmatter.get("confidence", {})
-    confidence_fields = [
-        "implementation_feasibility",
-        "requirement_clarity",
-        "estimate_confidence",
-    ]
-    conf_present = 0
-    if isinstance(confidence, dict):
-        conf_present = sum(1 for f in confidence_fields if f in confidence)
-    conf_ratio = conf_present / len(confidence_fields)
-
-    subsection_ratio = 1.0
-    matched_subsections = 0
-    expected_subsections = 0
-    if content is not None:
-        from trw_mcp.state.validation.template_variants import get_variant_for_category
-
-        variant = get_variant_for_category(resolved_category)
-        required_subsections = _REQUIRED_SUBSECTIONS_BY_VARIANT.get(variant, [])
-        expected_subsections = len(required_subsections)
-        if required_subsections:
-            present_subsections = _extract_subheadings(content)
-            matched_subsections = sum(1 for name in required_subsections if name in present_subsections)
-            subsection_ratio = matched_subsections / expected_subsections
-
-    # AI/LLM/agentic detection and operational sections scoring (PRD-QUAL-055)
-    ai_operational_sections_found = 0
-    ai_operational_sections_expected = 7
-    ai_section_keywords = [
-        "Data / Context Provenance",
-        "Failure Modes",
-        "Safe Degradation",
-        "Human Oversight",
-        "Escalation",
-        "Evaluation Plan",
-        "Release Gate",
-        "Monitoring Plan",
-        "Risk Register",
-        "Failure Class",
-    ]
-
-    ai_operational_section_found = False
-    if content is not None and _validation_profile(frontmatter) != "content_docs":
-        ai_operational_section_found = _is_ai_agentic_prd(frontmatter, content)
-        if ai_operational_section_found:
-            present_subsections = _extract_subheadings(content)
-            ai_operational_sections_found = sum(
-                1 for kw in ai_section_keywords if any(kw.lower() in ss.lower() for ss in present_subsections)
-            )
-            subsection_ratio = (subsection_ratio * 0.75) + (
-                ai_operational_sections_found / ai_operational_sections_expected * 0.25
-            )
-
-    # Weighted: sections 35%, frontmatter 25%, confidence 15%, required subsections 25%
-    composite = section_ratio * 0.35 + fm_ratio * 0.25 + conf_ratio * 0.15 + subsection_ratio * 0.25
-    score = composite * max_score
-
-    details: dict[str, object] = {
-        "sections_found": found,
-        "sections_expected": expected,
-        "frontmatter_fields": fm_present,
-        "confidence_fields": conf_present,
-        "required_subsections_found": matched_subsections,
-        "required_subsections_expected": expected_subsections,
-    }
-    if ai_operational_section_found:
-        details["ai_operational_sections_found"] = ai_operational_sections_found
-        details["ai_operational_sections_expected"] = ai_operational_sections_expected
-        details["ai_section_detected"] = True
-
-    return DimensionScore(
-        name="structural_completeness",
-        score=round(min(score, max_score), 2),
-        max_score=max_score,
-        details=details,
     )
 
 
