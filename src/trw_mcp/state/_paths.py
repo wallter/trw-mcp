@@ -373,78 +373,20 @@ def _resolve_session_id(
     return get_session_id()
 
 
-def pin_active_run(
-    run_dir: Path,
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> None:
-    """Pin a run directory as the active run for a session.
 
-    After pinning, :func:`find_active_run` returns this directory.
-    This prevents telemetry hijack when multiple instances share the
-    same project root.
+# Pin management helpers extracted to _paths_pin_mgmt (PRD-DIST-243 batch 26).
+# Re-exported for back-compat with all callers (build/_registration, middleware,
+# tools/report, tools/review, telemetry).
+from trw_mcp.state._paths_pin_mgmt import (
+    get_pinned_run as get_pinned_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
+    pin_active_run as pin_active_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
+    unpin_active_run as unpin_active_run,
+)
 
-    Writes through to ``.trw/runtime/pins.json`` via :func:`upsert_pin_entry`
-    so the pin survives MCP server restart (PRD-CORE-141 FR04).
-
-    Args:
-        run_dir: Absolute path to the run directory to pin.
-        context: TRWCallContext resolved from the FastMCP Context (preferred,
-            PRD-CORE-141 FR01).  When provided, its ``session_id`` wins.
-        session_id: Legacy kwarg — retained for backward compat with direct
-            Python callers.  Ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    record = upsert_pin_entry(sid, run_dir)
-    logger.debug(
-        "pin_saved",
-        pin_key=sid,
-        run_path=record["run_path"],
-        pid=record["pid"],
-    )
-
-
-def unpin_active_run(
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> None:
-    """Remove the run pin for a session, reverting to filesystem scan.
-
-    Persists the removal to ``.trw/runtime/pins.json`` (PRD-CORE-141 FR04).
-
-    Args:
-        context: TRWCallContext resolved from FastMCP Context (preferred).
-        session_id: Legacy kwarg; ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    removed = remove_pin_entry(sid)
-    if removed:
-        logger.debug("pin_cleared", pin_key=sid)
-
-
-def get_pinned_run(
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> Path | None:
-    """Return the currently pinned run directory for a session, or None.
-
-    Reads through the 1-second-TTL pin-store cache (PRD-CORE-141 FR04).
-
-    Args:
-        context: TRWCallContext resolved from FastMCP Context (preferred).
-        session_id: Legacy kwarg; ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    entry = get_pin_entry(sid)
-    if entry is None:
-        return None
-    run_path = entry.get("run_path")
-    if isinstance(run_path, str) and run_path:
-        return Path(run_path)
-    return None
 
 
 def resolve_memory_store_path() -> Path:
