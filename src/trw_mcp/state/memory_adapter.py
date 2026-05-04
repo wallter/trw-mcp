@@ -42,80 +42,32 @@ from trw_memory.security.runtime import (
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
-# ---------------------------------------------------------------------------
-# Re-export: connection management (singletons, embedder, migration)
-# ---------------------------------------------------------------------------
+# Re-export: connection mgmt + embedding ops + query routing + transforms.
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
-)
-from trw_mcp.state._memory_connection import (
     backfill_embeddings as backfill_embeddings,
-)
-from trw_mcp.state._memory_connection import (
     check_embeddings_status as _check_embeddings_status_impl,
-)
-
-# --- Embedding operations ---
-from trw_mcp.state._memory_connection import (
     embed_text as embed_text,
-)
-from trw_mcp.state._memory_connection import (
     embed_text_batch as embed_text_batch,
-)
-from trw_mcp.state._memory_connection import (
     embedding_available as embedding_available,
-)
-from trw_mcp.state._memory_connection import (
     ensure_migrated as ensure_migrated,
-)
-from trw_mcp.state._memory_connection import (
     get_backend as get_backend,
-)
-from trw_mcp.state._memory_connection import (
     get_embed_failure_count as get_embed_failure_count,
-)
-from trw_mcp.state._memory_connection import (
     get_embedder as get_embedder,
-)
-from trw_mcp.state._memory_connection import (
     get_initialized_embedder as get_initialized_embedder,
-)
-from trw_mcp.state._memory_connection import (
     reset_backend as reset_backend,
-)
-from trw_mcp.state._memory_connection import (
     reset_embed_failure_count as _reset_embed_failure_count_impl,
-)
-from trw_mcp.state._memory_connection import (
     reset_embedder as reset_embedder,
 )
-
-# ---------------------------------------------------------------------------
-# Re-export: query routing (keyword search, hybrid search, ID lookup)
-# ---------------------------------------------------------------------------
 from trw_mcp.state._memory_queries import (
     _apply_entry_filters as _apply_entry_filters,
-)
-from trw_mcp.state._memory_queries import (
     _keyword_search as _keyword_search,
-)
-from trw_mcp.state._memory_queries import (
     _lookup_id_tokens as _lookup_id_tokens,
-)
-from trw_mcp.state._memory_queries import (
     _search_entries as _search_entries,
-)
-from trw_mcp.state._memory_queries import (
     _search_intersect_keywords as _search_intersect_keywords,
 )
-
-# ---------------------------------------------------------------------------
-# Re-export: result transformations
-# ---------------------------------------------------------------------------
 from trw_mcp.state._memory_transforms import (
     _learning_to_memory_entry as _learning_to_memory_entry,
-)
-from trw_mcp.state._memory_transforms import (
     _memory_to_learning_dict as _memory_to_learning_dict,
 )
 
@@ -575,292 +527,16 @@ def update_learning(
     }
 
 
-def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | None:
-    """Look up a single learning entry by ID.
 
-    Returns the dict in learning format, or None if not found.
-    """
-    backend = get_backend(trw_dir)
-    entry = backend.get(learning_id)
-    if entry is None:
-        return None
-    return _memory_to_learning_dict(entry)
-
-
-def list_active_learnings(
-    trw_dir: Path,
-    *,
-    min_impact: float = 0.0,
-    limit: int = DEFAULT_LIST_LIMIT,
-) -> list[dict[str, object]]:
-    """List all active learning entries from SQLite.
-
-    Used by claude_md.py for CLAUDE.md promotion and analytics.
-    """
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(
-        status=MemoryStatus.ACTIVE,
-        namespace=_NAMESPACE,
-        limit=limit,
-    )
-    results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry)
-        for entry in entries
-        if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
-    ]
-    return results
-
-
-def list_entries_by_status(
-    trw_dir: Path,
-    *,
-    status: str = "active",
-    min_impact: float = 0.0,
-    limit: int = DEFAULT_LIST_LIMIT,
-) -> list[dict[str, object]]:
-    """Return all entries with the given status as learning dicts.
-
-    PRD-FIX-033-FR01: Single SQLite query for bulk entry retrieval.
-    """
-    try:
-        mem_status = MemoryStatus(status)
-    except ValueError:
-        return []
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(
-        status=mem_status,
-        namespace=_NAMESPACE,
-        limit=limit,
-    )
-    results: list[dict[str, object]] = [
-        _memory_to_learning_dict(entry)
-        for entry in entries
-        if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
-    ]
-    return results
-
-
-def find_yaml_path_for_entry(trw_dir: Path, entry_id: str) -> Path | None:
-    """Resolve the YAML file path for a given entry_id.
-
-    PRD-FIX-033-FR05: YAML path resolution for cold archive calls.
-    """
-    import re as _re
-
-    cfg = get_config()
-    entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    if not entries_dir.exists():
-        return None
-
-    sanitized = _re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
-
-    # Try exact match first
-    candidate = entries_dir / f"{sanitized}.yaml"
-    if candidate.exists():
-        return candidate
-
-    # Fall back to partial match
-    for yaml_file in entries_dir.glob("*.yaml"):
-        if yaml_file.name == "index.yaml":
-            continue
-        if sanitized in yaml_file.stem or entry_id in yaml_file.stem:
-            return yaml_file
-
-    return None
-
-
-def count_entries(trw_dir: Path) -> int:
-    """Return total number of entries in the SQLite store."""
-    backend = get_backend(trw_dir)
-    return len(
-        [
-            entry
-            for entry in backend.list_entries(namespace=_NAMESPACE, limit=100_000)
-            if entry.metadata.get("system_canary") != "true"
-        ]
-    )
-
-
-def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
-    """Increment access_count and last_accessed_at for recalled entries."""
-    backend = get_backend(trw_dir)
-    unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
-    if not unique_ids:
-        return
-    now = datetime.now(timezone.utc)
-
-    increment_access_counts = getattr(backend, "increment_access_counts", None)
-    if callable(increment_access_counts):
-        try:
-            increment_access_counts(unique_ids, accessed_at=now)
-            return
-        except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
-            logger.warning(
-                "access_tracking_batch_update_failed",
-                exc_info=True,
-                entry_ids=unique_ids,
-            )
-
-    for lid in unique_ids:
-        try:
-            entry = backend.get(lid)
-            if entry is not None:
-                backend.update(
-                    lid,
-                    access_count=entry.access_count + 1,
-                    last_accessed_at=now,
-                )
-        except (
-            Exception
-        ):  # per-item error handling: access tracking is best-effort, one failure must not break recall results
-            logger.warning(
-                "access_tracking_update_failed",
-                exc_info=True,
-                entry_id=lid,
-            )
-            continue
-
-
-def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
-    """Increment session_count once for each learning surfaced during session start."""
-    backend = get_backend(trw_dir)
-    seen_ids: set[str] = set()
-    valid_ids: list[str] = []
-    for lid in learning_ids:
-        if lid in seen_ids:
-            continue
-        seen_ids.add(lid)
-        if _LEARNING_ID_RE.fullmatch(lid) is None:
-            logger.warning(
-                "session_count_update_skipped_invalid_id",
-                entry_id=lid,
-            )
-            continue
-        valid_ids.append(lid)
-
-    if not valid_ids:
-        return
-
-    try:
-        backend.increment_session_counts(valid_ids, updated_at=datetime.now(timezone.utc))
-    except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
-        # Best-effort telemetry only: session start must not fail if tracking cannot be persisted.
-        logger.warning(
-            "session_count_update_failed",
-            exc_info=True,
-            entry_ids=valid_ids,
-        )
-
-
-# ---------------------------------------------------------------------------
-# WAL checkpoint management (PRD-QUAL-050-FR05)
-# ---------------------------------------------------------------------------
-
-
-def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
-    """Checkpoint the SQLite WAL file if it exceeds a configurable size threshold.
-
-    PRD-QUAL-050-FR05 + PRD-FIX-081: During ``trw_session_start()``
-    auto-maintenance, if the WAL file exceeds ``wal_checkpoint_threshold_mb``
-    (default 10 MB), attempt ``PRAGMA wal_checkpoint(TRUNCATE)`` first to
-    reclaim WAL space, falling back to ``PRAGMA wal_checkpoint(PASSIVE)``
-    when readers hold pages and TRUNCATE returns busy=1.
-
-    PASSIVE alone never shrinks the WAL file -- it only writes frames back
-    to the main DB. With persistent reader connections (the trw-memory
-    backend singleton plus concurrent MCP processes), the autocheckpoint
-    cannot reclaim space either. Result without TRUNCATE: WAL grows
-    unbounded on long-lived servers.
-
-    TRUNCATE is safe under concurrent multi-process access. SQLite uses
-    normal locking; the call returns busy=1 (not corruption) when readers
-    hold frames. The bounded busy_timeout (default 500 ms) ensures the
-    checkpoint never blocks ``trw_session_start`` beyond that window.
-
-    Fail-open: checkpoint failure is logged but never propagated. Returns a
-    result dict describing what happened.
-
-    Args:
-        trw_dir: Path to the ``.trw`` directory.
-
-    Returns:
-        Dict with either ``{"skipped": True, "reason": ...}`` when under
-        threshold, ``{"checkpointed": True, "mode": "truncate"|"passive",
-        "wal_size_before_mb": ..., "wal_size_after_mb": ...,
-        "pages_checkpointed": ..., "busy": 0|1, ...}`` on success, or
-        ``{"error": True, "reason": ...}`` on failure.
-    """
-    try:
-        config = get_config()
-        threshold_bytes = config.wal_checkpoint_threshold_mb * 1024 * 1024
-
-        # memory.db is the primary SQLite store (distinct from vectors.db)
-        db_path = trw_dir / "memory" / "memory.db"
-        wal_path = db_path.with_suffix(".db-wal")
-
-        if not wal_path.exists():
-            return {"skipped": True, "reason": "no_wal_file"}
-
-        wal_size = wal_path.stat().st_size
-        if wal_size < threshold_bytes:
-            return {"skipped": True, "reason": "under_threshold"}
-
-        wal_size_mb = round(wal_size / (1024 * 1024), 1)
-        logger.info(
-            "wal_checkpoint_starting",
-            wal_size_mb=wal_size_mb,
-            threshold_mb=config.wal_checkpoint_threshold_mb,
-        )
-
-        # Use a fresh connection with a short busy_timeout so a TRUNCATE
-        # attempt never blocks session_start beyond ~500 ms even under heavy
-        # writer contention. PASSIVE fallback handles the busy=1 case.
-        conn = sqlite3.connect(str(db_path), timeout=1.0)
-        truncate_busy = False
-        try:
-            conn.execute("PRAGMA busy_timeout = 500")
-            # PRAGMA wal_checkpoint(MODE) returns (busy, log_pages, checkpointed).
-            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            busy = int(row[0]) if row else 1
-            checkpointed = int(row[2]) if row and row[2] is not None else 0
-            mode = "truncate"
-            if busy == 1:
-                # Readers held pages -- fall back to PASSIVE so we still
-                # write frames back to the main DB even though the file
-                # cannot truncate this round.
-                truncate_busy = True
-                logger.info(
-                    "wal_checkpoint_truncate_busy",
-                    detail="readers held pages; falling back to PASSIVE",
-                )
-                row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-                busy = int(row[0]) if row else 1
-                checkpointed = int(row[2]) if row and row[2] is not None else 0
-                mode = "passive"
-        finally:
-            conn.close()
-
-        wal_size_after = wal_path.stat().st_size if wal_path.exists() else 0
-        wal_size_after_mb = round(wal_size_after / (1024 * 1024), 1)
-
-        logger.info(
-            "wal_checkpoint_complete",
-            mode=mode,
-            wal_size_before_mb=wal_size_mb,
-            wal_size_after_mb=wal_size_after_mb,
-            pages_checkpointed=checkpointed,
-            busy=busy,
-            truncate_busy=truncate_busy,
-        )
-        return {
-            "checkpointed": True,
-            "mode": mode,
-            "wal_size_before_mb": wal_size_mb,
-            "wal_size_after_mb": wal_size_after_mb,
-            "pages_checkpointed": checkpointed,
-            "busy": busy,
-            "truncate_busy": truncate_busy,
-        }
-    except Exception:  # justified: fail-open, WAL checkpoint must not block session start
-        logger.warning("wal_checkpoint_failed", exc_info=True)
-        return {"error": True, "reason": "checkpoint_failed"}
+# Lookup, list, count, access tracking, WAL checkpoint helpers extracted to
+# _memory_lookups.py (PRD-DIST-243 batch 43).
+from trw_mcp.state._memory_lookups import (
+    count_entries as count_entries,
+    find_entry_by_id as find_entry_by_id,
+    find_yaml_path_for_entry as find_yaml_path_for_entry,
+    increment_session_counts as increment_session_counts,
+    list_active_learnings as list_active_learnings,
+    list_entries_by_status as list_entries_by_status,
+    maybe_checkpoint_wal as maybe_checkpoint_wal,
+    update_access_tracking as update_access_tracking,
+)
