@@ -20,6 +20,10 @@ from typing import TextIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+# Spinner extracted to ``_auth_spinner.py`` (PRD-DIST-243 Phase 1,
+# cycle 22) to keep this module under the 350-effective-LOC threshold.
+from ._auth_spinner import _Spinner
+
 # ── ANSI colors (mirrors installer constants) ────────────────────────
 
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -30,38 +34,6 @@ RED = "\033[0;31m" if _USE_COLOR else ""
 BOLD = "\033[1m" if _USE_COLOR else ""
 DIM = "\033[2m" if _USE_COLOR else ""
 NC = "\033[0m" if _USE_COLOR else ""
-
-# ── Spinner (matches installer _Spinner) ─────────────────────────────
-
-_SPINNER_FRAMES = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
-
-
-class _Spinner:
-    """Braille-character spinner in a daemon thread."""
-
-    def __init__(self, message: str) -> None:
-        self.message = message
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-
-    def _run(self) -> None:
-        idx = 0
-        while not self._stop.is_set():
-            frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
-            sys.stdout.write(f"\r\033[K            {frame} {self.message}")
-            sys.stdout.flush()
-            idx += 1
-            self._stop.wait(0.1)
-
 
 # ── TTY input helper (matches installer _open_tty) ───────────────────
 
