@@ -14,12 +14,15 @@ the 350 effective-LOC ceiling.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.security.capability_scope import CapabilityScope, scope_from_allowed_tool
+from trw_mcp.security.mcp_registry import ALL_PHASES, ALL_SCOPES, RegistryDecision
 from trw_mcp.telemetry.event_base import MCPSecurityEvent
 from trw_mcp.telemetry.unified_events import emit as emit_unified_event
 
@@ -242,3 +245,148 @@ def _identity_verification(metadata: RuntimePeerMetadata) -> str:
     if metadata.observed_fingerprint:
         return "verified_fingerprint"
     return "server_name_only_runtime_constraint"
+
+
+def default_scope(
+    *,
+    server_name: str,
+    tool_name: str,
+    auth: RegistryDecision,
+) -> CapabilityScope | None:
+    """Build a capability scope from the allowlist entry, or None when absent."""
+    entry = auth.entry
+    if entry is None:
+        return None
+    allowed_tool = entry.tool_by_name(tool_name)
+    if allowed_tool is None:
+        return None
+    return scope_from_allowed_tool(server_name, allowed_tool)
+
+
+def first_party_tool_scope(
+    *,
+    server_name: str,
+    tool_name: str,
+    default_server_name: str,
+) -> CapabilityScope | None:
+    """Return a scope for bundled TRW tools omitted from the signed seed allowlist.
+
+    The signed allowlist intentionally moves slowly; the live in-process
+    TRW server can grow new first-party tools faster than that file is
+    re-signed.  For the trusted default server only, bridge that drift from
+    ``TOOL_PRESETS["all"]`` so advertisements and direct calls stay aligned
+    with the configured first-party surface while non-TRW/unknown tools
+    remain denied.
+    """
+    if server_name != default_server_name:
+        return None
+    from trw_mcp.models.config._defaults import TOOL_PRESETS
+
+    if tool_name not in TOOL_PRESETS["all"]:
+        return None
+    return CapabilityScope(
+        server_name=server_name,
+        tool_name=tool_name,
+        allowed_phases=ALL_PHASES,
+        allowed_scopes=ALL_SCOPES,
+    )
+
+
+def record_anomalies(
+    recent_anomalies: list[dict[str, Any]],
+    *,
+    fired: Sequence[str],
+    transport: Transport,
+    server: str,
+    tool: str,
+    args_hash: str,
+    run_id: str | None,
+    session_id: str,
+) -> list[dict[str, Any]]:
+    """Append fired anomalies to *recent_anomalies* and trim to 25 entries.
+
+    Returns the trimmed list (caller rebinds; in-place append + slice).
+    """
+    now = datetime.now(tz=timezone.utc).isoformat()
+    for anomaly_type in fired:
+        recent_anomalies.append(
+            {
+                "ts": now,
+                "transport": transport,
+                "server": server,
+                "tool": tool,
+                "type": anomaly_type,
+                "run_id": run_id or "",
+                "session_id": session_id,
+                "arg_hash": args_hash,
+            }
+        )
+    return recent_anomalies[-25:]
+
+
+def resolve_transport_from_ctx(fastmcp_ctx: object | None) -> Transport:
+    """Read ``transport`` off the FastMCP context and normalize, defaulting to stdio."""
+    raw = getattr(fastmcp_ctx, "transport", "stdio") if fastmcp_ctx is not None else "stdio"
+    return normalize_transport(raw)
+
+
+def resolve_run_context(
+    *,
+    configured_run_dir: Path | None,
+    session_id: str = "",
+    fastmcp_context: object | None = None,
+) -> tuple[Path | None, str | None]:
+    """Combined ``_resolve_runtime_run_dir`` + ``_resolve_run_id`` lookup."""
+    run_dir = _resolve_runtime_run_dir(
+        configured_run_dir=configured_run_dir,
+        session_id=session_id,
+        fastmcp_context=fastmcp_context,
+    )
+    return run_dir, _resolve_run_id(run_dir)
+
+
+def resolve_scope_with_fallback(
+    *,
+    scopes: Mapping[str, CapabilityScope],
+    tool_name: str,
+    server_name: str,
+    auth: RegistryDecision,
+    default_server_name: str,
+) -> CapabilityScope | None:
+    """Resolve the capability scope, cascading explicit → registry → first-party fallback."""
+    scope = scopes.get(tool_name) or default_scope(
+        server_name=server_name, tool_name=tool_name, auth=auth
+    )
+    if scope is None and auth.allowed:
+        scope = first_party_tool_scope(
+            server_name=server_name,
+            tool_name=tool_name,
+            default_server_name=default_server_name,
+        )
+    return scope
+
+
+def peer_extras(runtime_peer: RuntimePeerMetadata) -> dict[str, Any]:
+    """Return the 4 peer-identity fields shared across decision telemetry payloads."""
+    return {
+        "peer_identity_source": runtime_peer.peer_identity_source,
+        "fingerprint_source": runtime_peer.fingerprint_source,
+        "fingerprint_constraint": runtime_peer.fingerprint_constraint,
+        "identity_verification": _identity_verification(runtime_peer),
+    }
+
+
+def build_audit_fields(
+    *,
+    match_type: str,
+    allowed: bool,
+    operator: str,
+) -> dict[str, Any]:
+    """Return per-decision audit_fields keyed off auth match type."""
+    if not allowed:
+        return {}
+    if match_type == "unsigned_admission":
+        return {"unsigned_admission": True, "operator": operator}
+    if match_type == "overlay":
+        return {"operator": operator, "operator_overlay_applied": True}
+    return {}

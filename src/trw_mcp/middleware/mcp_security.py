@@ -20,27 +20,25 @@ from trw_mcp.middleware._mcp_security_helpers import (
     MCPSecurityDecision as MCPSecurityDecision,
     MCPSecurityStatusSnapshot as MCPSecurityStatusSnapshot,
     RuntimePeerMetadata as RuntimePeerMetadata,
-    Transport,
     _emit_decision,
-    _identity_verification,
-    _resolve_run_id,
-    _resolve_runtime_run_dir,
+    _resolve_runtime_run_dir as _resolve_runtime_run_dir,
+    build_audit_fields,
     normalize_tool_name as normalize_tool_name,
     normalize_transport as normalize_transport,
+    peer_extras,
+    record_anomalies,
+    resolve_run_context,
+    resolve_scope_with_fallback,
     resolve_runtime_peer_metadata as resolve_runtime_peer_metadata,
+    resolve_transport_from_ctx,
 )
 from trw_mcp.security.anomaly_detector import (
     AnomalyDetector,
     AnomalyObservation,
     hash_tool_args,
 )
-from trw_mcp.security.capability_scope import (
-    CapabilityScope,
-    CapabilityScopeError,
-    apply_scope,
-    scope_from_allowed_tool,
-)
-from trw_mcp.security.mcp_registry import ALL_PHASES, ALL_SCOPES, MCPAllowlist, MCPRegistry, RegistryDecision
+from trw_mcp.security.capability_scope import CapabilityScope, CapabilityScopeError, apply_scope
+from trw_mcp.security.mcp_registry import MCPAllowlist, MCPRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -92,70 +90,6 @@ class MCPSecurityMiddleware(Middleware):
         self._quarantine_auto_release = quarantine_auto_release
         self._recent_anomalies: list[dict[str, Any]] = []
 
-    def _default_scope(
-        self,
-        *,
-        server_name: str,
-        tool_name: str,
-        auth: RegistryDecision,
-    ) -> CapabilityScope | None:
-        entry = auth.entry
-        if entry is None:
-            return None
-        allowed_tool = entry.tool_by_name(tool_name)
-        if allowed_tool is None:
-            return None
-        return scope_from_allowed_tool(server_name, allowed_tool)
-
-    def _first_party_tool_scope(self, *, server_name: str, tool_name: str) -> CapabilityScope | None:
-        """Return a scope for bundled TRW tools omitted from the signed seed allowlist.
-
-        The signed allowlist intentionally moves slowly; the live in-process
-        TRW server can grow new first-party tools faster than that file is
-        re-signed.  For the trusted default server only, bridge that drift from
-        ``TOOL_PRESETS["all"]`` so advertisements and direct calls stay aligned
-        with the configured first-party surface while non-TRW/unknown tools
-        remain denied.
-        """
-        if server_name != self.default_server_name:
-            return None
-        from trw_mcp.models.config._defaults import TOOL_PRESETS
-
-        if tool_name not in TOOL_PRESETS["all"]:
-            return None
-        return CapabilityScope(
-            server_name=server_name,
-            tool_name=tool_name,
-            allowed_phases=ALL_PHASES,
-            allowed_scopes=ALL_SCOPES,
-        )
-
-    def _record_anomalies(
-        self,
-        *,
-        fired: Sequence[str],
-        transport: Transport,
-        server: str,
-        tool: str,
-        args_hash: str,
-        run_id: str | None,
-        session_id: str,
-    ) -> None:
-        now = datetime.now(tz=timezone.utc).isoformat()
-        for anomaly_type in fired:
-            record = {
-                "ts": now,
-                "transport": transport,
-                "server": server,
-                "tool": tool,
-                "type": anomaly_type,
-                "run_id": run_id or "",
-                "session_id": session_id,
-                "arg_hash": args_hash,
-            }
-            self._recent_anomalies.append(record)
-        self._recent_anomalies = self._recent_anomalies[-25:]
-
     def filter_advertised_tools(
         self,
         *,
@@ -167,12 +101,12 @@ class MCPSecurityMiddleware(Middleware):
         fastmcp_context: object | None = None,
     ) -> list[AdvertisedTool]:
         normalized_transport = normalize_transport(transport)
-        resolved_run_dir = _resolve_runtime_run_dir(
+        resolved_run_dir, base_run_id = resolve_run_context(
             configured_run_dir=self._run_dir,
             session_id=session_id,
             fastmcp_context=fastmcp_context,
         )
-        resolved_run_id = run_id or _resolve_run_id(resolved_run_dir)
+        resolved_run_id = run_id or base_run_id
         allowed: list[AdvertisedTool] = []
         for ad in advertisements:
             runtime_peer = resolve_runtime_peer_metadata(
@@ -189,16 +123,13 @@ class MCPSecurityMiddleware(Middleware):
             resolved_server = auth.entry.name if auth.entry is not None else runtime_peer.server
             layers = ["registry"]
             reason = auth.reason
-            scope = self._scopes.get(runtime_peer.tool) or self._default_scope(
-                server_name=resolved_server,
+            scope = resolve_scope_with_fallback(
+                scopes=self._scopes,
                 tool_name=runtime_peer.tool,
+                server_name=resolved_server,
                 auth=auth,
+                default_server_name=self.default_server_name,
             )
-            if scope is None and auth.allowed:
-                scope = self._first_party_tool_scope(
-                    server_name=resolved_server,
-                    tool_name=runtime_peer.tool,
-                )
             try:
                 if auth.allowed and scope is not None:
                     apply_scope(
@@ -235,14 +166,7 @@ class MCPSecurityMiddleware(Middleware):
                 fallback_dir=self._fallback_dir,
                 session_id=session_id,
                 run_id=resolved_run_id,
-                extra={
-                    "reason": reason,
-                    "allowlist_match_type": auth.match_type,
-                    "peer_identity_source": runtime_peer.peer_identity_source,
-                    "fingerprint_source": runtime_peer.fingerprint_source,
-                    "fingerprint_constraint": runtime_peer.fingerprint_constraint,
-                    "identity_verification": _identity_verification(runtime_peer),
-                },
+                extra={"reason": reason, "allowlist_match_type": auth.match_type, **peer_extras(runtime_peer)},
             )
         return allowed
 
@@ -262,11 +186,11 @@ class MCPSecurityMiddleware(Middleware):
         normalized_transport = normalize_transport(transport)
         safe_args = args or {}
         layers_fired: list[str] = []
-        resolved_run_dir = _resolve_runtime_run_dir(
+        resolved_run_dir, base_run_id = resolve_run_context(
             configured_run_dir=self._run_dir,
             session_id=session_id,
         )
-        resolved_run_id = run_id or _resolve_run_id(resolved_run_dir)
+        resolved_run_id = run_id or base_run_id
         runtime_peer = resolve_runtime_peer_metadata(
             raw_tool=tool,
             explicit_server=server,
@@ -282,16 +206,13 @@ class MCPSecurityMiddleware(Middleware):
         layers_fired.append("registry")
 
         scope_reason = ""
-        scope = self._scopes.get(runtime_peer.tool) or self._default_scope(
-            server_name=resolved_server,
+        scope = resolve_scope_with_fallback(
+            scopes=self._scopes,
             tool_name=runtime_peer.tool,
+            server_name=resolved_server,
             auth=auth,
+            default_server_name=self.default_server_name,
         )
-        if scope is None and auth.allowed:
-            scope = self._first_party_tool_scope(
-                server_name=resolved_server,
-                tool_name=runtime_peer.tool,
-            )
         try:
             if auth.allowed and scope is not None:
                 apply_scope(
@@ -321,7 +242,8 @@ class MCPSecurityMiddleware(Middleware):
             )
         )
         layers_fired.append("anomaly_detector")
-        self._record_anomalies(
+        self._recent_anomalies = record_anomalies(
+            self._recent_anomalies,
             fired=fired,
             transport=normalized_transport,
             server=resolved_server,
@@ -338,11 +260,9 @@ class MCPSecurityMiddleware(Middleware):
             reason = "rate_spike"
         if not self._enforce:
             allowed = True
-        audit_fields: dict[str, Any] = {}
-        if auth.match_type == "unsigned_admission" and allowed:
-            audit_fields = {"unsigned_admission": True, "operator": getpass.getuser()}
-        elif auth.match_type == "overlay" and allowed:
-            audit_fields = {"operator": getpass.getuser(), "operator_overlay_applied": True}
+        audit_fields = build_audit_fields(
+            match_type=auth.match_type, allowed=allowed, operator=getpass.getuser()
+        )
         _emit_decision(
             decision="allow" if allowed else "deny",
             transport=normalized_transport,
@@ -360,10 +280,7 @@ class MCPSecurityMiddleware(Middleware):
                 "novel_arg_pattern": "novel_arg_pattern" in fired,
                 "drift_detected": auth.drift_detected,
                 "quarantine_reason": auth.quarantine_reason,
-                "peer_identity_source": runtime_peer.peer_identity_source,
-                "fingerprint_source": runtime_peer.fingerprint_source,
-                "fingerprint_constraint": runtime_peer.fingerprint_constraint,
-                "identity_verification": _identity_verification(runtime_peer),
+                **peer_extras(runtime_peer),
                 "enforced": self._enforce,
                 **audit_fields,
             },
@@ -392,20 +309,17 @@ class MCPSecurityMiddleware(Middleware):
     ) -> Sequence[Tool]:
         tools = list(await call_next(context))
         fastmcp_ctx = context.fastmcp_context
-        transport = normalize_transport(
-            getattr(fastmcp_ctx, "transport", "stdio") if fastmcp_ctx is not None else "stdio"
+        sid = _safe_session_id(fastmcp_ctx)
+        _, run_id = resolve_run_context(
+            configured_run_dir=self._run_dir,
+            session_id=sid,
+            fastmcp_context=fastmcp_ctx,
         )
         allowed_ads = self.filter_advertised_tools(
-            transport=transport,
+            transport=resolve_transport_from_ctx(fastmcp_ctx),
             advertisements=[AdvertisedTool(server=self.default_server_name, name=tool.name) for tool in tools],
-            session_id=_safe_session_id(fastmcp_ctx),
-            run_id=_resolve_run_id(
-                _resolve_runtime_run_dir(
-                    configured_run_dir=self._run_dir,
-                    session_id=_safe_session_id(fastmcp_ctx),
-                    fastmcp_context=fastmcp_ctx,
-                )
-            ),
+            session_id=sid,
+            run_id=run_id,
             fastmcp_context=fastmcp_ctx,
         )
         allowed_names = {ad.name for ad in allowed_ads}
@@ -417,25 +331,25 @@ class MCPSecurityMiddleware(Middleware):
         call_next: CallNext[CallToolRequestParams, ToolResult],
     ) -> ToolResult:
         fastmcp_ctx = context.fastmcp_context
+        sid = _safe_session_id(fastmcp_ctx)
         runtime_peer = resolve_runtime_peer_metadata(
             raw_tool=context.message.name,
             explicit_server=self.default_server_name,
             default_server_name=self.default_server_name,
             fastmcp_context=fastmcp_ctx,
         )
+        _, run_id = resolve_run_context(
+            configured_run_dir=self._run_dir,
+            session_id=sid,
+            fastmcp_context=fastmcp_ctx,
+        )
         decision = self.on_tool_call(
-            transport=getattr(fastmcp_ctx, "transport", "stdio") if fastmcp_ctx is not None else "stdio",
+            transport=resolve_transport_from_ctx(fastmcp_ctx),
             server=runtime_peer.server,
             tool=context.message.name,
             args=context.message.arguments or {},
-            session_id=_safe_session_id(fastmcp_ctx),
-            run_id=_resolve_run_id(
-                _resolve_runtime_run_dir(
-                    configured_run_dir=self._run_dir,
-                    session_id=_safe_session_id(fastmcp_ctx),
-                    fastmcp_context=fastmcp_ctx,
-                )
-            ),
+            session_id=sid,
+            run_id=run_id,
             observed_fingerprint=runtime_peer.observed_fingerprint,
         )
         if not decision.allowed:
@@ -456,17 +370,3 @@ class MCPSecurityMiddleware(Middleware):
                 },
             )
         return await call_next(context)
-
-
-__all__ = [
-    "CLAUDE_CODE_PREFIX",
-    "TRANSPORTS",
-    "AdvertisedTool",
-    "MCPSecurityDecision",
-    "MCPSecurityMiddleware",
-    "MCPSecurityStatusSnapshot",
-    "RuntimePeerMetadata",
-    "normalize_tool_name",
-    "normalize_transport",
-    "resolve_runtime_peer_metadata",
-]
