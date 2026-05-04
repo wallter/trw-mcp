@@ -417,10 +417,3 @@ class PromotionGate:
             promotion_session_id=promotion_session_id,
         )
         return decision
-
-
-__all__ = [
-    "GateDecision",
-    "PromotionGate",
-    "PromotionProposal",
-]

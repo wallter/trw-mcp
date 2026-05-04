@@ -543,14 +543,10 @@ def copy_compliance_artifacts(
     result: ComplianceArtifactsDict = {}
     if run_path is None:
         return result
-
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    run_id = run_path.name
-
-    compliance_dir = trw_dir / config.compliance_dir / "reviews" / str(now.year) / f"{now.month:02d}" / run_id
-
+    compliance_dir = trw_dir / config.compliance_dir / "reviews" / str(now.year) / f"{now.month:02d}" / run_path.name
     artifacts = ["review.yaml", "review-all.yaml", "integration-review.yaml"]
     copied = []
     for artifact_name in artifacts:
