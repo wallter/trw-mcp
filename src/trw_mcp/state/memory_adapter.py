@@ -49,16 +49,13 @@ from trw_mcp.state._memory_connection import (
     get_backend as get_backend,
     get_embed_failure_count as get_embed_failure_count,
     get_embedder as get_embedder,
-    get_initialized_embedder as get_initialized_embedder,
     reset_backend as reset_backend,
     reset_embedder as reset_embedder,
 )
 from trw_mcp.state._memory_queries import (
     _apply_entry_filters as _apply_entry_filters,
     _keyword_search as _keyword_search,
-    _lookup_id_tokens as _lookup_id_tokens,
     _search_entries as _search_entries,
-    _search_intersect_keywords as _search_intersect_keywords,
 )
 from trw_mcp.state._memory_transforms import (
     _learning_to_memory_entry as _learning_to_memory_entry,
@@ -69,7 +66,6 @@ logger = structlog.get_logger(__name__)
 
 # Preserve module-level constants for backward compatibility with test patches
 _NAMESPACE = DEFAULT_NAMESPACE
-_MAX_ENTRIES = DEFAULT_LIST_LIMIT
 
 # Facade-level override for the embed failure counter.  Tests may set this
 # attribute directly (``memory_adapter._embed_failures = N``) to inject a
@@ -266,10 +262,10 @@ def recall_learnings(
                 entries = backend.list_entries(
                     status=mem_status,
                     namespace=_NAMESPACE,
-                    limit=max_results if max_results > 0 else _MAX_ENTRIES,
+                    limit=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
                 )
             else:
-                top_k = max_results if max_results > 0 else _MAX_ENTRIES
+                top_k = max_results if max_results > 0 else DEFAULT_LIST_LIMIT
                 entries = _search_entries(
                     backend,
                     query,
