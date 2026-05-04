@@ -147,6 +147,60 @@ def suppress_internal_events() -> Generator[None, None, None]:
         _suppress_internal_events.reset(token)
 
 
+def _resolve_hpo_event_context(
+    events_path: Path,
+    data: dict[str, object],
+) -> tuple[str, str | None, str]:
+    """Resolve ``(session_id, run_id, surface_snapshot_id)`` for unified HPO rows.
+
+    Legacy emitters often omit these H1 fields. When the legacy write target
+    is ``<run>/meta/events.jsonl``, recover them from ``run.yaml`` and/or
+    ``run_surface_snapshot.yaml`` so the parallel-emitted unified row still
+    satisfies FR-2 / FR-12.
+    """
+    # Lazy-import FileStateReader + StateError to avoid the circular dep
+    # with persistence.py (which re-exports this function).
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state.persistence import FileStateReader
+
+    session_id = str(data.get("session_id", "")) if data.get("session_id") is not None else ""
+    run_id = str(data.get("run_id")) if data.get("run_id") is not None else None
+    surface_snapshot_id = (
+        str(data.get("surface_snapshot_id", "")) if data.get("surface_snapshot_id") is not None else ""
+    )
+
+    if events_path.parent.name != "meta":
+        return session_id, run_id, surface_snapshot_id
+
+    meta_dir = events_path.parent
+    run_dir = meta_dir.parent
+    if run_id is None:
+        run_id = run_dir.name
+
+    run_yaml = meta_dir / "run.yaml"
+    if run_yaml.exists():
+        try:
+            run_data = FileStateReader().read_yaml(run_yaml)
+        except StateError:
+            run_data = {}
+        if not session_id and run_data.get("owner_session_id") is not None:
+            session_id = str(run_data.get("owner_session_id", ""))
+        if not surface_snapshot_id and run_data.get("surface_snapshot_id") is not None:
+            surface_snapshot_id = str(run_data.get("surface_snapshot_id", ""))
+
+    if not surface_snapshot_id:
+        snapshot_path = meta_dir / "run_surface_snapshot.yaml"
+        if snapshot_path.exists():
+            try:
+                snapshot_data = FileStateReader().read_yaml(snapshot_path)
+            except StateError:
+                snapshot_data = {}
+            if snapshot_data.get("snapshot_id") is not None:
+                surface_snapshot_id = str(snapshot_data.get("snapshot_id", ""))
+
+    return session_id, run_id, surface_snapshot_id
+
+
 @contextlib.contextmanager
 def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
     """Advisory exclusive lock for read-modify-write cycles.
