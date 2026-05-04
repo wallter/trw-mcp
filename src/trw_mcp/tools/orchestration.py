@@ -22,10 +22,9 @@ from trw_mcp.models.run import (
 from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
+from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._paths import (
-    TRWCallContext,
     pin_active_run,
-    resolve_pin_key,
     resolve_project_root,
     resolve_run_path,
 )
@@ -33,11 +32,7 @@ from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.artifact_scanner import scan_artifacts
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
-from trw_mcp.tools._orchestration_helpers import (
-    _deploy_frameworks,
-    _deploy_templates,
-    _get_bundled_file,
-)
+from trw_mcp.tools._orchestration_helpers import _deploy_frameworks, _deploy_templates, _get_bundled_file
 from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
     _compute_last_activity_ts,
@@ -60,21 +55,6 @@ def __getattr__(name: str) -> object:
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
-
-
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    try:
-        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    except Exception:
-        raw_session = None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
 
 def register_orchestration_tools(server: FastMCP) -> None:

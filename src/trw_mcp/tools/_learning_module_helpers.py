@@ -4,7 +4,8 @@ Extracted from ``tools/learning.py`` to keep that module under the
 350-effective-LOC operator threshold. Holds:
 
 - ``_SOLUTION_PATTERNS`` + ``_is_solution_summary`` (PRD-FIX-052 FR05)
-- ``_build_call_ctx`` (PRD-CORE-141 FR03 — TRWCallContext builder)
+- ``_build_call_ctx`` (PRD-CORE-141 FR03 — re-exports shared
+  ``state._call_context.build_call_context`` cycle 23)
 - ``_read_injected_ids`` + ``_annotate_injected_learnings`` (PRD-CORE-095 FR15)
 - ``_create_llm_client`` (LLMClient factory; routes usage log via config)
 
@@ -18,11 +19,10 @@ from __future__ import annotations
 import re as _re
 from pathlib import Path
 
-from fastmcp import Context
-
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
-from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, resolve_trw_dir
+from trw_mcp.state._call_context import build_call_context as _build_call_ctx
+from trw_mcp.state._paths import resolve_trw_dir
 
 __all__ = [
     "_SOLUTION_PATTERNS",
@@ -45,25 +45,6 @@ _SOLUTION_PATTERNS = _re.compile(
 def _is_solution_summary(summary: str) -> bool:
     """Return True if the summary matches solution-indicator patterns (FR05)."""
     return bool(_SOLUTION_PATTERNS.search(summary))
-
-
-def _build_call_ctx(ctx: Context | None) -> TRWCallContext:
-    """PRD-CORE-141 FR03: build a TRWCallContext from an incoming FastMCP ctx.
-
-    Used by ctx-aware learning tools so they don't scan-hijack another
-    session's on-disk active run via telemetry or PRD knowledge-ID prefetch.
-    """
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    try:
-        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    except Exception:
-        raw_session = None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
 
 def _read_injected_ids(trw_dir: Path) -> set[str]:
