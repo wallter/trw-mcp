@@ -30,7 +30,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import TracebackType
 
 import structlog
 
@@ -361,124 +360,8 @@ class SandboxRunner:
         return result
 
 
-class ProbeIsolationContext:
-    """Context manager yielding a :class:`SandboxRunner` for sandboxed execution.
-
-    Shared primitive for PRD-HPO-SAFE-001 (meta-tune candidate replay) and
-    PRD-CORE-144 (empirical probe harness). Other consumers MUST declare
-    intent in a PRD before importing — see design doc §Audit Policy.
-
-    On Linux with ``pyseccomp`` installed, applies seccomp-bpf syscall
-    filtering, ``RLIMIT_AS`` memory cap, ``signal.alarm`` timeout, and
-    ``unshare -n`` network-namespace isolation. On non-Linux or when
-    ``pyseccomp`` is unavailable, runs in **degraded mode**: subprocess +
-    RLIMIT + timeout only, emitting a warning.
-
-    Example:
-        >>> with ProbeIsolationContext(timeout_s=5.0, memory_cap_mb=256) as runner:
-        ...     result = runner.run(["python", "-c", "print(1)"])
-        ...     assert result.exit_code == 0
-    """
-
-    def __init__(
-        self,
-        *,
-        timeout_s: float,
-        memory_cap_mb: int = 256,
-        allow_network: bool = False,
-        readonly_paths: tuple[Path, ...] | list[Path] | None = None,
-        writable_paths: tuple[Path, ...] | list[Path] | None = None,
-        strict: bool = True,
-    ) -> None:
-        self.timeout_s = timeout_s
-        self.memory_cap_mb = memory_cap_mb
-        self.allow_network = allow_network
-        self.readonly_paths: tuple[Path, ...] = tuple(readonly_paths or ())
-        self.writable_paths: tuple[Path, ...] = tuple(writable_paths or ())
-        self.strict = strict
-        self._runner: SandboxRunner | None = None
-
-    def __enter__(self) -> SandboxRunner:
-        degraded = not _IS_LINUX or not _HAS_SECCOMP
-        if self.strict and not self.allow_network:
-            if not _IS_LINUX:
-                raise MetaTuneSafetyUnavailableError(
-                    dependency_id="sandbox",
-                    activation_gate_blocked_reason=f"non-linux platform {platform.system()} cannot enforce SAFE-001 isolation",
-                )
-            if not _HAS_SECCOMP:
-                raise MetaTuneSafetyUnavailableError(
-                    dependency_id="sandbox",
-                    activation_gate_blocked_reason="seccomp unavailable; SAFE-001 sandbox cannot degrade",
-                )
-        if not _IS_LINUX:
-            logger.warning(
-                "sandbox_degraded_mode",
-                component="meta_tune.sandbox",
-                op="enter",
-                outcome="degraded",
-                reason="non_linux_platform",
-                platform=platform.system(),
-            )
-        elif not _HAS_SECCOMP:
-            logger.warning(
-                "sandbox_degraded_mode",
-                component="meta_tune.sandbox",
-                op="enter",
-                outcome="degraded",
-                reason="pyseccomp_unavailable",
-            )
-        self._runner = SandboxRunner(
-            timeout_s=self.timeout_s,
-            memory_cap_mb=self.memory_cap_mb,
-            allow_network=self.allow_network,
-            readonly_paths=self.readonly_paths,
-            writable_paths=self.writable_paths,
-            degraded=degraded,
-            strict=self.strict,
-        )
-        logger.info(
-            "sandbox_context_enter",
-            component="meta_tune.sandbox",
-            op="enter",
-            outcome="ok",
-            degraded=degraded,
-        )
-        return self._runner
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        logger.info(
-            "sandbox_context_exit",
-            component="meta_tune.sandbox",
-            op="exit",
-            outcome="ok" if exc is None else "error",
-        )
-        self._runner = None
-
-
-def run_sandboxed(
-    cmd: list[str],
-    *,
-    timeout_s: float,
-    memory_cap_mb: int = 256,
-    allow_network: bool = False,
-    readonly_paths: list[Path] | None = None,
-    writable_paths: list[Path] | None = None,
-    strict: bool = True,
-) -> SandboxResult:
-    """One-shot helper: run ``cmd`` under :class:`ProbeIsolationContext`."""
-    with ProbeIsolationContext(
-        timeout_s=timeout_s,
-        memory_cap_mb=memory_cap_mb,
-        allow_network=allow_network,
-        readonly_paths=tuple(readonly_paths or ()),
-        writable_paths=tuple(writable_paths or ()),
-        strict=strict,
-    ) as runner:
-        return runner.run(cmd)
+from trw_mcp.meta_tune._sandbox_context import (
+    ProbeIsolationContext as ProbeIsolationContext,
+    run_sandboxed as run_sandboxed,
+)
 
