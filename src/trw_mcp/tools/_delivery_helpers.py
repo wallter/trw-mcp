@@ -28,11 +28,7 @@ from trw_mcp.models.typed_dicts import (
     DeliveryGatesDict,
     FinalizeRunResult,
 )
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-)
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
@@ -69,22 +65,12 @@ def _count_file_modified(events: list[dict[str, object]]) -> int:
 
 
 def _events_since_last_session_start(events: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Return only events after the last ``session_start`` event.
-
-    When a new session starts, it logs a ``session_start`` event to the run's
-    events.jsonl. Events before that boundary belong to a previous session and
-    should not count against the current session's delivery gates.
-
-    If no ``session_start`` event is found, returns all events (backward compat).
-    """
+    """Return events after the last ``session_start``; returns all on no boundary."""
     last_session_idx = -1
     for i, ev in enumerate(events):
         if str(ev.get("event", "")) == "session_start":
             last_session_idx = i
-
-    if last_session_idx < 0:
-        return events
-    return events[last_session_idx:]
+    return events if last_session_idx < 0 else events[last_session_idx:]
 
 
 def _count_file_modified_current_session(events: list[dict[str, object]]) -> int:
@@ -515,20 +501,8 @@ def check_delivery_gates(
     return result
 
 
-def finalize_run(
-    run_path: Path | None,
-    trw_dir: Path,
-    config: TRWConfig,
-    reader: FileStateReader,
-    writer: FileStateWriter,
-    events: FileEventLogger,
-) -> FinalizeRunResult:
-    """Post-delivery finalization — placeholder for future run status updates.
-
-    Currently a no-op pass-through. Checkpoint and reflect are handled inline
-    in ceremony.py to preserve patch-point compatibility with existing tests.
-    Future expansion: close run.yaml status, archive run, etc.
-    """
+def finalize_run(*_args: object, **_kwargs: object) -> FinalizeRunResult:
+    """Post-delivery finalization — currently a no-op placeholder."""
     return {}
 
 
