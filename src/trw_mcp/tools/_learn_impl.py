@@ -28,34 +28,16 @@ from trw_mcp.tools._learning_helpers import (
 )
 
 # Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
-# Re-exported so existing test imports
-# (``from trw_mcp.tools._learn_impl import _content_policy_reject``) continue to
-# work.
+# Re-exported so existing test imports continue to work.
 from trw_mcp.tools._learn_side_effects import (
     _LEARN_INJECTION_PATTERNS as _LEARN_INJECTION_PATTERNS,
-)
-from trw_mcp.tools._learn_side_effects import (
     _MAX_DETAIL_CHARS as _MAX_DETAIL_CHARS,
-)
-from trw_mcp.tools._learn_side_effects import (
     _MAX_SUMMARY_CHARS as _MAX_SUMMARY_CHARS,
-)
-from trw_mcp.tools._learn_side_effects import (
     _append_provenance_signed as _append_provenance_signed,
-)
-from trw_mcp.tools._learn_side_effects import (
     _content_policy_reject as _content_policy_reject,
-)
-from trw_mcp.tools._learn_side_effects import (
     _default_is_solution as _default_is_solution,
-)
-from trw_mcp.tools._learn_side_effects import (
     _handle_consolidation as _handle_consolidation,
-)
-from trw_mcp.tools._learn_side_effects import (
     _save_yaml_backup as _save_yaml_backup,
-)
-from trw_mcp.tools._learn_side_effects import (
     _store_accepts_positional_trw_dir as _store_accepts_positional_trw_dir,
 )
 
