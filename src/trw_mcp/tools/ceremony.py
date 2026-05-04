@@ -142,6 +142,7 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
     _parse_iso_utc as _parse_iso_utc,
     _persist_surface_snapshot_pointer as _persist_surface_snapshot_pointer,
     _timedelta_hours as _timedelta_hours,
+    step_assertion_health as step_assertion_health,
 )
 
 
@@ -420,42 +421,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
         _record_step("embed_health", _embed_health_started)
 
         _assertion_health_started = time.monotonic()
-        # FR07 (PRD-CORE-086): Assertion health summary from cached last_result fields.
         try:
-            ah_start = time.monotonic()
-            from trw_mcp.state.memory_adapter import get_backend
-
-            ah_trw_dir = resolve_trw_dir()
-            backend = get_backend(ah_trw_dir)
-            if hasattr(backend, "entries_with_assertions"):
-                entries_with_assertions = backend.entries_with_assertions()
-                if entries_with_assertions:
-                    from datetime import timedelta
-
-                    stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
-                    ah_passing = 0
-                    ah_failing = 0
-                    ah_stale = 0
-                    ah_unverifiable = 0
-                    for entry in entries_with_assertions:
-                        for a in entry.assertions:
-                            if a.last_verified_at is None or a.last_verified_at < stale_threshold:
-                                ah_stale += 1
-                            elif a.last_result is True:
-                                ah_passing += 1
-                            elif a.last_result is False:
-                                ah_failing += 1
-                            else:
-                                ah_unverifiable += 1
-                    results["assertion_health"] = {
-                        "passing": ah_passing,
-                        "failing": ah_failing,
-                        "stale": ah_stale,
-                        "unverifiable": ah_unverifiable,
-                        "total": len(entries_with_assertions),
-                    }
-            ah_ms = (time.monotonic() - ah_start) * 1000
-            logger.debug("assertion_health_computed", duration_ms=round(ah_ms, 1))
+            ah = step_assertion_health(resolve_trw_dir())
+            if ah is not None:
+                results["assertion_health"] = ah
         except Exception:  # justified: fail-open, assertion health must not block session start
             logger.debug("assertion_health_failed", exc_info=True)
         _record_step("assertion_health", _assertion_health_started)

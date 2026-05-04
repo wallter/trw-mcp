@@ -272,3 +272,52 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return max(0.0, (datetime.now(timezone.utc) - mtime_dt).total_seconds() / 3600.0)
     except OSError:
         return 0.0
+
+
+def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
+    """PRD-CORE-086 FR07: assertion health summary from cached last_result fields.
+
+    Returns ``{"passing", "failing", "stale", "unverifiable", "total"}``
+    when the backend exposes ``entries_with_assertions`` and at least one
+    entry has assertions. Returns ``None`` otherwise. Fail-open: any
+    backend error returns ``None`` and is logged at debug.
+    """
+    import time
+
+    from trw_mcp.state.memory_adapter import get_backend
+
+    started = time.monotonic()
+    try:
+        backend = get_backend(trw_dir)
+        if not hasattr(backend, "entries_with_assertions"):
+            return None
+        entries = backend.entries_with_assertions()
+        if not entries:
+            return None
+        stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        passing = 0
+        failing = 0
+        stale = 0
+        unverifiable = 0
+        for entry in entries:
+            for a in entry.assertions:
+                if a.last_verified_at is None or a.last_verified_at < stale_threshold:
+                    stale += 1
+                elif a.last_result is True:
+                    passing += 1
+                elif a.last_result is False:
+                    failing += 1
+                else:
+                    unverifiable += 1
+        return {
+            "passing": passing,
+            "failing": failing,
+            "stale": stale,
+            "unverifiable": unverifiable,
+            "total": len(entries),
+        }
+    except Exception:  # justified: fail-open per PRD-CORE-086 NFR
+        logger.debug("assertion_health_failed", exc_info=True)
+        return None
+    finally:
+        logger.debug("assertion_health_computed", duration_ms=round((time.monotonic() - started) * 1000, 1))
