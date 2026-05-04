@@ -274,6 +274,47 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return 0.0
 
 
+def step_surface_stamp(
+    run_dir: Path | None,
+    session_id: str,
+) -> str:
+    """PRD-HPO-MEAS-001 FR-1/FR-2 — resolve SurfaceRegistry + stamp run snapshot.
+
+    Always resolves the SurfaceRegistry so ``surface_snapshot_id`` is
+    available for downstream event emitters. When a run_dir is pinned,
+    writes the immutable ``run_surface_snapshot.yaml`` frozen copy
+    under ``<run_dir>/meta/``. Failure is non-fatal by design
+    (fail-open) — returns an empty string so the Phase-1 default
+    remains available on HPOTelemetryEvent.
+    """
+    try:
+        from trw_mcp.telemetry.artifact_registry import SurfaceRegistry, resolve_surface_registry
+        from trw_mcp.telemetry.surface_manifest import stamp_session
+
+        if run_dir is not None:
+            registry = SurfaceRegistry.build_and_emit(
+                session_id=session_id,
+                run_id=run_dir.name,
+                run_dir=run_dir,
+            )
+            snapshot_id = registry.snapshot_id
+            stamp_session(run_dir / "meta")
+            _persist_surface_snapshot_pointer(run_dir, snapshot_id)
+        else:
+            registry = resolve_surface_registry()
+            snapshot_id = registry.snapshot_id
+        logger.debug(
+            "surface_snapshot_stamped",
+            snapshot_id=snapshot_id,
+            run_dir=str(run_dir) if run_dir else "",
+            artifact_count=len(registry.artifacts),
+        )
+        return snapshot_id
+    except Exception:  # justified: fail-open, surface stamping must not block session start
+        logger.debug("surface_snapshot_stamp_failed", exc_info=True)
+        return ""
+
+
 def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
     """PRD-CORE-086 FR07: assertion health summary from cached last_result fields.
 
