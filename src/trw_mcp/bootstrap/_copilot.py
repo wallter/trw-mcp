@@ -15,10 +15,17 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
 
+from ._copilot_models import (
+    CopilotHookCommand,
+    CopilotHookConfig,
+    CopilotHookGroup,
+    CopilotHooksPayload,
+    PathScopedTemplate,
+)
 from ._file_ops import (
     _new_result,
     _record_write,
@@ -53,39 +60,14 @@ _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 # ---------------------------------------------------------------------------
 
 
-class PathScopedTemplate(TypedDict):
-    """Template for a path-scoped Copilot instruction file."""
-
-    applyTo: str
-    content: str
-
-
-class CopilotHookCommand(TypedDict):
-    """A single command entry inside a Copilot hook group."""
-
-    type: str
-    command: str
-
-
-class CopilotHookGroup(TypedDict):
-    """A hook group entry in Copilot hooks.json."""
-
-    description: str
-    hooks: list[CopilotHookCommand]
-
-
-class CopilotHooksPayload(TypedDict):
-    """Top-level hooks.json structure for Copilot."""
-
-    version: int
-    hooks: dict[str, list[CopilotHookGroup]]
-
-
-class CopilotHookConfig(TypedDict):
-    """Mapping entry for a TRW hook → Copilot event."""
-
-    script: str
-    description: str
+# TypedDicts re-exported from _copilot_models.py (cycle 36).
+__all__ = [
+    "CopilotHookCommand",
+    "CopilotHookConfig",
+    "CopilotHookGroup",
+    "CopilotHooksPayload",
+    "PathScopedTemplate",
+]
 
 
 # ---------------------------------------------------------------------------
