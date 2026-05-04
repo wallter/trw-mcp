@@ -178,6 +178,41 @@ class SessionStartResultDict(TypedDict, total=False):
     step_durations_ms: dict[str, float]
 
 
+class BuildCheckResultDict(TypedDict, total=False):
+    """Return shape of ``trw_build_check`` MCP tool.
+
+    PRD-FIX-088 FR03: ``step_durations_ms`` mirrors the
+    ``SessionStartResultDict`` precedent set by PRD-FIX-084. Keys
+    populated on the success path: persist, run_resolve, log_event,
+    q_learning_dispatch, finalize, total.
+
+    PRD-FIX-088 FR01: ``q_learning_deferred`` is ALWAYS present when
+    Q-learning was scheduled (which is now every successful call,
+    not only under writer pressure).
+    """
+
+    tests_passed: bool
+    static_checks_clean: bool
+    mypy_clean: bool
+    timed_out: bool
+    coverage_pct: float
+    test_count: int
+    failure_count: int
+    failures: list[str]
+    scope: str
+    duration_secs: float
+    cache_path: str
+    status: str
+    reason: str
+    coverage_threshold_failed: bool
+    coverage_threshold: float
+    coverage_threshold_message: str
+    q_learning_deferred: dict[str, object]
+    q_learning_error: str
+    q_learning_error_count: int
+    step_durations_ms: dict[str, float]
+
+
 class RunReportResultDict(TypedDict, total=False):
     """Return shape of ``trw_run_report`` MCP tool.
 

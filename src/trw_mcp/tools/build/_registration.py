@@ -5,16 +5,27 @@ Registers ``trw_build_check`` on the FastMCP server instance.
 PRD-CORE-098: ``trw_build_check`` is a **result reporter** — agents run
 tests via Bash and then call this tool to record the outcome for ceremony
 tracking and delivery gates.
+
+PRD-FIX-088 FR01: Q-learning outcome correlation is ALWAYS deferred to a
+dedicated background worker thread (single-flight + coalescing queue).
+Pre-fix the inline path could take >90 s on large corpora, holding the
+MCP response on the SSE stream for the entire duration.
+
+PRD-FIX-088 FR03: Per-step ``step_durations_ms`` telemetry mirrors the
+PRD-FIX-084 precedent on ``trw_session_start``.
 """
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 import structlog
 from fastmcp import Context, FastMCP
 
+import trw_mcp.tools._q_learning_state as _qls
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import (
@@ -115,6 +126,16 @@ def register_build_tools(server: FastMCP) -> None:
          static_checks_clean, mypy_clean, coverage_threshold_failed?,
          gate_effects: list[str]}.
         """
+        # PRD-FIX-088 FR03: Per-step latency telemetry for ``trw_build_check``.
+        # Every named step records elapsed-since-start so future regressions
+        # of the "step accidentally O(corpus)" class are visible from one
+        # log line.
+        _call_started_at = monotonic()
+        step_durations_ms: dict[str, float] = {}
+
+        def _record_step(step_key: str, started_at: float) -> None:
+            step_durations_ms[step_key] = round((monotonic() - started_at) * 1000.0, 2)
+
         reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()
         if not config.build_check_enabled:
@@ -133,6 +154,8 @@ def register_build_tools(server: FastMCP) -> None:
 
         effective_static_checks_clean = mypy_clean if static_checks_clean is None else static_checks_clean
 
+        # Step: persist (cache + progress state)
+        _persist_started = monotonic()
         status = BuildStatus(
             tests_passed=reported_tests_passed,
             static_checks_clean=effective_static_checks_clean,
@@ -151,8 +174,10 @@ def register_build_tools(server: FastMCP) -> None:
 
         # PRD-FIX-077-FR01: persist build outcome for delivery-gate fallback.
         persist_build_progress_state(trw_dir, status, scope=scope)
+        _record_step("persist", _persist_started)
 
-        # FIX-035-FR01: Auto-detect active run when not explicitly provided
+        # Step: run_resolve + phase update
+        _run_resolve_started = monotonic()
         from trw_mcp.models.run import Phase
         from trw_mcp.state.phase import try_update_phase
 
@@ -163,28 +188,25 @@ def register_build_tools(server: FastMCP) -> None:
             # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run.
             resolved_run = _find_active_run_compat(ctx)
 
-        # FIX-035-FR05: Auto-update phase to VALIDATE
         try_update_phase(resolved_run, Phase.VALIDATE)
+        _record_step("run_resolve", _run_resolve_started)
 
-        # FIX-035-FR02: Log event with proper boolean types
+        # Step: log_event
+        _log_event_started = monotonic()
         _log_build_event(resolved_run, scope, status)
+        _record_step("log_event", _log_event_started)
 
-        # Q-learning: reward recalled learnings based on build outcome.
-        # Process inline under normal conditions so existing reporter semantics
-        # stay deterministic. Under live writer pressure, defer instead of
-        # making the MCP response wait on YAML indexing/outcome correlation.
+        # Step: q_learning_dispatch — always defer to a background worker.
+        # PRD-FIX-088 FR01: pre-fix this ran inline and could take >90 s on
+        # large corpora; the response was held on the SSE stream the whole
+        # time. Now it returns immediately with ``q_learning_deferred`` set.
+        _q_dispatch_started = monotonic()
         event_type = "build_passed" if status.tests_passed and effective_static_checks_clean else "build_failed"
-        q_learning_deferred = _q_learning_defer_reason(trw_dir, config)
-        if q_learning_deferred is None:
-            _process_q_learning(event_type, scope)
-        else:
-            logger.warning(
-                "q_learning_deferred",
-                event_type=event_type,
-                scope=scope,
-                **q_learning_deferred,
-            )
+        q_learning_deferred = _dispatch_q_learning_async(event_type, scope)
+        _record_step("q_learning_dispatch", _q_dispatch_started)
 
+        # Step: finalize (logging + result-dict assembly)
+        _finalize_started = monotonic()
         logger.info(
             "build_check_complete",
             scope=scope,
@@ -212,9 +234,8 @@ def register_build_tools(server: FastMCP) -> None:
             "scope": status.scope,
             "duration_secs": status.duration_secs,
             "cache_path": str(cache_path),
+            "q_learning_deferred": q_learning_deferred,
         }
-        if q_learning_deferred is not None:
-            result["q_learning_deferred"] = q_learning_deferred
 
         # Coverage threshold enforcement (sprint-finish anti-regression)
         _finalize_build_result(result, min_coverage)
@@ -226,6 +247,10 @@ def register_build_tools(server: FastMCP) -> None:
             result["q_learning_error"] = q_health["last_error"]
             result["q_learning_error_count"] = q_health["error_count"]
 
+        _record_step("finalize", _finalize_started)
+        _record_step("total", _call_started_at)
+        result["step_durations_ms"] = step_durations_ms
+
         return result
 
 
@@ -233,13 +258,95 @@ def register_build_tools(server: FastMCP) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inline Q-learning outcome processing state.
+# PRD-FIX-088 FR01: Background Q-learning worker — single-flight + queue.
+# Worker handle and lock live in ``_q_learning_state`` (extracted to keep
+# this module testable; tests reset state via the conftest fixture).
 _q_learning_last_error: str | None = None
 _q_learning_error_count: int = 0
 
 
-def _process_q_learning(event_type: str, scope: str) -> None:
-    """Apply Q-learning outcome updates inline and fail open on errors."""
+def _dispatch_q_learning_async(event_type: str, scope: str) -> dict[str, object]:
+    """Schedule Q-learning outcome correlation on the background worker.
+
+    Returns a stable ``q_learning_deferred`` dict (always non-None) with:
+    - ``reason``: literal ``"deferred_always"`` (FR01).
+    - ``scheduled_at``: ISO 8601 UTC timestamp for log correlation.
+    - ``thread_state``: one of ``"launched"`` | ``"queued"`` | ``"queue_full"``.
+    """
+    scheduled_at = datetime.now(timezone.utc).isoformat()
+    with _qls._q_lock:
+        worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
+        if worker_alive:
+            try:
+                _qls._q_queue.put_nowait(event_type)
+                thread_state = "queued"
+            except Exception:  # justified: bounded queue overflow is best-effort
+                logger.warning(
+                    "q_learning_queue_full",
+                    event_type=event_type,
+                    scope=scope,
+                    queue_max=_qls._q_queue.maxsize,
+                )
+                thread_state = "queue_full"
+        else:
+            _qls._q_thread = threading.Thread(
+                target=_q_learning_worker,
+                args=(event_type, scope),
+                name="trw-q-learning",
+                daemon=True,
+            )
+            _qls._q_thread.start()
+            thread_state = "launched"
+    return {
+        "reason": "deferred_always",
+        "scheduled_at": scheduled_at,
+        "thread_state": thread_state,
+    }
+
+
+def _q_learning_worker(initial_event_type: str, scope: str) -> None:
+    """Background worker: process the initial event then drain the coalescing queue.
+
+    Single-flight contract: only one worker at a time. While alive, peer
+    callers enqueue onto ``_q_queue``; after the initial pass completes,
+    the worker drains the queue and exits. The handle is cleared in
+    ``finally`` so a crash leaves no zombie reference.
+    """
+    global _q_learning_last_error, _q_learning_error_count
+    try:
+        _process_q_learning_inline(initial_event_type, scope)
+        # Drain coalescing queue until empty. ``get_nowait`` returns
+        # immediately on empty, breaking the loop.
+        import queue as _queue
+
+        while True:
+            try:
+                queued_event = _qls._q_queue.get_nowait()
+            except _queue.Empty:
+                break
+            _process_q_learning_inline(queued_event, scope)
+    except BaseException as exc:
+        _q_learning_error_count += 1
+        _q_learning_last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        logger.error(
+            "q_learning_worker_crashed",
+            event_type=initial_event_type,
+            scope=scope,
+            error_count=_q_learning_error_count,
+            exc_info=True,
+        )
+    finally:
+        with _qls._q_lock:
+            _qls._q_thread = None
+
+
+def _process_q_learning_inline(event_type: str, scope: str) -> None:
+    """Run a single Q-learning correlation pass and record outcome.
+
+    Errors are caught and recorded on the module-level health counters
+    so ``trw_build_check`` can surface them on the next call without
+    crashing the worker.
+    """
     global _q_learning_last_error, _q_learning_error_count
     try:
         from trw_mcp.scoring import process_outcome_for_event
@@ -264,42 +371,14 @@ def _process_q_learning(event_type: str, scope: str) -> None:
         )
 
 
-def _q_learning_defer_reason(
-    trw_dir: Path,
-    config: object,
-) -> dict[str, object] | None:
-    """Return a structured reason to skip inline Q-learning on hot MCP paths."""
-
-    if not bool(getattr(config, "session_start_defer_under_writer_pressure", True)):
-        return None
-    try:
-        from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
-
-        threshold = int(getattr(config, "session_start_writer_pressure_threshold", 2))
-        should_defer, writer_pids, reason = should_defer_session_start_optional_work(
-            trw_dir,
-            threshold=threshold,
-        )
-    except Exception:  # justified: pressure detection is advisory; keep legacy behavior if it fails
-        logger.debug("q_learning_pressure_check_failed", exc_info=True)
-        return None
-    if not should_defer:
-        return None
-    return {
-        "reason": reason,
-        "writer_pids": writer_pids,
-        "writer_count": len(writer_pids),
-        "threshold": threshold,
-    }
-
-
 def get_q_learning_health() -> dict[str, object]:
     """Return Q-learning worker health for observability."""
+    worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
     return {
-        "queue_size": 0,
+        "queue_size": _qls._q_queue.qsize(),
         "error_count": _q_learning_error_count,
         "last_error": _q_learning_last_error,
-        "worker_alive": False,
+        "worker_alive": worker_alive,
     }
 
 

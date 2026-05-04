@@ -219,6 +219,7 @@ from trw_mcp.models.typed_dicts._telemetry import (
 
 # _tools
 from trw_mcp.models.typed_dicts._tools import (
+    BuildCheckResultDict,
     CheckpointResultDict,
     DeliverResultDict,
     KnowledgeSyncResultDict,
@@ -285,6 +286,7 @@ __all__ = [
     "BatchDedupResult",
     "BatchSendResult",
     "BootstrapFileResult",
+    "BuildCheckResultDict",
     "CodexConfigDict",
     "CodexFeaturesConfig",
     "CodexHookCommand",

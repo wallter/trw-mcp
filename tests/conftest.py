@@ -326,6 +326,35 @@ def _join_and_reset_deferred() -> None:
         pass
 
 
+def _join_and_reset_q_learning() -> None:
+    """PRD-FIX-088 FR01: reset the Q-learning bg worker between tests.
+
+    Joins any running ``_q_thread``, drains the coalescing queue, and
+    clears the ``_q_thread`` reference so the next test starts fresh.
+    Prevents use-after-close segfaults on the SQLite backend the same
+    way ``_join_and_reset_deferred`` does for the deliver-deferred thread.
+    """
+    try:
+        import queue as _queue
+
+        import trw_mcp.tools._q_learning_state as _qls
+
+        with _qls._q_lock:
+            t = _qls._q_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=15)
+        with _qls._q_lock:
+            _qls._q_thread = None
+            # Drain any leftover events.
+            try:
+                while True:
+                    _qls._q_queue.get_nowait()
+            except _queue.Empty:
+                pass
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
     """Reset memory adapter singleton for test isolation.
@@ -336,9 +365,11 @@ def _reset_memory_backend() -> Iterator[None]:
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
+    _join_and_reset_q_learning()
     reset_backend()
     yield
     _join_and_reset_deferred()
+    _join_and_reset_q_learning()
     reset_backend()
 
 

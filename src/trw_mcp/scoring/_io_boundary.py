@@ -248,14 +248,36 @@ def _sync_to_sqlite(
         logger.debug("q_value_sqlite_sync_skipped", exc_info=True)  # justified: fail-open, YAML is authoritative
 
 
+# PRD-FIX-088 FR02: Chunk size for ``_batch_sync_to_sqlite`` transaction bracket.
+# Each chunk wraps N ``backend.update()`` calls in a single
+# ``BEGIN IMMEDIATE`` / ``COMMIT``. Bounds lock-hold-time to ~150 ms/chunk
+# (NFR07: ≤ 250 ms p95) so the async sync loop introduced by PRD-FIX-087
+# can still interleave between chunks. Tunable without an FR change.
+Q_LEARNING_BATCH_CHUNK_SIZE: int = 500
+
+
 def _batch_sync_to_sqlite(
     updates: list[_PendingUpdate],
     trw_dir: Path,
 ) -> None:
-    """Batch sync Q-values to SQLite (PRD-FIX-070-FR03).
+    """Batch sync Q-values to SQLite in chunked transactions.
 
-    Groups all updates into a single backend session instead of N individual
-    calls. Falls back gracefully -- individual entry failures don't abort the batch.
+    PRD-FIX-070-FR03: groups updates into a single backend session
+    instead of N individual calls.
+
+    PRD-FIX-088 FR02: wraps each chunk of ``Q_LEARNING_BATCH_CHUNK_SIZE``
+    rows in a single ``BEGIN IMMEDIATE`` / ``COMMIT`` (via
+    ``backend.transaction()``). Collapses N implicit transactions to
+    ``ceil(N / chunk)`` explicit transactions while bounding the
+    SQLite write-lock-hold-time per chunk so the async sync loop is
+    not starved.
+
+    Per-row exceptions are caught (existing fail-open behavior preserved);
+    a chunk still commits with whatever rows succeeded. WHEN a
+    ``BEGIN``/``COMMIT`` itself raises, the chunk is logged at WARNING
+    and execution falls through to the next chunk; no exception
+    propagates to the caller (Q-learning is best-effort, YAML is
+    authoritative).
     """
     if not updates:
         return
@@ -263,21 +285,68 @@ def _batch_sync_to_sqlite(
         from trw_mcp.state.memory_adapter import get_backend
 
         backend = get_backend(trw_dir)
-        synced = 0
-        for lid, _path, _data, q_new, q_obs, history in updates:
-            try:
-                backend.update(
-                    lid,
-                    q_value=round(q_new, 4),
-                    q_observations=q_obs,
-                    outcome_history=history,
-                )
-                synced += 1
-            except Exception:  # justified: fail-open, individual entry failures don't abort batch
-                logger.debug("q_value_sqlite_sync_skipped", learning_id=lid, exc_info=True)
-        logger.debug("batch_sqlite_sync_complete", synced=synced, total=len(updates))
     except Exception:  # justified: fail-open, SQLite batch sync is best-effort
         logger.debug("q_value_sqlite_batch_sync_failed", exc_info=True)
+        return
+
+    total = len(updates)
+    expected_chunks = (total + Q_LEARNING_BATCH_CHUNK_SIZE - 1) // Q_LEARNING_BATCH_CHUNK_SIZE
+    synced = 0
+    for chunk_index in range(expected_chunks):
+        start = chunk_index * Q_LEARNING_BATCH_CHUNK_SIZE
+        chunk = updates[start : start + Q_LEARNING_BATCH_CHUNK_SIZE]
+        chunk_synced = _sync_chunk(backend, chunk, chunk_index, len(chunk))
+        synced += chunk_synced
+    logger.debug(
+        "batch_sqlite_sync_complete",
+        synced=synced,
+        total=total,
+        chunks=expected_chunks,
+        chunk_size=Q_LEARNING_BATCH_CHUNK_SIZE,
+    )
+
+
+def _sync_chunk(
+    backend: object,
+    chunk: list[_PendingUpdate],
+    chunk_index: int,
+    chunk_size: int,
+) -> int:
+    """Run one transaction-bracketed chunk of ``backend.update()`` calls.
+
+    Returns the number of rows that succeeded. Per-row exceptions are
+    caught and logged at debug; a transaction-level failure (BEGIN/COMMIT)
+    is caught and logged at WARNING with chunk metadata.
+    """
+    chunk_synced = 0
+    try:
+        # backend.transaction() defaults to a no-op pass-through on
+        # backends without batching support, so this is safe across
+        # SQLite/YAML/in-memory test backends.
+        with backend.transaction():  # type: ignore[attr-defined]  # justified: protocol guard handled by backend ABC default
+            for lid, _path, _data, q_new, q_obs, history in chunk:
+                try:
+                    backend.update(  # type: ignore[attr-defined]  # justified: protocol-typed at call site via memory_adapter
+                        lid,
+                        q_value=round(q_new, 4),
+                        q_observations=q_obs,
+                        outcome_history=history,
+                    )
+                    chunk_synced += 1
+                except Exception:  # justified: fail-open, individual entry failures don't abort chunk
+                    logger.debug(
+                        "q_value_sqlite_sync_skipped",
+                        learning_id=lid,
+                        exc_info=True,
+                    )
+    except Exception:  # justified: fail-open, transaction-level failure must not propagate
+        logger.warning(
+            "batch_sqlite_chunk_failed",
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            exc_info=True,
+        )
+    return chunk_synced
 
 
 def _write_pending_entries(
@@ -429,12 +498,14 @@ def _tail_lines(path: Path, max_lines: int) -> list[str]:
 
 
 __all__ = [
+    "Q_LEARNING_BATCH_CHUNK_SIZE",
     "_PendingUpdate",
     "_batch_sync_to_sqlite",
     "_default_lookup_entry",
     "_find_session_start_ts",
     "_load_entries_from_dir",
     "_read_recall_tracking_jsonl",
+    "_sync_chunk",
     "_sync_to_sqlite",
     "_write_pending_entries",
 ]

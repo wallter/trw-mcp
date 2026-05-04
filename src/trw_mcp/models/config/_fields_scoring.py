@@ -37,7 +37,13 @@ class _ScoringFields:
 
     # -- Outcome correlation --
 
-    learning_outcome_correlation_window_minutes: int = 60
+    # PRD-FIX-088 FR04: lowered from 60 to 7 minutes.
+    # 60-min window matched ~2800 receipts on active sessions (one
+    # build_check correlated 2823 entries, taking 91s wall time).
+    # 7 minutes covers a typical work cycle while keeping correlation
+    # set sizes O(100). Existing deployments with an explicit
+    # ``.trw/config.yaml`` override are unaffected (env > yaml > default).
+    learning_outcome_correlation_window_minutes: int = 7
     learning_outcome_correlation_scope: str = "session"
     learning_outcome_history_cap: int = 20
     recall_utility_lambda: float = 0.3

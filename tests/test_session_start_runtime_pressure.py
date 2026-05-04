@@ -387,10 +387,19 @@ def test_append_ceremony_status_defers_nudges_on_writer_presence(tmp_path: Path)
     assert nudge_deferred["reason"] == "writer_present"
 
 
-def test_build_check_defers_q_learning_on_writer_presence(
+def test_build_check_always_defers_q_learning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """PRD-FIX-088 FR01: Q-learning is ALWAYS deferred (not only under writer pressure).
+
+    Pre-FIX-088 this test asserted ``reason == 'writer_present'``; that
+    deferral path was conditional on detected peer writers and inline
+    otherwise. The 91-second hang on 2026-05-04 (call dc084e2b)
+    proved the inline path was unsafe at any corpus size, so FIX-088
+    made deferral unconditional. The reason now is the literal
+    ``"deferred_always"``.
+    """
     from fastmcp import FastMCP
 
     import trw_mcp.tools.build as build_mod
@@ -401,19 +410,18 @@ def test_build_check_defers_q_learning_on_writer_presence(
     config = TRWConfig.model_validate(
         {
             "trw_dir": str(trw_dir),
-            "session_start_defer_under_writer_pressure": True,
-            "session_start_writer_pressure_threshold": 2,
         }
     )
 
     monkeypatch.setattr(reg_mod, "get_config", lambda: config)
     monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr(reg_mod, "find_active_run", lambda **kwargs: None)
+    # The bg worker catches exceptions and logs; we don't need to
+    # inject one to prove inline-Q-learning would have failed. We just
+    # stub the work so the worker exits cleanly.
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type: (_ for _ in ()).throw(
-            AssertionError("inline Q-learning must leave pressured MCP hot paths")
-        ),
+        lambda event_type, event_data=None: [],
     )
 
     server = FastMCP("test")
@@ -425,4 +433,5 @@ def test_build_check_defers_q_learning_on_writer_presence(
     assert result["tests_passed"] is True
     q_learning_deferred = result["q_learning_deferred"]
     assert isinstance(q_learning_deferred, dict)
-    assert q_learning_deferred["reason"] == "writer_present"
+    assert q_learning_deferred["reason"] == "deferred_always"
+    assert q_learning_deferred["thread_state"] in {"launched", "queued"}
