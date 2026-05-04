@@ -130,6 +130,8 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
     _parse_iso_utc as _parse_iso_utc,
     _persist_surface_snapshot_pointer as _persist_surface_snapshot_pointer,
     _timedelta_hours as _timedelta_hours,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     finalize_session_start as finalize_session_start,
     step_assertion_health as step_assertion_health,
     step_phase_auto_recall as step_phase_auto_recall,
