@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
@@ -43,6 +44,26 @@ class _ScoringConfig(Protocol):
     """Minimal config surface needed by scoring I/O helpers."""
 
     runs_root: str
+
+
+class _TransactionalBackend(Protocol):
+    """Structural-typed surface of the memory backend used by ``_sync_chunk``.
+
+    PRD-FIX-088 NFR01 ("0 type:ignore added"): scoring previously used
+    ``# type: ignore[attr-defined]`` to call ``backend.transaction()`` and
+    ``backend.update()`` on an ``object`` parameter. This Protocol pins
+    the contract structurally so mypy --strict resolves the calls and the
+    ignores are removed.
+
+    The concrete backends (``SQLiteBackend``, the in-memory test double,
+    and the YAML pass-through) all implement these two methods today;
+    backends without batching expose ``transaction()`` as a no-op
+    pass-through context manager.
+    """
+
+    def transaction(self) -> AbstractContextManager[object]: ...
+
+    def update(self, entry_id: str, /, **fields: object) -> object: ...
 
 
 def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
@@ -284,7 +305,11 @@ def _batch_sync_to_sqlite(
     try:
         from trw_mcp.state.memory_adapter import get_backend
 
-        backend = get_backend(trw_dir)
+        # Cast to the structural protocol since concrete backends define
+        # ``transaction``/``update`` (no-op pass-through on backends
+        # without batching support); the cast is the documented contract
+        # boundary, replacing two ``# type: ignore[attr-defined]``.
+        backend = cast(_TransactionalBackend, get_backend(trw_dir))
     except Exception:  # justified: fail-open, SQLite batch sync is best-effort
         logger.debug("q_value_sqlite_batch_sync_failed", exc_info=True)
         return
@@ -307,7 +332,7 @@ def _batch_sync_to_sqlite(
 
 
 def _sync_chunk(
-    backend: object,
+    backend: _TransactionalBackend,
     chunk: list[_PendingUpdate],
     chunk_index: int,
     chunk_size: int,
@@ -323,10 +348,10 @@ def _sync_chunk(
         # backend.transaction() defaults to a no-op pass-through on
         # backends without batching support, so this is safe across
         # SQLite/YAML/in-memory test backends.
-        with backend.transaction():  # type: ignore[attr-defined]  # justified: protocol guard handled by backend ABC default
+        with backend.transaction():
             for lid, _path, _data, q_new, q_obs, history in chunk:
                 try:
-                    backend.update(  # type: ignore[attr-defined]  # justified: protocol-typed at call site via memory_adapter
+                    backend.update(
                         lid,
                         q_value=round(q_new, 4),
                         q_observations=q_obs,

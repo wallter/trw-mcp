@@ -18,9 +18,12 @@ PRD-FIX-084 precedent on ``trw_session_start``.
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from queue import Empty
 from time import monotonic
+from typing import Literal
 
 import structlog
 from fastmcp import Context, FastMCP
@@ -28,6 +31,10 @@ from fastmcp import Context, FastMCP
 import trw_mcp.tools._q_learning_state as _qls
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts._tools import (
+    QLearningDeferredDict,
+    QLearningHealthDict,
+)
 from trw_mcp.state._paths import (
     TRWCallContext,
     find_active_run,
@@ -41,6 +48,11 @@ from trw_mcp.tools.build._core import (
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
+
+# PRD-FIX-088 FR01: literal alias for the ``thread_state`` field on
+# :class:`QLearningDeferredDict`. Kept private to this module since it
+# is an implementation detail of the dispatcher.
+_DispatchThreadState = Literal["launched", "queued", "queue_full"]
 
 _BUILD_CHECK_USAGE = (
     "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, "
@@ -136,6 +148,18 @@ def register_build_tools(server: FastMCP) -> None:
         def _record_step(step_key: str, started_at: float) -> None:
             step_durations_ms[step_key] = round((monotonic() - started_at) * 1000.0, 2)
 
+        # PRD-FIX-088 FR01: ``tool_call_id`` is captured up-front and
+        # threaded through the bg worker so async ``q_learning_complete``
+        # and ``outcome_correlation_applied`` events correlate back to the
+        # originating call. ``log_tool_call`` already binds the same id
+        # into structlog contextvars; we pull it from there when present
+        # to keep ids consistent, otherwise mint a fresh 12-char hex.
+        bound_ctx = structlog.contextvars.get_contextvars()
+        bound_id = bound_ctx.get("tool_call_id")
+        tool_call_id: str = (
+            bound_id if isinstance(bound_id, str) and bound_id else uuid.uuid4().hex[:12]
+        )
+
         reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()
         if not config.build_check_enabled:
@@ -202,19 +226,11 @@ def register_build_tools(server: FastMCP) -> None:
         # time. Now it returns immediately with ``q_learning_deferred`` set.
         _q_dispatch_started = monotonic()
         event_type = "build_passed" if status.tests_passed and effective_static_checks_clean else "build_failed"
-        q_learning_deferred = _dispatch_q_learning_async(event_type, scope)
+        q_learning_deferred = _dispatch_q_learning_async(event_type, scope, tool_call_id)
         _record_step("q_learning_dispatch", _q_dispatch_started)
 
-        # Step: finalize (logging + result-dict assembly)
+        # Step: finalize (result-dict assembly)
         _finalize_started = monotonic()
-        logger.info(
-            "build_check_complete",
-            scope=scope,
-            tests_passed=status.tests_passed,
-            static_checks_clean=effective_static_checks_clean,
-            mypy_clean=status.mypy_clean,
-            coverage_pct=status.coverage_pct,
-        )
         if not status.tests_passed or not effective_static_checks_clean:
             logger.warning(
                 "build_check_failed",
@@ -251,6 +267,22 @@ def register_build_tools(server: FastMCP) -> None:
         _record_step("total", _call_started_at)
         result["step_durations_ms"] = step_durations_ms
 
+        # PRD-FIX-088 FR03 acceptance #2: ``step_durations_ms`` MUST appear
+        # on the ``build_check_complete`` log payload AND on the result
+        # dict. Emitted AFTER ``_record_step("total", ...)`` so the dict
+        # is fully populated; pre-fix the log fired before ``finalize``
+        # and ``total`` were recorded, yielding an incomplete mirror.
+        logger.info(
+            "build_check_complete",
+            scope=scope,
+            tests_passed=status.tests_passed,
+            static_checks_clean=effective_static_checks_clean,
+            mypy_clean=status.mypy_clean,
+            coverage_pct=status.coverage_pct,
+            step_durations_ms=step_durations_ms,
+            tool_call_id=tool_call_id,
+        )
+
         return result
 
 
@@ -259,26 +291,33 @@ def register_build_tools(server: FastMCP) -> None:
 
 # ---------------------------------------------------------------------------
 # PRD-FIX-088 FR01: Background Q-learning worker — single-flight + queue.
-# Worker handle and lock live in ``_q_learning_state`` (extracted to keep
-# this module testable; tests reset state via the conftest fixture).
-_q_learning_last_error: str | None = None
-_q_learning_error_count: int = 0
+# Worker handle, lock, and aggregated health counters live in
+# ``_q_learning_state`` (extracted to keep this module testable; tests
+# reset state via the conftest fixture).
 
 
-def _dispatch_q_learning_async(event_type: str, scope: str) -> dict[str, object]:
+def _dispatch_q_learning_async(
+    event_type: str,
+    scope: str,
+    tool_call_id: str,
+) -> QLearningDeferredDict:
     """Schedule Q-learning outcome correlation on the background worker.
 
-    Returns a stable ``q_learning_deferred`` dict (always non-None) with:
-    - ``reason``: literal ``"deferred_always"`` (FR01).
-    - ``scheduled_at``: ISO 8601 UTC timestamp for log correlation.
-    - ``thread_state``: one of ``"launched"`` | ``"queued"`` | ``"queue_full"``.
+    Returns a stable :class:`QLearningDeferredDict` (always non-None) with
+    a literal ``reason`` and a literal ``thread_state`` so log readers and
+    tests get static-typed access without ``cast`` / ``# type: ignore``.
+
+    PRD-FIX-088 FR01: ``tool_call_id`` is threaded through so the async
+    ``q_learning_complete`` and ``outcome_correlation_applied`` events the
+    worker emits can be correlated back to the originating tool call.
     """
     scheduled_at = datetime.now(timezone.utc).isoformat()
+    thread_state: _DispatchThreadState
     with _qls._q_lock:
         worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
         if worker_alive:
             try:
-                _qls._q_queue.put_nowait(event_type)
+                _qls._q_queue.put_nowait((event_type, tool_call_id))
                 thread_state = "queued"
             except Exception:  # justified: bounded queue overflow is best-effort
                 logger.warning(
@@ -286,53 +325,64 @@ def _dispatch_q_learning_async(event_type: str, scope: str) -> dict[str, object]
                     event_type=event_type,
                     scope=scope,
                     queue_max=_qls._q_queue.maxsize,
+                    tool_call_id=tool_call_id,
                 )
                 thread_state = "queue_full"
         else:
             _qls._q_thread = threading.Thread(
                 target=_q_learning_worker,
-                args=(event_type, scope),
+                args=(event_type, scope, tool_call_id),
                 name="trw-q-learning",
                 daemon=True,
             )
             _qls._q_thread.start()
             thread_state = "launched"
-    return {
-        "reason": "deferred_always",
-        "scheduled_at": scheduled_at,
-        "thread_state": thread_state,
-    }
+    return QLearningDeferredDict(
+        reason="deferred_always",
+        scheduled_at=scheduled_at,
+        thread_state=thread_state,
+        tool_call_id=tool_call_id,
+    )
 
 
-def _q_learning_worker(initial_event_type: str, scope: str) -> None:
+def _q_learning_worker(
+    initial_event_type: str,
+    scope: str,
+    tool_call_id: str,
+) -> None:
     """Background worker: process the initial event then drain the coalescing queue.
 
     Single-flight contract: only one worker at a time. While alive, peer
-    callers enqueue onto ``_q_queue``; after the initial pass completes,
-    the worker drains the queue and exits. The handle is cleared in
-    ``finally`` so a crash leaves no zombie reference.
+    callers enqueue ``(event_type, tool_call_id)`` onto ``_q_queue``;
+    after the initial pass completes, the worker drains the queue and
+    exits. The handle is cleared in ``finally`` so a crash leaves no
+    zombie reference.
+
+    PRD-FIX-088 P1.5 Fix 6: catches ``Exception`` (not ``BaseException``)
+    so daemon threads do not swallow ``KeyboardInterrupt``/``SystemExit``.
+    P1.5 Fix 8: this is the **single** crash-recording site — the inner
+    helper now raises straight through so ``q_learning_worker_crashed``
+    is the one accurate event when correlation throws.
     """
-    global _q_learning_last_error, _q_learning_error_count
     try:
-        _process_q_learning_inline(initial_event_type, scope)
+        _process_q_learning_inline(initial_event_type, scope, tool_call_id)
         # Drain coalescing queue until empty. ``get_nowait`` returns
         # immediately on empty, breaking the loop.
-        import queue as _queue
-
         while True:
             try:
-                queued_event = _qls._q_queue.get_nowait()
-            except _queue.Empty:
+                queued_event, queued_call_id = _qls._q_queue.get_nowait()
+            except Empty:
                 break
-            _process_q_learning_inline(queued_event, scope)
-    except BaseException as exc:
-        _q_learning_error_count += 1
-        _q_learning_last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            _process_q_learning_inline(queued_event, scope, queued_call_id)
+    except Exception as exc:  # justified: bg-thread last-resort barrier
+        _qls._health.error_count += 1
+        _qls._health.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         logger.error(
             "q_learning_worker_crashed",
             event_type=initial_event_type,
             scope=scope,
-            error_count=_q_learning_error_count,
+            error_count=_qls._health.error_count,
+            tool_call_id=tool_call_id,
             exc_info=True,
         )
     finally:
@@ -340,46 +390,50 @@ def _q_learning_worker(initial_event_type: str, scope: str) -> None:
             _qls._q_thread = None
 
 
-def _process_q_learning_inline(event_type: str, scope: str) -> None:
+def _process_q_learning_inline(
+    event_type: str,
+    scope: str,
+    tool_call_id: str,
+) -> None:
     """Run a single Q-learning correlation pass and record outcome.
 
-    Errors are caught and recorded on the module-level health counters
-    so ``trw_build_check`` can surface them on the next call without
-    crashing the worker.
+    PRD-FIX-088 P1.5 Fix 8: previously this caught ``Exception`` and
+    logged ``q_learning_failed``, which made the worker's outer
+    ``except`` unreachable for normal failures and produced two
+    overlapping error events. The catch has been removed; exceptions
+    propagate to the worker and are recorded once via
+    ``q_learning_worker_crashed``.
+
+    Note (Fix 10): the import of ``process_outcome_for_event`` is
+    deferred here to avoid a potential ``trw_mcp.scoring`` ↔ ``tools``
+    import cycle at module-load time. The function is called once per
+    pass, so the per-call import cost is negligible.
     """
-    global _q_learning_last_error, _q_learning_error_count
-    try:
-        from trw_mcp.scoring import process_outcome_for_event
+    from trw_mcp.scoring import process_outcome_for_event
 
-        updated = process_outcome_for_event(event_type)
-        logger.info(
-            "q_learning_complete",
-            event_type=event_type,
-            scope=scope,
-            updated_count=len(updated),
-        )
-        _q_learning_last_error = None
-    except Exception as exc:  # justified: fail-open, Q-learning is best-effort
-        _q_learning_error_count += 1
-        _q_learning_last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-        logger.warning(
-            "q_learning_failed",
-            event_type=event_type,
-            scope=scope,
-            error_count=_q_learning_error_count,
-            exc_info=True,
-        )
+    updated = process_outcome_for_event(
+        event_type,
+        tool_call_id=tool_call_id,
+    )
+    logger.info(
+        "q_learning_complete",
+        event_type=event_type,
+        scope=scope,
+        updated_count=len(updated),
+        tool_call_id=tool_call_id,
+    )
+    _qls._health.last_error = None
 
 
-def get_q_learning_health() -> dict[str, object]:
+def get_q_learning_health() -> QLearningHealthDict:
     """Return Q-learning worker health for observability."""
     worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
-    return {
-        "queue_size": _qls._q_queue.qsize(),
-        "error_count": _q_learning_error_count,
-        "last_error": _q_learning_last_error,
-        "worker_alive": worker_alive,
-    }
+    return QLearningHealthDict(
+        queue_size=_qls._q_queue.qsize(),
+        error_count=_qls._health.error_count,
+        last_error=_qls._health.last_error,
+        worker_alive=worker_alive,
+    )
 
 
 def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> None:

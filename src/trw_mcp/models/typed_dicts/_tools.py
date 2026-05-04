@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from typing_extensions import NotRequired, TypedDict
 
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
@@ -178,6 +180,30 @@ class SessionStartResultDict(TypedDict, total=False):
     step_durations_ms: dict[str, float]
 
 
+class QLearningDeferredDict(TypedDict):
+    """Stable shape of ``BuildCheckResultDict.q_learning_deferred`` (PRD-FIX-088 FR01).
+
+    Always-present fields. Returned by ``_dispatch_q_learning_async`` and
+    surfaced to MCP callers so log readers can correlate the eventual
+    async ``q_learning_complete`` / ``outcome_correlation_applied``
+    events back to the originating ``trw_build_check`` call.
+    """
+
+    reason: Literal["deferred_always"]
+    scheduled_at: str
+    thread_state: Literal["launched", "queued", "queue_full"]
+    tool_call_id: str
+
+
+class QLearningHealthDict(TypedDict):
+    """Return shape of ``get_q_learning_health()`` (PRD-FIX-088 FR01)."""
+
+    queue_size: int
+    error_count: int
+    last_error: str | None
+    worker_alive: bool
+
+
 class BuildCheckResultDict(TypedDict, total=False):
     """Return shape of ``trw_build_check`` MCP tool.
 
@@ -207,7 +233,7 @@ class BuildCheckResultDict(TypedDict, total=False):
     coverage_threshold_failed: bool
     coverage_threshold: float
     coverage_threshold_message: str
-    q_learning_deferred: dict[str, object]
+    q_learning_deferred: QLearningDeferredDict
     q_learning_error: str
     q_learning_error_count: int
     step_durations_ms: dict[str, float]

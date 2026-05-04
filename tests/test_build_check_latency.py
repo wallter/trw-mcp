@@ -6,7 +6,7 @@ came back. Live measurement 2026-05-04 on the dev shared HTTP MCP server.
 
 Post-fix: Q-learning is dispatched to a background worker; the response
 returns in <500 ms even when ``correlate_recalls`` would identify >1000
-candidates. ``q_learning_dispatch`` step alone is <5 ms.
+candidates. ``q_learning_dispatch`` step alone is <10 ms.
 
 These tests are the latency regression guard for FR01 + NFR03 + NFR08.
 """
@@ -14,29 +14,13 @@ These tests are the latency regression guard for FR01 + NFR03 + NFR08.
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import Any
 
 import pytest
 
 
-def _invoke_build_check(tmp_project: Path) -> dict[str, object]:
-    from tests.conftest import extract_tool_fn, make_test_server
-
-    server = make_test_server("build")
-    fn = extract_tool_fn(server, "trw_build_check")
-
-    import trw_mcp.tools.build._registration as reg_mod
-
-    original_resolve = reg_mod.resolve_trw_dir
-    reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
-    try:
-        return fn(tests_passed=True, test_count=1, scope="full")  # type: ignore[no-any-return]
-    finally:
-        reg_mod.resolve_trw_dir = original_resolve  # type: ignore[assignment]
-
-
 def test_trw_build_check_returns_within_500ms(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """NFR03/NFR08: warm-path p95 < 500 ms.
@@ -47,11 +31,11 @@ def test_trw_build_check_returns_within_500ms(
     # Stub correlation so the bg worker doesn't actually do work.
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
 
     t0 = time.monotonic()
-    _invoke_build_check(tmp_project)
+    build_check_invoke()
     elapsed_ms = (time.monotonic() - t0) * 1000.0
 
     assert elapsed_ms < 500.0, (
@@ -62,23 +46,31 @@ def test_trw_build_check_returns_within_500ms(
     )
 
 
-def test_q_learning_dispatch_step_under_5ms(
-    tmp_project: Path,
+def test_q_learning_dispatch_step_under_10ms(
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """FR01: dispatch is just thread spawn + queue check; <5 ms regardless of corpus."""
+    """FR01: dispatch is just thread spawn + queue check; <10 ms regardless of corpus.
+
+    PRD-FIX-088 P1.5 Fix 11: spec is "<5 ms" (FR05). The pre-fix bound
+    was 50 ms which doesn't match the spec. 10 ms keeps the regression
+    teeth (catches inline Q-learning leaks) while tolerating the typical
+    CI thread-spawn jitter of 1-3 ms; if this flakes on slower runners,
+    review what is leaking into the dispatch path before raising the
+    bound.
+    """
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
     dispatch_ms = float(durations["q_learning_dispatch"])
 
-    assert dispatch_ms < 50.0, (
-        f"FR01 regression: q_learning_dispatch took {dispatch_ms:.1f}ms (cap 50ms). "
+    assert dispatch_ms < 10.0, (
+        f"FR01/FR05 regression: q_learning_dispatch took {dispatch_ms:.1f}ms (cap 10ms). "
         f"Dispatch is just thread spawn + queue inspection — should be near-instant. "
         f"A larger value suggests work has leaked back into the dispatch path "
         f"(e.g. someone re-added an inline correlate_recalls call)."
@@ -86,7 +78,7 @@ def test_q_learning_dispatch_step_under_5ms(
 
 
 def test_build_check_does_not_block_on_slow_correlation(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR01: a slow ``process_outcome_for_event`` does NOT delay the response.
@@ -100,7 +92,7 @@ def test_build_check_does_not_block_on_slow_correlation(
 
     proceed = threading.Event()
 
-    def slow_correlation(event_type: str, event_data: object = None) -> list[str]:
+    def slow_correlation(event_type: str, event_data: object = None, **_kw: object) -> list[str]:
         proceed.wait(timeout=30.0)  # block until the test releases
         return []
 
@@ -108,7 +100,7 @@ def test_build_check_does_not_block_on_slow_correlation(
 
     try:
         t0 = time.monotonic()
-        _invoke_build_check(tmp_project)
+        build_check_invoke()
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
         assert elapsed_ms < 500.0, (

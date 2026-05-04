@@ -183,6 +183,53 @@ def test_batch_sync_transaction_failure_falls_through_to_next_chunk(
     assert backend.update_call_count == 501
 
 
+@pytest.mark.slow
+def test_batch_sync_2000_rows_under_300ms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR02 wall-time guarantee: 2000-row batch sync completes in <300 ms.
+
+    PRD-FIX-088 §FR02 acceptance: "Wall-time benchmark on a 2000-entry
+    batch SHALL be <300 ms". Pre-fix this batch took 91 s on the live
+    deployment (one implicit ``COMMIT`` per row). Post-fix it bundles
+    into ``ceil(2000/500) = 4`` chunks.
+
+    Uses the production ``_CountingBackend`` shape via the spy injected
+    through ``state.memory_adapter.get_backend``. The dominant cost
+    pre-fix was the per-row implicit transaction overhead in SQLite,
+    which the chunked-transaction wrapper collapses; here we measure
+    the hot path through ``_batch_sync_to_sqlite`` itself, since this
+    test must not depend on a real SQLite write-cache for repeatability
+    on CI.
+    """
+    import time
+
+    from trw_mcp.scoring._io_boundary import _batch_sync_to_sqlite
+
+    spy_backend = _CountingBackend()
+    monkeypatch.setattr(
+        "trw_mcp.state.memory_adapter.get_backend",
+        lambda trw_dir: spy_backend,
+    )
+
+    updates = _make_pending_updates(2000)
+
+    start = time.monotonic()
+    _batch_sync_to_sqlite(updates, tmp_path / ".trw")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.3, (
+        f"FR02 wall-time regression: 2000-row batch sync took {elapsed*1000:.1f}ms "
+        f"(cap 300ms). Pre-fix this was 91s with one implicit COMMIT per row. "
+        f"If this fails, the chunked-transaction wrapper has regressed or new "
+        f"per-row work has been added inside _sync_chunk."
+    )
+    # Sanity: every row was applied across exactly 4 chunks.
+    assert spy_backend.update_call_count == 2000
+    assert spy_backend.transaction_enter_count == 4
+
+
 def test_chunk_size_constant_is_documented_value(tmp_path: Path) -> None:
     """FR02 stability: the chunk-size constant is exported and equals 500."""
     from trw_mcp.scoring._io_boundary import Q_LEARNING_BATCH_CHUNK_SIZE

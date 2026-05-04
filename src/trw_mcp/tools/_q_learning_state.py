@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from dataclasses import dataclass
 
 # --- Single-flight worker handle ---
 # Held by the launcher; the worker clears it in a ``finally`` block so a
@@ -36,4 +37,42 @@ _q_lock = threading.Lock()
 
 # Bounded coalescing queue. Worker drains it before exiting; launcher
 # enqueues when a worker is already alive.
-_q_queue: queue.Queue[str] = queue.Queue(maxsize=16)
+# PRD-FIX-088: queued items carry the originating ``tool_call_id`` so
+# async correlation log events can be threaded back to the call that
+# enqueued them. Tuple shape: ``(event_type, tool_call_id)``.
+_q_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=16)
+
+
+# --- Worker health (PRD-FIX-088 P1.5 Fix 9) ---
+# Replaces module-level scalar globals with a dataclass so conftest can
+# zero it out in one assignment and ``get_q_learning_health`` reads a
+# single object instead of two ``global`` declarations.
+@dataclass
+class _QLearningHealth:
+    """Aggregated background-worker health counters."""
+
+    error_count: int = 0
+    last_error: str | None = None
+
+
+_health: _QLearningHealth = _QLearningHealth()
+
+
+def reset_health() -> None:
+    """Test-helper: zero the worker-health counters between tests."""
+    _health.error_count = 0
+    _health.last_error = None
+
+
+def join_q_learning_worker(timeout: float = 30.0) -> None:
+    """Join the background Q-learning worker thread, if alive.
+
+    PRD-FIX-088 FR01 "Shutdown + recovery contract": ``trw_deliver`` SHALL
+    join the worker with ``timeout=30.0`` so last-pass durability is
+    guaranteed before process exit. The worker is daemon=True so process
+    exit doesn't strictly require it, but the PRD mandates it.
+    """
+    with _q_lock:
+        t = _q_thread
+    if t is not None and t.is_alive():
+        t.join(timeout=timeout)

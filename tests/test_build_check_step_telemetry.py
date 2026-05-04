@@ -12,9 +12,10 @@ performance budget itself, which is covered by
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import Any
 
 import pytest
+import structlog.testing
 
 _REQUIRED_KEYS = {
     "persist",
@@ -26,32 +27,16 @@ _REQUIRED_KEYS = {
 }
 
 
-def _invoke_build_check(tmp_project: Path) -> dict[str, object]:
-    from tests.conftest import extract_tool_fn, make_test_server
-
-    server = make_test_server("build")
-    fn = extract_tool_fn(server, "trw_build_check")
-
-    import trw_mcp.tools.build._registration as reg_mod
-
-    original_resolve = reg_mod.resolve_trw_dir
-    reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
-    try:
-        return fn(tests_passed=True, test_count=1, scope="full")  # type: ignore[no-any-return]
-    finally:
-        reg_mod.resolve_trw_dir = original_resolve  # type: ignore[assignment]
-
-
 def test_step_durations_ms_present_on_success(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: success-path response carries ``step_durations_ms`` dict."""
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     assert "step_durations_ms" in result, (
         "FR03: every successful trw_build_check MUST emit step_durations_ms. "
@@ -63,15 +48,15 @@ def test_step_durations_ms_present_on_success(
 
 
 def test_step_durations_ms_has_required_keys(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: required key set matches the locked telemetry shape."""
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
@@ -84,15 +69,15 @@ def test_step_durations_ms_has_required_keys(
 
 
 def test_step_durations_ms_values_non_negative(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: every recorded duration is ``>= 0.0``."""
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
@@ -102,7 +87,7 @@ def test_step_durations_ms_values_non_negative(
 
 
 def test_step_durations_total_is_sum_of_parts(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: ``total`` equals the sum of all other steps (within ±5 ms tolerance).
@@ -113,9 +98,9 @@ def test_step_durations_total_is_sum_of_parts(
     """
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
@@ -131,15 +116,15 @@ def test_step_durations_total_is_sum_of_parts(
 
 
 def test_step_durations_total_is_max(
-    tmp_project: Path,
+    build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: ``total`` is the largest value in the dict (no step exceeds the call duration)."""
     monkeypatch.setattr(
         "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None: [],
+        lambda event_type, event_data=None, **_kw: [],
     )
-    result = _invoke_build_check(tmp_project)
+    result = build_check_invoke()
 
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
@@ -147,4 +132,44 @@ def test_step_durations_total_is_max(
     total = float(durations["total"])
     assert total >= max(others), (
         f"FR03: total ({total}ms) must be >= max of other steps ({max(others)}ms)"
+    )
+
+
+def test_step_durations_ms_mirrored_on_log_event(
+    build_check_invoke: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR03 acceptance #2: ``step_durations_ms`` mirrors onto ``build_check_complete`` log event.
+
+    PRD-FIX-088 P1 Fix 1: the log call previously fired BEFORE the
+    ``finalize`` and ``total`` steps were recorded, so even if the field
+    were attached to the log payload it would be missing the last two
+    keys. The fix moves the log emission to AFTER ``_record_step("total",
+    ...)`` and passes the full dict, then this test pins the contract.
+    """
+    monkeypatch.setattr(
+        "trw_mcp.scoring.process_outcome_for_event",
+        lambda event_type, event_data=None, **_kw: [],
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        result = build_check_invoke()
+
+    complete_events = [e for e in logs if e.get("event") == "build_check_complete"]
+    assert complete_events, (
+        "FR03 #2: build_check_complete log event must fire on every success path"
+    )
+    event = complete_events[-1]
+
+    assert "step_durations_ms" in event, (
+        "FR03 #2: build_check_complete log MUST mirror step_durations_ms onto "
+        "the structlog event payload (currently missing — the log fired "
+        "before the dict was complete)"
+    )
+    log_durations = event["step_durations_ms"]
+    result_durations = result["step_durations_ms"]
+    assert log_durations == result_durations, (
+        f"FR03 #2: log step_durations_ms ({log_durations!r}) must equal "
+        f"result step_durations_ms ({result_durations!r}). Divergence means "
+        f"the log payload was assembled before all steps were recorded."
     )

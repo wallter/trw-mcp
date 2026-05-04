@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,30 +16,6 @@ from trw_mcp.state._ceremony_progress_state import (
     mark_build_check,
     read_ceremony_state,
 )
-
-
-def _invoke_build_check(tmp_project: Path, *, tests_passed: bool, mypy_clean: bool = True) -> dict:
-    """Invoke trw_build_check tool via the FastMCP server fixture."""
-    from tests.conftest import extract_tool_fn, make_test_server
-
-    server = make_test_server("build")
-    fn = extract_tool_fn(server, "trw_build_check")
-
-    import trw_mcp.tools.build._registration as reg_mod
-
-    # Force the tool to operate under the tmp_project .trw/ dir.
-    original_resolve = reg_mod.resolve_trw_dir
-    reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
-    try:
-        return fn(  # type: ignore[no-any-return]
-            tests_passed=tests_passed,
-            test_count=10,
-            coverage_pct=95.0,
-            mypy_clean=mypy_clean,
-            scope="full",
-        )
-    finally:
-        reg_mod.resolve_trw_dir = original_resolve  # type: ignore[assignment]
 
 
 def test_mark_build_check_writes_passed(tmp_project: Path) -> None:
@@ -62,15 +39,31 @@ def test_mark_build_check_writes_failed(tmp_project: Path) -> None:
     assert state.last_build_check_ts is not None
 
 
-def test_trw_build_check_passing_persists_result(tmp_project: Path) -> None:
-    _invoke_build_check(tmp_project, tests_passed=True)
+def test_trw_build_check_passing_persists_result(
+    tmp_project: Path,
+    build_check_invoke: Any,
+) -> None:
+    build_check_invoke(
+        tests_passed=True,
+        test_count=10,
+        coverage_pct=95.0,
+        mypy_clean=True,
+    )
     state = read_ceremony_state(tmp_project / ".trw")
     assert state.build_check_result == "passed"
     assert state.last_build_check_ts is not None
 
 
-def test_trw_build_check_failing_persists_result(tmp_project: Path) -> None:
-    _invoke_build_check(tmp_project, tests_passed=False, mypy_clean=True)
+def test_trw_build_check_failing_persists_result(
+    tmp_project: Path,
+    build_check_invoke: Any,
+) -> None:
+    build_check_invoke(
+        tests_passed=False,
+        test_count=10,
+        coverage_pct=95.0,
+        mypy_clean=True,
+    )
     state = read_ceremony_state(tmp_project / ".trw")
     assert state.build_check_result == "failed"
 
@@ -86,7 +79,10 @@ def test_ceremony_state_backward_compat_no_ts_field(tmp_project: Path) -> None:
     assert state.last_build_check_ts is None
 
 
-def test_build_check_persist_failure_does_not_raise(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_check_persist_failure_does_not_raise(
+    build_check_invoke: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """If mark_build_check raises (e.g., read-only fs), tool still returns status."""
 
     def _boom(*args: object, **kwargs: object) -> None:
@@ -96,7 +92,7 @@ def test_build_check_persist_failure_does_not_raise(tmp_project: Path, monkeypat
         "trw_mcp.state._ceremony_progress_state.mark_build_check",
         _boom,
     )
-    result = _invoke_build_check(tmp_project, tests_passed=True)
+    result = build_check_invoke(tests_passed=True, test_count=10, coverage_pct=95.0)
     assert result["tests_passed"] is True
 
 

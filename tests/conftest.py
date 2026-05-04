@@ -351,6 +351,9 @@ def _join_and_reset_q_learning() -> None:
                     _qls._q_queue.get_nowait()
             except _queue.Empty:
                 pass
+        # PRD-FIX-088 P1.5 Fix 9: zero the worker-health dataclass so the
+        # next test starts with a clean error_count / last_error.
+        _qls.reset_health()
     except Exception:
         pass
 
@@ -573,3 +576,41 @@ def sample_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     )
 
     return run_dir
+
+
+# PRD-FIX-088 P1.5 Fix 7: shared invoke helper for ``trw_build_check`` tests.
+# Replaces 14-line duplicated ``_invoke_build_check`` helpers across
+# ``test_q_learning_defer_always.py``, ``test_build_check_step_telemetry.py``,
+# ``test_build_check_latency.py``, and ``test_build_check_persistence.py``.
+@pytest.fixture
+def build_check_invoke(tmp_project: Path) -> Any:
+    """Return a callable that invokes ``trw_build_check`` against ``tmp_project``.
+
+    Usage::
+
+        def test_x(build_check_invoke):
+            result = build_check_invoke(tests_passed=True, scope="quick")
+
+    Defaults: ``tests_passed=True``, ``test_count=1``, ``scope="full"``.
+    Any kwarg supplied overrides the default.
+    """
+
+    def _invoke(**kwargs: Any) -> dict[str, Any]:
+        import trw_mcp.tools.build._registration as reg_mod
+
+        server = make_test_server("build")
+        fn = extract_tool_fn(server, "trw_build_check")
+        original_resolve = reg_mod.resolve_trw_dir
+        reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
+        try:
+            defaults: dict[str, Any] = {
+                "tests_passed": True,
+                "test_count": 1,
+                "scope": "full",
+            }
+            defaults.update(kwargs)
+            return fn(**defaults)  # type: ignore[no-any-return]
+        finally:
+            reg_mod.resolve_trw_dir = original_resolve  # type: ignore[assignment]
+
+    return _invoke

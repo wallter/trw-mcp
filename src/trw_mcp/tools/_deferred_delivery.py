@@ -337,7 +337,20 @@ def _launch_deferred(
     Thread handle and lock live in ``_deferred_state`` (extracted to
     break the ceremony <-> _deferred_delivery circular import).
     Test patches should target ``trw_mcp.tools._deferred_state``.
+
+    PRD-FIX-088 FR01 "Shutdown + recovery contract": before launching the
+    deferred-delivery thread, join any running Q-learning bg worker so
+    the last correlation pass is durable on disk before the deliver
+    batch starts. Daemon threads on process exit aren't guaranteed to
+    finish their current SQLite write, and ``trw_deliver`` is the
+    last-pass contract.
     """
+    # Lazy import: avoid pulling the build-tools package into the
+    # _deferred_delivery import graph at module-load time.
+    from trw_mcp.tools._q_learning_state import join_q_learning_worker
+
+    join_q_learning_worker(timeout=30.0)
+
     with _ds._deferred_lock:
         if _ds._deferred_thread is not None and _ds._deferred_thread.is_alive():
             logger.info("deferred_launch_skipped", reason="thread_still_alive")
