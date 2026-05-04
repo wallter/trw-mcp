@@ -33,6 +33,7 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
     SessionStartResultDict,
 )
+from trw_mcp.state._paths import TRWCallContext
 from trw_mcp.tools._ceremony_runtime_helpers import _persist_surface_snapshot_pointer
 
 if TYPE_CHECKING:
@@ -58,6 +59,61 @@ def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) 
                 f.write(lid + "\n")
     except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
         logger.debug("injected_ids_write_failed", exc_info=True)
+
+
+def step_run_resolve(
+    ctx: object | None,
+    results: SessionStartResultDict,
+    errors: list[str],
+) -> tuple[Path | None, TRWCallContext]:
+    """Step 2 — resolve + pin the active run for this session.
+
+    PRD-CORE-141 FR03/FR05/FR06: threads ctx through so fresh ctx-aware
+    sessions do NOT hijack another session's active run via the mtime
+    scan, and surfaces a structured ``hint`` field in the no-pin case.
+
+    Returns ``(run_dir, call_ctx)``. Mutates ``results`` in-place: sets
+    ``run`` (RunStatusDict), optionally ``hint`` and ``candidate_runs``
+    when no pin exists. On failure appends to ``errors`` and sets
+    ``run`` to error-state.
+    """
+    from trw_mcp.state._paths import pin_active_run, resolve_pin_key
+    from trw_mcp.tools import ceremony as _ceremony
+    from trw_mcp.tools._ceremony_runtime_helpers import (
+        _candidate_run_hints,
+        _get_run_status,
+        _no_active_run_hint,
+    )
+
+    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    try:
+        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
+    except Exception:
+        raw_session = None
+    call_ctx = TRWCallContext(
+        session_id=pin_key,
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
+    )
+
+    run_dir: Path | None = None
+    try:
+        run_dir = _ceremony._find_active_run_compat(call_ctx)
+        if run_dir is not None:
+            pin_active_run(run_dir, context=call_ctx)
+            results["run"] = _get_run_status(run_dir)
+        else:
+            logger.info("session_start_no_active_run", pin_key=call_ctx.session_id)
+            candidate_runs = _candidate_run_hints()
+            results["run"] = {"active_run": None, "status": "no_active_run"}
+            results["hint"] = _no_active_run_hint(candidate_runs)
+            if candidate_runs:
+                results["candidate_runs"] = candidate_runs
+    except Exception as exc:  # justified: fail-open, run status check must not block session start
+        errors.append(f"status: {exc}")
+        results["run"] = {"active_run": None, "status": "error"}
+    return run_dir, call_ctx
 
 
 def step_recall_learnings(

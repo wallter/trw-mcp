@@ -136,6 +136,7 @@ from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health as step_assertion_health,
     step_phase_auto_recall as step_phase_auto_recall,
     step_recall_learnings as step_recall_learnings,
+    step_run_resolve as step_run_resolve,
     step_surface_stamp as step_surface_stamp,
 )
 
@@ -229,32 +230,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
         step_recall_learnings(query, config, results, errors)
         _record_step("recall", _recall_started)
 
-        # Step 2: Check active run status (and pin it for this process).
-        # PRD-CORE-141 FR03/FR05/FR06: thread ctx through so fresh ctx-aware
-        # sessions do NOT hijack another session's active run via the mtime
-        # scan, and surface a structured ``hint`` field in the no-pin case.
+        # Step 2: resolve + pin active run (PRD-CORE-141 FR03/FR05/FR06)
         _run_resolve_started = time.monotonic()
-        call_ctx = _build_call_context(ctx)
-        run_dir: Path | None = None
-        try:
-            run_dir = _find_active_run_compat(call_ctx)
-            if run_dir is not None:
-                pin_active_run(run_dir, context=call_ctx)
-                results["run"] = _get_run_status(run_dir)
-            else:
-                logger.info(
-                    "session_start_no_active_run",
-                    pin_key=call_ctx.session_id,
-                )
-                candidate_runs = _candidate_run_hints()
-                results["run"] = {"active_run": None, "status": "no_active_run"}
-                # FR06: surface actionable guidance when no pin exists.
-                results["hint"] = _no_active_run_hint(candidate_runs)
-                if candidate_runs:
-                    results["candidate_runs"] = candidate_runs
-        except Exception as exc:  # justified: fail-open, run status check must not block session start
-            errors.append(f"status: {exc}")
-            results["run"] = {"active_run": None, "status": "error"}
+        run_dir, call_ctx = step_run_resolve(ctx, results, errors)
         _record_step("run_resolve", _run_resolve_started)
 
         _surface_stamp_started = time.monotonic()
