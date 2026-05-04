@@ -24,6 +24,12 @@ from trw_mcp.state.validation._prd_scoring_ai import (
     _is_ai_agentic_prd as _is_ai_agentic_prd,
     _score_ai_operational_evidence as _score_ai_operational_evidence,
 )
+from trw_mcp.state.validation._prd_scoring_fr import (
+    _FR_HEADING_RE as _FR_HEADING_RE,
+    _extract_fr_sections as _extract_fr_sections,
+    _score_assertion_coverage as _score_assertion_coverage,
+    _score_file_path_coverage as _score_file_path_coverage,
+)
 from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_BLOCK_RE as _ASSERTION_BLOCK_RE,
     _ASSERTION_JSON_TYPE_RE as _ASSERTION_JSON_TYPE_RE,
@@ -125,7 +131,6 @@ _REQUIREMENT_LINE_RE = re.compile(
 _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
 # FR heading pattern for extracting individual FR sections (PRD-QUAL-056-FR01)
-_FR_HEADING_RE = re.compile(r"^###\s+(?:PRD-[\w-]+-)?FR\d+.*$", re.MULTILINE)
 
 # Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
 
@@ -283,76 +288,6 @@ def _is_substantive_line(line: str) -> bool:
         return False
     # Horizontal rules
     return not re.match(r"^\s*---\s*$", line)
-
-
-def _extract_fr_sections(content: str) -> list[tuple[str, str]]:
-    """Extract (fr_name, fr_body) pairs from PRD ``### FR`` headings.
-
-    Body extraction stops at the next ``## `` heading to avoid leaking
-    into non-FR sections.
-    """
-    matches = list(_FR_HEADING_RE.finditer(content))
-    sections: list[tuple[str, str]] = []
-    for i, m in enumerate(matches):
-        name = m.group(0).strip().lstrip("#").strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-        # Truncate at next ## heading (non-FR section boundary)
-        segment = content[start:end]
-        for line in segment.splitlines(keepends=True):
-            if line.startswith("## ") and not line.startswith("###"):
-                end = start + segment.find(line)
-                break
-        sections.append((name, content[start:end]))
-    return sections
-
-
-def _score_file_path_coverage(
-    content: str,
-    fr_sections: list[tuple[str, str]],
-) -> float:
-    """Score (FRs_with_impl + FRs_with_test) / (2 * total_FRs).
-
-    Counts file/test refs found either directly in each FR body or in the
-    corresponding Traceability Matrix row. Supports both bare and backtick-
-    wrapped references. Returns 0.0--1.0.
-    """
-    if not fr_sections:
-        return 0.0
-
-    total_frs = len(fr_sections)
-    frs_with_impl = 0
-    frs_with_test = 0
-    traceability_rows = _extract_traceability_matrix_rows(content)
-
-    for name, body in fr_sections:
-        fr_id = _extract_fr_id(name)
-        matrix_row = traceability_rows.get(fr_id, "") if fr_id is not None else ""
-        combined = body if not matrix_row else f"{body}\n{matrix_row}"
-
-        if _has_impl_reference(combined):
-            frs_with_impl += 1
-        if _has_test_reference(combined):
-            frs_with_test += 1
-
-    return (frs_with_impl + frs_with_test) / (2 * total_frs)
-
-
-def _score_assertion_coverage(
-    content: str,
-    fr_sections: list[tuple[str, str]],
-) -> float:
-    """Score FRs_with_assertion / total_FRs.
-
-    An FR "has an assertion" when it contains explicit assertion syntax
-    (fenced `````assertions```` blocks or assertion list items), not when it
-    merely mentions assertion keywords in prose. Returns 0.0--1.0.
-    """
-    if not fr_sections:
-        return 0.0
-
-    frs_with_assertion = sum(1 for _name, body in fr_sections if _has_assertion_evidence(body))
-    return frs_with_assertion / len(fr_sections)
 
 
 def _validation_profile(frontmatter: dict[str, object]) -> str:
