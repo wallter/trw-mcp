@@ -27,13 +27,18 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import AutoMaintenanceDict
-from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateWriter,
 )
 from trw_mcp.tools._ceremony_status import (
     append_ceremony_status as append_ceremony_status,
+)
+from trw_mcp.tools._ceremony_telemetry import (
+    _resolve_trw_dir_compat as _resolve_trw_dir_compat,
+)
+from trw_mcp.tools._ceremony_telemetry import (
+    step_telemetry_startup as step_telemetry_startup,
 )
 
 # Re-export everything from sub-modules so existing imports continue to work.
@@ -122,23 +127,6 @@ from trw_mcp.tools._session_recall_helpers import (
 logger = structlog.get_logger(__name__)
 
 
-def _resolve_trw_dir_compat() -> Path:
-    """Resolve the active ``.trw`` dir while honoring ceremony-module patches."""
-    try:
-        from trw_mcp.tools import ceremony as ceremony_mod
-
-        # Dynamic lookup — ceremony module may expose resolve_trw_dir via re-export
-        # or via test monkeypatch. getattr with default preserves the fallback.
-        ceremony_resolver = getattr(ceremony_mod, "resolve_trw_dir", None)
-        if ceremony_resolver is not None:
-            result = ceremony_resolver()
-            if isinstance(result, Path):
-                return result
-    except Exception:
-        pass
-    return resolve_trw_dir()
-
-
 # ── Session lifecycle step functions ─────────────────────────────────────
 
 
@@ -181,73 +169,6 @@ def step_log_session_event(
         writer.ensure_dir(context_path)
         fallback_path = context_path / "session-events.jsonl"
         events.log_event(fallback_path, "session_start", event_data)
-
-
-def step_telemetry_startup(
-    results: dict[str, object],
-    run_dir: Path | None,
-) -> None:
-    """Queue SessionStartEvent for telemetry and start the telemetry pipeline.
-
-    Fail-open: exceptions are logged but never propagated.
-    """
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state._paths import resolve_installation_id
-    from trw_mcp.telemetry.client import TelemetryClient
-    from trw_mcp.telemetry.event_base import HPOSessionStartEvent
-    from trw_mcp.telemetry.models import SessionStartEvent
-
-    config = get_config()
-    inst_id = resolve_installation_id()
-    tel_client = TelemetryClient.from_config()
-    # Legacy CORE-031 event — continues through Phase 1 parallel-emit.
-    tel_client.record_event(
-        SessionStartEvent(
-            installation_id=inst_id,
-            framework_version=config.framework_version,
-            learnings_loaded=int(str(results.get("learnings_count", 0))),
-            run_id=str(run_dir.name) if run_dir else None,
-        )
-    )
-    # PRD-HPO-MEAS-001 FR-2/FR-3: parallel-emit the unified-schema
-    # HPOSessionStartEvent carrying the resolved surface_snapshot_id so
-    # the session's own bootstrap event satisfies "every event carries it".
-    # Wave 2b: wired through UnifiedEventWriter to events-YYYY-MM-DD.jsonl.
-    snapshot_id = str(results.get("surface_snapshot_id", ""))
-    try:
-        from trw_mcp.telemetry.unified_events import emit as emit_unified
-
-        hpo_session_event = HPOSessionStartEvent(
-            session_id=inst_id,
-            run_id=str(run_dir.name) if run_dir else None,
-            surface_snapshot_id=snapshot_id,
-            payload={
-                "learnings_loaded": int(str(results.get("learnings_count", 0))),
-                "framework_version": config.framework_version,
-            },
-        )
-        trw_dir_path = _resolve_trw_dir_compat()
-        context_dir = trw_dir_path / config.context_dir
-        emit_unified(
-            hpo_session_event,
-            run_dir=run_dir,
-            fallback_dir=context_dir if context_dir.exists() else None,
-        )
-    except Exception:  # justified: fail-open, HPO schema drift must not block session start
-        logger.warning("hpo_session_start_event_failed", exc_info=True)
-    tel_client.flush()
-    # Start the unified telemetry pipeline (periodic background flush
-    # replaces the old fire-and-forget BatchSender thread).
-    # Note: the TelemetryClient.record_event + flush above already handles
-    # the session_start event via the typed path. We only need to start the
-    # pipeline here — no separate enqueue, which would create a duplicate event.
-    try:
-        from trw_mcp.telemetry.pipeline import TelemetryPipeline
-
-        pipeline = TelemetryPipeline.get_instance()
-        pipeline.start()
-    except Exception:  # justified: fail-open, pipeline start must not block session start
-        logger.warning("pipeline_start_failed", exc_info=True)
 
 
 def step_increment_session_counter() -> None:
@@ -293,7 +214,7 @@ def step_embed_health() -> dict[str, object]:
     try:
         from trw_mcp.state.memory_adapter import check_embeddings_status
 
-        embed_status = check_embeddings_status()
+        embed_status = check_embeddings_status(allow_initialize=False)
         return dict(embed_status)
     except Exception:  # justified: fail-open, embed health check must not block session start
         return {
@@ -479,7 +400,7 @@ def run_auto_maintenance(
         else:
             from trw_mcp.state.memory_adapter import check_embeddings_status
 
-            emb_status = check_embeddings_status()
+            emb_status = check_embeddings_status(allow_initialize=False)
             if emb_status.get("advisory"):
                 maintenance["embeddings_advisory"] = str(emb_status["advisory"])
             elif emb_status.get("enabled") and emb_status.get("available"):
