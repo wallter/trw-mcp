@@ -58,6 +58,11 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
+from trw_mcp.tools._ceremony_deliver_steps import (
+    log_deliver_complete,
+    step_clear_score,
+    unpack_gate_result,
+)
 from trw_mcp.tools._deferred_delivery import (
     _launch_deferred,
     _step_checkpoint,
@@ -572,27 +577,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
         gate_result = check_delivery_gates(resolved_run, reader)
-        # Unpack DeliveryGatesDict keys explicitly (all declared in DeliverResultDict)
-        if "review_warning" in gate_result:
-            results["review_warning"] = gate_result["review_warning"]
-        if "review_advisory" in gate_result:
-            results["review_advisory"] = gate_result["review_advisory"]
-        if "integration_review_block" in gate_result:
-            results["integration_review_block"] = gate_result["integration_review_block"]
-        if "integration_review_warning" in gate_result:
-            results["integration_review_warning"] = gate_result["integration_review_warning"]
-        if "untracked_warning" in gate_result:
-            results["untracked_warning"] = gate_result["untracked_warning"]
-        if "build_gate_warning" in gate_result:
-            results["build_gate_warning"] = gate_result["build_gate_warning"]
-        if "warning" in gate_result:
-            results["warning"] = gate_result["warning"]
-        if "review_scope_block" in gate_result:
-            results["review_scope_block"] = gate_result["review_scope_block"]
-        if "checkpoint_blocker_warning" in gate_result:
-            results["checkpoint_blocker_warning"] = gate_result["checkpoint_blocker_warning"]
-        if "complexity_drift_warning" in gate_result:
-            results["complexity_drift_warning"] = gate_result["complexity_drift_warning"]
+        unpack_gate_result(gate_result, results)
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
         from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
@@ -667,35 +652,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open — integrity probe must not block deliver
             logger.debug("deliver_integrity_check_failed", exc_info=True)
 
-        # Step 3c: PRD-HPO-MEAS-001 FR-5 — compute + persist CLEAR score
-        # for this session. One record per closed session; failure is
-        # fail-open so the scorer never blocks deliver completion.
+        # Step 3c: PRD-HPO-MEAS-001 FR-5 — CLEAR score for this session.
         if resolved_run is not None:
-            try:
-                from trw_mcp.scoring.clear import load_and_score_run
-
-                session_id_for_clear = str(resolved_run.name)
-                clear_score = load_and_score_run(session_id_for_clear, resolved_run)
-                if clear_score is not None:
-                    import json as _clear_json
-
-                    clear_path = resolved_run / "meta" / "session_clear_score.json"
-                    clear_path.write_text(
-                        _clear_json.dumps(clear_score.model_dump(mode="json"), indent=2),
-                        encoding="utf-8",
-                    )
-                    results["clear_score"] = cast("dict[str, object]", clear_score.model_dump(mode="json"))
-                    logger.info(
-                        "clear_score_persisted",
-                        session_id=session_id_for_clear,
-                        cost=clear_score.cost,
-                        latency=clear_score.latency,
-                        efficacy=clear_score.efficacy,
-                        assurance=clear_score.assurance,
-                        reliability=clear_score.reliability,
-                    )
-            except Exception:  # justified: fail-open — CLEAR scoring must not block deliver
-                logger.debug("clear_score_step_failed", exc_info=True)
+            step_clear_score(resolved_run, results)
 
         # -- DEFERRED PATH (background thread) --
         # Housekeeping, analytics, publishing, and telemetry — these don't
@@ -759,30 +718,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 },
             )
 
-        _deliver_run_id = str(resolved_run.name) if resolved_run else ""
-        _events_jsonl = resolved_run / "meta" / "events.jsonl" if resolved_run else None
-        _events_logged = len(reader.read_jsonl(_events_jsonl)) if _events_jsonl and _events_jsonl.exists() else 0
-        if len(errors) == 0:
-            logger.info(
-                "deliver_ok",
-                run_id=_deliver_run_id,
-                task=str(results.get("run_path", "")),
-                events_logged=_events_logged,
-            )
-        else:
-            logger.warning(
-                "deliver_failed",
-                run_id=_deliver_run_id,
-                errors=errors,
-            )
-        if deferred_status == "skipped_already_running":
-            logger.warning("deliver_deferred", reason="background_thread_running")
-        logger.info(
-            "trw_deliver_complete",
-            critical_steps=results.get("critical_steps_completed"),
-            deferred=deferred_status,
+        log_deliver_complete(
+            resolved_run=resolved_run,
+            results=results,
+            errors=errors,
+            deferred_status=deferred_status,
             critical_elapsed=critical_elapsed,
-            errors=len(errors),
         )
         return results
 
