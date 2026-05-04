@@ -186,6 +186,43 @@ def step_surface_stamp(run_dir: Path | None, session_id: str) -> str:
         return ""
 
 
+def step_auto_recall_orchestrated(
+    query: str,
+    config: TRWConfig,
+    run_dir: Path | None,
+    results: SessionStartResultDict,
+) -> None:
+    """Orchestrate step 6: response-compacted check + primary_ids + auto_recall + surfaces.
+
+    Looks up ``resolve_trw_dir`` and ``record_session_start_surfaces``
+    via the parent ``ceremony`` module so test monkeypatches propagate.
+    Fail-open on every branch.
+    """
+    from trw_mcp.tools import ceremony as _ceremony
+    from trw_mcp.tools._ceremony_helpers import record_session_start_surfaces
+
+    try:
+        if bool(results.get("response_compacted")):
+            results["auto_recall_deferred"] = {
+                "reason": "session_start_compacted",
+                "detail": "Phase auto-recall is optional and was left off the hot response path.",
+            }
+            return
+        trw_dir_ar = _ceremony.resolve_trw_dir()  # type: ignore[attr-defined]
+        primary_ids = {
+            str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
+        }
+        outcome = step_phase_auto_recall(trw_dir_ar, query, config, run_dir, results.get("run"), primary_ids)
+        if outcome is None:
+            return
+        phase_recalled, auto_ids = outcome
+        record_session_start_surfaces(trw_dir_ar, auto_ids)
+        results["auto_recalled"] = phase_recalled
+        results["auto_recall_count"] = len(phase_recalled)
+    except Exception:  # justified: fail-open, auto-recall must not block session start
+        logger.debug("session_auto_recall_failed", exc_info=True)
+
+
 def step_phase_auto_recall(
     trw_dir: Path,
     query: str,

@@ -16,14 +16,13 @@ for step functions should target that module directly:
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import structlog
 from fastmcp import Context, FastMCP
 
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
@@ -41,18 +40,6 @@ from trw_mcp.state._paths import (
     resolve_pin_key,
     resolve_trw_dir,
 )
-from trw_mcp.state._pin_store import (
-    _iso_now,
-    get_pin_entry,
-    load_pin_store,
-    remove_pin_entry,
-    upsert_pin_entry,
-)
-from trw_mcp.state.analytics import (
-    find_success_patterns,
-    update_analytics,
-)
-from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateReader,
@@ -134,6 +121,7 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
 from trw_mcp.tools._ceremony_session_start_steps import (
     finalize_session_start as finalize_session_start,
     step_assertion_health as step_assertion_health,
+    step_auto_recall_orchestrated as step_auto_recall_orchestrated,
     step_phase_auto_recall as step_phase_auto_recall,
     step_recall_learnings as step_recall_learnings,
     step_run_resolve as step_run_resolve,
@@ -182,7 +170,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
         See Also: trw_init, trw_recall
         """
         from trw_mcp.tools._ceremony_helpers import (
-            record_session_start_surfaces,
             step_embed_health,
             step_increment_session_counter,
             step_log_session_event,
@@ -286,32 +273,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
         _phase_recall_started = time.monotonic()
-        try:
-            if bool(results.get("response_compacted")):
-                results["auto_recall_deferred"] = {
-                    "reason": "session_start_compacted",
-                    "detail": "Phase auto-recall is optional and was left off the hot response path.",
-                }
-            else:
-                trw_dir_ar = resolve_trw_dir()
-                primary_ids = {
-                    str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
-                }
-                recall_outcome = step_phase_auto_recall(
-                    trw_dir_ar,
-                    query,
-                    config,
-                    run_dir,
-                    results.get("run"),
-                    primary_ids,
-                )
-                if recall_outcome is not None:
-                    phase_recalled, auto_ids = recall_outcome
-                    record_session_start_surfaces(trw_dir_ar, auto_ids)
-                    results["auto_recalled"] = phase_recalled
-                    results["auto_recall_count"] = len(phase_recalled)
-        except Exception:  # justified: fail-open, auto-recall must not block session start
-            logger.debug("session_auto_recall_failed", exc_info=True)
+        step_auto_recall_orchestrated(query, config, run_dir, results)
         _record_step("phase_recall", _phase_recall_started)
 
         # PRD-FIX-084 follow-on: cover the post-phase-recall tail so total
