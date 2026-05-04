@@ -27,6 +27,7 @@ from trw_mcp.tools._ceremony_status_helpers import (
     _select_deterministic_fallback_learning as _select_deterministic_fallback_learning,
     _synthetic_nudge_learning_id as _synthetic_nudge_learning_id,
 )
+from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content as _try_learning_nudge_content
 
 logger = structlog.get_logger(__name__)
 
@@ -83,135 +84,6 @@ def build_ceremony_status_line(state: CeremonyState) -> str:
         parts.append("deliver_called")
     return "; ".join(parts)
 
-
-def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None:
-    """Attempt to produce cache-ranked or deterministic learning nudge content.
-
-    Uses backend-provided cache weights when available, but never runs the
-    backend-only local policy/state machine in the public client. Falls back to
-    deterministic recall order when the cache is empty or stale.
-    """
-    try:
-        from trw_mcp.state._ceremony_progress_state import (
-            is_nudge_eligible,
-            record_nudge_shown,
-        )
-        from trw_mcp.state.recall_factories import recall_for_nudge_pool
-        from trw_mcp.state.surface_tracking import log_surface_event
-        from trw_mcp.sync.cache import IntelligenceCache
-        from trw_mcp.tools._recall_impl import build_recall_context
-
-        # ── Resolve config metadata (best-effort, fail-open) ────────────────
-        client_profile_name = ""
-        model_family = "generic"
-
-        try:
-            # PRD-FIX-085 FR03: use the per-process get_config() singleton
-            # instead of constructing a fresh TRWConfig per nudge call.
-            # The prior model_validate path triggered full settings-model
-            # construction (env loading, YAML parsing, profile resolution)
-            # on every call; latent perf regression risk.
-            from trw_mcp.models.config import get_config
-
-            cfg = get_config()
-            client_profile_name = getattr(cfg.client_profile, "client_id", "") or ""
-            model_family = cfg.model_family or "generic"
-        except Exception:  # justified: config may not be available, use defaults
-            logger.debug("ceremony_status_config_defaults", exc_info=True)
-
-        # ── Recall candidates ────────────────────────────────────────────────
-        # PRD-FIX-085 FR05: use named factory.
-        candidates = recall_for_nudge_pool(
-            trw_dir,
-            query="*",
-            min_impact=0.5,
-            max_results=10,
-        )
-        if not candidates:
-            return None
-
-        # ── Dedup: filter candidates already shown in current phase (P1 fix) ─
-        eligible_candidates = [c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), state.phase)]
-        if not eligible_candidates:
-            # Fall back to full pool if all candidates are already deduplicated
-            eligible_candidates = candidates
-
-        recall_context = build_recall_context(trw_dir, "*")
-        is_transition = bool(state.previous_phase and state.previous_phase != state.phase)
-        selection_candidates = _contextualize_candidates(
-            eligible_candidates,
-            recall_context=recall_context,
-            is_transition=is_transition,
-        )
-        if not selection_candidates:
-            selection_candidates = eligible_candidates
-
-        inferred_domains: set[str] = _normalize_inferred_domains(
-            getattr(recall_context, "inferred_domains", set()),
-        )
-        bandit_params = IntelligenceCache(trw_dir).get_bandit_params()
-        selected_learning = _select_cached_or_deterministic_learning(
-            selection_candidates,
-            phase=state.phase,
-            inferred_domains=inferred_domains,
-            bandit_params=bandit_params,
-        )
-        if selected_learning is None:
-            return None
-
-        content = _deterministic_fallback_text(selected_learning)
-        if not content:
-            return None
-
-        learning_id = str(selected_learning.get("id", ""))
-        if learning_id:
-            try:
-                record_nudge_shown(trw_dir, learning_id, state.phase, turn=state.tool_call_counter)
-            except Exception:  # justified: fail-open
-                logger.debug("record_nudge_shown_failed", exc_info=True)
-
-            try:
-                logger.info(
-                    "nudge_shown",
-                    pool="learnings",
-                    messenger="standard",
-                    learning_id=learning_id,
-                    phase=state.phase,
-                    client_id=client_profile_name,
-                    turn=state.tool_call_counter,
-                )
-            except Exception:  # justified: fail-open per NFR02
-                pass
-
-            try:
-                from trw_mcp.state._session_id import resolve_effective_session_id
-
-                log_surface_event(
-                    trw_dir,
-                    learning_id=learning_id,
-                    surface_type="phase_transition" if is_transition else "nudge",
-                    phase=state.phase,
-                    exploration=False,
-                    bandit_score=_cached_bandit_weight(selected_learning, bandit_params),
-                    client_profile=client_profile_name,
-                    model_family=model_family,
-                    session_id=resolve_effective_session_id(trw_dir),
-                )
-            except Exception:  # justified: fail-open
-                logger.debug("surface_event_log_failed", exc_info=True)
-
-        logger.info(
-            "learning_nudge_selected",
-            selected=learning_id,
-            phase=state.phase,
-            is_transition=is_transition,
-            used_cached_bandit=bool(bandit_params),
-        )
-        return content
-
-    except Exception:  # justified: nudge content must never block tool responses
-        logger.debug("learning_nudge_content_failed", exc_info=True)
-        return None
 
 
 def append_ceremony_status(
