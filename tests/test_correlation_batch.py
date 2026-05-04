@@ -239,3 +239,64 @@ def test_chunk_size_constant_is_documented_value(tmp_path: Path) -> None:
         "this value affects lock-hold-time bounds (NFR07). Update PRD if "
         "intentional."
     )
+
+
+@pytest.mark.slow
+def test_batch_sync_2000_rows_real_sqlite_under_1s(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR02 wall-time guarantee on a REAL SQLite backend.
+
+    Round-2 F4: the spy-backed wall-time test (above) cannot detect a
+    regression where someone re-introduces per-row implicit COMMITs,
+    because the spy has no transaction layer to measure. This test
+    runs the same hot path against an actual ``SQLiteBackend`` writing
+    to disk so the per-row vs chunked-transaction cost is real.
+
+    Cap is 1000 ms (not 300) because real SQLite + WAL setup adds
+    fixed cost on cold open; pre-fix this batch took ~91s on the live
+    deployment, so the >90× margin still catches a regression to
+    per-row commits while tolerating SSD jitter and cold WAL.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    pytest.importorskip("trw_memory")
+    from trw_memory.models.memory import MemoryEntry
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    from trw_mcp.scoring._io_boundary import _batch_sync_to_sqlite
+
+    db_path = tmp_path / "real-sqlite.db"
+    backend = SQLiteBackend(db_path)
+    # Seed 2000 entries so update() targets exist (update is a no-op on
+    # missing IDs; we want it to actually write rows).
+    now = datetime.now(timezone.utc)
+    for i in range(2000):
+        entry = MemoryEntry(
+            id=f"L-{i:04d}",
+            content=f"seed entry {i}",
+            tags=[],
+            importance=0.5,
+            type="pattern",
+            created_at=now,
+            updated_at=now,
+        )
+        backend.store(entry)
+
+    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda trw_dir: backend)
+
+    updates = _make_pending_updates(2000)
+
+    start = time.monotonic()
+    _batch_sync_to_sqlite(updates, tmp_path / ".trw")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, (
+        f"FR02 wall-time regression on REAL SQLite: 2000-row batch sync took "
+        f"{elapsed*1000:.1f}ms (cap 1000ms). Pre-fix this was 91s with one "
+        f"implicit COMMIT per row. A >1s value here suggests the chunked-"
+        f"transaction wrapper has been bypassed (each update() is committing "
+        f"on its own again)."
+    )

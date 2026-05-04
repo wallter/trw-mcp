@@ -43,10 +43,16 @@ _q_lock = threading.Lock()
 _q_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=16)
 
 
-# --- Worker health (PRD-FIX-088 P1.5 Fix 9) ---
+# --- Worker health (PRD-FIX-088 P1.5 Fix 9, round-2 thread-safety) ---
 # Replaces module-level scalar globals with a dataclass so conftest can
 # zero it out in one assignment and ``get_q_learning_health`` reads a
 # single object instead of two ``global`` declarations.
+#
+# Thread-safety (round-2 finding F2): ``error_count``/``last_error`` are
+# written by the bg worker and read by the main thread. Mutations must
+# go through ``record_error()`` / ``mark_success()`` which take the
+# shared ``_q_lock``; reads use ``snapshot()`` so the pair is consistent
+# (no torn read of newer count + stale message).
 @dataclass
 class _QLearningHealth:
     """Aggregated background-worker health counters."""
@@ -58,10 +64,36 @@ class _QLearningHealth:
 _health: _QLearningHealth = _QLearningHealth()
 
 
+def record_error(exc: BaseException) -> int:
+    """Atomically bump ``error_count`` and stamp ``last_error``.
+
+    Returns the new ``error_count`` for use in log payloads. Holding
+    ``_q_lock`` ensures concurrent readers see a consistent
+    ``(count, message)`` pair.
+    """
+    with _q_lock:
+        _health.error_count += 1
+        _health.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return _health.error_count
+
+
+def mark_success() -> None:
+    """Clear ``last_error`` after a successful correlation pass."""
+    with _q_lock:
+        _health.last_error = None
+
+
+def snapshot() -> tuple[int, str | None]:
+    """Return ``(error_count, last_error)`` as a coherent pair."""
+    with _q_lock:
+        return _health.error_count, _health.last_error
+
+
 def reset_health() -> None:
     """Test-helper: zero the worker-health counters between tests."""
-    _health.error_count = 0
-    _health.last_error = None
+    with _q_lock:
+        _health.error_count = 0
+        _health.last_error = None
 
 
 def join_q_learning_worker(timeout: float = 30.0) -> None:

@@ -375,13 +375,15 @@ def _q_learning_worker(
                 break
             _process_q_learning_inline(queued_event, scope, queued_call_id)
     except Exception as exc:  # justified: bg-thread last-resort barrier
-        _qls._health.error_count += 1
-        _qls._health.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        # PRD-FIX-088 round-2 F2: atomic count + last_error update via
+        # ``_q_lock``-guarded helper; prevents torn reads from
+        # ``get_q_learning_health()``.
+        new_count = _qls.record_error(exc)
         logger.error(
             "q_learning_worker_crashed",
             event_type=initial_event_type,
             scope=scope,
-            error_count=_qls._health.error_count,
+            error_count=new_count,
             tool_call_id=tool_call_id,
             exc_info=True,
         )
@@ -422,16 +424,23 @@ def _process_q_learning_inline(
         updated_count=len(updated),
         tool_call_id=tool_call_id,
     )
-    _qls._health.last_error = None
+    # PRD-FIX-088 round-2 F2: lock-guarded clear via helper.
+    _qls.mark_success()
 
 
 def get_q_learning_health() -> QLearningHealthDict:
-    """Return Q-learning worker health for observability."""
+    """Return Q-learning worker health for observability.
+
+    Round-2 F2: ``snapshot()`` returns ``(count, last_error)`` as a
+    coherent pair under ``_q_lock`` so callers never see a newer count
+    paired with a stale message.
+    """
     worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
+    error_count, last_error = _qls.snapshot()
     return QLearningHealthDict(
         queue_size=_qls._q_queue.qsize(),
-        error_count=_qls._health.error_count,
-        last_error=_qls._health.last_error,
+        error_count=error_count,
+        last_error=last_error,
         worker_alive=worker_alive,
     )
 
