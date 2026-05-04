@@ -20,14 +20,10 @@ This module is the public facade -- all external imports should come here.
 from __future__ import annotations
 
 import hashlib
-import re
-import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
-from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
-from trw_memory.migration.from_trw import migrate_entries_dir as migrate_entries_dir
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
 from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
 from trw_memory.security.recall_filter import filter_recall_window
@@ -46,7 +42,6 @@ from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
     backfill_embeddings as backfill_embeddings,
-    check_embeddings_status as _check_embeddings_status_impl,
     embed_text as embed_text,
     embed_text_batch as embed_text_batch,
     embedding_available as embedding_available,
@@ -56,7 +51,6 @@ from trw_mcp.state._memory_connection import (
     get_embedder as get_embedder,
     get_initialized_embedder as get_initialized_embedder,
     reset_backend as reset_backend,
-    reset_embed_failure_count as _reset_embed_failure_count_impl,
     reset_embedder as reset_embedder,
 )
 from trw_mcp.state._memory_queries import (
@@ -76,7 +70,6 @@ logger = structlog.get_logger(__name__)
 # Preserve module-level constants for backward compatibility with test patches
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
-_LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 
 # Facade-level override for the embed failure counter.  Tests may set this
 # attribute directly (``memory_adapter._embed_failures = N``) to inject a
@@ -84,95 +77,16 @@ _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 _embed_failures: int | None = None
 
 
-def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
-    """Check embedding readiness and return status for session_start advisory.
-
-    Delegates to :func:`_memory_connection.check_embeddings_status`, but
-    supports test patches that set ``memory_adapter._embed_failures`` directly.
-    """
-    if allow_initialize:
-        result = _check_embeddings_status_impl()
-    else:
-        result = _check_embeddings_status_impl(allow_initialize=False)
-    # If a test injected _embed_failures on this facade module, honour it.
-    if _embed_failures is not None:
-        result["recent_failures"] = _embed_failures
-    return result
-
-
-def reset_embed_failure_count() -> None:
-    """Reset the embed failure counter to zero (for tests).
-
-    Also clears the facade-level ``_embed_failures`` override so that
-    ``check_embeddings_status`` reads the authoritative counter.
-    """
-    global _embed_failures
-    _reset_embed_failure_count_impl()
-    _embed_failures = None
-
-
-def set_embed_failure_count_for_testing(n: int) -> None:
-    """Set the facade-level embed failure override (for tests only).
-
-    Prefer calling this over direct attribute assignment when possible.
-    """
-    global _embed_failures
-    _embed_failures = n
-
-
-# ---------------------------------------------------------------------------
-# Corruption recovery
-# ---------------------------------------------------------------------------
-
-_MALFORMED_MARKERS = ("malformed", "database disk image", "not a database", "file is not a database")
-
-
-def _is_corruption_error(exc: BaseException) -> bool:
-    """Return True if *exc* indicates SQLite database corruption."""
-    if isinstance(exc, CorruptDatabaseUnsalvageableError):
-        return False
-    msg = str(exc).lower()
-    return any(m in msg for m in _MALFORMED_MARKERS)
-
-
-def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError) -> None:
-    """Log strict recovery refusal before surfacing it to the caller."""
-    logger.error(
-        "memory_recovery_terminal",
-        db=str(db_path),
-        backup_path=exc.backup_path,
-        action="raise",
-    )
-
-
-def _recover_and_reset_backend(trw_dir: Path) -> None:
-    """Force-recover the database, backfill from YAML, and reset the singleton."""
-    from trw_mcp.state._memory_connection import get_backend as _get_backend
-    from trw_mcp.state._memory_connection import reset_backend as _reset
-
-    db_path = trw_dir / "memory" / "memory.db"
-    logger.error("runtime_corruption_detected", db=str(db_path), action="recover_and_reset")
-    _reset()
-    if db_path.exists():
-        from trw_memory.storage.sqlite_backend import SQLiteBackend
-
-        try:
-            conn = SQLiteBackend.recover_db(db_path)
-        except CorruptDatabaseUnsalvageableError as exc:
-            _log_terminal_recovery(db_path, exc)
-            raise
-        conn.close()
-    # Remove migration sentinel so ensure_migrated re-runs the YAML backfill.
-    # This restores any entries that were in YAML but lost from SQLite.
-    sentinel = trw_dir / "memory" / ".migrated"
-    if sentinel.exists():
-        sentinel.unlink()
-    # Re-open via the normal singleton path — triggers ensure_migrated (YAML backfill).
-    try:
-        _get_backend(trw_dir)
-    except CorruptDatabaseUnsalvageableError as exc:
-        _log_terminal_recovery(db_path, exc)
-        raise
+# Embedding-status + corruption-recovery helpers extracted to _memory_recovery
+# (PRD-DIST-243 batch 44).
+from trw_mcp.state._memory_recovery import (
+    _is_corruption_error as _is_corruption_error,
+    _log_terminal_recovery as _log_terminal_recovery,
+    _recover_and_reset_backend as _recover_and_reset_backend,
+    check_embeddings_status as check_embeddings_status,
+    reset_embed_failure_count as reset_embed_failure_count,
+    set_embed_failure_count_for_testing as set_embed_failure_count_for_testing,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -385,15 +299,13 @@ def recall_learnings(
     filter_result = (
         filter_recall_window(public_entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
     )
-    results: list[dict[str, object]] = []
     filtered_entries = filter_result.accepted if filter_result is not None else public_entries
+    results: list[dict[str, object]] = []
     for entry in filtered_entries:
-        # Wildcard path: list_entries doesn't filter by tags/impact, so apply
-        # _apply_entry_filters (AND semantics) to match the search path.
-        # Search path already applies these filters internally.
+        # Wildcard: apply _apply_entry_filters to match search-path AND semantics.
+        # Non-wildcard: search applies tags/status filters; still guard min_impact here.
         if is_wildcard and not _apply_entry_filters(entry, tags, mem_status, min_impact):
             continue
-        # Non-wildcard: still guard min_impact (search may not filter on dict-level impact)
         if not is_wildcard and entry.importance < min_impact:
             continue
         results.append(_memory_to_learning_dict(entry, compact=compact))

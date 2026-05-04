@@ -1,0 +1,108 @@
+"""Memory adapter — embedding status + corruption recovery helpers.
+
+Belongs to the ``memory_adapter.py`` facade. Re-exported there for back-compat.
+
+Two micro-clusters:
+1. **Embedding status** (3 helpers) — read/reset/inject the embed-failure
+   counter. ``check_embeddings_status`` honors the
+   ``memory_adapter._embed_failures`` test-injection override at call time.
+2. **Corruption recovery** (3 helpers) — detect SQLite corruption,
+   force-recover, and reset the singleton. Triggered from CRUD code paths
+   when ``_is_corruption_error`` matches.
+
+Extracted as DIST-243 batch 44 to bring the parent ``memory_adapter.py``
+module under the 350 effective-LOC ceiling.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
+
+logger = structlog.get_logger(__name__)
+
+
+_MALFORMED_MARKERS = ("malformed", "database disk image", "not a database", "file is not a database")
+
+
+def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
+    """Check embedding readiness; honors memory_adapter._embed_failures override."""
+    from trw_mcp.state import memory_adapter
+    from trw_mcp.state._memory_connection import check_embeddings_status as _impl
+
+    result = _impl() if allow_initialize else _impl(allow_initialize=False)
+    if memory_adapter._embed_failures is not None:
+        result["recent_failures"] = memory_adapter._embed_failures
+    return result
+
+
+def reset_embed_failure_count() -> None:
+    """Reset the embed failure counter and clear the facade-level override."""
+    from trw_mcp.state import memory_adapter
+    from trw_mcp.state._memory_connection import reset_embed_failure_count as _impl
+
+    _impl()
+    memory_adapter._embed_failures = None
+
+
+def set_embed_failure_count_for_testing(n: int) -> None:
+    """Set the facade-level embed failure override (for tests only)."""
+    from trw_mcp.state import memory_adapter
+
+    memory_adapter._embed_failures = n
+
+
+def _is_corruption_error(exc: BaseException) -> bool:
+    """Return True if *exc* indicates SQLite database corruption."""
+    if isinstance(exc, CorruptDatabaseUnsalvageableError):
+        return False
+    msg = str(exc).lower()
+    return any(m in msg for m in _MALFORMED_MARKERS)
+
+
+def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError) -> None:
+    """Log strict recovery refusal before surfacing it to the caller."""
+    _logger().error(
+        "memory_recovery_terminal",
+        db=str(db_path),
+        backup_path=exc.backup_path,
+        action="raise",
+    )
+
+
+def _recover_and_reset_backend(trw_dir: Path) -> None:
+    """Force-recover the database, backfill from YAML, and reset the singleton."""
+    from trw_mcp.state._memory_connection import get_backend as _get_backend
+    from trw_mcp.state._memory_connection import reset_backend as _reset
+
+    db_path = trw_dir / "memory" / "memory.db"
+    _logger().error("runtime_corruption_detected", db=str(db_path), action="recover_and_reset")
+    _reset()
+    if db_path.exists():
+        from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+        try:
+            conn = SQLiteBackend.recover_db(db_path)
+        except CorruptDatabaseUnsalvageableError as exc:
+            _log_terminal_recovery(db_path, exc)
+            raise
+        conn.close()
+    sentinel = trw_dir / "memory" / ".migrated"
+    if sentinel.exists():
+        sentinel.unlink()
+    try:
+        _get_backend(trw_dir)
+    except CorruptDatabaseUnsalvageableError as exc:
+        _log_terminal_recovery(db_path, exc)
+        raise
+
+
+def _logger() -> Any:
+    """Lookup memory_adapter.logger at call time so test patches stick."""
+    from trw_mcp.state import memory_adapter
+
+    return memory_adapter.logger
