@@ -414,54 +414,6 @@ def append_ceremony_status(
                 logger.debug("contextual_messenger_failed", exc_info=True)
             return response
 
-        if messenger == "governance":
-            try:
-                from trw_mcp.state.ceremony_nudge import compute_nudge_governance
-
-                gov_content = compute_nudge_governance(state)
-                if gov_content:
-                    response["nudge_content"] = gov_content
-                    _record_emitted_nudge(
-                        messenger_name="governance",
-                        pool_name="governance",
-                        learning_id=None,
-                    )
-            except Exception:  # justified: fail-open per NFR02
-                logger.debug("governance_messenger_failed", exc_info=True)
-            return response
-
-        if messenger == "cod":
-            try:
-                from trw_mcp.state.ceremony_nudge import compute_nudge_cod
-
-                cod_content = compute_nudge_cod(state)
-                if cod_content:
-                    response["nudge_content"] = cod_content
-                    _record_emitted_nudge(
-                        messenger_name="cod",
-                        pool_name="cod",
-                        learning_id=None,
-                    )
-            except Exception:  # justified: fail-open per NFR02
-                logger.debug("cod_messenger_failed", exc_info=True)
-            return response
-
-        if messenger == "negative":
-            try:
-                from trw_mcp.state.ceremony_nudge import compute_nudge_negative
-
-                neg_content = compute_nudge_negative(state)
-                if neg_content:
-                    response["nudge_content"] = neg_content
-                    _record_emitted_nudge(
-                        messenger_name="negative",
-                        pool_name="negative",
-                        learning_id=None,
-                    )
-            except Exception:  # justified: fail-open per NFR02
-                logger.debug("negative_messenger_failed", exc_info=True)
-            return response
-
         # 1. Select nudge pool via weighted random with cooldowns (standard messenger)
         weights = cfg.client_profile.nudge_pool_weights
         cooldown_after = cfg.nudge_pool_cooldown_after
