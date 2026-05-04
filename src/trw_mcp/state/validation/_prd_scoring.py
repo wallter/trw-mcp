@@ -20,6 +20,22 @@ from trw_mcp.models.requirements import (
     DimensionScore,
     SectionScore,
 )
+from trw_mcp.state.validation._prd_scoring_traceability import (
+    _BARE_IMPL_REF_RE as _BARE_IMPL_REF_RE,
+    _BARE_TEST_REF_RE as _BARE_TEST_REF_RE,
+    _IMPL_REF_RE as _IMPL_REF_RE,
+    _KNOWN_TEST_PATTERNS as _KNOWN_TEST_PATTERNS,
+    _TEST_REF_RE as _TEST_REF_RE,
+    _collect_reference_matches as _collect_reference_matches,
+    _count_populated_trace_fields as _count_populated_trace_fields,
+    _count_table_rows as _count_table_rows,
+    _extract_fr_id as _extract_fr_id,
+    _extract_traceability_matrix_rows as _extract_traceability_matrix_rows,
+    _has_impl_reference as _has_impl_reference,
+    _has_test_reference as _has_test_reference,
+    _normalize_reference_token as _normalize_reference_token,
+    _score_traceability_matrix as _score_traceability_matrix,
+)
 from trw_mcp.state.validation.template_variants import get_required_sections, get_variant_for_category
 
 if TYPE_CHECKING:
@@ -84,62 +100,6 @@ _REQUIREMENT_LINE_RE = re.compile(
     r"FR\d+|NFR\d+|- \[ \]|\bWhen\b|\bWhile\b|\bIf\b|\bWhere\b",
 )
 
-# Known test file naming conventions supported by _TEST_REF_RE.
-# Used for documentation and external introspection.
-_KNOWN_TEST_PATTERNS: dict[str, str] = {
-    "python": "test_*.py or test_*.py::test_func (pytest prefix convention)",
-    "typescript": "*.test.ts, *.test.tsx (Jest/Vitest suffix convention)",
-    "javascript": "*.test.js, *.spec.js (Jest/Jasmine conventions)",
-    "go": "*_test.go (Go testing suffix convention)",
-    "rust": "tests/*.rs (Rust integration tests directory convention)",
-    "java": "*Test.java, *Tests.java (JUnit suffix convention)",
-    "ruby": "*_spec.rb (RSpec suffix convention)",
-    "generic_spec": "*.spec.ts, *.spec.tsx (spec suffix, any extension)",
-}
-
-# Pre-compiled regex matching test file references (backtick-wrapped) for all
-# supported languages. Covers:
-#   - Python prefix:  `test_foo.py`, `test_foo.py::test_bar`
-#   - TS/JS suffix:   `Component.test.tsx`, `api.spec.ts`
-#   - Go suffix:      `handler_test.go`
-#   - Java suffix:    `UserServiceTest.java`, `UserServiceTests.java`
-#   - Ruby suffix:    `user_spec.rb`
-#   - tests/ dir:     `tests/integration.rs`
-_TEST_REF_RE = re.compile(
-    r"`(?:"
-    r"test[\w_]*\.[\w.]+[:\w]*"  # Python: test_foo.py, test_foo.py::bar
-    r"|[\w/]+\.(?:test|spec)\.[\w]+[:\w]*"  # TS/JS: foo.test.ts, foo.spec.tsx
-    r"|[\w/]+(?:_test|_spec)\.[\w]+[:\w]*"  # Go/Ruby: foo_test.go, user_spec.rb
-    r"|[\w/]+(?:Test|Tests|Spec)\.[\w]+[:\w]*"  # Java: FooTest.java, FooTests.java
-    r"|tests?/[\w/]+\.[\w]+[:\w]*"  # tests/ dir: tests/integration.rs
-    r")`",
-)
-
-# Backtick-wrapped source / implementation file references used inside
-# traceability matrices. Accept hyphenated repo roots (e.g. ``trw-mcp/``),
-# nested dirs, shell scripts, markdown, and optional line/anchor suffixes.
-_IMPL_REF_RE = re.compile(
-    r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
-)
-
-# Bare (non-backtick-wrapped) test file references — catches references in
-# prose, table cells, and list items that lack backtick delimiters.
-_BARE_TEST_REF_RE = re.compile(
-    r"(?<!`)(?:"
-    r"test[\w./-]*\.[\w]+(?:::[\w.-]+)?"
-    r"|[\w./-]+\.(?:test|spec)\.[\w]+(?:::[\w.-]+)?"
-    r"|[\w./-]+(?:_test|_spec)\.[\w]+(?:::[\w.-]+)?"
-    r"|[\w./-]+(?:Test|Tests|Spec)\.[\w]+(?:::[\w.-]+)?"
-    r"|tests?/[\w./-]+\.[\w]+(?:::[\w.-]+)?"
-    r")(?!`)",
-)
-# Bare implementation file references (non-backtick-wrapped).
-_BARE_IMPL_REF_RE = re.compile(
-    r"(?<!`)(?:"
-    r"(?:[-\w*]+/)+[-\w.*]+\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
-    r"|(?:[-A-Za-z0-9_]*[A-Za-z_][-A-Za-z0-9_]*)\.[A-Za-z][\w]*(?:[:#][-\w./*#]+)?"
-    r")(?!`)",
-)
 
 _SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
@@ -392,116 +352,6 @@ def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
 
     return len(body_keyword_matches) >= 2
 
-
-def _count_table_rows(content: str, heading: str) -> int:
-    """Count substantive markdown table rows under a named subsection."""
-    marker = f"### {heading}"
-    start = content.find(marker)
-    if start == -1:
-        return 0
-    tail = content[start + len(marker) :]
-    next_heading = re.search(r"^###\s+.+$", tail, re.MULTILINE)
-    body = tail[: next_heading.start()] if next_heading else tail
-
-    rows = 0
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        if re.match(r"^\|[\s\-:|]+\|$", stripped):
-            continue
-        rows += 1
-    return max(rows - 1, 0)
-
-
-def _collect_reference_matches(content: str, *patterns: re.Pattern[str]) -> set[str]:
-    """Collect unique implementation/test reference tokens across regex variants."""
-    matches: set[str] = set()
-    for pattern in patterns:
-        for match in pattern.finditer(content):
-            token = match.group(0).strip("`")
-            if token:
-                matches.add(token)
-    return matches
-
-
-def _normalize_reference_token(token: str) -> str:
-    """Collapse selectors/anchors so test refs can be excluded from impl counts."""
-    return token.split("::", 1)[0].split("#", 1)[0]
-
-
-def _has_impl_reference(content: str) -> bool:
-    """Return True when content contains at least one implementation file ref."""
-    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE, _BARE_IMPL_REF_RE)
-    test_refs = _collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE)
-    normalized_test_refs = {_normalize_reference_token(token) for token in test_refs}
-    return any(_normalize_reference_token(token) not in normalized_test_refs for token in impl_refs)
-
-
-def _has_test_reference(content: str) -> bool:
-    """Return True when content contains at least one test file ref."""
-    return bool(_collect_reference_matches(content, _TEST_REF_RE, _BARE_TEST_REF_RE))
-
-
-def _extract_fr_id(label: str) -> str | None:
-    """Extract the normalized FR identifier from a heading or row label."""
-    match = re.search(r"\bFR\d+\b", label)
-    return match.group(0) if match else None
-
-
-def _extract_traceability_matrix_rows(content: str) -> dict[str, str]:
-    """Map each FR in the traceability matrix to its corresponding row content."""
-    if "Traceability Matrix" not in content:
-        return {}
-
-    matrix_tail = content.split("Traceability Matrix", 1)[1]
-    next_heading = re.search(r"^##\s+\d+\.\s+.+$", matrix_tail, re.MULTILINE)
-    matrix_section = matrix_tail[: next_heading.start()] if next_heading else matrix_tail
-
-    rows_by_fr: dict[str, list[str]] = {}
-    for line in matrix_section.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|") or re.match(r"^\|[\s\-:|]+\|$", stripped):
-            continue
-        fr_id = _extract_fr_id(stripped)
-        if fr_id is None:
-            continue
-        rows_by_fr.setdefault(fr_id, []).append(stripped)
-
-    return {fr_id: "\n".join(rows) for fr_id, rows in rows_by_fr.items()}
-
-
-def _count_populated_trace_fields(trace_data: object) -> int:
-    """Count populated traceability frontmatter fields."""
-    if not isinstance(trace_data, dict):
-        return 0
-
-    populated_fields = 0
-    for field in ("implements", "depends_on", "enables"):
-        value = trace_data.get(field, [])
-        if isinstance(value, list) and value:
-            populated_fields += 1
-    return populated_fields
-
-
-def _score_traceability_matrix(content: str) -> tuple[float, float]:
-    """Return matrix-score and proof-score for the traceability matrix."""
-    if "Traceability Matrix" not in content:
-        return 0.0, 0.0
-
-    traceability_rows = _extract_traceability_matrix_rows(content)
-    fr_refs = sorted(traceability_rows)
-    if not fr_refs:
-        return 0.0, 0.0
-
-    rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
-    rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
-    rows_with_both = sum(
-        1 for row in traceability_rows.values() if _has_impl_reference(row) and _has_test_reference(row)
-    )
-    matrix_score = min((rows_with_impl + rows_with_test) / (2 * len(fr_refs)), 1.0)
-    proof_score = min(rows_with_both / len(fr_refs), 1.0)
-    return matrix_score, proof_score
 
 
 def _score_ai_operational_evidence(content: str) -> tuple[float, float, float]:
