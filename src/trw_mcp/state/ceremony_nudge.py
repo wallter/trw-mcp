@@ -345,110 +345,28 @@ def compute_nudge_contextual_distress(
         return compute_nudge_minimal(state)
 
 
-def compute_nudge_silent_flow(
-    state: CeremonyState,
-    trw_dir: Path,
-    context: NudgeContext | None = None,
-) -> str:
-    """Render rich contextual nudge only if in distress; otherwise pure silence.
 
-    Iter-25 'Zero-Tax' variant for high-performing models. Eliminates token overhead
-    unless intervention is clinically necessary.
-    """
+# Specialized compute_nudge_* variants extracted to _ceremony_nudge_specialized
+# (PRD-DIST-243 batch 24). Re-exported for back-compat with _ceremony_status.py.
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_anchor as compute_nudge_anchor,
+)
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_cod as compute_nudge_cod,
+)
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_governance as compute_nudge_governance,
+)
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_negative as compute_nudge_negative,
+)
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_silent_flow as compute_nudge_silent_flow,
+)
+from trw_mcp.state._ceremony_nudge_specialized import (
+    compute_nudge_stepback as compute_nudge_stepback,
+)
 
-    try:
-        if _is_agent_in_distress(state):
-            return compute_nudge_contextual(state, trw_dir, context=context)
-
-        return ""
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_silent_flow_failed", exc_info=True)
-        return ""
-
-
-def compute_nudge_stepback(
-    state: CeremonyState,
-    trw_dir: Path,
-    context: NudgeContext | None = None,
-) -> str:
-    """Render a 'Step-Back' rescue nudge if distress is detected.
-
-    Prompts the agent to hypothesize and identify core principles when stalled.
-    """
-
-    try:
-        if _is_agent_in_distress(state):
-            status = _build_minimal_status_line(state)
-            msg = (
-                f"{_MINIMAL_HEADER}\n{status}\n"
-                "\u26a0 STOP. Step back. Identify the core principle or problem category. "
-                "Form a hypothesis before your next tool call."
-            )
-            return msg
-
-        return compute_nudge_contextual(state, trw_dir, context=context)
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_stepback_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
-def compute_nudge_cod(state: CeremonyState) -> str:
-    """Render a 'Chain of Draft' (CoD) shorthand nudge."""
-
-    try:
-        status = _build_done_next_then_status_light(state)
-        return f"{_MINIMAL_HEADER}\n{status}"
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_cod_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
-def compute_nudge_anchor(state: CeremonyState, trw_dir: Path, context: NudgeContext | None = None) -> str:
-    """Render a nudge wrapped in high-signal XML tags to anchor attention."""
-
-    try:
-        content = compute_nudge_contextual(state, trw_dir, context=context)
-        return f"<TRW_SESSION_ANCHOR>\n{content}\n</TRW_SESSION_ANCHOR>"
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_anchor_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
-def compute_nudge_negative(state: CeremonyState) -> str:
-    """Render a nudge using negative constraints (anti-patterns)."""
-
-    try:
-        status = _build_minimal_status_line(state)
-        pending = _highest_priority_pending_step(state)
-
-        if pending == "session_start":
-            msg = "Do NOT proceed with edits until trw_session_start() is called."
-        elif pending == "checkpoint":
-            msg = "Do NOT risk context compaction; call trw_checkpoint() now."
-        elif pending == "build_check":
-            msg = "Do NOT deliver unverified code; run trw_build_check() first."
-        elif pending == "review":
-            msg = "Do NOT skip independent review; call trw_review() before delivery."
-        elif pending == "deliver":
-            msg = "Do NOT end this session without calling trw_deliver() to persist learnings."
-        else:
-            msg = "Do NOT violate ceremony requirements."
-
-        return f"{_MINIMAL_HEADER}\n{status}\n\u26a0 {msg}"
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_negative_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
-def compute_nudge_governance(state: CeremonyState, available_learnings: int = 0) -> str:
-    """Render a governance-only nudge (status line only, no prompt text)."""
-
-    try:
-        status_line = _build_minimal_status_line(state)
-        return f"{_MINIMAL_HEADER}\n{status_line}"
-    except Exception:  # justified: fail-open per NFR02
-        logger.debug("compute_nudge_governance_failed", exc_info=True)
-        return f"{_MINIMAL_HEADER}\n? start | ? deliver"
 
 
 def _select_learning_injection_candidate(
