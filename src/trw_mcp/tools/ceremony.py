@@ -149,6 +149,7 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
     _parse_iso_utc as _parse_iso_utc,
     _persist_surface_snapshot_pointer as _persist_surface_snapshot_pointer,
     _timedelta_hours as _timedelta_hours,
+    finalize_session_start as finalize_session_start,
     step_assertion_health as step_assertion_health,
     step_phase_auto_recall as step_phase_auto_recall,
     step_surface_stamp as step_surface_stamp,
@@ -401,61 +402,11 @@ def register_ceremony_tools(server: FastMCP) -> None:
         _record_step("assertion_health", _assertion_health_started)
 
         _finalize_started = time.monotonic()
-        results["errors"] = errors
-        results["success"] = len(errors) == 0
-
-        # FR07 (PRD-CORE-084): Compact response for light ceremony mode.
-        if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
-            results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
-        else:
-            results["framework_reminder"] = (
-                "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
-                "your tools implement (6-phase execution model, exit criteria, "
-                "formations, quality gates, phase reversion). Re-read after "
-                "context compaction."
-            )
-
-        # Mark session started in ceremony state (PRD-CORE-074 FR04)
-        try:
-            step_mark_session_started()
-        except Exception:  # justified: fail-open, state mutation must not block session start
-            logger.debug("session_mark_started_failed", exc_info=True)
-
-        # Inject ceremony progress summary when full ceremony mode is active.
-        try:
-            if bool(results.get("response_compacted")):
-                results["ceremony_status_deferred"] = {
-                    "reason": "session_start_compacted",
-                    "detail": "Nudge decoration is optional and was left off the hot response path.",
-                }
-            else:
-                step_ceremony_status(cast("dict[str, object]", results))
-        except Exception:  # justified: fail-open, status decoration must not block session start
-            logger.debug("session_ceremony_status_failed", exc_info=True)
-
-        _record_step("finalize", _finalize_started)
-
         # PRD-FIX-084: total elapsed time for the entire session_start call.
+        # Captured BEFORE finalize so logs see the post-step total.
+        _record_step("finalize", _finalize_started)
         _record_step("total", _step_started_at)
-        results["step_durations_ms"] = step_durations_ms
-
-        run_info: RunStatusDict | None = results.get("run")
-        _active_run_id = str(run_info.get("active_run", "")) if run_info else ""
-        _phase = str(run_info.get("phase", "")) if run_info else ""
-        _task = str(run_info.get("task_name", "")) if run_info else ""
-        _learnings_count = int(str(results.get("learnings_count", 0)))
-        logger.info(
-            "session_start_ok",
-            run_id=_active_run_id,
-            phase=_phase,
-            task=_task,
-            learnings_count=_learnings_count,
-            step_durations_ms=step_durations_ms,
-        )
-        logger.debug(
-            "session_start_learnings_loaded",
-            count=_learnings_count,
-        )
+        finalize_session_start(results, config, step_durations_ms, errors)
 
         # PRD-FIX-085 FR02: reset HOT_PATH ContextVar before returning. Always
         # runs even if step bodies raised, because each step uses its own

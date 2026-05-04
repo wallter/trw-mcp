@@ -25,7 +25,13 @@ from trw_mcp.models.config import get_config
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.typed_dicts import AutoRecalledItemDict, ClaudeMdSyncResultDict, ReflectResultDict, RunStatusDict
+from trw_mcp.models.typed_dicts import (
+    AutoRecalledItemDict,
+    ClaudeMdSyncResultDict,
+    ReflectResultDict,
+    RunStatusDict,
+    SessionStartResultDict,
+)
 from trw_mcp.state.analytics import find_success_patterns, update_analytics
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -276,6 +282,71 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return max(0.0, (datetime.now(timezone.utc) - mtime_dt).total_seconds() / 3600.0)
     except OSError:
         return 0.0
+
+
+def finalize_session_start(
+    results: SessionStartResultDict,
+    config: TRWConfig,
+    step_durations_ms: dict[str, float],
+    errors: list[str],
+) -> None:
+    """Finalize trw_session_start: errors, success, framework_reminder, ceremony_status, logs.
+
+    Mutates ``results`` in-place. Sets ``errors``, ``success``,
+    ``framework_reminder`` (or compacted variant), step_durations_ms,
+    and emits the ``session_start_ok`` info-level log line. Calls
+    ``step_mark_session_started`` and ``step_ceremony_status`` with
+    fail-open guards (skipped via ``ceremony_status_deferred`` when the
+    response is in compacted mode).
+    """
+    from trw_mcp.tools._ceremony_helpers import step_ceremony_status, step_mark_session_started
+    from typing import cast
+
+    results["errors"] = errors
+    results["success"] = len(errors) == 0
+
+    if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
+        results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
+    else:
+        results["framework_reminder"] = (
+            "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
+            "your tools implement (6-phase execution model, exit criteria, "
+            "formations, quality gates, phase reversion). Re-read after "
+            "context compaction."
+        )
+
+    try:
+        step_mark_session_started()
+    except Exception:  # justified: fail-open, state mutation must not block session start
+        logger.debug("session_mark_started_failed", exc_info=True)
+
+    try:
+        if bool(results.get("response_compacted")):
+            results["ceremony_status_deferred"] = {
+                "reason": "session_start_compacted",
+                "detail": "Nudge decoration is optional and was left off the hot response path.",
+            }
+        else:
+            step_ceremony_status(cast("dict[str, object]", results))
+    except Exception:  # justified: fail-open, status decoration must not block session start
+        logger.debug("session_ceremony_status_failed", exc_info=True)
+
+    results["step_durations_ms"] = step_durations_ms
+
+    run_info: RunStatusDict | None = results.get("run")
+    active_run_id = str(run_info.get("active_run", "")) if run_info else ""
+    phase = str(run_info.get("phase", "")) if run_info else ""
+    task = str(run_info.get("task_name", "")) if run_info else ""
+    learnings_count = int(str(results.get("learnings_count", 0)))
+    logger.info(
+        "session_start_ok",
+        run_id=active_run_id,
+        phase=phase,
+        task=task,
+        learnings_count=learnings_count,
+        step_durations_ms=step_durations_ms,
+    )
+    logger.debug("session_start_learnings_loaded", count=learnings_count)
 
 
 def step_phase_auto_recall(
