@@ -9,7 +9,7 @@ Covers:
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
@@ -166,20 +166,19 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
     client._coordinator.get_last_pull_seq.return_value = 0
     client._coordinator.get_last_outcome_line.return_value = 0
 
-    # Primary target pusher raises connection error.
+    # PRD-FIX-087: pusher methods are now async — use AsyncMock per method.
     primary_pusher = MagicMock()
-    primary_pusher.push_learnings.side_effect = ConnectionError("refused")
-    primary_pusher.push_outcomes.side_effect = ConnectionError("refused")
+    primary_pusher.push_learnings = AsyncMock(side_effect=ConnectionError("refused"))
+    primary_pusher.push_outcomes = AsyncMock(side_effect=ConnectionError("refused"))
     client._pusher = primary_pusher
 
-    # Secondary target pusher succeeds.
     secondary_pusher = MagicMock()
-    secondary_pusher.push_learnings.return_value = PushResult(pushed=1, failed=0, skipped=0)
-    secondary_pusher.push_outcomes.return_value = PushResult(pushed=0, failed=0, skipped=0)
+    secondary_pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
+    secondary_pusher.push_outcomes = AsyncMock(return_value=PushResult(pushed=0, failed=0, skipped=0))
     client._pushers["localhost"] = secondary_pusher
 
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[SimpleNamespace(id="L-1", sync_seq=5)],
@@ -215,21 +214,31 @@ async def test_429_on_one_target_does_not_stop_others(tmp_path) -> None:
     client._coordinator.get_last_pull_seq.return_value = 0
     client._coordinator.get_last_outcome_line.return_value = 0
 
+    # PRD-FIX-087: pusher methods are now async.
     primary = MagicMock()
-    primary.push_learnings.side_effect = httpx.HTTPStatusError(
-        "429",
-        request=MagicMock(),
-        response=MagicMock(status_code=429),
+    primary.push_learnings = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "429",
+            request=MagicMock(),
+            response=MagicMock(status_code=429),
+        )
+    )
+    primary.push_outcomes = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "429",
+            request=MagicMock(),
+            response=MagicMock(status_code=429),
+        )
     )
     client._pusher = primary
 
     secondary = MagicMock()
-    secondary.push_learnings.return_value = PushResult(pushed=1, failed=0, skipped=0)
-    secondary.push_outcomes.return_value = PushResult(pushed=0, failed=0, skipped=0)
+    secondary.push_learnings = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
+    secondary.push_outcomes = AsyncMock(return_value=PushResult(pushed=0, failed=0, skipped=0))
     client._pushers["localhost"] = secondary
 
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[SimpleNamespace(id="L-1", sync_seq=5)],

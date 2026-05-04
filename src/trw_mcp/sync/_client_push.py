@@ -21,7 +21,7 @@ class _TargetLike(Protocol):
     label: str
 
 
-def _push_to_target(
+async def _push_to_target(
     *,
     client_id: str,
     target: _TargetLike,
@@ -33,6 +33,7 @@ def _push_to_target(
     dirty: list[MemoryEntry],
     outcomes: list[dict[str, object]],
 ) -> PushResult:
+    """PRD-FIX-087 FR03: async — awaits pusher.push_learnings / push_outcomes."""
     started = perf_counter()
     if primary_target_label is not None and target.label == primary_target_label:
         pusher = primary_pusher
@@ -56,7 +57,7 @@ def _push_to_target(
             kind="learnings",
             client_id=client_id,
         )
-        learning_result = pusher.push_learnings(dirty)
+        learning_result = await pusher.push_learnings(dirty)
         total = PushResult(
             pushed=total.pushed + learning_result.pushed,
             failed=total.failed + learning_result.failed,
@@ -79,7 +80,7 @@ def _push_to_target(
             kind="outcomes",
             client_id=client_id,
         )
-        outcome_result = pusher.push_outcomes(outcomes)
+        outcome_result = await pusher.push_outcomes(outcomes)
         total = PushResult(
             pushed=total.pushed + outcome_result.pushed,
             failed=total.failed + outcome_result.failed,
@@ -98,7 +99,7 @@ def _push_to_target(
     return total
 
 
-def fanout_push(
+async def fanout_push(
     *,
     client_id: str,
     targets: list[_TargetLike],
@@ -109,13 +110,14 @@ def fanout_push(
     dirty: list[MemoryEntry],
     outcomes: list[dict[str, object]],
 ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
+    """PRD-FIX-087 FR03: async — awaits _push_to_target per target."""
     report: dict[str, dict[str, object]] = {}
     aggregate: PushResult = PushResult()
     any_success = False
     primary_target_label = targets[0].label if targets else None
     for target in targets:
         try:
-            result = _push_to_target(
+            result = await _push_to_target(
                 client_id=client_id,
                 target=target,
                 primary_target_label=primary_target_label,

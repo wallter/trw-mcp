@@ -48,8 +48,13 @@ class SyncPusher:
         self._client_id = (client_id or "").strip() or resolve_sync_client_id()
         self._project_root = os.getenv("TRW_PROJECT_ROOT", os.getcwd())
 
-    def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
-        """Batch push learnings to POST /v1/sync/learnings. Never raises."""
+    async def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
+        """Batch push learnings to POST /v1/sync/learnings. Never raises.
+
+        PRD-FIX-087 FR02: async + httpx.AsyncClient so each batch yields
+        the asyncio event loop instead of blocking it. Pre-fix, 44+
+        sequential POST batches blocked the loop for 5+ seconds total.
+        """
         import httpx
 
         if not entries:
@@ -78,8 +83,8 @@ class SyncPusher:
                 "push_seq": max(e.sync_seq for e in batch) if batch else 0,
             }
             try:
-                with httpx.Client(timeout=self._timeout) as client:
-                    resp = client.post(
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(
                         f"{self._backend_url}/v1/sync/learnings",
                         json=payload,
                         headers={"Authorization": f"Bearer {self._api_key}"},
@@ -120,8 +125,11 @@ class SyncPusher:
         )
         return PushResult(pushed=total_pushed, failed=total_failed, skipped=total_skipped)
 
-    def push_outcomes(self, outcomes: list[dict[str, object]]) -> PushResult:
-        """Batch push outcomes to POST /v1/sync/outcomes. Never raises."""
+    async def push_outcomes(self, outcomes: list[dict[str, object]]) -> PushResult:
+        """Batch push outcomes to POST /v1/sync/outcomes. Never raises.
+
+        PRD-FIX-087 FR02: async + httpx.AsyncClient.
+        """
         import httpx
 
         if not outcomes:
@@ -144,8 +152,8 @@ class SyncPusher:
                 "client_id": self._get_client_id(),
             }
             try:
-                with httpx.Client(timeout=self._timeout) as client:
-                    resp = client.post(
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(
                         f"{self._backend_url}/v1/sync/outcomes",
                         json=payload,
                         headers={"Authorization": f"Bearer {self._api_key}"},

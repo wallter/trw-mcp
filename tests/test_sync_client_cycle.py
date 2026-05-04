@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,12 +24,14 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
     client._coordinator.get_last_pull_seq.return_value = 4
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(
-        state={"etag": "etag-1"},
-        etag="etag-1",
-        team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
-        sync_hints={},
-        status_code=200,
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
+            sync_hints={},
+            status_code=200,
+        )
     )
     client._puller.merge_team_learnings.return_value = 1
     client._cache = MagicMock()
@@ -63,16 +65,18 @@ async def test_run_one_cycle_applies_server_next_poll_hint(tmp_path) -> None:
     client._coordinator.get_last_pull_seq.return_value = 0
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(
-        state={"etag": "etag-1"},
-        etag="etag-1",
-        sync_hints={
-            "next_poll_recommended_at": (datetime.now(tz=UTC) + timedelta(seconds=5)).isoformat(),
-            "polling_cap_seconds": 120,
-            "interval_seconds": 120,
-        },
-        team_learnings=[],
-        status_code=200,
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            sync_hints={
+                "next_poll_recommended_at": (datetime.now(tz=UTC) + timedelta(seconds=5)).isoformat(),
+                "polling_cap_seconds": 120,
+                "interval_seconds": 120,
+            },
+            team_learnings=[],
+            status_code=200,
+        )
     )
     client._puller.merge_team_learnings.return_value = 0
     client._cache = MagicMock()
@@ -99,16 +103,18 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
     client._coordinator.get_last_pull_seq.return_value = 0
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(
-        state={"etag": "etag-1"},
-        etag="etag-1",
-        sync_hints={
-            "significant_updates_available": True,
-            "polling_cap_seconds": 300,
-            "interval_seconds": 300,
-        },
-        team_learnings=[],
-        status_code=200,
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            sync_hints={
+                "significant_updates_available": True,
+                "polling_cap_seconds": 300,
+                "interval_seconds": 300,
+            },
+            team_learnings=[],
+            status_code=200,
+        )
     )
     client._puller.merge_team_learnings.return_value = 0
     client._cache = MagicMock()
@@ -135,12 +141,14 @@ async def test_run_one_cycle_accepts_server_intervals_above_one_hour(tmp_path) -
     client._coordinator.get_last_pull_seq.return_value = 0
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(
-        state={"etag": "etag-1"},
-        etag="etag-1",
-        sync_hints={"polling_cap_seconds": 5400, "interval_seconds": 5400},
-        team_learnings=[],
-        status_code=200,
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            sync_hints={"polling_cap_seconds": 5400, "interval_seconds": 5400},
+            team_learnings=[],
+            status_code=200,
+        )
     )
     client._puller.merge_team_learnings.return_value = 0
     client._cache = MagicMock()
@@ -167,7 +175,7 @@ async def test_run_one_cycle_passes_scheduled_interval_to_coordinator(tmp_path) 
     client._coordinator.get_last_pull_seq.return_value = 0
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -190,7 +198,7 @@ async def test_run_one_cycle_records_not_modified_pull_as_success(tmp_path) -> N
     client._coordinator.get_last_pull_seq.return_value = 5
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -223,7 +231,7 @@ async def test_run_one_cycle_preserves_last_server_schedule_after_not_modified(t
     client._coordinator.get_last_pull_seq.return_value = 5
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -246,7 +254,7 @@ async def test_run_one_cycle_records_pull_failures_as_failures(tmp_path) -> None
     client._coordinator.get_last_pull_seq.return_value = 5
     client._pusher = MagicMock()
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = None
+    client._puller.pull_intel_state = AsyncMock(return_value=None)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 

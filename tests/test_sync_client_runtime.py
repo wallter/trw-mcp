@@ -1,10 +1,15 @@
-"""Tests for BackendSyncClient runtime, push, and lifespan behavior."""
+"""Tests for BackendSyncClient runtime, push, and lifespan behavior.
+
+PRD-FIX-087: pusher/puller methods that hit the network are now async.
+Tests mock those specific methods with AsyncMock; non-network methods
+(merge_team_learnings, etc.) stay as MagicMock.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastmcp import FastMCP
@@ -50,9 +55,9 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
     client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
     client._coordinator.get_last_pull_seq.return_value = 3
     client._pusher = MagicMock()
-    client._pusher.push_learnings.return_value = SimpleNamespace(pushed=2, failed=0, skipped=0)
+    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=2, failed=0, skipped=0))
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[
@@ -103,10 +108,10 @@ async def test_run_one_cycle_pushes_pending_outcomes_after_learning_sync(tmp_pat
     client._coordinator.get_last_pull_seq.return_value = 3
     client._coordinator.get_last_outcome_line.return_value = 0
     client._pusher = MagicMock()
-    client._pusher.push_learnings.return_value = SimpleNamespace(pushed=1, failed=0, skipped=0)
-    client._pusher.push_outcomes.return_value = SimpleNamespace(pushed=1, failed=0, skipped=0)
+    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=0, skipped=0))
+    client._pusher.push_outcomes = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=0, skipped=0))
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=5)])
     client._mark_synced = MagicMock()
@@ -133,9 +138,9 @@ async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_
     client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
     client._coordinator.get_last_pull_seq.return_value = 3
     client._pusher = MagicMock()
-    client._pusher.push_learnings.return_value = SimpleNamespace(pushed=1, failed=1, skipped=0)
+    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=1, skipped=0))
     client._puller = MagicMock()
-    client._puller.pull_intel_state.return_value = PullResult(status_code=304, not_modified=True)
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[

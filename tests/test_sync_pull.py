@@ -1,10 +1,30 @@
-"""Tests for SyncPuller — PRD-INFRA-053."""
+"""Tests for SyncPuller — PRD-INFRA-053.
+
+PRD-FIX-087: pull_intel_state is now async + httpx.AsyncClient.
+Tests are async and patch httpx.AsyncClient (with AsyncMock for
+async context manager + awaitable get/post).
+"""
 
 from __future__ import annotations
 
 import ast
 import inspect
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _build_async_httpx_mock(response: object) -> MagicMock:
+    """Build a mock AsyncClient that yields ``response`` from ``await client.get(...)``.
+
+    Async context manager: ``async with httpx.AsyncClient(...) as client``
+    requires __aenter__/__aexit__ on the class instance.
+    """
+    mock_cls = MagicMock()
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=response)
+    mock_client.post = AsyncMock(return_value=response)
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+    return mock_cls
 
 
 def test_pull_result_model() -> None:
@@ -31,7 +51,7 @@ def test_pull_result_model() -> None:
     assert len(result2.team_learnings) == 1  # type: ignore[arg-type]
 
 
-def test_pull_empty_returns_none() -> None:
+async def test_pull_empty_returns_none() -> None:
     """Pull from unreachable URL returns None (fail-open)."""
     from trw_mcp.sync.pull import SyncPuller
 
@@ -41,11 +61,11 @@ def test_pull_empty_returns_none() -> None:
         timeout=1.0,
         client_id="sync-test",
     )
-    result = puller.pull_intel_state()
+    result = await puller.pull_intel_state()
     assert result is None
 
 
-def test_puller_never_raises() -> None:
+async def test_puller_never_raises() -> None:
     """SyncPuller never raises exceptions on any error path."""
     from trw_mcp.sync.pull import SyncPuller
 
@@ -55,9 +75,9 @@ def test_puller_never_raises() -> None:
         timeout=0.5,
         client_id="sync-test",
     )
-    assert puller.pull_intel_state(etag="stale-etag") is None
-    assert puller.pull_intel_state(since_seq=999) is None
-    assert puller.pull_intel_state(model_family="opus", trw_version="0.38.2") is None
+    assert await puller.pull_intel_state(etag="stale-etag") is None
+    assert await puller.pull_intel_state(since_seq=999) is None
+    assert await puller.pull_intel_state(model_family="opus", trw_version="0.38.2") is None
 
 
 def test_puller_constructor_strips_trailing_slash() -> None:
@@ -90,7 +110,7 @@ def test_puller_warns_on_insecure_non_local_http_url() -> None:
     mock_warning.assert_called_once_with("sync_pull_insecure_url", url="http://example.com")
 
 
-def test_pull_sends_client_id_and_logs_structured_events() -> None:
+async def test_pull_sends_client_id_and_logs_structured_events() -> None:
     """Pull includes client_id/query params and emits start/complete events."""
     from trw_mcp.sync.pull import SyncPuller
 
@@ -100,22 +120,21 @@ def test_pull_sends_client_id_and_logs_structured_events() -> None:
         client_id="sync-client-1",
     )
 
+    response = MagicMock()
+    response.status_code = 200
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "etag": "etag-1",
+        "sync_hints": {"polling_cap_seconds": 60},
+        "team_learnings": [{"source_learning_id": "remote-1"}],
+    }
+    mock_client_cls = _build_async_httpx_mock(response)
+
     with (
-        patch("httpx.Client") as mock_client_cls,
+        patch("httpx.AsyncClient", mock_client_cls),
         patch("trw_mcp.sync.pull.logger.info") as mock_info,
     ):
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response = MagicMock()
-        response.status_code = 200
-        response.raise_for_status.return_value = None
-        response.json.return_value = {
-            "etag": "etag-1",
-            "sync_hints": {"polling_cap_seconds": 60},
-            "team_learnings": [{"source_learning_id": "remote-1"}],
-        }
-        mock_client.get.return_value = response
-
-        result = puller.pull_intel_state(
+        result = await puller.pull_intel_state(
             etag="cached-etag",
             since_seq=7,
             model_family="opus",
@@ -123,6 +142,7 @@ def test_pull_sends_client_id_and_logs_structured_events() -> None:
         )
 
     assert result is not None
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
     _, kwargs = mock_client.get.call_args
     assert kwargs["headers"]["If-None-Match"] == '"cached-etag"'
     assert kwargs["params"] == {
@@ -136,7 +156,7 @@ def test_pull_sends_client_id_and_logs_structured_events() -> None:
     assert mock_info.call_args_list[1].kwargs["team_learnings_count"] == 1
 
 
-def test_pull_malformed_200_payload_returns_none() -> None:
+async def test_pull_malformed_200_payload_returns_none() -> None:
     """Malformed 200 pull payloads fail open instead of looking successful."""
     from trw_mcp.sync.pull import SyncPuller
 
@@ -150,31 +170,31 @@ def test_pull_malformed_200_payload_returns_none() -> None:
     ]
 
     for payload in malformed_payloads:
-        with patch("httpx.Client") as mock_client_cls:
-            mock_client = mock_client_cls.return_value.__enter__.return_value
-            response = MagicMock()
-            response.status_code = 200
-            response.raise_for_status.return_value = None
-            response.json.return_value = payload
-            mock_client.get.return_value = response
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        response.json.return_value = payload
+        mock_client_cls = _build_async_httpx_mock(response)
 
-            assert puller.pull_intel_state(since_seq=7) is None
+        with patch("httpx.AsyncClient", mock_client_cls):
+            assert await puller.pull_intel_state(since_seq=7) is None
 
 
-def test_pull_boundary_failure_logs_structured_warning() -> None:
+async def test_pull_boundary_failure_logs_structured_warning() -> None:
     """Boundary failures log structured warning + traceback and still fail open."""
     from trw_mcp.sync.pull import SyncPuller
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
+    mock_client_cls = _build_async_httpx_mock(MagicMock())
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
+    mock_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+
     with (
-        patch("httpx.Client") as mock_client_cls,
+        patch("httpx.AsyncClient", mock_client_cls),
         patch("trw_mcp.sync.pull.logger.warning") as mock_warning,
     ):
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        mock_client.get.side_effect = RuntimeError("boom")
-
-        assert puller.pull_intel_state(since_seq=3) is None
+        assert await puller.pull_intel_state(since_seq=3) is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("sync_pull_error",)
@@ -185,40 +205,38 @@ def test_pull_boundary_failure_logs_structured_warning() -> None:
     assert kwargs["exc_info"] is True
 
 
-def test_pull_not_modified_returns_distinct_result() -> None:
+async def test_pull_not_modified_returns_distinct_result() -> None:
     """304 responses are distinguishable from transport failures."""
     from trw_mcp.sync.pull import SyncPuller
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
-    with patch("httpx.Client") as mock_client_cls:
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response = MagicMock()
-        response.status_code = 304
-        mock_client.get.return_value = response
+    response = MagicMock()
+    response.status_code = 304
+    mock_client_cls = _build_async_httpx_mock(response)
 
-        result = puller.pull_intel_state(etag="etag-1", since_seq=7)
+    with patch("httpx.AsyncClient", mock_client_cls):
+        result = await puller.pull_intel_state(etag="etag-1", since_seq=7)
 
     assert result is not None
     assert result.not_modified is True
     assert result.status_code == 304
 
 
-def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
+async def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
     """The convenience wrapper returns only the team-learning payload from a 200 pull."""
     from trw_mcp.sync.pull import PullResult, SyncPuller
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
-    with patch.object(
-        puller,
-        "pull_intel_state",
+    mock_pull = AsyncMock(
         return_value=PullResult(
             team_learnings=[{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}],
             status_code=200,
-        ),
-    ) as mock_pull:
-        result = puller.pull_team_learnings(
+        )
+    )
+    with patch.object(puller, "pull_intel_state", mock_pull):
+        result = await puller.pull_team_learnings(
             since_seq=7,
             etag="etag-1",
             model_family="opus",
@@ -227,7 +245,7 @@ def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
         )
 
     assert result == [{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}]
-    mock_pull.assert_called_once_with(
+    mock_pull.assert_awaited_once_with(
         etag="etag-1",
         since_seq=7,
         model_family="opus",
@@ -236,17 +254,21 @@ def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
     )
 
 
-def test_pull_team_learnings_returns_empty_list_for_not_modified_or_failure() -> None:
+async def test_pull_team_learnings_returns_empty_list_for_not_modified_or_failure() -> None:
     """304 and transport failures both collapse to an empty delta for callers."""
     from trw_mcp.sync.pull import PullResult, SyncPuller
 
     puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
-    with patch.object(puller, "pull_intel_state", return_value=PullResult(not_modified=True, status_code=304)):
-        assert puller.pull_team_learnings(since_seq=7) == []
+    with patch.object(
+        puller,
+        "pull_intel_state",
+        AsyncMock(return_value=PullResult(not_modified=True, status_code=304)),
+    ):
+        assert await puller.pull_team_learnings(since_seq=7) == []
 
-    with patch.object(puller, "pull_intel_state", return_value=None):
-        assert puller.pull_team_learnings(since_seq=7) == []
+    with patch.object(puller, "pull_intel_state", AsyncMock(return_value=None)):
+        assert await puller.pull_team_learnings(since_seq=7) == []
 
 
 def test_sync_modules_follow_structlog_conventions() -> None:

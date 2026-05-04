@@ -218,7 +218,7 @@ class BackendSyncClient:
                 since_line=self._coordinator.get_last_outcome_line(),
             )
 
-            report, push_result, any_target_succeeded = self._fanout_push(
+            report, push_result, any_target_succeeded = await self._fanout_push(
                 dirty=dirty,
                 outcomes=[item.payload for item in pending_outcomes],
             )
@@ -266,7 +266,7 @@ class BackendSyncClient:
             pulled = 0
             merged = 0
             pull_seq = self._coordinator.get_last_pull_seq()
-            pull_result = self._puller.pull_intel_state(
+            pull_result = await self._puller.pull_intel_state(
                 etag=self._cache.etag if self._config.intel_cache_enabled else None,
                 since_seq=pull_seq,
                 model_family=getattr(self._config, "model_family", ""),
@@ -331,12 +331,13 @@ class BackendSyncClient:
                     pull_completed=True,
                 )
 
-    def _fanout_push(
+    async def _fanout_push(
         self,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
-        return _fanout_push_impl(
+        """PRD-FIX-087 FR03: async — awaits the package-level fanout_push helper."""
+        return await _fanout_push_impl(
             client_id=self._client_id,
             targets=self._targets,
             primary_pusher=self._pusher,
@@ -347,13 +348,14 @@ class BackendSyncClient:
             outcomes=outcomes,
         )
 
-    def _push_to_target(
+    async def _push_to_target(
         self,
         target: SyncTarget,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> PushResult:
-        return _push_to_target_impl(
+        """PRD-FIX-087 FR03: async — awaits the package-level _push_to_target helper."""
+        return await _push_to_target_impl(
             client_id=self._client_id,
             target=target,
             primary_target_label=self._targets[0].label if self._targets else None,
