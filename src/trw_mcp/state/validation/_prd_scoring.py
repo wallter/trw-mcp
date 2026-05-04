@@ -18,6 +18,12 @@ from trw_mcp.models.requirements import (
     DimensionScore,
     SectionScore,
 )
+from trw_mcp.state.validation._prd_scoring_ai import (
+    _AI_KEYWORD_RE as _AI_KEYWORD_RE,
+    _AI_OPERATIONAL_HEADINGS as _AI_OPERATIONAL_HEADINGS,
+    _is_ai_agentic_prd as _is_ai_agentic_prd,
+    _score_ai_operational_evidence as _score_ai_operational_evidence,
+)
 from trw_mcp.state.validation._prd_scoring_grounding import (
     compute_grounding_penalty as compute_grounding_penalty,
     get_project_files as get_project_files,
@@ -130,24 +136,6 @@ _VERIFICATION_COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 
-# AI/Agentic detection keywords (PRD-QUAL-055). Keep these boundary-aware to
-# avoid false positives from ordinary words like "maintainers".
-_AI_KEYWORD_RE = re.compile(
-    r"\b(?:ai|llm|agentic|generative|prompt(?:ing)?|inference|foundation model|language model)\b",
-    re.IGNORECASE,
-)
-_AI_OPERATIONAL_HEADINGS = (
-    "Data / Context Provenance",
-    "Failure Modes",
-    "Safe Degradation",
-    "Human Oversight",
-    "Escalation",
-    "Evaluation Plan",
-    "Release Gate",
-    "Monitoring Plan",
-    "Risk Register",
-    "Failure Class",
-)
 
 _REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
     "feature": [
@@ -274,91 +262,6 @@ def _extract_subheadings(content: str) -> set[str]:
     return {match.group(1).strip() for match in _SUBHEADING_RE.finditer(content)}
 
 
-def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
-    """Heuristic detection of AI/LLM/agentic PRDs.
-
-    Returns True if:
-    - PRD contains explicit AI/LLM/agentic keywords as standalone terms, or
-    - PRD includes AI operational headings used by the hardening template, or
-    - PRD category is QUAL and the document contains one of those explicit cues
-
-    Args:
-        frontmatter: Parsed YAML frontmatter dictionary.
-        content: Full PRD markdown content.
-
-    Returns:
-        True if the PRD appears to be AI/LLM/agentic in nature.
-    """
-    category = str(frontmatter.get("category", "")).upper()
-    title = str(frontmatter.get("title", ""))
-    title_keyword_match = _AI_KEYWORD_RE.search(title) is not None
-    body_keyword_matches = {match.group(0).lower() for match in _AI_KEYWORD_RE.finditer(content)}
-    operational_heading_match = any(heading in content for heading in _AI_OPERATIONAL_HEADINGS)
-
-    if operational_heading_match or title_keyword_match:
-        return True
-
-    if category == "QUAL":
-        return bool(body_keyword_matches)
-
-    return len(body_keyword_matches) >= 2
-
-
-
-def _score_ai_operational_evidence(content: str) -> tuple[float, float, float]:
-    """Return evaluation, release, and monitoring evidence scores."""
-    ai_evaluation_score = 0.0
-    ai_release_score = 0.0
-    ai_monitoring_score = 0.0
-
-    if "Evaluation Plan" in content:
-        eval_section = content.split("Evaluation Plan")[-1].lower()
-        eval_keywords = [
-            "baseline",
-            "criteria",
-            "threshold",
-            "accuracy",
-            "latency",
-            "reliability",
-            "A/B",
-            "test",
-            "user study",
-            "metric",
-        ]
-        ai_evaluation_score = min(sum(1 for kw in eval_keywords if kw in eval_section) / len(eval_keywords), 1.0)
-
-    if "Release Gate" in content:
-        release_section = content.split("Release Gate")[-1].lower()
-        release_keywords = [
-            "canary",
-            "phased",
-            "rollback",
-            "trigger",
-            "threshold",
-            "error rate",
-            "latency",
-            "confidence",
-        ]
-        ai_release_score = min(sum(1 for kw in release_keywords if kw in release_section) / len(release_keywords), 1.0)
-
-    if "Monitoring Plan" in content:
-        monitoring_section = content.split("Monitoring Plan")[-1].lower()
-        monitoring_keywords = [
-            "primary signal",
-            "target threshold",
-            "escalation",
-            "alert",
-            "drift",
-            "latency",
-            "error rate",
-            "trust",
-        ]
-        ai_monitoring_score = min(
-            sum(1 for kw in monitoring_keywords if kw in monitoring_section) / len(monitoring_keywords),
-            1.0,
-        )
-
-    return ai_evaluation_score, ai_release_score, ai_monitoring_score
 
 
 def _has_assertion_evidence(content: str) -> bool:
