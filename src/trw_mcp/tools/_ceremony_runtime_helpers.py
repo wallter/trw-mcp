@@ -284,6 +284,72 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return 0.0
 
 
+def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
+    """Write learning IDs from session_start to the injected-IDs state file.
+
+    PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
+    learnings that session_start already surfaced.
+    """
+    ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
+    if not ids:
+        return
+    state_file = trw_dir / "context" / "injected_learning_ids.txt"
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with state_file.open("a", encoding="utf-8") as f:
+            for lid in ids:
+                f.write(lid + "\n")
+    except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
+        logger.debug("injected_ids_write_failed", exc_info=True)
+
+
+def step_recall_learnings(
+    query: str,
+    config: TRWConfig,
+    results: SessionStartResultDict,
+    errors: list[str],
+) -> None:
+    """Step 1 — recall learnings via SQLite adapter and update results in-place.
+
+    Reads ``trw_dir`` via ``resolve_trw_dir``, runs ``perform_session_recalls``,
+    promotes ``query`` / ``query_matched`` / ``total_available`` /
+    ``response_compacted`` / ``side_effects_deferred`` from the extras dict
+    into ``results`` when present, and pre-populates injected IDs (PRD-CORE-095
+    FR16) when side_effects are not deferred. Failure paths set ``learnings=[]``
+    and ``learnings_count=0`` and append to ``errors``.
+
+    Looks up ``resolve_trw_dir`` via the parent ``ceremony`` module so test
+    monkeypatches on ``trw_mcp.tools.ceremony.resolve_trw_dir`` propagate
+    correctly (per the test-monkeypatch indirection pattern).
+    """
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools import ceremony as _ceremony
+    from trw_mcp.tools._ceremony_helpers import perform_session_recalls
+
+    reader = FileStateReader()
+    try:
+        trw_dir = _ceremony.resolve_trw_dir()
+        learnings, _auto_recalled, extra = perform_session_recalls(trw_dir, query, config, reader)
+        results["learnings"] = learnings
+        results["learnings_count"] = len(learnings)
+        if "query" in extra:
+            results["query"] = str(extra["query"])
+        if "query_matched" in extra:
+            results["query_matched"] = int(str(extra["query_matched"]))
+        if "total_available" in extra:
+            results["total_available"] = int(str(extra["total_available"]))
+        if "response_compacted" in extra:
+            results["response_compacted"] = bool(extra["response_compacted"])
+        if "side_effects_deferred" in extra:
+            results["side_effects_deferred"] = extra["side_effects_deferred"]
+        if "side_effects_deferred" not in extra:
+            _write_session_start_ids(trw_dir, learnings)
+    except Exception as exc:  # justified: fail-open, recall failure must not block session start
+        errors.append(f"recall: {exc}")
+        results["learnings"] = []
+        results["learnings_count"] = 0
+
+
 def finalize_session_start(
     results: SessionStartResultDict,
     config: TRWConfig,

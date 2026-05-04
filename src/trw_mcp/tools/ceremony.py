@@ -117,25 +117,6 @@ def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
             return find_active_run()  # compat: legacy zero-argument test doubles
 
 
-def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
-    """Write learning IDs from session_start to the injected-IDs state file.
-
-    PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
-    learnings that session_start already surfaced.
-    """
-    ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
-    if not ids:
-        return
-    state_file = trw_dir / "context" / "injected_learning_ids.txt"
-    try:
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        with state_file.open("a", encoding="utf-8") as f:
-            for lid in ids:
-                f.write(lid + "\n")
-    except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
-        logger.debug("injected_ids_write_failed", exc_info=True)
-
-
 # Runtime helpers extracted to _ceremony_runtime_helpers (PRD-DIST-243 batch 53).
 from trw_mcp.tools._ceremony_runtime_helpers import (
     _candidate_run_hints as _candidate_run_hints,
@@ -152,6 +133,7 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
     finalize_session_start as finalize_session_start,
     step_assertion_health as step_assertion_health,
     step_phase_auto_recall as step_phase_auto_recall,
+    step_recall_learnings as step_recall_learnings,
     step_surface_stamp as step_surface_stamp,
 )
 
@@ -197,20 +179,15 @@ def register_ceremony_tools(server: FastMCP) -> None:
         See Also: trw_init, trw_recall
         """
         from trw_mcp.tools._ceremony_helpers import (
-            _phase_contextual_recall,
-            perform_session_recalls,
             record_session_start_surfaces,
-            step_ceremony_status,
             step_embed_health,
             step_increment_session_counter,
             step_log_session_event,
-            step_mark_session_started,
             step_sanitize_and_maintain,
             step_telemetry_startup,
         )
 
         config = get_config()
-        reader = FileStateReader()
         results: SessionStartResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
@@ -247,34 +224,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         # Step 1: Recall learnings via SQLite adapter (compact mode)
         _recall_started = time.monotonic()
-        try:
-            trw_dir = resolve_trw_dir()
-            learnings, _auto_recalled, extra = perform_session_recalls(
-                trw_dir,
-                query,
-                config,
-                reader,
-            )
-            results["learnings"] = learnings
-            results["learnings_count"] = len(learnings)
-            if "query" in extra:
-                results["query"] = str(extra["query"])
-            if "query_matched" in extra:
-                results["query_matched"] = int(str(extra["query_matched"]))
-            if "total_available" in extra:
-                results["total_available"] = int(str(extra["total_available"]))
-            if "response_compacted" in extra:
-                results["response_compacted"] = bool(extra["response_compacted"])
-            if "side_effects_deferred" in extra:
-                results["side_effects_deferred"] = extra["side_effects_deferred"]
-            # PRD-CORE-095 FR16: Pre-populate injected IDs so the auto-injection
-            # hook doesn't re-inject learnings that session_start already surfaced.
-            if "side_effects_deferred" not in extra:
-                _write_session_start_ids(trw_dir, learnings)
-        except Exception as exc:  # justified: fail-open, recall failure must not block session start
-            errors.append(f"recall: {exc}")
-            results["learnings"] = []
-            results["learnings_count"] = 0
+        step_recall_learnings(query, config, results, errors)
         _record_step("recall", _recall_started)
 
         # Step 2: Check active run status (and pin it for this process).
