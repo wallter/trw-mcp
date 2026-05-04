@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any, Final
 
 import structlog
-from typing_extensions import TypedDict
 
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
@@ -37,72 +36,27 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 _CURSOR_HOOKS_DATA_DIR = _DATA_DIR / "hooks" / "cursor"
 
 
-# ---------------------------------------------------------------------------
-# TypedDicts for Cursor JSON config structures
-# ---------------------------------------------------------------------------
-
-
-class CursorServerEntry(TypedDict, total=False):
-    """TRW MCP server entry within Cursor's mcp.json ``mcpServers`` section."""
-
-    command: str | list[str]
-    args: list[str]
-
-
-class CursorMcpConfig(TypedDict, total=False):
-    """Shape of a parsed .cursor/mcp.json document."""
-
-    mcpServers: dict[str, CursorServerEntry]
-
-
-class CursorHookEntry(TypedDict, total=False):
-    """Single hook entry in the *legacy* list-style .cursor/hooks.json.
-
-    Used only by ``generate_cursor_hooks`` (the backward-compat legacy helper).
-    New code should use ``HookHandlerEntry`` and ``CursorHooksV1Config``.
-    """
-
-    event: str
-    command: str
-    description: str
-
-
-class HookHandlerEntry(TypedDict, total=False):
-    """A single handler within a Cursor hooks.json v1 event list.
-
-    Cursor v2.4+ hooks.json shape::
-
-        {
-          "version": 1,
-          "hooks": {
-            "<eventName>": [<HookHandlerEntry>, ...]
-          }
-        }
-
-    Required key: ``command``.  Optional: ``type``, ``timeout``, ``failClosed``, ``matcher``.
-    """
-
-    command: str
-    type: str
-    timeout: int
-    failClosed: bool
-    matcher: str
-
-
-class CursorHooksV1Config(TypedDict, total=False):
-    """Shape of a parsed .cursor/hooks.json (version 1, dict-of-events format).
-
-    Contrast with the legacy list-style format used by ``generate_cursor_hooks``.
-    """
-
-    version: int
-    hooks: dict[str, list[HookHandlerEntry]]
-
-
-class CursorHooksConfig(TypedDict, total=False):
-    """Shape of a parsed .cursor/hooks.json document (legacy list style)."""
-
-    hooks: list[CursorHookEntry]
+# Cursor-config TypedDicts extracted to _cursor_models (PRD-DIST-243 batch 11).
+# Re-exported here for backward compatibility with sibling bootstrap modules
+# (_cursor_cli.py, _cursor_ide.py) that import HookHandlerEntry via this facade.
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    CursorHookEntry as CursorHookEntry,
+)
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    CursorHooksConfig as CursorHooksConfig,
+)
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    CursorHooksV1Config as CursorHooksV1Config,
+)
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    CursorMcpConfig as CursorMcpConfig,
+)
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    CursorServerEntry as CursorServerEntry,
+)
+from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+    HookHandlerEntry as HookHandlerEntry,
+)
 
 
 # ---------------------------------------------------------------------------
