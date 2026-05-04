@@ -21,13 +21,11 @@ import json
 import os
 import tempfile
 from collections.abc import Generator
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 import structlog
-from pydantic import BaseModel
-from ruamel.yaml import YAML
 
 from trw_mcp._locking import _lock_ex, _lock_sh, _lock_un
 from trw_mcp.exceptions import StateError
@@ -110,43 +108,17 @@ def _resolve_hpo_event_context(
     return session_id, run_id, surface_snapshot_id
 
 
-def _safe_yaml() -> YAML:
-    """Safe YAML loader for reading untrusted content.
-
-    Uses ruamel.yaml's safe loader (typ="safe") which rejects !!python/object
-    and other constructor tags that would enable RCE. Use for all read paths
-    where the YAML source may be user-editable (e.g. config.yaml, run.yaml).
-
-    ruamel.yaml's YAML class maintains internal state that is NOT thread-safe.
-    Creating a fresh instance per operation prevents concurrent read corruption
-    (PRD-CORE-014 FR03).
-    """
-    return YAML(typ="safe")
-
-
-def _roundtrip_yaml() -> YAML:
-    """Round-trip YAML for write operations that preserve formatting.
-
-    Uses the default round-trip loader/dumper so that comments and key ordering
-    are preserved when serializing framework-generated data. Only use this for
-    write paths — never for parsing user-supplied YAML content.
-
-    ruamel.yaml's YAML class maintains internal emitter state that is
-    NOT thread-safe.  Creating a fresh instance per operation prevents
-    concurrent write corruption (PRD-CORE-014 FR03).
-    """
-    yml = YAML()
-    yml.default_flow_style = False
-    yml.preserve_quotes = True
-    return yml
-
-
-def _new_yaml() -> YAML:
-    """Deprecated alias kept for any call sites not yet migrated.
-
-    New code should use _safe_yaml() for reads and _roundtrip_yaml() for writes.
-    """
-    return _roundtrip_yaml()
+# YAML factories + json/model utilities extracted to _persistence_helpers
+# (PRD-DIST-243 batch 12). Re-exported for backward compatibility.
+from trw_mcp.state._persistence_helpers import (
+    _new_yaml as _new_yaml,
+)
+from trw_mcp.state._persistence_helpers import (
+    _roundtrip_yaml as _roundtrip_yaml,
+)
+from trw_mcp.state._persistence_helpers import (
+    _safe_yaml as _safe_yaml,
+)
 
 
 class StateReader(Protocol):
@@ -193,22 +165,10 @@ class EventLogger(Protocol):
         ...
 
 
-def json_serializer(obj: object) -> str:
-    """JSON serializer for objects not serializable by default json code.
-
-    Args:
-        obj: Object to serialize.
-
-    Returns:
-        JSON-compatible string representation.
-
-    Raises:
-        TypeError: If object type is not supported.
-    """
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
-    raise TypeError(msg)
+# json_serializer extracted to _persistence_helpers (PRD-DIST-243 batch 12).
+from trw_mcp.state._persistence_helpers import (
+    json_serializer as json_serializer,
+)
 
 
 class FileStateReader:
@@ -587,15 +547,7 @@ class FileEventLogger:
         emit_unified(event, run_dir=run_dir, fallback_dir=fallback_dir)
 
 
-def model_to_dict(model: BaseModel) -> dict[str, object]:
-    """Convert a Pydantic model to a plain dict suitable for YAML serialization.
-
-    Converts enums to their values and dates to ISO strings.
-
-    Args:
-        model: Pydantic model instance.
-
-    Returns:
-        Plain dictionary with JSON-compatible values.
-    """
-    return cast("dict[str, object]", json.loads(model.model_dump_json()))
+# model_to_dict extracted to _persistence_helpers (PRD-DIST-243 batch 12).
+from trw_mcp.state._persistence_helpers import (
+    model_to_dict as model_to_dict,
+)
