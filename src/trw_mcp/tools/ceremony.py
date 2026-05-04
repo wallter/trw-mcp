@@ -150,6 +150,7 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
     _persist_surface_snapshot_pointer as _persist_surface_snapshot_pointer,
     _timedelta_hours as _timedelta_hours,
     step_assertion_health as step_assertion_health,
+    step_phase_auto_recall as step_phase_auto_recall,
     step_surface_stamp as step_surface_stamp,
 )
 
@@ -360,25 +361,21 @@ def register_ceremony_tools(server: FastMCP) -> None:
                     "reason": "session_start_compacted",
                     "detail": "Phase auto-recall is optional and was left off the hot response path.",
                 }
-            elif config.auto_recall_enabled:
+            else:
                 trw_dir_ar = resolve_trw_dir()
-                run_status_obj: RunStatusDict | None = results.get("run")
-                phase_recalled = _phase_contextual_recall(
+                primary_ids = {
+                    str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
+                }
+                recall_outcome = step_phase_auto_recall(
                     trw_dir_ar,
                     query,
                     config,
                     run_dir,
-                    run_status_obj,
+                    results.get("run"),
+                    primary_ids,
                 )
-                if phase_recalled:
-                    primary_ids = {
-                        str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
-                    }
-                    auto_ids = [
-                        str(entry.get("id", ""))
-                        for entry in phase_recalled
-                        if entry.get("id") and str(entry.get("id", "")) not in primary_ids
-                    ]
+                if recall_outcome is not None:
+                    phase_recalled, auto_ids = recall_outcome
                     record_session_start_surfaces(trw_dir_ar, auto_ids)
                     results["auto_recalled"] = phase_recalled
                     results["auto_recall_count"] = len(phase_recalled)

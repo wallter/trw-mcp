@@ -16,12 +16,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict, ReflectResultDict, RunStatusDict
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.typed_dicts import AutoRecalledItemDict, ClaudeMdSyncResultDict, ReflectResultDict, RunStatusDict
 from trw_mcp.state.analytics import find_success_patterns, update_analytics
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -272,6 +276,40 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return max(0.0, (datetime.now(timezone.utc) - mtime_dt).total_seconds() / 3600.0)
     except OSError:
         return 0.0
+
+
+def step_phase_auto_recall(
+    trw_dir: Path,
+    query: str,
+    config: TRWConfig,
+    run_dir: Path | None,
+    run_status: RunStatusDict | None,
+    primary_ids: set[str],
+) -> tuple[list[AutoRecalledItemDict], list[str]] | None:
+    """PRD-CORE-049 — phase-contextual auto-recall on session_start.
+
+    Returns ``(phase_recalled, dedup_auto_ids)`` when recall produces
+    results, ``None`` otherwise. Caller decides how to merge the
+    recalled entries into the result payload. Fail-open: any error
+    returns ``None`` and is logged at debug.
+    """
+    from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
+
+    if not config.auto_recall_enabled:
+        return None
+    try:
+        phase_recalled = _phase_contextual_recall(trw_dir, query, config, run_dir, run_status)
+        if not phase_recalled:
+            return None
+        auto_ids = [
+            str(entry.get("id", ""))
+            for entry in phase_recalled
+            if entry.get("id") and str(entry.get("id", "")) not in primary_ids
+        ]
+        return phase_recalled, auto_ids
+    except Exception:  # justified: fail-open, auto-recall must not block session start
+        logger.debug("session_auto_recall_failed", exc_info=True)
+        return None
 
 
 def step_surface_stamp(
