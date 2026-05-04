@@ -47,6 +47,23 @@ from trw_mcp.state.validation._prd_scoring_grounding import (
     compute_grounding_penalty as compute_grounding_penalty,
     get_project_files as get_project_files,
 )
+from trw_mcp.state.validation._prd_scoring_parsing import (
+    _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
+    _HEADING_RE as _HEADING_RE,
+    _HIGH_WEIGHT_SECTIONS as _HIGH_WEIGHT_SECTIONS,
+    _PLACEHOLDER_RE as _PLACEHOLDER_RE,
+    _REQUIRED_SUBSECTIONS_BY_VARIANT as _REQUIRED_SUBSECTIONS_BY_VARIANT,
+    _REQUIREMENT_LINE_RE as _REQUIREMENT_LINE_RE,
+    _SECTION_WEIGHTS as _SECTION_WEIGHTS,
+    _SUBHEADING_RE as _SUBHEADING_RE,
+    _VAGUE_TERMS_RE as _VAGUE_TERMS_RE,
+    _compute_ambiguity_rate as _compute_ambiguity_rate,
+    _extract_subheadings as _extract_subheadings,
+    _get_section_weights as _get_section_weights,
+    _is_substantive_line as _is_substantive_line,
+    _parse_section_content as _parse_section_content,
+    _validation_profile as _validation_profile,
+)
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _BARE_IMPL_REF_RE as _BARE_IMPL_REF_RE,
     _BARE_TEST_REF_RE as _BARE_TEST_REF_RE,
@@ -69,233 +86,6 @@ if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Compiled regex patterns
-# ---------------------------------------------------------------------------
-
-# Section heading pattern: ## N. Title
-_HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
-
-# Placeholder patterns for content density (common template defaults)
-_PLACEHOLDER_RE = re.compile(
-    r"^\s*<!--.*?-->\s*$"
-    r"|^\s*\{[^}]+\}\s*$"
-    r"|^\s*\[.*TODO.*\]\s*$",
-    re.IGNORECASE,
-)
-
-# Section headings expected in an AARE-F compliant PRD
-_EXPECTED_SECTION_NAMES: list[str] = [
-    "Problem Statement",
-    "Goals & Non-Goals",
-    "User Stories",
-    "Functional Requirements",
-    "Non-Functional Requirements",
-    "Technical Approach",
-    "Test Strategy",
-    "Rollout Plan",
-    "Success Metrics",
-    "Dependencies & Risks",
-    "Open Questions",
-    "Traceability Matrix",
-]
-
-# Sections with higher weight in density scoring
-_HIGH_WEIGHT_SECTIONS: dict[str, float] = {
-    "Problem Statement": 2.0,
-    "Functional Requirements": 2.0,
-    "Traceability Matrix": 1.5,
-}
-
-# Section weights used by external consumers
-_SECTION_WEIGHTS: dict[str, float] = _HIGH_WEIGHT_SECTIONS
-
-# Pre-compiled regexes for ambiguity rate computation (FR02 -- PRD-FIX-054).
-# Using word-boundary matching to avoid false positives on substrings.
-# Compiled once at module load to prevent ReDoS.
-_VAGUE_TERMS_RE = re.compile(
-    r"\b(?:might|possibly|approximately|as needed|if possible|as appropriate)\b"
-    r"|should consider"
-    r"|etc\."
-    r"|and/or",
-    re.IGNORECASE,
-)
-
-# Lines that qualify as requirement-like statements
-_REQUIREMENT_LINE_RE = re.compile(
-    r"FR\d+|NFR\d+|- \[ \]|\bWhen\b|\bWhile\b|\bIf\b|\bWhere\b",
-)
-
-
-_SUBHEADING_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
-
-# FR heading pattern for extracting individual FR sections (PRD-QUAL-056-FR01)
-
-# Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
-
-
-_REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
-    "feature": [
-        "Primary Control Points",
-        "Behavior Switch Matrix",
-        "Unit Tests",
-        "Integration Tests",
-        "Acceptance Tests",
-        "Regression Tests",
-        "Negative / Fallback Tests",
-        "Completion Evidence (Definition of Done)",
-        "Migration / Backward Compatibility",
-    ],
-    "infrastructure": [
-        "Primary Control Points",
-        "Behavior Switch Matrix",
-        "Unit Tests",
-        "Integration Tests",
-        "Acceptance Tests",
-        "Regression Tests",
-        "Negative / Fallback Tests",
-        "Completion Evidence (Definition of Done)",
-        "Migration / Backward Compatibility",
-    ],
-    "fix": [
-        "Root Cause",
-        "Contributing Factors",
-        "Fix Verification",
-        "Regression Tests",
-        "Negative / Fallback Tests",
-        "Completion Evidence (Definition of Done)",
-        "Migration / Backward Compatibility",
-    ],
-    "research": [
-        "Approach",
-        "Data Sources",
-        "Evaluation Criteria",
-    ],
-}
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-
-def _get_section_weights(config: TRWConfig) -> dict[str, float]:
-    """Build per-section weight map from TRWConfig (PRD-CORE-080-FR04).
-
-    Reads configurable per-section weights from TRWConfig flat fields
-    (``validation_section_weight_*``) and returns a dict ready for use
-    in weighted-average density computation. Falls back to module-level
-    ``_HIGH_WEIGHT_SECTIONS`` defaults when config fields are at default.
-
-    Args:
-        config: TRWConfig instance to read weight fields from.
-
-    Returns:
-        Dict mapping section name to weight multiplier (default 1.0 for
-        unlisted sections).
-    """
-    return {
-        "Problem Statement": config.density_weight_problem_statement,
-        "Functional Requirements": config.density_weight_functional_requirements,
-        "Traceability Matrix": config.density_weight_traceability_matrix,
-    }
-
-
-def _compute_ambiguity_rate(content: str) -> float:
-    """Compute ambiguity rate: vague-term count / requirement-statement count.
-
-    Counts occurrences of vague terms (might, should consider, possibly,
-    approximately, as needed, etc., and/or, if possible, as appropriate)
-    divided by the total number of requirement-like lines (lines matching
-    FR\\d+, NFR\\d+, '- [ ]', or EARS keywords When/While/If/Where).
-
-    Returns 0.0 when no requirement-like statements are found to avoid
-    division by zero.
-
-    Args:
-        content: Full PRD markdown content.
-
-    Returns:
-        Ambiguity rate as a non-negative float (>= 0.0).
-    """
-    vague_count = len(_VAGUE_TERMS_RE.findall(content))
-    req_lines = [line for line in content.splitlines() if _REQUIREMENT_LINE_RE.search(line)]
-    total_req = len(req_lines)
-    if total_req == 0:
-        return 0.0
-    return vague_count / total_req
-
-
-def _parse_section_content(content: str) -> list[tuple[str, str]]:
-    """Split PRD content into (section_name, section_body) pairs.
-
-    Args:
-        content: Full PRD markdown content.
-
-    Returns:
-        List of (section_name, section_body) tuples.
-    """
-    # Strip frontmatter
-    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
-
-    fm_match = _FRONTMATTER_RE.match(content)
-    body = content[fm_match.end() :] if fm_match else content
-
-    sections: list[tuple[str, str]] = []
-    matches = list(_HEADING_RE.finditer(body))
-
-    for i, m in enumerate(matches):
-        name = m.group(1).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
-        sections.append((name, body[start:end]))
-
-    return sections
-
-
-def _extract_subheadings(content: str) -> set[str]:
-    """Return all level-3 markdown subheading titles present in the PRD body."""
-    return {match.group(1).strip() for match in _SUBHEADING_RE.finditer(content)}
-
-
-
-
-
-
-def _is_substantive_line(line: str) -> bool:
-    """Check if a line is substantive (not blank, comment, heading, or placeholder).
-
-    Args:
-        line: Single line of text.
-
-    Returns:
-        True if the line contains substantive content.
-    """
-    stripped = line.strip()
-    if not stripped:
-        return False
-    if stripped.startswith("#"):
-        return False
-    if _PLACEHOLDER_RE.match(line):
-        return False
-    # Single-line HTML comment
-    if stripped.startswith("<!--") and stripped.endswith("-->"):
-        return False
-    # Table separator rows (|---|---|)
-    if re.match(r"^\s*\|[\s\-:|]+\|\s*$", line):
-        return False
-    # Horizontal rules
-    return not re.match(r"^\s*---\s*$", line)
-
-
-def _validation_profile(frontmatter: dict[str, object]) -> str:
-    """Return the explicit PRD validation profile, if one is declared."""
-    nested = frontmatter.get("prd")
-    nested_profile = nested.get("validation_profile") if isinstance(nested, dict) else None
-    profile = frontmatter.get("validation_profile", nested_profile)
-    return str(profile or "").strip().lower()
 
 
 # ---------------------------------------------------------------------------
