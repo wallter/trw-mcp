@@ -28,6 +28,11 @@ from trw_mcp.tools._ceremony_status_helpers import (
     _synthetic_nudge_learning_id as _synthetic_nudge_learning_id,
 )
 from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content as _try_learning_nudge_content
+from trw_mcp.tools._ceremony_status_pool import (
+    dispatch_contextual_messenger as dispatch_contextual_messenger,
+    resolve_pool_content as resolve_pool_content,
+    select_pool as select_pool,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -139,13 +144,8 @@ def append_ceremony_status(
             record_pool_nudge,
         )
         from trw_mcp.state.ceremony_nudge import (
-            _compute_urgency,
-            _context_reactive_message,
             _highest_priority_pending_step,
-            _select_nudge_message,
-            _select_nudge_pool,
             compute_nudge_minimal,
-            select_contextual_nudge_content,
             select_learning_injection_content,
         )
         from trw_mcp.state.surface_tracking import log_surface_event
@@ -303,58 +303,9 @@ def append_ceremony_status(
             "governance",
         }:
             try:
-                contentual_content: str | None
-                if messenger == "contextual_distress":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_contextual_distress
-
-                    contentual_content = compute_nudge_contextual_distress(state, effective_dir, context=context)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "silent_flow":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_silent_flow
-
-                    contentual_content = compute_nudge_silent_flow(state, effective_dir, context=context)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "stepback":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_stepback
-
-                    contentual_content = compute_nudge_stepback(state, effective_dir, context=context)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "anchor":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_anchor
-
-                    contentual_content = compute_nudge_anchor(state, effective_dir, context=context)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "cod":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_cod
-
-                    contentual_content = compute_nudge_cod(state)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "negative":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_negative
-
-                    contentual_content = compute_nudge_negative(state)
-                    learning_id = None
-                    target_file = None
-                elif messenger == "governance":
-                    from trw_mcp.state.ceremony_nudge import compute_nudge_governance
-
-                    contentual_content = compute_nudge_governance(state)
-                    learning_id = None
-                    target_file = None
-                else:
-                    include_learning_caution = messenger == "contextual"
-                    contentual_content, learning_id, target_file = select_contextual_nudge_content(
-                        state,
-                        effective_dir,
-                        context=context,
-                        skip_phase_duplicates=True,
-                        include_learning_caution=include_learning_caution,
-                    )
+                contentual_content, learning_id, target_file = dispatch_contextual_messenger(
+                    messenger, state, effective_dir, context
+                )
 
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
                     try:
@@ -414,48 +365,13 @@ def append_ceremony_status(
                 logger.debug("contextual_messenger_failed", exc_info=True)
             return response
 
-        # 1. Select nudge pool via weighted random with cooldowns (standard messenger)
-        weights = cfg.client_profile.nudge_pool_weights
-        cooldown_after = cfg.nudge_pool_cooldown_after
-        cooldown_calls = cfg.nudge_pool_cooldown_calls
-
-        pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
-        if not pool:
+        # 1. Select nudge pool (weighted random + cooldown + learning-cache override)
+        pool = select_pool(state, cfg, context, effective_dir)
+        if pool is None:
             return response
-        if pool != "learnings" and _has_cached_learning_weights(effective_dir):
-            pool = "learnings"
-
-        nudge_content: str | None = None
 
         # 2. Dispatch to pool-specific content generators
-        if pool == "learnings":
-            nudge_content = _try_learning_nudge_content(effective_dir, state)
-        elif pool == "workflow":
-            try:
-                from trw_mcp.state._nudge_content import load_pool_message
-
-                nudge_content = load_pool_message("workflow", phase_hint=state.phase)
-            except ImportError:
-                pass
-        elif pool == "ceremony":
-            pending = _highest_priority_pending_step(state)
-            if pending:
-                try:
-                    from trw_mcp.state._nudge_content import load_pool_message
-
-                    nudge_content = load_pool_message("ceremony", phase_hint=pending)
-                except ImportError:
-                    pass
-                if not nudge_content:
-                    # PRD-CORE-149 FR03: pass active profile so client-identity
-                    # placeholders ({client_display_name}/{client_config_dir})
-                    # substitute correctly for opencode/cursor/aider users.
-                    nudge_content = _select_nudge_message(
-                        pending, state, available_learnings=0, profile=cfg.client_profile
-                    )
-        elif pool == "context" and context:
-            urgency = _compute_urgency(state, _highest_priority_pending_step(state) or "session_start")
-            nudge_content = _context_reactive_message(context, state, urgency=urgency)
+        nudge_content = resolve_pool_content(pool, state, cfg, context, effective_dir)
 
         # 3. Apply nudge content and update state
         if nudge_content:
