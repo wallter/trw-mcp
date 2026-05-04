@@ -18,11 +18,7 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.state._pin_store import (
-    get_pin_entry,
-    remove_pin_entry,
-    upsert_pin_entry,
-)
+from trw_mcp.state._pin_store import get_pin_entry, remove_pin_entry, upsert_pin_entry
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -58,31 +54,6 @@ def _get_config() -> Any:
 # trw_mcp.state._paths.get_config directly. Runtime code should still call
 # _get_config() so config import remains lazy at module import time.
 get_config = _get_config
-
-
-# Explicit public surface — keeps static analyzers (Pyright) from inferring
-# imported symbols as ``object`` via the module-level ``__getattr__`` shim
-# below.  Must list every name callers ``from trw_mcp.state._paths import …``.
-__all__ = [
-    "HOT_PATH",
-    "HotPathLegacyScanError",
-    "TRWCallContext",
-    "detect_current_phase",
-    "find_active_run",
-    "find_run_via_mtime_scan",
-    "get_pinned_run",
-    "get_session_id",
-    "iter_run_dirs",
-    "pin_active_run",
-    "resolve_installation_id",
-    "resolve_memory_store_path",
-    "resolve_pin_key",
-    "resolve_project_root",
-    "resolve_run_path",
-    "resolve_trw_dir",
-    "touch_heartbeat",
-    "unpin_active_run",
-]
 
 
 def __getattr__(name: str) -> Any:
@@ -379,11 +350,7 @@ def _resolve_session_id(
 # tools/report, tools/review, telemetry).
 from trw_mcp.state._paths_pin_mgmt import (
     get_pinned_run as get_pinned_run,
-)
-from trw_mcp.state._paths_pin_mgmt import (
     pin_active_run as pin_active_run,
-)
-from trw_mcp.state._paths_pin_mgmt import (
     unpin_active_run as unpin_active_run,
 )
 
