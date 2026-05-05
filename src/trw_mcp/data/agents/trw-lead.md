@@ -8,6 +8,7 @@ description: >
   reviews (use trw-reviewer). Does not write production code; stays in
   delegate mode during IMPLEMENT.
 effort: high
+model: frontier
 maxTurns: 200
 memory: project
 allowedTools:

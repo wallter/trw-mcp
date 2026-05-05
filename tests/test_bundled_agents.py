@@ -116,22 +116,30 @@ class TestAgentDefinitions:
         root_agents_dir: Path,
         agent_name: str,
     ) -> None:
-        """Bundled and .claude/ variants align after marker expansion (PRD-QUAL-073 FR10, Route B).
+        """Bundled and .claude/ variants align after marker expansion + tier resolution.
 
-        Bundled is the source of truth and carries ``{tool:trw_X}`` placeholders
-        so it renders correctly across client profiles. ``.claude/agents/`` is
-        the dev-repo-local marker-expanded copy (bare ``trw_X`` tool names).
-        The two must match byte-for-byte after expanding the bundled markers.
+        - PRD-QUAL-073 FR10 (Route B): bundled carries ``{tool:trw_X}``
+          placeholders that get expanded to bare ``trw_X``.
+        - PRD-INFRA-104 FR-04: bundled also carries capability tiers in
+          ``model:`` that get resolved to Claude Code shortnames
+          (``frontier->opus``, ``balanced->sonnet``, ``local-small->haiku``).
+
+        After both transforms the dev-repo ``.claude/agents/`` copy must
+        match byte-for-byte. If this test fails, run
+        ``python3 scripts/sync-agents.py`` (without ``--check``).
         """
         import re as _re
 
+        from trw_mcp.agents.tier_resolver import rewrite_model_line
+
         bundled_raw = (agents_dir / agent_name).read_text(encoding="utf-8")
         bundled_expanded = _re.sub(r"\{tool:(trw_\w+)\}", lambda m: m.group(1), bundled_raw)
+        bundled_resolved = rewrite_model_line(bundled_expanded, client="claude-code")
         root_content = (root_agents_dir / agent_name).read_text(encoding="utf-8")
 
-        assert bundled_expanded == root_content, (
+        assert bundled_resolved == root_content, (
             f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
-            "expansion. Run scripts/sync-agents.py to regenerate."
+            "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
         )
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
@@ -261,6 +269,13 @@ class TestAgentDefinitions:
             ("trw-auditor.md", "balanced"),
             ("trw-reviewer.md", "balanced"),
             ("trw-researcher.md", "balanced"),
+            # Restored 2026-05-05 by PRD-INFRA-104 FR-05/FR-06 once the
+            # capability-tier resolver translates frontier -> opus at
+            # install time. Prior to that fix these were dropped in
+            # commit 20fb923e7 because the harness rejected the raw
+            # tier value.
+            ("trw-implementer.md", "frontier"),
+            ("trw-prd-groomer.md", "frontier"),
         ],
     )
     def test_agent_model_assignment(self, agents_dir: Path, agent_name: str, expected_model: str) -> None:
@@ -328,9 +343,14 @@ class TestAgentDefinitions:
 
         ``model`` is optional: agents that omit it inherit the harness default.
         Agents that DO pin a tier must use one of the valid capability tiers.
-        Three bundle agents (trw-implementer, trw-lead, trw-prd-groomer) currently
-        omit ``model`` pending the resolver-side adapter fix that will translate
-        ``frontier`` to client-specific model identifiers.
+
+        PRD-INFRA-104 (2026-05-05): Once the capability-tier resolver lands
+        in ``trw_mcp.agents.tier_resolver`` and is wired into
+        ``_install_agents`` + ``scripts/sync-agents.py``, the bundle pins
+        survive translation into the client-specific harness vocabulary.
+        ``trw-implementer``, ``trw-lead``, ``trw-prd-groomer`` are pinned
+        to ``frontier`` and resolve to ``opus`` at install time for the
+        Claude Code client profile.
         """
         import yaml
 
