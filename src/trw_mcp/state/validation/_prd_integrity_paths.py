@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -188,15 +189,60 @@ def _path_exists(project_root: Path, rel_path: str) -> bool:
         return False
 
 
+_INDEX_BUILT_SENTINEL = "\x00__index_built__\x00"
+
+
+def _populate_basename_index(
+    project_root: Path,
+    cache: dict[str, tuple[bool, int]],
+) -> None:
+    """One-shot walk that builds {basename: (unique, count)} for every file
+    under ``project_root``, pruning :data:`_GLOB_EXCLUDE_DIRS` in-place so
+    vendor / cache / build trees never get descended into.
+
+    Single os.walk pass replaces per-token ``rglob`` calls. The previous
+    implementation was O(R * F) wall-clock — for a ~100k-file repo with 10+
+    bare references, that exceeded the MCP tool timeout. New cost is O(F)
+    once + O(1) per lookup.
+    """
+
+    counts: dict[str, int] = {}
+    try:
+        for _dirpath, dirnames, filenames in os.walk(project_root):
+            # Prune excluded subtrees BEFORE descending — this is the order-of-
+            # magnitude speedup vs the prior rglob-then-filter approach.
+            dirnames[:] = [d for d in dirnames if d not in _GLOB_EXCLUDE_DIRS]
+            for fname in filenames:
+                counts[fname] = counts.get(fname, 0) + 1
+    except OSError:
+        return
+
+    for fname, n in counts.items():
+        cache[fname] = (n == 1, n)
+    cache[_INDEX_BUILT_SENTINEL] = (True, 0)
+
+
 def _resolve_bare_filename(
     project_root: Path,
     rel_path: str,
     cache: dict[str, tuple[bool, int]] | None = None,
 ) -> tuple[bool, int]:
-    """PRD-QUAL-067 FR-01: bounded rglob resolver for `/`-less path tokens."""
+    """PRD-QUAL-067 FR-01: bounded resolver for ``/``-less path tokens.
+
+    When ``cache`` is supplied, lazily builds a basename index on the first
+    call and serves subsequent lookups from memory. When ``cache`` is None
+    (legacy path), falls back to a single bounded ``rglob`` for one-shot use.
+    """
+
     if cache is not None and rel_path in cache:
         return cache[rel_path]
 
+    if cache is not None:
+        if _INDEX_BUILT_SENTINEL not in cache:
+            _populate_basename_index(project_root, cache)
+        return cache.get(rel_path, (False, 0))
+
+    # Legacy single-shot path (cache=None): one rglob, bounded by exclude dirs.
     match_count = 0
     try:
         for p in project_root.rglob(rel_path):
@@ -212,7 +258,4 @@ def _resolve_bare_filename(
     except OSError:
         match_count = 0
 
-    result = (match_count == 1, match_count)
-    if cache is not None:
-        cache[rel_path] = result
-    return result
+    return (match_count == 1, match_count)
