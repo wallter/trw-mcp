@@ -257,7 +257,7 @@ def recall_learnings(
             backend = get_backend(trw_dir)
             sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
             initialize_canaries(sec_cfg, backend=backend)
-            if should_halt_recalls(sec_cfg):
+            if should_halt_recalls(sec_cfg, backend=backend):
                 from trw_memory.exceptions import CanaryTamperError
 
                 raise CanaryTamperError("recall halted after canary tamper")
