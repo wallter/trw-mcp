@@ -136,17 +136,27 @@ def _learning_to_memory_entry(
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
     anchor_validity: float = 1.0,
+    # PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata for
+    # promotion-policy keys (utility_grade, current_status, etc.).
+    metadata: dict[str, str] | None = None,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
 
     Pre-seeds q_value from impact score so high-impact learnings start
     with an elevated Q-value before any observations accumulate.
+
+    Caller-supplied ``metadata`` (PRD-DIST-254 §FR02) is merged with
+    internal keys (``shard_id``, etc.); caller keys win on collision.
+    Used by trw-distill PolicyFilter to plumb DIST-247 grader output
+    into stored records.
     """
     from trw_mcp.scoring._correlation import compute_initial_q_value
 
-    metadata: dict[str, str] = {}
+    merged_metadata: dict[str, str] = {}
     if shard_id:
-        metadata["shard_id"] = shard_id
+        merged_metadata["shard_id"] = shard_id
+    if metadata:
+        merged_metadata.update(metadata)
 
     # Validate and attach assertions (PRD-CORE-086)
     assertion_objects: list[Assertion] = []
@@ -179,7 +189,7 @@ def _learning_to_memory_entry(
         client_profile=client_profile,
         model_id=model_id,
         namespace=_NAMESPACE,
-        metadata=metadata,
+        metadata=merged_metadata,
         q_value=compute_initial_q_value(impact),
         assertions=assertion_objects,
         # PRD-CORE-110: Typed learning fields - convert strings to enums

@@ -121,6 +121,8 @@ def store_learning(
     anchors: list[dict[str, object]] | None = None,
     anchor_validity: float = 1.0,
     session_id: str | None = None,
+    # PRD-DIST-254 §FR02 (cycle 112): policy-relevant metadata.
+    metadata: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Store a learning entry in SQLite and return the tool result dict.
 
@@ -162,6 +164,7 @@ def store_learning(
         protection_tier=protection_tier,
         anchors=anchors,
         anchor_validity=anchor_validity,
+        metadata=metadata,
     )
 
     for attempt in range(2):

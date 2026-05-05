@@ -299,3 +299,51 @@ class TestLearningToMemoryEntry:
         assert [anchor.file for anchor in entry.anchors] == ["src/good.py"]
         mock_debug.assert_called_once()
         assert mock_debug.call_args.kwargs["anchor"] == anchors[1]
+
+    def test_caller_metadata_merges_with_shard_id(self) -> None:
+        """PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata + shard_id co-exist."""
+        entry = _learning_to_memory_entry(
+            "L-meta001",
+            "s",
+            "d",
+            shard_id="shard-X",
+            metadata={"utility_grade": "R3", "current_status": "current"},
+        )
+        # Both internal (shard_id) and caller keys present.
+        assert entry.metadata.get("shard_id") == "shard-X"
+        assert entry.metadata.get("utility_grade") == "R3"
+        assert entry.metadata.get("current_status") == "current"
+
+    def test_caller_metadata_wins_on_collision_with_shard_id(self) -> None:
+        """Caller-supplied metadata overrides internal keys on collision (cycle 112)."""
+        entry = _learning_to_memory_entry(
+            "L-coll001",
+            "s",
+            "d",
+            shard_id="internal-shard",
+            metadata={"shard_id": "caller-shard"},
+        )
+        # Caller's value wins.
+        assert entry.metadata.get("shard_id") == "caller-shard"
+
+    def test_metadata_default_none_preserves_back_compat(self) -> None:
+        """metadata=None (default) leaves existing shard-only behavior intact."""
+        entry = _learning_to_memory_entry(
+            "L-bc001",
+            "s",
+            "d",
+            shard_id="only-shard",
+            metadata=None,
+        )
+        assert entry.metadata == {"shard_id": "only-shard"}
+
+    def test_metadata_without_shard_id_round_trips_keys(self) -> None:
+        """Without shard_id, caller metadata is the entire metadata dict."""
+        entry = _learning_to_memory_entry(
+            "L-ms001",
+            "s",
+            "d",
+            shard_id=None,
+            metadata={"utility_grade": "R5", "evidence_count": "2"},
+        )
+        assert entry.metadata == {"utility_grade": "R5", "evidence_count": "2"}
