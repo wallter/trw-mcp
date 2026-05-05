@@ -7,7 +7,6 @@ description: >
   lifecycle. Not for single-file edits (use trw-implementer) or read-only
   reviews (use trw-reviewer). Does not write production code; stays in
   delegate mode during IMPLEMENT.
-model: frontier
 effort: high
 maxTurns: 200
 memory: project

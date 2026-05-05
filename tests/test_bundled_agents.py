@@ -259,8 +259,6 @@ class TestAgentDefinitions:
         ("agent_name", "expected_model"),
         [
             ("trw-auditor.md", "balanced"),
-            ("trw-implementer.md", "frontier"),
-            ("trw-prd-groomer.md", "frontier"),
             ("trw-reviewer.md", "balanced"),
             ("trw-researcher.md", "balanced"),
         ],
@@ -326,7 +324,14 @@ class TestAgentDefinitions:
         ],
     )
     def test_agent_has_required_frontmatter(self, agents_dir: Path, agent_name: str) -> None:
-        """Agent definitions must have name, description, model in frontmatter."""
+        """Agent definitions must have name, description in frontmatter.
+
+        ``model`` is optional: agents that omit it inherit the harness default.
+        Agents that DO pin a tier must use one of the valid capability tiers.
+        Three bundle agents (trw-implementer, trw-lead, trw-prd-groomer) currently
+        omit ``model`` pending the resolver-side adapter fix that will translate
+        ``frontier`` to client-specific model identifiers.
+        """
         import yaml
 
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
@@ -334,6 +339,8 @@ class TestAgentDefinitions:
         meta = yaml.safe_load(frontmatter)
         assert "name" in meta, f"{agent_name}: missing 'name'"
         assert "description" in meta, f"{agent_name}: missing 'description'"
-        assert "model" in meta, f"{agent_name}: missing 'model'"
-        valid_models = ("frontier", "balanced", "local-large", "local-small")
-        assert meta["model"] in valid_models, f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
+        if "model" in meta:
+            valid_models = ("frontier", "balanced", "local-large", "local-small")
+            assert meta["model"] in valid_models, (
+                f"{agent_name}: model must be one of {valid_models}, got {meta['model']}"
+            )
