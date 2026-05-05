@@ -7,7 +7,9 @@ with external callers (`bootstrap/__init__.py` exports + `_copilot.py` and
 Three helpers:
 - ``_validate_skill`` — verify SKILL.md has required frontmatter fields
 - ``_install_skills`` — copy bundled skills to .claude/skills/
-- ``_install_agents`` — copy bundled agent .md files to .claude/agents/
+- ``_install_agents`` — copy bundled agent .md files to .claude/agents/,
+  rewriting the ``model:`` field via the per-client tier resolver
+  (PRD-INFRA-104).
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import structlog
+
+from trw_mcp.agents.tier_resolver import rewrite_model_line
 
 from ._utils import (
     ProgressCallback,
@@ -122,8 +126,30 @@ def _install_agents(
     force: bool,
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
+    *,
+    client: str = "claude-code",
 ) -> None:
-    """Copy bundled agent markdown files to ``.claude/agents/``."""
+    """Copy bundled agent markdown files to ``.claude/agents/``.
+
+    PRD-INFRA-104: bundled agents declare a capability-tier vocabulary
+    (``frontier|balanced|local-large|local-small``) in their ``model:``
+    frontmatter. Each client harness accepts a different concrete model
+    vocabulary, so this function applies
+    :func:`trw_mcp.agents.tier_resolver.rewrite_model_line` per agent
+    before writing the destination file. For the default ``claude-code``
+    client that means ``model: frontier`` → ``model: opus``, etc.
+    Unknown tiers are logged and the file is skipped (FR-11).
+
+    Args:
+        target_dir: Root of the target git repository.
+        force: When ``True`` overwrite existing destination files.
+        result: Bootstrap accumulator dict (``created``/``skipped``/``errors``).
+        on_progress: Optional progress callback.
+        client: Client-profile identifier passed through to the tier
+            resolver. Defaults to ``"claude-code"``; cursor-ide installs
+            its own agents via :mod:`trw_mcp.bootstrap._cursor_ide` so the
+            default is correct for the only call-site.
+    """
     # PRD-CORE-125-FR08: Agents gating -- skip agent installation when
     # agents are disabled via config/profile.
     try:
@@ -137,15 +163,81 @@ def _install_agents(
         logger.debug("agents_install_gate_unavailable", exc_info=True)
 
     agents_source = _data_dir() / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                _copy_file(
-                    agent_file,
-                    target_dir / ".claude" / "agents" / agent_file.name,
-                    force,
-                    result,
-                    on_progress,
-                )
+    if not agents_source.is_dir():
+        return
+
+    dest_root = target_dir / ".claude" / "agents"
+    for agent_file in sorted(agents_source.iterdir()):
+        if agent_file.suffix != ".md":
+            continue
+        dest = dest_root / agent_file.name
+        _install_one_agent(
+            agent_file,
+            dest,
+            force=force,
+            result=result,
+            on_progress=on_progress,
+            client=client,
+        )
+
+
+def _install_one_agent(
+    src: Path,
+    dest: Path,
+    *,
+    force: bool,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback,
+    client: str,
+) -> None:
+    """Install a single bundled agent, rewriting its ``model:`` field.
+
+    Idempotent: if *dest* already exists and *force* is False, the file
+    is skipped (matching :func:`trw_mcp.bootstrap._utils._copy_file`
+    semantics). Tier resolution failures are logged and the file is
+    appended to ``result['errors']`` — the rest of the install
+    continues (PRD-INFRA-104 FR-11).
+    """
+    if dest.exists() and not force:
+        result["skipped"].append(str(dest))
+        if on_progress:
+            on_progress("Skipped", str(dest))
+        return
+
+    try:
+        bundled = src.read_text(encoding="utf-8")
+    except OSError as exc:
+        result["errors"].append(f"Failed to read {src}: {exc}")
+        if on_progress:
+            on_progress("Error", str(dest))
+        return
+
+    try:
+        rewritten = rewrite_model_line(bundled, client=client)
+    except ValueError as exc:
+        # Unknown tier -- surface clearly, skip this agent only.
+        logger.warning(
+            "agent_install_tier_unknown",
+            agent=src.name,
+            client=client,
+            error=str(exc),
+        )
+        result["errors"].append(str(src))
+        if on_progress:
+            on_progress("Error", str(dest))
+        return
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(rewritten, encoding="utf-8")
+    except OSError as exc:
+        result["errors"].append(f"Failed to write {dest}: {exc}")
+        if on_progress:
+            on_progress("Error", str(dest))
+        return
+
+    result["created"].append(str(dest))
+    if on_progress:
+        on_progress("Created", str(dest))
 
 
