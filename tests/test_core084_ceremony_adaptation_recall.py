@@ -38,6 +38,7 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             """Return learnings capped to max_results."""
             return all_learnings[:max_results]
@@ -82,6 +83,7 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             """Return learnings capped to max_results."""
             return all_learnings[:max_results]
@@ -139,6 +141,7 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             captured_max_results.append(max_results)
             return all_learnings[:max_results]

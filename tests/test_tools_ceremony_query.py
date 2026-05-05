@@ -57,6 +57,7 @@ class TestSessionStartWithQuery:
             compact: bool = False,
             tags: Any = None,
             status: Any = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             call_log.append({"query": query, "min_impact": min_impact})
             if query == "*":
@@ -100,6 +101,7 @@ class TestSessionStartWithQuery:
             compact: bool = False,
             tags: Any = None,
             status: Any = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             if query == "*":
                 return [shared_entry, baseline_only]
@@ -164,6 +166,7 @@ class TestSessionStartWithQuery:
             compact: bool = False,
             tags: Any = None,
             status: Any = None,
+            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             all_queries.append(query)
             return []
