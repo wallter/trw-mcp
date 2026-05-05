@@ -357,13 +357,21 @@ from trw_mcp.state._paths_pin_mgmt import (
 
 
 def resolve_memory_store_path() -> Path:
-    """Resolve the sqlite-vec memory store database path.
+    """Resolve the SECONDARY sqlite-vec embedding-sidecar database path.
+
+    PRD-INFRA-102 FR-03 clarification (2026-05-04): this returns the path
+    to the embedding-sidecar database used by ``dedup.py`` re-indexing via
+    ``MemoryStore`` (default ``<trw_dir>/memory/vectors.db``). It is NOT
+    the primary memory store path — that is hardcoded to
+    ``<trw_dir>/memory/memory.db`` in ``_memory_connection.get_backend``
+    and contains the canonical ``vec_memories`` table. The
+    ``MemoryStore`` schema uses ``vec_entries`` table prefix instead.
 
     Strips the ``.trw/`` prefix from the configured ``memory_store_path``
     and joins with the resolved .trw directory.
 
     Returns:
-        Absolute path to the sqlite-vec database file.
+        Absolute path to the secondary sqlite-vec database file.
     """
     config = get_config()
     memory_store_path = str(config.memory_store_path)

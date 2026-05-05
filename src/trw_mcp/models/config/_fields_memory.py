@@ -34,6 +34,15 @@ class _MemoryFields:
 
     # -- Hybrid retrieval (CORE-041) --
 
+    # PRD-INFRA-102 FR-03 clarification (2026-05-04):
+    # `memory_store_path` is the SECONDARY embedding-sidecar path used by
+    # `dedup.py` re-indexing via `MemoryStore` (creates `vec_entries` tables).
+    # It is NOT the primary memory store path — that is hardcoded to
+    # `<trw_dir>/memory/memory.db` in `_memory_connection.get_backend` and
+    # contains the canonical `vec_memories` table. The field name's "memory
+    # store" wording is historical (CORE-041 era) and misleading; do not
+    # rename without coordinating with `_paths.resolve_memory_store_path`,
+    # `dedup.py:367`, and tests in `test_retrieval.py`.
     memory_store_path: str = ".trw/memory/vectors.db"
     embeddings_enabled: bool = False
     retrieval_embedding_model: str = "all-MiniLM-L6-v2"
