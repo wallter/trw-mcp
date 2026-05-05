@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.2] — 2026-05-04
+
+### Changed
+
+- **`memory_store_path` config field — clarifying comments at three locations** (PRD-INFRA-102 FR-03). Added inline comment block above `_MemoryFields.memory_store_path` (`src/trw_mcp/models/config/_fields_memory.py:37`), brief reference comment above the duplicate declaration in `_sub_models.py:56`, and an extended docstring on `state/_paths.py:resolve_memory_store_path()` to document that the field points at the **secondary embedding sidecar** (`vectors.db`, used by `dedup.py` re-indexing via `MemoryStore` with `vec_entries` table prefix), NOT the primary memory store path (which is hardcoded to `<trw_dir>/memory/memory.db` in `_memory_connection.get_backend` and uses the canonical `vec_memories` table). Default value preserved at `.trw/memory/vectors.db` (changing it would break dedup re-indexing). No behavior change; comment-only clarification. Test suite green; mypy --strict clean.
+
 ## [0.48.1] — 2026-04-30
 
 ### Changed
