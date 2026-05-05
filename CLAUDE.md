@@ -22,6 +22,12 @@ ruff check src/                                               # Lint
 - `middleware/` — Observation masking (`ContextBudgetMiddleware`), ceremony enforcement
 - `telemetry/` — Constants (inlined from trw-shared), pipeline, sender
 - `data/` — Bundled agents, skills, hooks for `init-project`
+- `agents/` — Per-client capability-tier resolver (PRD-INFRA-104). Translates the framework's
+  tier vocabulary (`frontier|balanced|local-large|local-small`) into the concrete model
+  identifiers each client harness accepts. `bootstrap/_init_project_skills.py::_install_agents`
+  applies it on every Claude Code install; `scripts/sync-agents.py` applies it for the dev
+  repo's `.claude/agents/`. New client adapters add an entry to `_CLIENT_MAPS` in
+  `agents/tier_resolver.py`.
 
 ## Security Notes
 
