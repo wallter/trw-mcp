@@ -114,9 +114,18 @@ def _has_test_reference(content: str) -> bool:
 
 
 def _extract_fr_id(label: str) -> str | None:
-    """Extract the normalized FR identifier from a heading or row label."""
-    match = re.search(r"\bFR\d+\b", label)
-    return match.group(0) if match else None
+    """Extract the normalized FR identifier from a heading or row label.
+
+    Accepts both ``FR01`` (no hyphen) and ``FR-01`` (hyphenated) forms;
+    normalizes to the un-hyphenated canonical key so callers can dict-
+    join matrix rows + heading rows regardless of which style the PRD
+    author chose. Both styles are common across the catalogue and the
+    template; the prior ``\\bFR\\d+\\b`` regex only matched the un-
+    hyphenated form, silently zeroing matrix_score on every PRD that
+    used ``FR-01`` in its Traceability Matrix.
+    """
+    match = re.search(r"\bFR-?(\d+)\b", label)
+    return f"FR{match.group(1)}" if match else None
 
 
 def _extract_traceability_matrix_rows(content: str) -> dict[str, str]:
