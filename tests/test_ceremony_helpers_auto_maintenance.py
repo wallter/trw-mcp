@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._ceremony_helpers_support import config, trw_dir, write_installed_version
+from tests._ceremony_helpers_support import config, trw_dir, write_installed_version  # noqa: F401
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
@@ -139,6 +139,31 @@ class TestRunAutoMaintenance:
         assert isinstance(result, dict)
         assert "embeddings_advisory" not in result
         assert "embeddings_backfill" not in result
+
+    def test_embeddings_backfill_deferred_on_session_start_hot_path(
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
+    ) -> None:
+        """Session startup never performs a bulk synchronous embedding backfill."""
+        with (
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                return_value={"available": False},
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.check_embeddings_status",
+                return_value={"enabled": True, "available": True, "advisory": ""},
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.backfill_embeddings",
+                side_effect=AssertionError("bulk embedding backfill must leave trw_session_start"),
+            ),
+        ):
+            result = run_auto_maintenance(trw_dir, config)
+
+        assert "embeddings_backfill" not in result
+        assert result["embeddings_backfill_deferred"]["reason"] == "session_start_hot_path"
 
     def test_version_sentinel_mismatch_injects_advisory(
         self,

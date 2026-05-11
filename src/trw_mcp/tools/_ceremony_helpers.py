@@ -404,11 +404,22 @@ def run_auto_maintenance(
             if emb_status.get("advisory"):
                 maintenance["embeddings_advisory"] = str(emb_status["advisory"])
             elif emb_status.get("enabled") and emb_status.get("available"):
-                from trw_mcp.state.memory_adapter import backfill_embeddings
-
-                backfill = backfill_embeddings(_resolve_trw_dir_compat())
-                if backfill.get("embedded", 0) > 0:
-                    maintenance["embeddings_backfill"] = backfill
+                # trw_session_start is an MCP hot path. A shared server may
+                # already have the local embedder initialized from a prior
+                # trw_learn call; in that state the previous behavior kicked
+                # off a full synchronous vector backfill here. On a large
+                # learning corpus that can run for minutes, starving the
+                # shared HTTP server and making otherwise healthy clients time
+                # out during session_start. Leave bulk embedding maintenance
+                # to explicit install/update flows, not session startup.
+                maintenance["embeddings_backfill_deferred"] = {
+                    "reason": "session_start_hot_path",
+                    "detail": "Bulk embedding backfill is skipped during trw_session_start; run project update/bootstrap maintenance to backfill vectors.",
+                }
+                logger.info(
+                    "embeddings_backfill_deferred",
+                    reason="session_start_hot_path",
+                )
     except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
 
