@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import tomllib
 
 from trw_mcp.bootstrap._codex import (
@@ -14,6 +15,7 @@ from trw_mcp.bootstrap._codex import (
     merge_codex_config,
 )
 
+
 class TestCodexBootstrap:
     """Codex bootstrap configuration and smart-merge behavior."""
 
@@ -21,8 +23,10 @@ class TestCodexBootstrap:
         result = generate_codex_config(tmp_path)
         assert ".codex/config.toml" in result["created"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is False
+        assert config["features"]["hooks"] is False
+        assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
+        assert "url" not in config["mcp_servers"]["trw"]
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
         assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_build_check" in config["mcp_servers"]["trw"]["enabled_tools"]
@@ -100,8 +104,8 @@ class TestCodexBootstrap:
         skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
         assert skill_path.exists()
         content = skill_path.read_text(encoding="utf-8")
-        assert "Codex-specific skill" in content
-        assert "AGENTS.md" in content
+        assert "# TRW Deliver" in content
+        assert "trw_deliver()" in content
         assert "allowed-tools:" not in content
         assert "disable-model-invocation:" not in content
         assert "user-invocable:" not in content
@@ -132,7 +136,8 @@ class TestCodexBootstrap:
         assert merged["model_reasoning_effort"] == "high"
         assert merged["sandbox_mode"] == "read-only"
         assert merged["approval_policy"] == "never"
-        assert merged["features"]["codex_hooks"] is False
+        assert merged["features"]["hooks"] is False
+        assert "codex_hooks" not in merged["features"]
         assert merged["features"]["some_feature"] is False
         assert "custom" in merged["mcp_servers"]
         assert merged["mcp_servers"]["custom"]["enabled"] is False
@@ -142,7 +147,27 @@ class TestCodexBootstrap:
     def test_codex_merge_preserves_explicit_hook_opt_in(self) -> None:
         merged = merge_codex_config({"features": {"codex_hooks": True}})
 
-        assert merged["features"]["codex_hooks"] is True
+        assert merged["features"]["hooks"] is True
+        assert "codex_hooks" not in merged["features"]
+
+    def test_codex_merge_preserves_current_hook_opt_in(self) -> None:
+        merged = merge_codex_config({"features": {"hooks": True}})
+
+        assert merged["features"]["hooks"] is True
+        assert "codex_hooks" not in merged["features"]
+
+    def test_codex_config_prefers_project_venv_command(self, tmp_path: Path) -> None:
+        project_command = tmp_path / ".venv" / "bin" / "trw-mcp"
+        project_command.parent.mkdir(parents=True)
+        project_command.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        result = generate_codex_config(tmp_path)
+
+        assert ".codex/config.toml" in result["created"]
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["mcp_servers"]["trw"]["command"] == ".venv/bin/trw-mcp"
+        assert config["mcp_servers"]["trw"]["args"] == ["--debug"]
+        assert "url" not in config["mcp_servers"]["trw"]
 
     def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"
@@ -180,7 +205,8 @@ config = [
         config = tomllib.loads((codex_dir / "config.toml").read_text(encoding="utf-8"))
         assert config["model"] == "gpt-5.4-mini"
         assert config["features"]["legacy_toggle"] is False
-        assert config["features"]["codex_hooks"] is False
+        assert config["features"]["hooks"] is False
+        assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["custom"]["enabled"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert "trw_session_start" in config["mcp_servers"]["trw"]["enabled_tools"]
@@ -205,6 +231,7 @@ config = [
         fallback_files = config.get("project_doc_fallback_filenames", [])
         assert ".codex/INSTRUCTIONS.md" not in fallback_files
         assert config["model_instructions_file"] == "INSTRUCTIONS.md"
+        assert "codex_hooks" not in config["features"]
 
         trw_tools = config["mcp_servers"]["trw"]["enabled_tools"]
         assert "trw_session_start" in trw_tools

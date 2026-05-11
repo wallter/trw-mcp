@@ -64,6 +64,7 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     entry: CodexMcpServerEntry = {}
     command = existing.get("command")
     args = existing.get("args")
+    cwd = existing.get("cwd")
     url = existing.get("url")
     enabled = existing.get("enabled")
     enabled_tools = existing.get("enabled_tools")
@@ -74,6 +75,8 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
         entry["command"] = command
     if isinstance(args, list) and all(isinstance(arg, str) for arg in args):
         entry["args"] = cast("list[str]", args)
+    if isinstance(cwd, str):
+        entry["cwd"] = cwd
     if isinstance(url, str):
         entry["url"] = url
     if isinstance(enabled, bool):
@@ -195,13 +198,23 @@ def _normalize_hook_config(existing: object) -> CodexHooksConfig:
 
 
 def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
-    """Extract boolean feature flags while defaulting Codex hooks off."""
+    """Extract boolean feature flags while defaulting Codex hooks off.
+
+    Codex CLI 0.130 reports ``features.codex_hooks`` as deprecated in favor of
+    the canonical ``features.hooks`` flag. Accept legacy config on input, but
+    normalize TRW-managed output to the non-deprecated key.
+    """
     features_map: dict[str, bool] = {}
     if isinstance(raw_features, dict):
         features_map = {
-            key: value for key, value in raw_features.items() if isinstance(key, str) and isinstance(value, bool)
+            key: value
+            for key, value in raw_features.items()
+            if isinstance(key, str) and key != "codex_hooks" and isinstance(value, bool)
         }
-    features_map.setdefault("codex_hooks", False)
+        legacy_hooks = raw_features.get("codex_hooks")
+        if "hooks" not in features_map and isinstance(legacy_hooks, bool):
+            features_map["hooks"] = legacy_hooks
+    features_map.setdefault("hooks", False)
     return cast("CodexFeaturesConfig", features_map)
 
 

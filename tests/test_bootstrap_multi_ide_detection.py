@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import tomllib
 
 import pytest
+import tomllib
 
 from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals
+
 
 @pytest.mark.unit
 class TestUpdateProjectMultiIDE:
@@ -59,7 +60,8 @@ class TestUpdateProjectMultiIDE:
             update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is False
+        assert config["features"]["hooks"] is False
+        assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert not (tmp_path / ".codex" / "hooks.json").exists()
         assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
@@ -78,7 +80,8 @@ class TestUpdateProjectMultiIDE:
             update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is True
+        assert config["features"]["hooks"] is True
+        assert "codex_hooks" not in config["features"]
         assert (tmp_path / ".codex" / "hooks.json").exists()
 
     def test_fr15_update_codex_preserves_customized_agents_and_skills(self, tmp_path: Path) -> None:

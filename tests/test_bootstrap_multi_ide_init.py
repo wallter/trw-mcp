@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import tomllib
 
 import pytest
+import tomllib
 
 from trw_mcp.bootstrap import init_project
+
 
 @pytest.mark.unit
 class TestUpdateProjectMultiIDE:
@@ -90,7 +91,8 @@ class TestUpdateProjectMultiIDE:
 
         assert not result["errors"], result["errors"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["codex_hooks"] is False
+        assert config["features"]["hooks"] is False
+        assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
         assert not (tmp_path / ".codex" / "hooks.json").exists()

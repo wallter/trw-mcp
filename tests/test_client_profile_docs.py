@@ -178,7 +178,8 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
     ) in codex_section
     assert "model_instructions_file" in codex_section
     assert ".codex/agents/*.toml" in codex_section
-    assert "features.codex_hooks = true" in codex_section
+    assert "features.hooks = true" in codex_section
+    assert "features.codex_hooks" in codex_section
 
 
 @pytest.mark.integration

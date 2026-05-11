@@ -10,7 +10,6 @@ Generates and smart-merges repo-scoped Codex artifacts:
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 import sys
 from collections.abc import Coroutine
@@ -25,6 +24,30 @@ else:  # pragma: no cover - Python <3.11 fallback
 
 import structlog
 
+from trw_mcp.bootstrap._codex_hooks import (
+    _codex_hooks_payload,
+    _is_trw_hook_group,
+    _trw_hook_group,
+    generate_codex_hooks,
+    merge_codex_hooks,
+)
+from trw_mcp.bootstrap._codex_normalize import (
+    _normalize_fallback_files,
+    _normalize_feature_flags,
+    _normalize_hook_command,
+    _normalize_hook_config,
+    _normalize_hook_matcher_group,
+    _normalize_mcp_server_entry,
+    _normalize_mcp_servers,
+    _normalize_mcp_tool_config,
+    _normalize_skill_config,
+)
+from trw_mcp.bootstrap._codex_toml import (
+    _parse_codex_toml,
+    _toml_dumps,
+    _toml_key,
+    _toml_value,
+)
 from trw_mcp.models.typed_dicts import (
     BootstrapFileResult,
     CodexConfigDict,
@@ -52,6 +75,41 @@ _LEGACY_PROJECT_DOC = "CLAUDE.md"
 _TRW_TOOL_PREFIX = "trw_"
 _AsyncResultT = TypeVar("_AsyncResultT")
 
+__all__ = [
+    "BootstrapFileResult",
+    "CodexConfigDict",
+    "CodexFeaturesConfig",
+    "CodexHookCommand",
+    "CodexHookMatcherEntry",
+    "CodexHooksConfig",
+    "CodexMcpServerEntry",
+    "CodexMcpToolConfigEntry",
+    "CodexSkillConfigEntry",
+    "CodexSkillsConfig",
+    "_codex_hooks_payload",
+    "_is_trw_hook_group",
+    "_normalize_fallback_files",
+    "_normalize_feature_flags",
+    "_normalize_hook_command",
+    "_normalize_hook_config",
+    "_normalize_hook_matcher_group",
+    "_normalize_mcp_server_entry",
+    "_normalize_mcp_servers",
+    "_normalize_mcp_tool_config",
+    "_normalize_skill_config",
+    "_parse_codex_toml",
+    "_toml_dumps",
+    "_toml_key",
+    "_toml_value",
+    "_trw_hook_group",
+    "generate_codex_agents",
+    "generate_codex_config",
+    "generate_codex_hooks",
+    "install_codex_skills",
+    "merge_codex_config",
+    "merge_codex_hooks",
+]
+
 
 def _codex_instruction_path() -> str:
     """Return the profile-driven Codex instruction file path."""
@@ -78,9 +136,13 @@ class _NamedTool(Protocol):
     name: str
 
 
-def _trw_mcp_server_entry() -> CodexMcpServerEntry:
+def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry:
     """Return the TRW MCP server entry for Codex config."""
-    if shutil.which("trw-mcp"):
+    project_executable = target_dir / ".venv" / "bin" / "trw-mcp" if target_dir is not None else None
+    if project_executable is not None and project_executable.exists():
+        command = ".venv/bin/trw-mcp"
+        args = ["--debug"]
+    elif shutil.which("trw-mcp"):
         command = "trw-mcp"
         args = ["--debug"]
     else:
@@ -118,8 +180,6 @@ def _registered_trw_tool_names() -> list[str]:
     return tool_names
 
 
-
-
 def _trw_mcp_enabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
     """Return the documented enabled_tools list for the TRW MCP server."""
     enabled_tools = {
@@ -142,35 +202,6 @@ def _trw_mcp_disabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
     return sorted(disabled_tools)
 
 
-# TOML helpers extracted to _codex_toml (PRD-DIST-243 batch 13).
-from trw_mcp.bootstrap._codex_toml import (
-    _parse_codex_toml as _parse_codex_toml,
-    _toml_dumps as _toml_dumps,
-    _toml_key as _toml_key,
-    _toml_value as _toml_value,
-)
-
-# Normalization + hook helpers extracted (PRD-DIST-243 batch 42).
-from trw_mcp.bootstrap._codex_hooks import (
-    _codex_hooks_payload as _codex_hooks_payload,
-    _is_trw_hook_group as _is_trw_hook_group,
-    _trw_hook_group as _trw_hook_group,
-    generate_codex_hooks as generate_codex_hooks,
-    merge_codex_hooks as merge_codex_hooks,
-)
-from trw_mcp.bootstrap._codex_normalize import (
-    _normalize_fallback_files as _normalize_fallback_files,
-    _normalize_feature_flags as _normalize_feature_flags,
-    _normalize_hook_command as _normalize_hook_command,
-    _normalize_hook_config as _normalize_hook_config,
-    _normalize_hook_matcher_group as _normalize_hook_matcher_group,
-    _normalize_mcp_server_entry as _normalize_mcp_server_entry,
-    _normalize_mcp_servers as _normalize_mcp_servers,
-    _normalize_mcp_tool_config as _normalize_mcp_tool_config,
-    _normalize_skill_config as _normalize_skill_config,
-)
-
-
 def _skill_paths() -> list[str]:
     """Return repo-local skill paths for Codex config."""
     skills_dir = _codex_skills_source_dir()
@@ -184,13 +215,6 @@ def _normalize_skill_path(path: str) -> str:
     if normalized.endswith(suffix):
         return normalized[: -len(suffix)]
     return normalized
-
-
-
-
-
-
-
 
 
 def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
@@ -220,7 +244,7 @@ def _merge_skill_config(raw_skills: object) -> CodexSkillsConfig:
     return skills
 
 
-def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
+def merge_codex_config(existing: CodexConfigDict, *, target_dir: Path | None = None) -> CodexConfigDict:
     """Merge TRW-managed Codex config into an existing config dict."""
     result = cast("CodexConfigDict", dict(existing))
     instruction_path = _codex_instruction_path()
@@ -229,7 +253,7 @@ def merge_codex_config(existing: CodexConfigDict) -> CodexConfigDict:
 
     mcp_servers = _normalize_mcp_servers(result.get("mcp_servers"))
     existing_trw_server: CodexMcpServerEntry = mcp_servers.get("trw", {})
-    trw_server = _trw_mcp_server_entry()
+    trw_server = _trw_mcp_server_entry(target_dir)
     trw_server["enabled_tools"] = _trw_mcp_enabled_tools(existing_trw_server)
     disabled_tools = _trw_mcp_disabled_tools(existing_trw_server)
     if disabled_tools:
@@ -267,7 +291,7 @@ def codex_hooks_enabled(target_dir: Path) -> bool:
         return False
 
     features = _normalize_feature_flags(config.get("features"))
-    return features.get("codex_hooks", False)
+    return features.get("hooks", False)
 
 
 def generate_codex_config(
@@ -285,21 +309,20 @@ def generate_codex_config(
     if existed and not force:
         try:
             existing = _parse_codex_toml(config_path.read_text(encoding="utf-8"))
-            merged = merge_codex_config(existing)
+            merged = merge_codex_config(existing, target_dir=target_dir)
             config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=True)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             result["errors"].append(f"Failed to read/merge {config_path}: {exc}")
     else:
         try:
-            merged = merge_codex_config({})
+            merged = merge_codex_config({}, target_dir=target_dir)
             config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
 
     return result
-
 
 
 _CODEX_AGENT_TEMPLATES: dict[str, str] = {

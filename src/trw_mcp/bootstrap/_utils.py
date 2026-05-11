@@ -274,8 +274,11 @@ def _verify_installation(
             if not isinstance(mcp_servers, dict) or "trw" not in mcp_servers:
                 result["warnings"].append(".codex/config.toml missing TRW MCP entry")
             features = data.get("features", {})
-            if not isinstance(features, dict) or features.get("codex_hooks") is not True:
-                result["warnings"].append(".codex/config.toml does not enable codex_hooks")
+            hooks_enabled = isinstance(features, dict) and (
+                features.get("hooks") is True or features.get("codex_hooks") is True
+            )
+            if not hooks_enabled:
+                result["warnings"].append(".codex/config.toml does not enable hooks")
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 
