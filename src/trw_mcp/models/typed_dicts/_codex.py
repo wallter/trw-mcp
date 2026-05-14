@@ -45,6 +45,7 @@ class CodexFeaturesConfig(TypedDict, total=False):
     """Codex `features` table."""
 
     hooks: bool
+    # Legacy input accepted for migration; TRW-managed output writes `hooks`.
     codex_hooks: bool
 
 

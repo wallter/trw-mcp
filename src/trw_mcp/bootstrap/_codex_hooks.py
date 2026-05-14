@@ -11,6 +11,7 @@ Hook-cluster helpers that build, identify, merge, and emit the
 - ``_is_trw_hook_group`` — TRW hook group detector
 - ``merge_codex_hooks`` — TRW + user merge preserving user groups
 - ``generate_codex_hooks`` — write .codex/hooks.json (with merge if exists)
+- ``codex_hooks_review_warning`` — installer warning for Codex hook review
 
 Extracted as DIST-243 batch 42 (continuation) to keep the parent
 ``_codex.py`` module under the 350 effective-LOC ceiling.
@@ -98,6 +99,30 @@ def _codex_hooks_payload() -> CodexHooksConfig:
             "Stop": [_trw_hook_group(event="Stop", script_name="stop-ceremony.sh", timeout=30)],
         }
     }
+
+
+def codex_trw_hook_count(config: CodexHooksConfig | None = None) -> int:
+    """Return the number of TRW-managed command hooks in a Codex hook config."""
+    payload = _normalize_hook_config(config or _codex_hooks_payload())
+    hook_count = 0
+    for event_name, groups in payload.get("hooks", {}).items():
+        for group in groups:
+            if _is_trw_hook_group(event_name, group):
+                hook_count += len(group.get("hooks", []))
+    return hook_count
+
+
+def codex_hooks_review_warning() -> str:
+    """Return the installer warning shown after writing TRW-managed Codex hooks."""
+    hook_count = codex_trw_hook_count()
+    hook_label = "hook" if hook_count == 1 else "hooks"
+    return (
+        "Codex hooks are enabled with [features].hooks; current Codex builds require "
+        "manual review before project hooks run. Open /hooks in Codex to approve or "
+        f"disable the {hook_count} TRW-managed {hook_label}. The deprecated "
+        "[features].codex_hooks key is migrated on update; hook trust state stays in "
+        "user-controlled Codex config, not in project files."
+    )
 
 
 def _is_trw_hook_group(event: str, group: CodexHookMatcherEntry) -> bool:

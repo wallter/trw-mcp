@@ -18,7 +18,7 @@ from trw_mcp.bootstrap import (
     _write_installer_metadata,
 )
 
-from ._bootstrap_test_support import fake_git_repo, initialized_repo
+from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401 - pytest fixture registration
 
 
 @pytest.mark.unit
@@ -146,6 +146,50 @@ class TestVerifyInstallation:
         _verify_installation(tmp_path, result)
 
         assert any("not valid JSON" in w for w in result["warnings"])
+
+    def test_codex_hooks_disabled_is_not_a_health_warning(self, tmp_path: Path) -> None:
+        """Codex hooks are optional; disabled hooks should not fail install health."""
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}}}), encoding="utf-8")
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            """
+[features]
+hooks = false
+
+[mcp_servers.trw]
+command = "trw-mcp"
+args = ["--debug"]
+enabled = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result: dict[str, list[str]] = {"warnings": []}
+        _verify_installation(tmp_path, result)
+
+        assert not any("does not enable hooks" in w for w in result["warnings"])
+
+    def test_codex_direct_trw_http_url_warns(self, tmp_path: Path) -> None:
+        """Codex TRW MCP should use the stdio proxy so shared-HTTP mode still autostarts."""
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}}}), encoding="utf-8")
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            """
+[mcp_servers.trw]
+url = "http://127.0.0.1:8100/mcp"
+enabled = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result: dict[str, list[str]] = {"warnings": []}
+        _verify_installation(tmp_path, result)
+
+        assert any("direct TRW MCP HTTP URL" in w for w in result["warnings"])
 
     def test_claude_md_missing_markers_warns(self, tmp_path: Path) -> None:
         """CLAUDE.md without TRW markers → warning."""

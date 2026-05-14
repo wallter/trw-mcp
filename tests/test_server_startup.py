@@ -390,7 +390,7 @@ class TestCliSubcommandOutput:
         assert exc.value.code == 0
         captured = capsys.readouterr()
         assert "TRW update complete" in captured.out
-        assert "Codex: managed config, hooks, agents, skills, and AGENTS.md synced" in captured.out
+        assert "Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced" in captured.out
         assert "Use -v for per-file changes or --log-json for structured output." in captured.out
         assert "update_progress" not in captured.out
 

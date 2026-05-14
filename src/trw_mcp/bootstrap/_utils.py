@@ -273,12 +273,19 @@ def _verify_installation(
             mcp_servers = data.get("mcp_servers", {})
             if not isinstance(mcp_servers, dict) or "trw" not in mcp_servers:
                 result["warnings"].append(".codex/config.toml missing TRW MCP entry")
+            else:
+                trw_server = mcp_servers.get("trw")
+                if isinstance(trw_server, dict) and "url" in trw_server and "command" not in trw_server:
+                    result["warnings"].append(
+                        ".codex/config.toml uses a direct TRW MCP HTTP URL; "
+                        "run update-project to restore the stdio proxy entry"
+                    )
             features = data.get("features", {})
-            hooks_enabled = isinstance(features, dict) and (
-                features.get("hooks") is True or features.get("codex_hooks") is True
-            )
-            if not hooks_enabled:
-                result["warnings"].append(".codex/config.toml does not enable hooks")
+            if isinstance(features, dict) and features.get("codex_hooks") is True:
+                result["warnings"].append(
+                    ".codex/config.toml uses deprecated features.codex_hooks; "
+                    "run update-project to migrate to features.hooks"
+                )
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 

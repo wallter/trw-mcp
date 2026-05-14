@@ -28,6 +28,8 @@ from trw_mcp.bootstrap._codex_hooks import (
     _codex_hooks_payload,
     _is_trw_hook_group,
     _trw_hook_group,
+    codex_hooks_review_warning,
+    codex_trw_hook_count,
     generate_codex_hooks,
     merge_codex_hooks,
 )
@@ -102,6 +104,8 @@ __all__ = [
     "_toml_key",
     "_toml_value",
     "_trw_hook_group",
+    "codex_hooks_review_warning",
+    "codex_trw_hook_count",
     "generate_codex_agents",
     "generate_codex_config",
     "generate_codex_hooks",
@@ -137,7 +141,16 @@ class _NamedTool(Protocol):
 
 
 def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry:
-    """Return the TRW MCP server entry for Codex config."""
+    """Return the TRW MCP server entry for Codex config.
+
+    TRW writes a stdio launcher even in the development repo where
+    ``.trw/config.yaml`` points at the shared streamable-HTTP server. The
+    ``trw-mcp`` CLI is the compatibility boundary: in normal projects it runs
+    standalone stdio, while in shared-HTTP projects it auto-starts/bridges to
+    the shared server. Writing a direct Codex ``url`` would bypass that proxy,
+    lose autostart/fallback behavior, and make local dev installs drift from
+    user-project installs.
+    """
     project_executable = target_dir / ".venv" / "bin" / "trw-mcp" if target_dir is not None else None
     if project_executable is not None and project_executable.exists():
         command = ".venv/bin/trw-mcp"

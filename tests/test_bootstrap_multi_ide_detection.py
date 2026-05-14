@@ -57,13 +57,14 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".codex").mkdir()
 
         with patch_update_project_internals():
-            update_project(tmp_path)
+            result = update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
         assert config["features"]["hooks"] is False
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert not (tmp_path / ".codex" / "hooks.json").exists()
+        assert "Open /hooks" not in "\n".join(result.get("warnings", []))
         assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         assert (tmp_path / "AGENTS.md").exists()
@@ -77,12 +78,17 @@ class TestUpdateProjectMultiIDE:
         (codex_dir / "config.toml").write_text("[features]\ncodex_hooks = true\n", encoding="utf-8")
 
         with patch_update_project_internals():
-            update_project(tmp_path)
+            result = update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
         assert config["features"]["hooks"] is True
         assert "codex_hooks" not in config["features"]
         assert (tmp_path / ".codex" / "hooks.json").exists()
+        warnings = "\n".join(result.get("warnings", []))
+        assert "Open /hooks" in warnings
+        assert "5 TRW-managed hooks" in warnings
+        assert "[features].hooks" in warnings
+        assert "[features].codex_hooks" in warnings
 
     def test_fr15_update_codex_preserves_customized_agents_and_skills(self, tmp_path: Path) -> None:
         """update_project preserves Codex agent and skill edits in protected paths."""

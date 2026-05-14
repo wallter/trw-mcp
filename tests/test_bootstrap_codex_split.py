@@ -8,6 +8,8 @@ from pathlib import Path
 import tomllib
 
 from trw_mcp.bootstrap._codex import (
+    codex_hooks_review_warning,
+    codex_trw_hook_count,
     generate_codex_agents,
     generate_codex_config,
     generate_codex_hooks,
@@ -44,6 +46,16 @@ class TestCodexBootstrap:
         assert "PreToolUse" in hooks["hooks"]
         assert "PostToolUse" in hooks["hooks"]
         assert "Stop" in hooks["hooks"]
+
+    def test_codex_hooks_review_warning_matches_current_review_gate(self) -> None:
+        warning = codex_hooks_review_warning()
+
+        assert codex_trw_hook_count() == 5
+        assert "[features].hooks" in warning
+        assert "[features].codex_hooks" in warning
+        assert "Open /hooks" in warning
+        assert "5 TRW-managed hooks" in warning
+        assert "user-controlled Codex config" in warning
 
     def test_codex_hooks_merge_preserves_user_handlers(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"
@@ -168,6 +180,29 @@ class TestCodexBootstrap:
         assert config["mcp_servers"]["trw"]["command"] == ".venv/bin/trw-mcp"
         assert config["mcp_servers"]["trw"]["args"] == ["--debug"]
         assert "url" not in config["mcp_servers"]["trw"]
+
+    def test_codex_config_replaces_direct_trw_http_url_with_stdio_proxy(self, tmp_path: Path) -> None:
+        """TRW-owned Codex MCP config keeps the stdio proxy even for shared-HTTP projects."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            """
+[mcp_servers.trw]
+url = "http://127.0.0.1:8100/mcp"
+enabled = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = generate_codex_config(tmp_path)
+
+        assert ".codex/config.toml" in result["updated"]
+        config = tomllib.loads((codex_dir / "config.toml").read_text(encoding="utf-8"))
+        trw_server = config["mcp_servers"]["trw"]
+        assert trw_server["enabled"] is True
+        assert "url" not in trw_server
+        assert trw_server["command"]
+        assert trw_server["args"] == ["--debug"]
 
     def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"

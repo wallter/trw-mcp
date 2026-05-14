@@ -103,3 +103,23 @@ class TestUpdateProjectMultiIDE:
         instructions_content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert "trw_deliver" in instructions_content
         assert (tmp_path / "AGENTS.md").exists()
+
+    def test_fr15_init_codex_migrates_legacy_hook_opt_in_and_warns(self, tmp_path: Path) -> None:
+        """init_project(ide='codex') migrates legacy hook opt-in and tells users to review hooks."""
+        (tmp_path / ".git").mkdir()
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[features]\ncodex_hooks = true\n", encoding="utf-8")
+
+        result = init_project(tmp_path, ide="codex")
+
+        assert not result["errors"], result["errors"]
+        config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+        assert config["features"]["hooks"] is True
+        assert "codex_hooks" not in config["features"]
+        assert (tmp_path / ".codex" / "hooks.json").exists()
+        warnings = "\n".join(result.get("warnings", []))
+        assert "Open /hooks" in warnings
+        assert "5 TRW-managed hooks" in warnings
+        assert "[features].hooks" in warnings
+        assert "[features].codex_hooks" in warnings

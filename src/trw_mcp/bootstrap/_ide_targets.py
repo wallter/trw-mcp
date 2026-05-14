@@ -20,6 +20,15 @@ from pathlib import Path
 
 import structlog
 
+from ._ide_targets_finalize import (
+    _LEGACY_PROFILE_RENAMES as _LEGACY_PROFILE_RENAMES,
+)
+from ._ide_targets_finalize import (
+    _run_claude_md_sync as _run_claude_md_sync,
+)
+from ._ide_targets_finalize import (
+    _update_config_target_platforms as _update_config_target_platforms,
+)
 from ._utils import _minimal_claude_md, resolve_ide_targets
 
 logger = structlog.get_logger(__name__)
@@ -178,6 +187,7 @@ def _update_codex_artifacts(
     """Update Codex artifacts when Codex is detected."""
     from ._codex import (
         codex_hooks_enabled,
+        codex_hooks_review_warning,
         generate_codex_agents,
         generate_codex_config,
         generate_codex_hooks,
@@ -206,6 +216,8 @@ def _update_codex_artifacts(
             result["updated"].extend(hooks_result.get("updated", []))
             result["preserved"].extend(hooks_result.get("preserved", []))
             result["errors"].extend(hooks_result.get("errors", []))
+            if hooks_result.get("created") or hooks_result.get("updated"):
+                result.setdefault("warnings", []).append(codex_hooks_review_warning())
         except Exception as exc:  # justified: fail-open, codex update is best-effort
             result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
 
@@ -530,12 +542,3 @@ def _update_cursor_cli_artifacts(
         result.setdefault("warnings", []).append(
             f".cursor/hooks.json (cursor-cli) update skipped: {type(exc).__name__}: {exc}"
         )
-
-
-# Finalization helpers — _LEGACY_PROFILE_RENAMES + _update_config_target_platforms
-# + _run_claude_md_sync extracted to _ide_targets_finalize (PRD-DIST-243 batch 41).
-from ._ide_targets_finalize import (
-    _LEGACY_PROFILE_RENAMES as _LEGACY_PROFILE_RENAMES,
-    _run_claude_md_sync as _run_claude_md_sync,
-    _update_config_target_platforms as _update_config_target_platforms,
-)

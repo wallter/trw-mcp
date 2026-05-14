@@ -15,6 +15,34 @@ from typing import TextIO
 
 import structlog
 
+from trw_mcp.server._subcommands_check import (
+    _check_instructions_core as _check_instructions_core,
+)
+from trw_mcp.server._subcommands_check import (
+    _run_check_instructions as _run_check_instructions,
+)
+from trw_mcp.server._subcommands_lifecycle import (
+    _run_auth as _run_auth,
+)
+from trw_mcp.server._subcommands_lifecycle import (
+    _run_uninstall as _run_uninstall,
+)
+from trw_mcp.server._subcommands_misc import (
+    _run_config_reference as _run_config_reference,
+)
+from trw_mcp.server._subcommands_misc import (
+    _run_local as _run_local,
+)
+from trw_mcp.server._subcommands_release import (
+    _get_framework_version as _get_framework_version,
+)
+from trw_mcp.server._subcommands_release import (
+    _push_release as _push_release,
+)
+from trw_mcp.server._subcommands_release import (
+    _run_build_release as _run_build_release,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -56,7 +84,7 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
     if ide:
         _print_cli_line(f"Target IDE: {ide}")
     if codex_touched:
-        _print_cli_line("Codex: managed config, hooks, agents, skills, and AGENTS.md synced")
+        _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
     if warnings:
         _print_cli_line("")
         _print_cli_line("Warnings:")
@@ -93,6 +121,9 @@ def _run_init_project(args: argparse.Namespace) -> None:
 
     for e in result["errors"]:
         logger.error("init_project_error", op="init_project", error=str(e))
+    if detailed:
+        for w in result.get("warnings", []):
+            logger.warning("init_project_warning", op="init_project", detail=str(w))
 
     if not result["errors"]:
         if detailed:
@@ -105,6 +136,12 @@ def _run_init_project(args: argparse.Namespace) -> None:
             _print_cli_line(
                 f"Changes: {len(updated)} updated, {len(result['created'])} created, {len(preserved)} preserved"
             )
+            warnings = result.get("warnings", [])
+            if warnings:
+                _print_cli_line("")
+                _print_cli_line("Warnings:")
+                for warning in warnings:
+                    _print_cli_line(f"- {warning}")
             _print_cli_line("")
             _print_cli_line("Next: run your AI coding tool in this directory.")
 
@@ -258,49 +295,6 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
     )
 
     sys.exit(0)
-
-
-# Release-related CLI handlers extracted to _subcommands_release
-# (PRD-DIST-243 batch 19). Re-exported for back-compat.
-from trw_mcp.server._subcommands_release import (
-    _get_framework_version as _get_framework_version,
-)
-from trw_mcp.server._subcommands_release import (
-    _push_release as _push_release,
-)
-from trw_mcp.server._subcommands_release import (
-    _run_build_release as _run_build_release,
-)
-
-
-# Lifecycle handlers extracted to _subcommands_lifecycle (PRD-DIST-243 batch 19b).
-# Re-exported for back-compat with test imports.
-from trw_mcp.server._subcommands_lifecycle import (
-    _run_auth as _run_auth,
-)
-from trw_mcp.server._subcommands_lifecycle import (
-    _run_uninstall as _run_uninstall,
-)
-
-
-# Misc handlers (config-reference, local) extracted to _subcommands_misc
-# (PRD-DIST-243 batch 19c). Re-exported for back-compat with test imports.
-from trw_mcp.server._subcommands_misc import (
-    _run_config_reference as _run_config_reference,
-)
-from trw_mcp.server._subcommands_misc import (
-    _run_local as _run_local,
-)
-
-
-# check-instructions handlers extracted to _subcommands_check
-# (PRD-DIST-243 batch 19). Re-exported for back-compat with test imports.
-from trw_mcp.server._subcommands_check import (
-    _check_instructions_core as _check_instructions_core,
-)
-from trw_mcp.server._subcommands_check import (
-    _run_check_instructions as _run_check_instructions,
-)
 
 
 def _run_gc(args: argparse.Namespace) -> None:
