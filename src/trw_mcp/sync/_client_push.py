@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from time import perf_counter
 from typing import TYPE_CHECKING, Protocol
 
@@ -16,9 +17,14 @@ if TYPE_CHECKING:
 
 
 class _TargetLike(Protocol):
-    url: str
-    api_key: str
-    label: str
+    @property
+    def url(self) -> str: ...
+
+    @property
+    def api_key(self) -> str: ...
+
+    @property
+    def label(self) -> str: ...
 
 
 async def _push_to_target(
@@ -35,6 +41,7 @@ async def _push_to_target(
 ) -> PushResult:
     """PRD-FIX-087 FR03: async — awaits pusher.push_learnings / push_outcomes."""
     started = perf_counter()
+    pusher: SyncPusher | None
     if primary_target_label is not None and target.label == primary_target_label:
         pusher = primary_pusher
     else:
@@ -102,7 +109,7 @@ async def _push_to_target(
 async def fanout_push(
     *,
     client_id: str,
-    targets: list[_TargetLike],
+    targets: Sequence[_TargetLike],
     primary_pusher: SyncPusher,
     pusher_map: dict[str, SyncPusher],
     batch_size: int,

@@ -135,8 +135,8 @@ class BackendSyncClient:
         # Primary puller uses the first target (intel pull is single-source for now).
         primary_url = self._targets[0].url if self._targets else ""
         primary_key = self._targets[0].api_key if self._targets else ""
-        self._pusher = (
-            self._pushers.get(self._targets[0].label)
+        self._pusher: SyncPusher = (
+            self._pushers[self._targets[0].label]
             if self._targets
             else SyncPusher(
                 backend_url=primary_url,

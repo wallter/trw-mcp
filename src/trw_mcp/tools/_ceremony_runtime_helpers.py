@@ -14,8 +14,10 @@ the 936-LOC top-of-list violator position.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -31,6 +33,9 @@ from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
 
 
 def _get_run_status(run_dir: Path) -> RunStatusDict:
@@ -197,7 +202,8 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     from trw_mcp.clients.llm import LLMClient
     from trw_mcp.tools import ceremony as _ceremony
 
-    config = _ceremony.get_config()  # type: ignore[attr-defined]
+    get_config_fn = cast("Callable[[], TRWConfig]", getattr(_ceremony, "get_config", get_config))
+    config = get_config_fn()
     reader = FileStateReader()
     llm = LLMClient()
 
@@ -209,7 +215,11 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
     else:
         client = "auto"
 
-    raw = _ceremony.execute_claude_md_sync(  # type: ignore[attr-defined]
+    sync_fn = cast(
+        "Callable[..., ClaudeMdSyncResultDict]",
+        getattr(_ceremony, "execute_claude_md_sync", execute_claude_md_sync),
+    )
+    raw = sync_fn(
         scope="root", target_dir=None, config=config, reader=reader, llm=llm, client=client,
     )
     raw["status"] = "success"
@@ -276,4 +286,3 @@ def _compute_run_age_hours(run_dir: Path | None) -> float:
         return max(0.0, (datetime.now(timezone.utc) - mtime_dt).total_seconds() / 3600.0)
     except OSError:
         return 0.0
-
