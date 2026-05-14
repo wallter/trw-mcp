@@ -7,10 +7,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
-from trw_memory.models.memory import MemoryEntry
 
 from trw_mcp.state import memory_adapter as memory_adapter_module
 from trw_mcp.state.memory_adapter import get_backend, recall_learnings, store_learning, update_learning
+
+
+@pytest.fixture
+def trw_dir(tmp_project: Path) -> Path:
+    """Return the isolated .trw directory for memory-adapter tests."""
+    trw = tmp_project / ".trw"
+    (trw / "memory").mkdir(exist_ok=True)
+    return trw
 
 
 class TestRecallLearningsBoundary:
@@ -86,25 +93,45 @@ class TestRecallLearningsBoundary:
             action="raise",
         )
 
-    def test_recall_learnings_retries_once_after_corruption(self, trw_dir: Path) -> None:
-        """Corruption on first recall attempt triggers recovery + retry with logging."""
-        entry = MemoryEntry(id="L-retry2", content="Retry content")
+    def test_recall_learnings_defers_recovery_after_corruption(self, trw_dir: Path) -> None:
+        """Recall corruption schedules background recovery and returns degraded results."""
         backend_first = MagicMock()
         backend_first.list_entries.side_effect = RuntimeError("database disk image is malformed")
-        backend_second = MagicMock()
-        backend_second.list_entries.return_value = [entry]
 
         with (
-            patch("trw_mcp.state.memory_adapter.get_backend", side_effect=[backend_first, backend_second]),
-            patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=backend_first),
+            patch("trw_mcp.state.memory_adapter._memory_recovery_in_progress", return_value=False),
+            patch("trw_mcp.state.memory_adapter._schedule_deferred_recovery") as mock_schedule,
             patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
         ):
             result = recall_learnings(trw_dir, "*")
 
-        assert [row["id"] for row in result] == ["L-retry2"]
-        mock_recover.assert_called_once_with(trw_dir)
-        backend_second.list_entries.assert_called_once()
-        mock_warning.assert_called_once()
+        assert result == []
+        mock_schedule.assert_called_once_with(
+            trw_dir,
+            reason="recall_corruption",
+            context={"query": "*"},
+        )
+        backend_first.list_entries.assert_called_once()
+        assert mock_warning.call_args.args == ("memory_recall_degraded_recovery_scheduled",)
+
+    def test_recall_learnings_skips_when_recovery_in_progress(self, trw_dir: Path) -> None:
+        """Concurrent recalls do not stampede while deferred recovery is active."""
+        with (
+            patch("trw_mcp.state.memory_adapter._memory_recovery_in_progress", return_value=True),
+            patch("trw_mcp.state.memory_adapter.get_backend") as mock_get_backend,
+            patch("trw_mcp.state.memory_adapter._schedule_deferred_recovery") as mock_schedule,
+            patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
+        ):
+            result = recall_learnings(trw_dir, "anything")
+
+        assert result == []
+        mock_get_backend.assert_not_called()
+        mock_schedule.assert_not_called()
+        mock_warning.assert_called_once_with(
+            "memory_recall_skipped_recovery_in_progress",
+            query="anything",
+        )
 
     def test_empty_string_query_treated_as_wildcard(self, trw_dir: Path) -> None:
         """Empty string query is treated as wildcard (returns all entries)."""

@@ -6,6 +6,12 @@ All notable changes to the TRW MCP server package.
 
 _No unreleased changes yet._
 
+## [0.48.6] — 2026-05-14
+
+### Fixed
+
+- **`trw_session_start` no longer blocks on full memory corruption recovery** (PRD-FIX-093). Recall now fails open with an empty degraded result and schedules a single background recovery worker when it detects SQLite corruption, preserving automatic cold rebuild/YAML migration without spending the client request timeout budget. Store/write-path recovery semantics remain synchronous and unchanged.
+
 ## [0.48.5] — 2026-05-14
 
 ### Fixed

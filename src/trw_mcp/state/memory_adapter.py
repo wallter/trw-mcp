@@ -108,7 +108,13 @@ from trw_mcp.state._memory_recovery import (
     _log_terminal_recovery as _log_terminal_recovery,
 )
 from trw_mcp.state._memory_recovery import (
+    _memory_recovery_in_progress as _memory_recovery_in_progress,
+)
+from trw_mcp.state._memory_recovery import (
     _recover_and_reset_backend as _recover_and_reset_backend,
+)
+from trw_mcp.state._memory_recovery import (
+    _schedule_deferred_recovery as _schedule_deferred_recovery,
 )
 from trw_mcp.state._memory_recovery import (
     check_embeddings_status as check_embeddings_status,
@@ -289,6 +295,12 @@ def recall_learnings(
     from trw_memory.models.memory import MemoryEntry as _ME
 
     entries: list[_ME] = []
+    if _memory_recovery_in_progress():
+        logger.warning(
+            "memory_recall_skipped_recovery_in_progress",
+            query=query[:80],
+        )
+        return []
     for attempt in range(2):
         try:
             backend = get_backend(trw_dir)
@@ -323,13 +335,17 @@ def recall_learnings(
                 raise
             if attempt == 0 and _is_corruption_error(exc):
                 logger.warning(
-                    "memory_recall_retry_after_corruption",
+                    "memory_recall_degraded_recovery_scheduled",
                     query=query,
                     attempt=attempt + 1,
                     exc_info=True,
                 )
-                _recover_and_reset_backend(trw_dir)
-                continue
+                _schedule_deferred_recovery(
+                    trw_dir,
+                    reason="recall_corruption",
+                    context={"query": query[:80]},
+                )
+                return []
             raise
 
     public_entries = [entry for entry in entries if entry.metadata.get("system_canary") != "true"]
