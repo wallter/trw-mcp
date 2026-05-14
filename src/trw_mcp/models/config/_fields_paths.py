@@ -72,6 +72,15 @@ class _PathsFields:
             "Large workspaces can spend 30s+ in boot-time stale-run cleanup before Uvicorn listens."
         ),
     )
+    mcp_proxy_handshake_timeout_seconds: float = Field(
+        default=8.0,
+        ge=0.1,
+        description=(
+            "Total seconds a foreground stdio proxy may spend on remote HTTP MCP initialize/tools/resources/"
+            "prompts discovery before retrying. The default keeps three attempts plus backoff below common 30s "
+            "client reconnect windows."
+        ),
+    )
 
     # -- Pin isolation & stale-run lifecycle (PRD-CORE-141 FR13) --
     # Knobs governing per-connection pin isolation, the boot-time stale-run

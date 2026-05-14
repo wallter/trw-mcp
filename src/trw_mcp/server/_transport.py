@@ -130,7 +130,12 @@ def _run_http_proxy_transport(
         import asyncio
 
         try:
-            asyncio.run(run_stdio_proxy(url))
+            asyncio.run(
+                run_stdio_proxy(
+                    url,
+                    handshake_timeout_seconds=float(config.mcp_proxy_handshake_timeout_seconds),
+                )
+            )
         except (KeyboardInterrupt, EOFError):
             pass  # Clean exit when Claude Code disconnects
         except ConnectionError:

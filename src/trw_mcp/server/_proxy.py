@@ -6,13 +6,23 @@ process and bridging stdio transport to it via an async proxy.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+
+
+class ProxyCapabilities(NamedTuple):
+    """Remote capability payloads discovered before stdio proxy serving starts."""
+
+    tools_result: Any
+    resources_result: Any
+    prompts_result: Any
 
 
 def _is_port_open(host: str, port: int) -> bool:
@@ -199,7 +209,42 @@ def ensure_http_server(
             _lock_un(lock_fd.fileno())
 
 
-async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
+async def discover_proxy_capabilities(
+    session: Any,
+    *,
+    timeout_seconds: float,
+) -> ProxyCapabilities:
+    """Discover remote MCP capabilities within one total handshake budget.
+
+    The foreground stdio process must not stay silent longer than common MCP
+    client reconnect windows.  Apply one budget across remote initialize,
+    tools, resources, and prompts discovery so a slow shared HTTP server causes
+    a bounded retry/fallback instead of a client-visible 30s reconnect timeout.
+    """
+
+    async def _discover() -> ProxyCapabilities:
+        await session.initialize()
+        tools_result = await session.list_tools()
+        resources_result = await session.list_resources()
+        prompts_result = await session.list_prompts()
+        return ProxyCapabilities(
+            tools_result=tools_result,
+            resources_result=resources_result,
+            prompts_result=prompts_result,
+        )
+
+    try:
+        return await asyncio.wait_for(_discover(), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise TimeoutError(f"proxy capability discovery timed out after {timeout_seconds:.3f}s") from exc
+
+
+async def run_stdio_proxy(
+    url: str,
+    max_retries: int = 3,
+    *,
+    handshake_timeout_seconds: float = 8.0,
+) -> None:
     """Bridge stdio transport to a shared HTTP MCP server.
 
     Creates a lightweight proxy that forwards all MCP operations (tools,
@@ -209,7 +254,7 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     Retries initial connection up to ``max_retries`` times with exponential
     backoff to handle race conditions where the server is still starting.
     """
-    import asyncio as _asyncio
+    import time
 
     from mcp import types
     from mcp.client.session import ClientSession
@@ -225,18 +270,29 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
     for attempt in range(max_retries):
         try:
             async with streamable_http_client(url) as (read, write, _), ClientSession(read, write) as session:
-                await session.initialize()
-
-                # Discover remote capabilities once at startup
-                tools_result = await session.list_tools()
-                resources_result = await session.list_resources()
-                prompts_result = await session.list_prompts()
+                # Discover remote capabilities once at startup. This is on the
+                # client reconnect critical path, so bound the total remote
+                # discovery time and let the existing retry/fallback path handle
+                # transient shared-server pressure.
+                discovery_start = time.monotonic()
+                capabilities = await discover_proxy_capabilities(
+                    session,
+                    timeout_seconds=handshake_timeout_seconds,
+                )
+                discovery_elapsed_ms = round((time.monotonic() - discovery_start) * 1000, 2)
+                tools_result = capabilities.tools_result
+                resources_result = capabilities.resources_result
+                prompts_result = capabilities.prompts_result
 
                 log.info(
                     "stdio_proxy_connected",
                     url=url,
                     tools=len(tools_result.tools),
+                    resources=len(resources_result.resources),
+                    prompts=len(prompts_result.prompts),
                     attempt=attempt + 1,
+                    discovery_elapsed_ms=discovery_elapsed_ms,
+                    handshake_timeout_seconds=handshake_timeout_seconds,
                 )
 
                 proxy = Server("trw-proxy")
@@ -307,9 +363,10 @@ async def run_stdio_proxy(url: str, max_retries: int = 3) -> None:
                     url=url,
                     attempt=attempt + 1,
                     delay_secs=delay,
+                    handshake_timeout_seconds=handshake_timeout_seconds,
                     error=str(exc),
                 )
-                await _asyncio.sleep(delay)
+                await asyncio.sleep(delay)
 
     # All retries exhausted
     log.error(
