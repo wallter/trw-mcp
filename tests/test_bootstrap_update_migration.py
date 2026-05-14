@@ -97,6 +97,7 @@ class TestUpdatePrefixScopedCleanup:
 
         assert not stale_agent.exists()
 
+
 class TestPrefixMigration:
     """Tests for _migrate_prefix_predecessors via update_project."""
 

@@ -77,6 +77,7 @@ class TestSkipUpdatesAccessCount:
         assert int(str(updated_data.get("access_count", 0))) == 3
         assert int(str(updated_data.get("recurrence", 1))) == 1
 
+
 class TestTrwLearnReturnDictKeys:
     """CORE-042-FR04: Verify return dict structure for skip, merge, and recorded paths."""
 

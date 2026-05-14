@@ -123,6 +123,7 @@ class TestUpdateRemovesStaleArtifacts:
         # Manifest is now written for future updates
         assert manifest_path.exists()
 
+
 class TestContextCleanup:
     """Test _cleanup_context_transients via update_project — PRD-FIX-031."""
 

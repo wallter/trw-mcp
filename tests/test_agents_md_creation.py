@@ -85,9 +85,7 @@ class TestAgentsMdCreation:
         user_lines = [f"# Line {i}" for i in range(200)]
         target.write_text("\n".join(user_lines) + "\n", encoding="utf-8")
 
-        trw_section = (
-            f"\n{TRW_MARKER_START}\n## TRW Section\n- learning 1\n- learning 2\n{TRW_MARKER_END}\n"
-        )
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW Section\n- learning 1\n- learning 2\n{TRW_MARKER_END}\n"
         merge_trw_section(target, trw_section, max_lines=100)
 
         content = target.read_text(encoding="utf-8")
@@ -113,9 +111,7 @@ class TestAgentsMdCreation:
         user_lines = [f"# User line {i}" for i in range(150)]
         target.write_text("\n".join(user_lines) + "\n", encoding="utf-8")
 
-        trw_section = (
-            f"\n{TRW_MARKER_START}\n## TRW Generated\n- item a\n- item b\n- item c\n{TRW_MARKER_END}\n"
-        )
+        trw_section = f"\n{TRW_MARKER_START}\n## TRW Generated\n- item a\n- item b\n- item c\n{TRW_MARKER_END}\n"
         merge_trw_section(target, trw_section, max_lines=50)
 
         content = target.read_text(encoding="utf-8")

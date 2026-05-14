@@ -231,6 +231,7 @@ class TestRollbackArchive:
             # Should not raise — exception caught at lines 457-458
             _rollback_archive([], "L-cons001", entries_dir, writer)
 
+
 class TestArchiveOriginalsEdgeCases:
     """Edge cases for _archive_originals."""
 

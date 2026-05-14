@@ -55,13 +55,9 @@ _PY_FENCE_PATTERN = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-ACK_FRONTMATTER_PATTERN = re.compile(
-    r"^hand_curation_acknowledged:\s*true\b", re.MULTILINE | re.IGNORECASE
-)
+ACK_FRONTMATTER_PATTERN = re.compile(r"^hand_curation_acknowledged:\s*true\b", re.MULTILINE | re.IGNORECASE)
 
-EVIDENCE_SECTION_PATTERN = re.compile(
-    r"^##\s+Substrate-First evidence\b", re.MULTILINE
-)
+EVIDENCE_SECTION_PATTERN = re.compile(r"^##\s+Substrate-First evidence\b", re.MULTILINE)
 
 SIGN_OFF_PATTERN = re.compile(
     r"<!--\s*substrate_first_sign_off:\s*[^\s>][^>]*-->",
@@ -193,7 +189,7 @@ def _scan_balanced_body(text: str, start: int, open_ch: str) -> tuple[str, int] 
         i += 1
     if depth != 0:
         return None
-    return (text[body_start:i - 1], i)
+    return (text[body_start : i - 1], i)
 
 
 def _scan_python_block(text: str, *, threshold: int) -> list[FlaggedCollection]:
@@ -212,10 +208,7 @@ def _scan_python_block(text: str, *, threshold: int) -> list[FlaggedCollection]:
         # is a literal collection (``{...}``), recurse into it: the
         # entries we care about are inside the inner brace.
         inner = body.strip()
-        if (
-            kind in {"frozenset", "tuple", "set", "list", "dict"}
-            and inner.startswith(("{", "[", "("))
-        ):
+        if kind in {"frozenset", "tuple", "set", "list", "dict"} and inner.startswith(("{", "[", "(")):
             inner_open = inner[0]
             inner_scan = _scan_balanced_body(inner, 0, inner_open)
             if inner_scan is not None:

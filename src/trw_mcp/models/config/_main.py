@@ -378,9 +378,7 @@ class TRWConfig(_TRWConfigFields):
                     "multi_platform_profile_resolution",
                     primary=primary,
                     all_platforms=self.target_platforms,
-                    detail=(
-                        "Using first platform as primary profile; instruction sync writes to all targets"
-                    ),
+                    detail=("Using first platform as primary profile; instruction sync writes to all targets"),
                 )
         return resolve_client_profile(primary)
 

@@ -130,6 +130,7 @@ class TestIDEDetection:
         result = detect_installed_clis()
         assert result == []
 
+
 class TestEnforcementVariant:
     """FR09: A/B test infrastructure for ceremony enforcement variants."""
 

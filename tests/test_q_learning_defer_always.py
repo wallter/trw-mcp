@@ -37,8 +37,7 @@ def test_response_carries_q_learning_deferred_field(
     result = build_check_invoke()
 
     assert "q_learning_deferred" in result, (
-        "FR01: response MUST always include q_learning_deferred. Pre-fix this "
-        "field was only set under writer pressure."
+        "FR01: response MUST always include q_learning_deferred. Pre-fix this field was only set under writer pressure."
     )
     deferred = result["q_learning_deferred"]
     assert isinstance(deferred, dict)
@@ -133,8 +132,7 @@ def test_concurrent_calls_coalesce_via_queue(
     deferred_second = second["q_learning_deferred"]
     assert isinstance(deferred_second, dict)
     assert deferred_second["thread_state"] == "queued", (
-        "FR01: while bg worker is alive, peer call must enqueue, not spawn "
-        "a second thread."
+        "FR01: while bg worker is alive, peer call must enqueue, not spawn a second thread."
     )
 
     # Unblock the worker; it should drain the queued event and exit.

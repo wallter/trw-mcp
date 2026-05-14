@@ -101,10 +101,7 @@ class TestDoReflect:
     ) -> None:
         """PRD-FIX-021: _do_reflect must not create 'Success: X (Nx)' learnings."""
         events_path = run_dir / "meta" / "events.jsonl"
-        success_events = [
-            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "shard_complete", "data": {}}
-            for i in range(8)
-        ]
+        success_events = [{"ts": f"2026-02-11T12:0{i}:00Z", "event": "shard_complete", "data": {}} for i in range(8)]
         events_path.write_text(
             "\n".join(json.dumps(event) for event in success_events) + "\n",
             encoding="utf-8",
@@ -131,10 +128,7 @@ class TestDoReflect:
     ) -> None:
         """PRD-FIX-021: _do_reflect must not create 'Repeated operation: X' learnings."""
         events_path = run_dir / "meta" / "events.jsonl"
-        repeated_events = [
-            {"ts": f"2026-02-11T12:0{i}:00Z", "event": "checkpoint", "data": {}}
-            for i in range(6)
-        ]
+        repeated_events = [{"ts": f"2026-02-11T12:0{i}:00Z", "event": "checkpoint", "data": {}} for i in range(6)]
         events_path.write_text(
             "\n".join(json.dumps(event) for event in repeated_events) + "\n",
             encoding="utf-8",

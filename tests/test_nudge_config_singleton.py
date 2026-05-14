@@ -45,8 +45,7 @@ def test_nudge_path_invokes_get_config_at_runtime() -> None:
     # get_config() should have been called at least once during the
     # session_start (by the nudge path; possibly other paths too).
     assert mock_gc.call_count >= 1, (
-        f"FR03: nudge path must call get_config() at least once "
-        f"(call_count={mock_gc.call_count})"
+        f"FR03: nudge path must call get_config() at least once (call_count={mock_gc.call_count})"
     )
 
 

@@ -26,18 +26,14 @@ def _seed_jsonl_over_threshold(path: Path, target_mb: float = 11) -> int:
     return path.stat().st_size
 
 
-def test_recall_tracking_rotates_when_oversized(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recall_tracking_rotates_when_oversized(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """record_recall() rotates recall_tracking.jsonl when over 10 MB."""
     trw_dir = tmp_path / ".trw"
     log_path = trw_dir / "logs" / "recall_tracking.jsonl"
     pre_size = _seed_jsonl_over_threshold(log_path)
     assert pre_size > 10 * 1024 * 1024
 
-    monkeypatch.setattr(
-        "trw_mcp.state.recall_tracking.resolve_trw_dir", lambda: trw_dir
-    )
+    monkeypatch.setattr("trw_mcp.state.recall_tracking.resolve_trw_dir", lambda: trw_dir)
 
     from trw_mcp.state.recall_tracking import record_recall
 
@@ -49,18 +45,14 @@ def test_recall_tracking_rotates_when_oversized(
     assert log_path.stat().st_size < pre_size, "fresh recall_tracking.jsonl is small"
 
 
-def test_recall_tracking_no_rotation_when_under_threshold(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recall_tracking_no_rotation_when_under_threshold(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """record_recall() does NOT rotate when under 10 MB."""
     trw_dir = tmp_path / ".trw"
     log_path = trw_dir / "logs" / "recall_tracking.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text('{"existing": "row"}\n', encoding="utf-8")
 
-    monkeypatch.setattr(
-        "trw_mcp.state.recall_tracking.resolve_trw_dir", lambda: trw_dir
-    )
+    monkeypatch.setattr("trw_mcp.state.recall_tracking.resolve_trw_dir", lambda: trw_dir)
 
     from trw_mcp.state.recall_tracking import record_recall
 

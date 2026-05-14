@@ -213,7 +213,6 @@ def perform_session_recalls(
         logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
         return [], [], {}
 
-
     is_focused = query.strip() not in ("", "*")
     extra: SessionRecallExtrasDict = {}
     learnings: list[dict[str, object]] = []

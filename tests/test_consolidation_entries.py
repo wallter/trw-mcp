@@ -151,6 +151,7 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["status"] == "active"
 
+
 class TestCreateConsolidatedEntryEdgeCases:
     """Edge cases for _create_consolidated_entry field aggregation."""
 

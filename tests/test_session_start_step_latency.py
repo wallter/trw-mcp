@@ -35,8 +35,7 @@ def test_session_start_emits_step_durations_ms(
     result: dict[str, Any] = fn(ctx=None, query="*")
 
     assert "step_durations_ms" in result, (
-        f"trw_session_start result must include step_durations_ms; "
-        f"got keys: {sorted(result.keys())}"
+        f"trw_session_start result must include step_durations_ms; got keys: {sorted(result.keys())}"
     )
     durations = result["step_durations_ms"]
     assert isinstance(durations, dict)
@@ -62,9 +61,7 @@ def test_session_start_emits_step_durations_ms(
     # but in a clean run with no errors, all named steps run.
     if not result.get("errors"):
         missing = expected_keys - present_keys
-        assert not missing, (
-            f"Clean session_start should record all named steps; missing: {missing}"
-        )
+        assert not missing, f"Clean session_start should record all named steps; missing: {missing}"
 
     # Every duration is a non-negative float.
     for key, value in durations.items():
@@ -92,14 +89,21 @@ def test_session_start_total_is_at_least_sum_of_named_steps(
     total = float(durations["total"])
     named_sum = sum(
         float(durations[k])
-        for k in ("recall", "run_resolve", "surface_stamp", "log_event",
-                  "telemetry", "counter", "sanitize_maintain", "phase_recall")
+        for k in (
+            "recall",
+            "run_resolve",
+            "surface_stamp",
+            "log_event",
+            "telemetry",
+            "counter",
+            "sanitize_maintain",
+            "phase_recall",
+        )
         if k in durations
     )
     # total must include the named steps. Allow 1ms slack for floating point.
     assert total + 1.0 >= named_sum, (
-        f"total ({total:.2f} ms) < sum of named steps ({named_sum:.2f} ms); "
-        f"durations: {durations}"
+        f"total ({total:.2f} ms) < sum of named steps ({named_sum:.2f} ms); durations: {durations}"
     )
 
 
@@ -119,8 +123,7 @@ def test_session_start_step_durations_logged_with_event(
     assert ok_events, "session_start_ok event must fire on success"
     payload = ok_events[-1]
     assert "step_durations_ms" in payload, (
-        f"session_start_ok event must include step_durations_ms; "
-        f"got keys: {sorted(payload.keys())}"
+        f"session_start_ok event must include step_durations_ms; got keys: {sorted(payload.keys())}"
     )
     assert isinstance(payload["step_durations_ms"], dict)
     assert "total" in payload["step_durations_ms"]

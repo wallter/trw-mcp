@@ -64,7 +64,6 @@ def _check_mcp_json_portability(cwd: Path | None = None) -> None:
 # ── Argument parser ──────────────────────────────────────────────────────
 
 
-
 # _build_arg_parser extracted to _cli_argparse (PRD-DIST-243 batch 20).
 # Re-exported for back-compat with test_devex_fix065 + test_cli_auth_subcommand.
 from trw_mcp.server._cli_argparse import _build_arg_parser as _build_arg_parser

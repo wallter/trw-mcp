@@ -248,6 +248,7 @@ class TestProgressiveDisclosure:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
 
+
 class TestBehavioralProtocol:
     """Tests for behavioral protocol rendering and integration."""
 

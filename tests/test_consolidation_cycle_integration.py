@@ -144,6 +144,7 @@ class TestConsolidationIntegration:
             current = reader.read_yaml(entries_dir / f"entry{i:03d}.yaml")
             assert current == original_data[i]
 
+
 class TestIdempotency:
     """NFR03: Re-running consolidation on already-consolidated entries produces 0 new consolidations."""
 
@@ -232,6 +233,7 @@ class TestIdempotency:
         if mock_batch.call_count > 0:
             texts = mock_batch.call_args[0][0]
             assert len(texts) == 2
+
 
 class TestConsolidateCycleEdgeCases:
     """Edge cases for consolidate_cycle orchestration."""

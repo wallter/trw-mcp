@@ -66,9 +66,7 @@ def test_recall_recent_bypass_returns_full_entries(tmp_path: Path) -> None:
 def test_recall_for_nudge_pool_uses_compact_false(tmp_path: Path) -> None:
     """recall_for_nudge_pool uses compact=False because rendering needs summaries."""
     with patch.object(recall_factories, "_default_recall", return_value=_captured_call):
-        recall_factories.recall_for_nudge_pool(
-            tmp_path, query="*", tags=["audit"], min_impact=0.5, max_results=10
-        )
+        recall_factories.recall_for_nudge_pool(tmp_path, query="*", tags=["audit"], min_impact=0.5, max_results=10)
     kwargs = _captured_call.kwargs  # type: ignore[attr-defined]
     assert kwargs["query"] == "*"
     assert kwargs["tags"] == ["audit"]
@@ -80,9 +78,7 @@ def test_recall_for_nudge_pool_uses_compact_false(tmp_path: Path) -> None:
 def test_recall_for_review_tags_pins_status_active(tmp_path: Path) -> None:
     """recall_for_review_tags pins status='active'."""
     with patch.object(recall_factories, "_default_recall", return_value=_captured_call):
-        recall_factories.recall_for_review_tags(
-            tmp_path, tags=["pattern"], min_impact=0.7, max_results=20
-        )
+        recall_factories.recall_for_review_tags(tmp_path, tags=["pattern"], min_impact=0.7, max_results=20)
     kwargs = _captured_call.kwargs  # type: ignore[attr-defined]
     assert kwargs["tags"] == ["pattern"]
     assert kwargs["min_impact"] == 0.7

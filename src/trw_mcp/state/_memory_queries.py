@@ -222,9 +222,11 @@ def _search_entries(
     # model-load latency.
     if allow_cold_embedding_init:
         from trw_mcp.state._memory_connection import get_embedder
+
         embedder = get_embedder()
     else:
         from trw_mcp.state._memory_connection import get_initialized_embedder
+
         embedder = get_initialized_embedder()
     if embedder is None:
         return keyword_results

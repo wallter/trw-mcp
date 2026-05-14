@@ -233,6 +233,7 @@ class TestCollectContextData:
         assert arch_data == {}
         assert conv_data == {}
 
+
 class TestCollectPromotableLearningsExceptionContinue:
     """Cover claude_md.py lines 673-674: exception handling in collect_promotable_learnings."""
 

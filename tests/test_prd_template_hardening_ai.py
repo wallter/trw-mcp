@@ -7,7 +7,9 @@ from trw_mcp.state.validation import validate_prd_quality_v2
 
 
 def _make_ai_incomplete_prd() -> str:
-    return _make_prd(prd_id="PRD-QUAL-055", title="AI/LLM Hardening", category="QUAL") + """
+    return (
+        _make_prd(prd_id="PRD-QUAL-055", title="AI/LLM Hardening", category="QUAL")
+        + """
 ### Primary Control Points
 | Surface | Current Behavior | Required Change | Code Path | Proof |
 |---------|------------------|-----------------|-----------|-------|
@@ -47,6 +49,7 @@ def _make_ai_incomplete_prd() -> str:
 ### Migration / Backward Compatibility
 - repeated runs are idempotent
 """
+    )
 
 
 def _make_ai_operational_sections() -> str:
@@ -109,7 +112,9 @@ def test_ai_prd_required_operational_sections() -> None:
 
 
 def test_non_ai_prd_not_penalized_for_missing_ai_sections() -> None:
-    non_ai_prd = _make_prd(prd_id="PRD-INFRA-999", title="Infrastructure PRD", category="INFRA") + """
+    non_ai_prd = (
+        _make_prd(prd_id="PRD-INFRA-999", title="Infrastructure PRD", category="INFRA")
+        + """
 ### Primary Control Points
 | Surface | Current Behavior | Required Change | Code Path | Proof |
 |---------|------------------|-----------------|-----------|-------|
@@ -149,6 +154,7 @@ def test_non_ai_prd_not_penalized_for_missing_ai_sections() -> None:
 ### Migration / Backward Compatibility
 - repeated runs are idempotent
 """
+    )
 
     result = validate_prd_quality_v2(non_ai_prd)
 
@@ -177,7 +183,9 @@ It explicitly does not add LLM-based scoring to the system.
 
 
 def test_ai_prd_suggestions_reference_operational_gates() -> None:
-    ai_incomplete = _make_ai_incomplete_prd() + """
+    ai_incomplete = (
+        _make_ai_incomplete_prd()
+        + """
 ## 7. AI/LLM Operational Sections
 
 ### Data / Context Provenance
@@ -218,6 +226,7 @@ def test_ai_prd_suggestions_reference_operational_gates() -> None:
 | Maintainability | Model drift | Performance degradation | Retrain, alert | Low |
 | Governance | Unattributable output | No source attribution | Human review | Low |
 """
+    )
 
     result = validate_prd_quality_v2(ai_incomplete)
 

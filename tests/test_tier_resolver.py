@@ -88,7 +88,7 @@ class TestRewriteModelLine:
         "---\n"
         "name: trw-implementer\n"
         "effort: medium\n"
-        "description: \"do work\"\n"
+        'description: "do work"\n'
         "model: frontier\n"
         "maxTurns: 200\n"
         "---\n\n"
@@ -162,9 +162,7 @@ class TestStructlogObservation:
             wrapper_class=structlog.make_filtering_bound_logger(0),
         )
         with capture_logs() as logs:
-            rewrite_model_line(
-                "---\nmodel: frontier\n---\n", client="claude-code"
-            )
+            rewrite_model_line("---\nmodel: frontier\n---\n", client="claude-code")
         events = [e for e in logs if e.get("event") == "agent_tier_resolved"]
         assert len(events) == 1
         assert events[0]["tier"] == "frontier"

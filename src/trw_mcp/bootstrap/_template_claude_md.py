@@ -67,9 +67,7 @@ def _update_claude_md_trw_section(
         except OSError as exc:
             result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
     else:
-        result["errors"].append(
-            "CLAUDE.md has malformed TRW markers — found start but not end"
-        )
+        result["errors"].append("CLAUDE.md has malformed TRW markers — found start but not end")
 
 
 def _minimal_claude_md_trw_block() -> str:

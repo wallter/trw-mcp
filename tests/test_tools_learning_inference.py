@@ -124,6 +124,7 @@ class TestInferTopicTags:
         assert infer_topic_tags(None, []) == []  # type: ignore[arg-type]
         assert infer_topic_tags(123, []) == []  # type: ignore[arg-type]
 
+
 class TestTagInferenceIntegration:
     """QUAL-018 FR03: Tag inference is wired into learning save paths."""
 

@@ -185,6 +185,7 @@ class TestAuditCeremonyComplianceEnvRestore:
             os.environ.pop("TRW_PROJECT_ROOT", None)
             _reset_config()
 
+
 class TestAuditRecallEffectivenessBlankLines:
     """Cover audit.py line 171: blank line continue in recall log."""
 

@@ -21,13 +21,17 @@ class TestValidationReflectionQualityException:
 
         import json
 
-        (meta / "events.jsonl").write_text(json.dumps({"event": "reflection_complete", "ts": "2026-01-01T00:00:00Z"}) + "\n")
+        (meta / "events.jsonl").write_text(
+            json.dumps({"event": "reflection_complete", "ts": "2026-01-01T00:00:00Z"}) + "\n"
+        )
         (meta / "run.yaml").write_text("status: active\n")
         (run_path / "reports" / "final.md").write_text("# Final Report\n")
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
         with (
-            patch("trw_mcp.state.analytics.compute_reflection_quality", side_effect=RuntimeError("quality check exploded")),
+            patch(
+                "trw_mcp.state.analytics.compute_reflection_quality", side_effect=RuntimeError("quality check exploded")
+            ),
             patch("trw_mcp.state.validation._best_effort_integration_check"),
         ):
             result = check_phase_exit(Phase.REVIEW, run_path, config)

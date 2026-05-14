@@ -75,23 +75,13 @@ def test_passes_when_no_python_collections() -> None:
 
 
 def test_passes_when_python_block_under_threshold() -> None:
-    body = (
-        "```python\n"
-        'SMALL_ENUM = ("a", "b")\n'
-        "```\n"
-    )
+    body = '```python\nSMALL_ENUM = ("a", "b")\n```\n'
     result = substrate_first_check(_prd(body=body))
     assert result.verdict == "pass"
 
 
 def test_passes_when_protocol_internal_name_allowlisted() -> None:
-    body = (
-        "```python\n"
-        '_TRW_INTERNAL_BASENAMES = frozenset({\n'
-        '    "a", "b", "c", "d", "e", "f", "g", "h",\n'
-        "})\n"
-        "```\n"
-    )
+    body = '```python\n_TRW_INTERNAL_BASENAMES = frozenset({\n    "a", "b", "c", "d", "e", "f", "g", "h",\n})\n```\n'
     result = substrate_first_check(_prd(body=body))
     assert result.verdict == "pass"
     assert result.flagged_collections == []
@@ -208,11 +198,7 @@ def test_aggregates_across_multiple_fences() -> None:
 
 
 def test_extra_python_sources_scanned() -> None:
-    extra = (
-        '_NEW_VOCAB = frozenset({\n'
-        '    "a", "b", "c", "d", "e", "f", "g", "h",\n'
-        "})\n"
-    )
+    extra = '_NEW_VOCAB = frozenset({\n    "a", "b", "c", "d", "e", "f", "g", "h",\n})\n'
     prd = _prd(body="empty body, no inline diff")
     result = substrate_first_check(prd, extra_python_sources=[extra])
     assert result.verdict == "fail"
@@ -225,11 +211,7 @@ def test_extra_python_sources_scanned() -> None:
 def test_to_payload_shape_round_trip() -> None:
     result = SubstrateFirstResult(
         verdict="fail",
-        flagged_collections=[
-            FlaggedCollection(
-                name="X", kind="frozenset", entry_count=8, line_hint='"a","b"'
-            )
-        ],
+        flagged_collections=[FlaggedCollection(name="X", kind="frozenset", entry_count=8, line_hint='"a","b"')],
         evidence_section_present=False,
         sign_off_present=False,
         acknowledged=False,
@@ -247,11 +229,7 @@ def test_to_payload_shape_round_trip() -> None:
 
 
 def test_threshold_tunable() -> None:
-    body = (
-        "```python\n"
-        '_THREE = ("a", "b", "c")\n'
-        "```\n"
-    )
+    body = '```python\n_THREE = ("a", "b", "c")\n```\n'
     # Default threshold is 5 — passes
     assert substrate_first_check(_prd(body=body)).verdict == "pass"
     # Threshold=2 — same content now fails (3 > 2 entries)

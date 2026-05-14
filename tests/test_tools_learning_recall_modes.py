@@ -68,6 +68,7 @@ class TestRecallUtilityRanking:
                 assert "q_value" in data or True  # field may not be written until recall
                 break
 
+
 class TestRecallCompactMode:
     """Tests for PRD-FIX-013 — bounded recall with compact mode."""
 

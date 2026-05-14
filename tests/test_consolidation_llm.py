@@ -173,6 +173,7 @@ class TestSummarizeClusterLlm:
         result = _summarize_cluster_llm(cluster, llm)
         assert result is None
 
+
 class TestPathRedaction:
     """NFR06: _redact_paths removes filesystem paths from LLM prompt content."""
 
@@ -256,6 +257,7 @@ class TestPathRedaction:
         result = _redact_paths(text)
         assert result.startswith("before ")
         assert result.endswith(" after")
+
 
 class TestSummarizeClusterLlmEdgeCases:
     """Edge cases for _summarize_cluster_llm length checking and retry logic."""

@@ -141,6 +141,7 @@ class TestMergeTrwSectionTruncationNoMarkers:
         assert "Existing user content" in result
         assert "Appended" in result
 
+
 class TestRenderBehavioralProtocolEmptyDirectives:
     """Cover claude_md.py line 376: empty/non-list directives return empty string."""
 

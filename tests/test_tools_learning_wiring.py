@@ -27,6 +27,7 @@ class TestToolDelegationIntact:
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
         assert len(tool_names) == 5, f"Expected 5 tools, got {len(tool_names)}: {tool_names}"
 
+
 class TestRemoteRecallWiring:
     """Verify fetch_shared_learnings() wiring in trw_recall."""
 
@@ -96,6 +97,7 @@ class TestRemoteRecallWiring:
         assert kwargs["outcome"] == "fail_open"
         assert kwargs["query_excerpt"] == "testing observability query"
         assert kwargs["exc_info"] is True
+
 
 class TestRecallTrackingWiring:
     """Verify record_recall() is called in trw_recall for matched learnings."""

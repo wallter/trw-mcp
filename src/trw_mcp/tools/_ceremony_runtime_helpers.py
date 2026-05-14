@@ -164,7 +164,11 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     repeated_ops = find_repeated_operations(events)
     success_patterns = find_success_patterns(events)
     new_learnings = extract_learnings_mechanical(
-        error_events, repeated_ops, trw_dir, max_errors=5, max_repeated=3,
+        error_events,
+        repeated_ops,
+        trw_dir,
+        max_errors=5,
+        max_repeated=3,
     )
 
     # Success patterns are analytics data only — do NOT create learning entries
@@ -220,7 +224,12 @@ def _do_instruction_sync(trw_dir: Path) -> ClaudeMdSyncResultDict:
         getattr(_ceremony, "execute_claude_md_sync", execute_claude_md_sync),
     )
     raw = sync_fn(
-        scope="root", target_dir=None, config=config, reader=reader, llm=llm, client=client,
+        scope="root",
+        target_dir=None,
+        config=config,
+        reader=reader,
+        llm=llm,
+        client=client,
     )
     raw["status"] = "success"
     return raw

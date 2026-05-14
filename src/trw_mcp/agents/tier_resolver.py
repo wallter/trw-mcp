@@ -41,9 +41,7 @@ logger = structlog.get_logger(__name__)
 #: When adding a new tier, every entry of :data:`_CLIENT_MAPS` MUST be
 #: extended in lockstep so the resolver does not raise ``ValueError`` for
 #: a known tier on any adapted client.
-KNOWN_TIERS: frozenset[str] = frozenset(
-    {"frontier", "balanced", "local-large", "local-small"}
-)
+KNOWN_TIERS: frozenset[str] = frozenset({"frontier", "balanced", "local-large", "local-small"})
 
 #: Recognised client-profile identifiers. Clients in this set but absent
 #: from :data:`_CLIENT_MAPS` are intentional passthrough (the harness
@@ -127,10 +125,7 @@ def resolve_tier(tier: str, *, client: str) -> str:
         # tier vocabulary lands at the destination unchanged.
         return tier
     if tier not in client_map:
-        raise ValueError(
-            f"Unknown tier {tier!r} for client {client!r}; "
-            f"known tiers: {sorted(client_map)}"
-        )
+        raise ValueError(f"Unknown tier {tier!r} for client {client!r}; known tiers: {sorted(client_map)}")
     return client_map[tier]
 
 

@@ -230,8 +230,7 @@ class TestCopilotHooksMerge:
         descriptions = [group["description"] for group in session_groups]
         assert any("User hook" in description for description in descriptions)
         assert not any(
-            "old" in description and _TRW_HOOK_DESCRIPTION_PREFIX in description
-            for description in descriptions
+            "old" in description and _TRW_HOOK_DESCRIPTION_PREFIX in description for description in descriptions
         )
         assert any(description.startswith(_TRW_HOOK_DESCRIPTION_PREFIX) for description in descriptions)
 

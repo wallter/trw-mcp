@@ -239,5 +239,3 @@ def _install_one_agent(
     result["created"].append(str(dest))
     if on_progress:
         on_progress("Created", str(dest))
-
-

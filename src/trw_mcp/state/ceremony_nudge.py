@@ -346,7 +346,6 @@ def compute_nudge_contextual_distress(
         return compute_nudge_minimal(state)
 
 
-
 # Specialized compute_nudge_* variants extracted to _ceremony_nudge_specialized
 # (PRD-DIST-243 batch 24). Re-exported for back-compat with _ceremony_status.py.
 # Selectors extracted to _ceremony_nudge_selectors (PRD-DIST-243 batch 25).
@@ -381,4 +380,3 @@ from trw_mcp.state._ceremony_nudge_specialized import (
 from trw_mcp.state._ceremony_nudge_specialized import (
     compute_nudge_stepback as compute_nudge_stepback,
 )
-

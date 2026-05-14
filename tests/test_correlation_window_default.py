@@ -64,6 +64,5 @@ def test_env_override_wins_at_12(monkeypatch: pytest.MonkeyPatch) -> None:
     config = _fresh_config()
 
     assert config.learning_outcome_correlation_window_minutes == 12, (
-        f"FR04: env override at 12 must win, got "
-        f"{config.learning_outcome_correlation_window_minutes}"
+        f"FR04: env override at 12 must win, got {config.learning_outcome_correlation_window_minutes}"
     )

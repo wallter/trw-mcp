@@ -280,9 +280,7 @@ class MCPSecurityMiddleware(Middleware):
             reason = "rate_spike"
         if not self._enforce:
             allowed = True
-        audit_fields = build_audit_fields(
-            match_type=auth.match_type, allowed=allowed, operator=getpass.getuser()
-        )
+        audit_fields = build_audit_fields(match_type=auth.match_type, allowed=allowed, operator=getpass.getuser())
         _emit_decision(
             decision="allow" if allowed else "deny",
             transport=normalized_transport,

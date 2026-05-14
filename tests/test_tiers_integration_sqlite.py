@@ -69,7 +69,9 @@ class TestSweepWarmToColdSQLite:
 
         with (
             patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries) as mock_sqlite,
-            patch("trw_mcp.state.memory_adapter.find_yaml_path_for_entry", return_value=entries_dir / "sqlite-old.yaml"),
+            patch(
+                "trw_mcp.state.memory_adapter.find_yaml_path_for_entry", return_value=entries_dir / "sqlite-old.yaml"
+            ),
         ):
             mgr = TierManager(
                 trw_dir=trw_dir,
@@ -94,7 +96,9 @@ class TestSweepWarmToColdSQLite:
         writer = FileStateWriter()
         write_entry_yaml(entries_dir, writer, "yaml-old", impact=0.2, last_accessed_at=days_ago(60))
 
-        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("SQLite unavailable")):
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("SQLite unavailable")
+        ):
             mgr = TierManager(
                 trw_dir=trw_dir,
                 reader=FileStateReader(),
@@ -166,7 +170,9 @@ class TestSweepWarmToColdSQLite:
             },
         )
 
-        with patch("trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("SQLite unavailable")):
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings", side_effect=RuntimeError("SQLite unavailable")
+        ):
             mgr = TierManager(
                 trw_dir=trw_dir,
                 reader=FileStateReader(),

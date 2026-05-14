@@ -65,6 +65,7 @@ class TestIsClusterable:
         """Completely empty dict has no exclusion fields, so is clusterable."""
         assert _is_clusterable({}) is True
 
+
 class TestTagOverlapClusters:
     """PRD-FIX-052-FR03: tag-overlap fallback when embeddings are unavailable."""
 

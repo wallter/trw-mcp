@@ -175,6 +175,7 @@ class TestUpdateClaudeMdSmartMerge:
         assert claude_md.exists()
         assert "trw_session_start" in claude_md.read_text(encoding="utf-8")
 
+
 class TestUpdateCreatesNewArtifacts:
     """Test that update_project creates new artifacts from newer versions."""
 
@@ -226,6 +227,7 @@ class TestUpdateWarningsAndVersionCheck:
         result = update_project(initialized_repo)
         assert "warnings" in result
         assert isinstance(result["warnings"], list)
+
 
 class TestRootFrameworkMd:
     """Test that init/update deploy FRAMEWORK.md to the project root."""

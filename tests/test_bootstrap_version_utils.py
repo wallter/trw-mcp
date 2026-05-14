@@ -40,6 +40,7 @@ class TestDefaultConfig:
         assert "runs_root: docs/runs" in config_text
         assert ".trw/runs" not in config_text
 
+
 class TestWriteVersionYaml:
     """Unit tests for _write_version_yaml — VERSION.yaml generation from metadata."""
 

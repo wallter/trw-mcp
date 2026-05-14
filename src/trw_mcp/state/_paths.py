@@ -344,7 +344,6 @@ def _resolve_session_id(
     return get_session_id()
 
 
-
 # Pin management helpers extracted to _paths_pin_mgmt (PRD-DIST-243 batch 26).
 # Re-exported for back-compat with all callers (build/_registration, middleware,
 # tools/report, tools/review, telemetry).

@@ -19,6 +19,7 @@ from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
 
 logger = structlog.get_logger(__name__)
 
+
 def _select_nudge_template(step: str, state: CeremonyState, available_learnings: int) -> str:
     """Return the raw (pre-substitution) template for ``step`` at current urgency.
 
@@ -261,5 +262,3 @@ def _context_reactive_message(
     if tool == ToolName.PRD_VALIDATE:
         return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin the work."
     return None
-
-

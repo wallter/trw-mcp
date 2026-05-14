@@ -158,7 +158,6 @@ def _select_nudge_message(
     return format_nudge(template, profile)
 
 
-
 # Template selection extracted to _nudge_template_select (PRD-DIST-243 batch 23).
 # Re-exported for back-compat with _ceremony_status.py + ceremony_nudge.py.
 from trw_mcp.state._nudge_template_select import (
@@ -243,7 +242,6 @@ def _deliver_message(state: CeremonyState) -> str:
 # ---------------------------------------------------------------------------
 # Status line formatting
 # ---------------------------------------------------------------------------
-
 
 
 # Status-line builders extracted to _nudge_status_lines (PRD-DIST-243 batch 22).

@@ -35,6 +35,7 @@ class TestRecallSearch:
         matches = search_patterns(patterns_dir, ["research"], reader)
         assert len(matches) == 1
 
+
 class TestAnalyticsExtraction:
     """Unit tests for mechanical learning extraction."""
 
@@ -127,6 +128,7 @@ class TestAnalyticsExtraction:
         assert data["domain"] == ["testing", "quality"]
         assert data["phase_affinity"] == ["implement", "validate"]
 
+
 class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""
 
@@ -181,6 +183,7 @@ class TestClaudeMdCollection:
         arch, conv = collect_context_data(tmp_project / ".trw", config, reader)
         assert arch["style"] == "hexagonal"
         assert conv["naming"] == "snake_case"
+
 
 class TestSuccessPatternDetection:
     """PRD-QUAL-001: Unit tests for success pattern detection in analytics."""

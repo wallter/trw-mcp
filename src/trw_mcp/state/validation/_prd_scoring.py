@@ -389,5 +389,3 @@ def score_traceability_v2(
         max_score=max_score,
         details=details,
     )
-
-

@@ -356,9 +356,7 @@ def resolve_scope_with_fallback(
     default_server_name: str,
 ) -> CapabilityScope | None:
     """Resolve the capability scope, cascading explicit → registry → first-party fallback."""
-    scope = scopes.get(tool_name) or default_scope(
-        server_name=server_name, tool_name=tool_name, auth=auth
-    )
+    scope = scopes.get(tool_name) or default_scope(server_name=server_name, tool_name=tool_name, auth=auth)
     if scope is None and auth.allowed:
         scope = first_party_tool_scope(
             server_name=server_name,

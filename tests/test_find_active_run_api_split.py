@@ -86,9 +86,7 @@ def test_find_active_run_does_not_read_run_yaml_on_miss(
     result = find_active_run()
     assert result is None
     yaml_reads = [p for p in read_paths if p.name == "run.yaml"]
-    assert yaml_reads == [], (
-        f"find_active_run() with no pin must NOT scan run.yaml; got {yaml_reads}"
-    )
+    assert yaml_reads == [], f"find_active_run() with no pin must NOT scan run.yaml; got {yaml_reads}"
 
 
 def test_find_run_via_mtime_scan_does_scan(

@@ -65,9 +65,7 @@ def check_for_update() -> dict[str, object]:
             if _key:
                 headers["Authorization"] = f"Bearer {_key}"
             with httpx.Client(timeout=3.0) as client:
-                response = client.get(
-                    url, headers=headers, params={"channel": cfg.update_channel}
-                )
+                response = client.get(url, headers=headers, params={"channel": cfg.update_channel})
             if 200 <= response.status_code < 300:
                 data: dict[str, object] = response.json()
                 latest = str(data.get("version", current))

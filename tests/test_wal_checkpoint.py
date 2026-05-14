@@ -75,13 +75,10 @@ def test_truncate_shrinks_wal_when_no_concurrent_readers(
         if result.get("mode") == "truncate" and result.get("busy") == 0:
             # TRUNCATE shrinks to ~0 (some implementations leave a small header).
             assert post_size < 100_000, (
-                f"TRUNCATE should shrink WAL to near zero; got {post_size} bytes "
-                f"(was {pre_size})"
+                f"TRUNCATE should shrink WAL to near zero; got {post_size} bytes (was {pre_size})"
             )
             # Sanity: shrinkage is observable in the result dict.
-            assert cast("float", result["wal_size_after_mb"]) < cast(
-                "float", result["wal_size_before_mb"]
-            )
+            assert cast("float", result["wal_size_after_mb"]) < cast("float", result["wal_size_before_mb"])
     finally:
         holder.close()
 

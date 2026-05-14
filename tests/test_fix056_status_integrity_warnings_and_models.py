@@ -70,7 +70,9 @@ class TestPartiallyImplementedFRsWarning:
             partial_frs="[FR03]",
         )
         result = validate_prd_quality_v2(content)
-        partial_msgs = [warning for warning in result.status_drift_warnings if "partially implemented" in warning.lower()]
+        partial_msgs = [
+            warning for warning in result.status_drift_warnings if "partially implemented" in warning.lower()
+        ]
         assert len(partial_msgs) >= 1, (
             f"Expected partial FR warning in status_drift_warnings, got: {result.status_drift_warnings}"
         )

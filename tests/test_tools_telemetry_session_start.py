@@ -46,9 +46,7 @@ class TestSessionStartEvent:
         assert result["success"] is True
 
         session_events = [
-            r
-            for r in _read_jsonl(run_dir / "meta" / "events.jsonl")
-            if r.get("event") == "session_start"
+            r for r in _read_jsonl(run_dir / "meta" / "events.jsonl") if r.get("event") == "session_start"
         ]
         assert len(session_events) == 1
 

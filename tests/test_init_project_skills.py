@@ -53,8 +53,7 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         # accept ``None``; otherwise the rewrite must produce ``opus``.
         if model_value is not None:
             assert model_value == "opus", (
-                f"trw-implementer.md model field should resolve to 'opus' "
-                f"under client=claude-code, got {model_value!r}"
+                f"trw-implementer.md model field should resolve to 'opus' under client=claude-code, got {model_value!r}"
             )
 
     def test_traceability_checker_resolves_to_haiku(self, empty_target: Path) -> None:
@@ -82,9 +81,7 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         ]:
             path = empty_target / ".claude" / "agents" / agent
             assert path.exists(), f"{agent} not installed"
-            assert _read_model_line(path) == "sonnet", (
-                f"{agent} should resolve balanced->sonnet"
-            )
+            assert _read_model_line(path) == "sonnet", f"{agent} should resolve balanced->sonnet"
 
     def test_no_unknown_tiers_in_bundle(self, empty_target: Path) -> None:
         """Smoke test: every bundled agent installs without entering FR-11
@@ -94,17 +91,13 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         _install_agents(empty_target, force=False, result=result)
 
         unknown_tier_errors = [e for e in result["errors"] if "agents" in e]
-        assert not unknown_tier_errors, (
-            f"Unexpected unknown-tier failures during install: {unknown_tier_errors}"
-        )
+        assert not unknown_tier_errors, f"Unexpected unknown-tier failures during install: {unknown_tier_errors}"
 
     def test_install_creates_destinations(self, empty_target: Path) -> None:
         """``result['created']`` enumerates every installed agent."""
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
-        agent_paths = [
-            p for p in result["created"] if p.endswith(".md") and "agents" in p
-        ]
+        agent_paths = [p for p in result["created"] if p.endswith(".md") and "agents" in p]
         # Bundle ships 12 agents; installer must create all of them.
         assert len(agent_paths) == 12
 
@@ -146,23 +139,15 @@ class TestInstallAgentsBytePreservation:
 
         from trw_mcp.bootstrap._init_project import _DATA_DIR
 
-        bundle = (_DATA_DIR / "agents" / "trw-traceability-checker.md").read_text(
-            encoding="utf-8"
-        )
-        installed = (
-            empty_target / ".claude" / "agents" / "trw-traceability-checker.md"
-        ).read_text(encoding="utf-8")
+        bundle = (_DATA_DIR / "agents" / "trw-traceability-checker.md").read_text(encoding="utf-8")
+        installed = (empty_target / ".claude" / "agents" / "trw-traceability-checker.md").read_text(encoding="utf-8")
 
         bundle_lines = bundle.splitlines()
         installed_lines = installed.splitlines()
         assert len(bundle_lines) == len(installed_lines), (
             "rewrite changed line count -- byte-preservation contract broken"
         )
-        diffs = [
-            (i, a, b)
-            for i, (a, b) in enumerate(zip(bundle_lines, installed_lines, strict=True))
-            if a != b
-        ]
+        diffs = [(i, a, b) for i, (a, b) in enumerate(zip(bundle_lines, installed_lines, strict=True)) if a != b]
         # Exactly one line must differ (the model: line) and both ends
         # must start with ``model:``.
         assert len(diffs) == 1, f"unexpected diffs: {diffs}"
@@ -173,9 +158,7 @@ class TestInstallAgentsBytePreservation:
 class TestInstallAgentsUnknownTier:
     """FR-11: an agent with an unknown tier is logged + skipped."""
 
-    def test_unknown_tier_logs_and_skips(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unknown_tier_logs_and_skips(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Mock a fake bundle dir containing one good agent + one with a
         bogus tier; install must skip the bogus agent (file appended to
         ``result['errors']``) but install the good one."""
@@ -193,9 +176,7 @@ class TestInstallAgentsUnknownTier:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(
-            "trw_mcp.bootstrap._init_project._DATA_DIR", bogus_bundle
-        )
+        monkeypatch.setattr("trw_mcp.bootstrap._init_project._DATA_DIR", bogus_bundle)
 
         result = _empty_result()
         _install_agents(tmp_path, force=False, result=result)
@@ -219,9 +200,7 @@ class TestInstallAgentsClientPassthrough:
     is honored.
     """
 
-    def test_cursor_ide_client_resolves_to_inherit(
-        self, empty_target: Path
-    ) -> None:
+    def test_cursor_ide_client_resolves_to_inherit(self, empty_target: Path) -> None:
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result, client="cursor-ide")
 

@@ -47,7 +47,9 @@ def test_enforce_tier_distribution_new_impact_less_than_original(scores: list[fl
     demotions = enforce_tier_distribution(entries)
 
     for lid, new_score in demotions:
-        assert new_score < original[lid] + 1e-9, f"Demotion of {lid}: new_score={new_score} not < original={original[lid]}"
+        assert new_score < original[lid] + 1e-9, (
+            f"Demotion of {lid}: new_score={new_score} not < original={original[lid]}"
+        )
 
 
 @given(

@@ -145,6 +145,7 @@ class TestNextPrdSequence:
         result = next_prd_sequence(prds_dir, "CORE")
         assert result == 3
 
+
 class TestDiscoverGoverningPrdsExceptionHandlers:
     """Cover prd_utils.py lines 365-366 and 376-377: exception handlers."""
 

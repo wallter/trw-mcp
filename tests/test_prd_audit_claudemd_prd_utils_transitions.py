@@ -220,6 +220,7 @@ class TestCheckTransitionGuardsDraftToReview:
         assert result.allowed is True
         assert result.reason == "No guard for this transition."
 
+
 class TestCheckTransitionGuardsReviewApprovedPass:
     """Cover prd_utils.py line 329: REVIEW→APPROVED allowed=True branch."""
 

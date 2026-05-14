@@ -53,7 +53,10 @@ class TestAssignImpactTiers:
         self._write_entry(entries_dir, writer, "e-crit", impact=0.95)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[{"id": "e-crit", "impact": 0.95, "status": "active"}]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[{"id": "e-crit", "impact": 0.95, "status": "active"}],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["critical"] == 1
@@ -68,7 +71,10 @@ class TestAssignImpactTiers:
         self._write_entry(entries_dir, writer, "e-high", impact=0.75)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[{"id": "e-high", "impact": 0.75, "status": "active"}]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[{"id": "e-high", "impact": 0.75, "status": "active"}],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["high"] == 1
@@ -83,7 +89,10 @@ class TestAssignImpactTiers:
         self._write_entry(entries_dir, writer, "e-med", impact=0.5)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[{"id": "e-med", "impact": 0.5, "status": "active"}]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[{"id": "e-med", "impact": 0.5, "status": "active"}],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["medium"] == 1
@@ -98,7 +107,10 @@ class TestAssignImpactTiers:
         self._write_entry(entries_dir, writer, "e-low", impact=0.2)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[{"id": "e-low", "impact": 0.2, "status": "active"}]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[{"id": "e-low", "impact": 0.2, "status": "active"}],
+        ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert dist["low"] == 1
@@ -168,7 +180,10 @@ class TestAssignImpactTiers:
         self._write_entry(entries_dir, writer, "e-yaml", impact=0.92)
         mgr = TierManager(trw_dir=trw_dir, reader=reader, writer=writer)
 
-        with patch("trw_mcp.state.tiers.list_active_learnings", return_value=[{"id": "e-yaml", "impact": 0.92, "status": "active"}]):
+        with patch(
+            "trw_mcp.state.tiers.list_active_learnings",
+            return_value=[{"id": "e-yaml", "impact": 0.92, "status": "active"}],
+        ):
             mgr.assign_impact_tiers(trw_dir)
 
         data = reader.read_yaml(entries_dir / "e-yaml.yaml")

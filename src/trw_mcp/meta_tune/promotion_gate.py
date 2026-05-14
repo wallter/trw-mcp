@@ -295,7 +295,12 @@ class PromotionGate:
         human_ok: bool,
         eval_ok: bool,
     ) -> bool:
-        votes = (("eval_gaming", eval_ok, "eval-gaming-detector"), ("outcome", outcome_ok, "outcome-evaluator"), ("goodhart", goodhart_ok, "goodhart-evaluator"), ("human", human_ok, reviewer_id or ""))
+        votes = (
+            ("eval_gaming", eval_ok, "eval-gaming-detector"),
+            ("outcome", outcome_ok, "outcome-evaluator"),
+            ("goodhart", goodhart_ok, "goodhart-evaluator"),
+            ("human", human_ok, reviewer_id or ""),
+        )
         try:
             for vote_type, verdict, voter_id in votes:
                 append_audit_entry(

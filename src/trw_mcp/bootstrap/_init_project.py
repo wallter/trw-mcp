@@ -29,7 +29,6 @@ from ._utils import (
 logger = structlog.get_logger(__name__)
 
 
-
 # IDE installers extracted to _init_project_ide (PRD-DIST-243 batch 21).
 # Re-exported for back-compat with _client_integrations.py imports.
 from trw_mcp.bootstrap._init_project_ide import (
@@ -193,7 +192,6 @@ def _install_hooks(
                     result,
                     on_progress,
                 )
-
 
 
 # Skill/agent installers extracted to _init_project_skills (PRD-DIST-243 batch 21b).

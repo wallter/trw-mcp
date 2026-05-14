@@ -56,11 +56,7 @@ def _read_injected_ids(trw_dir: Path) -> set[str]:
     """
     state_file = trw_dir / "context" / "injected_learning_ids.txt"
     try:
-        return {
-            line.strip()
-            for line in state_file.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+        return {line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()}
     except OSError:
         return set()
 
@@ -100,6 +96,4 @@ def _create_llm_client() -> LLMClient:
     if config.llm_usage_log_enabled:
         trw_dir = resolve_trw_dir()
         llm_usage_path = trw_dir / config.logs_dir / config.llm_usage_log_file
-    return LLMClient(
-        model=config.llm_default_model, usage_log_path=llm_usage_path
-    )
+    return LLMClient(model=config.llm_default_model, usage_log_path=llm_usage_path)

@@ -244,9 +244,7 @@ class TestIntegration:
         assert get_turn_count("anything") == 0
 
     @pytest.mark.asyncio
-    async def test_compression_applied_when_text_changes(
-        self, middleware: ContextBudgetMiddleware
-    ) -> None:
+    async def test_compression_applied_when_text_changes(self, middleware: ContextBudgetMiddleware) -> None:
         """When compression actually changes the text, the block is replaced."""
         payload = json.dumps(
             {

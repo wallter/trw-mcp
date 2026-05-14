@@ -143,6 +143,7 @@ class TestCheckDuplicateViaBackend:
         assert result is not None
         assert result.action == "store"
 
+
 class TestCheckDuplicateFastPathIntegration:
     """Integration tests verifying check_duplicate uses the backend fast path."""
 

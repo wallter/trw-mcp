@@ -66,6 +66,7 @@ class TestClaudeMdSyncQValuePromotion:
         # Should use q_value (0.2) — not promoted
         assert sync_result["learnings_promoted"] == 0
 
+
 class TestTrwLearnDistributionWarning:
     """Tests for PRD-CORE-034 impact score distribution advisory in trw_learn."""
 
@@ -154,6 +155,7 @@ class TestTrwLearnDistributionWarning:
         )
         assert result["status"] == "recorded"
         assert result["distribution_warning"] == ""
+
 
 class TestBayesianCalibrationWiring:
     """Verify compute_calibration_accuracy + bayesian_calibrate wiring in trw_learn."""

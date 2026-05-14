@@ -34,6 +34,7 @@ class TestComputeImpactDistributionReadException:
         original_reader = scoring_mod._reader
         real_read = original_reader.read_yaml
         try:
+
             def patched_read(path: Path) -> dict[str, object]:
                 if "bad" in str(path):
                     raise StateError("parse error", path=str(path))

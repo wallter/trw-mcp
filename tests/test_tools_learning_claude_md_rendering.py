@@ -118,6 +118,7 @@ class TestClaudeMdTemplate:
         assert "Project-Specific Notes" in content
         assert "React 19" in content
 
+
 class TestCeremonyRendering:
     """Tests for ceremony tool guidance rendering (auto-generated in CLAUDE.md)."""
 

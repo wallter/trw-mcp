@@ -244,6 +244,7 @@ class TestRenderAdherence:
         result = render_adherence(high_impact)
         assert result == ""
 
+
 class TestRenderAdherenceMaxEntriesCap:
     """Cover claude_md.py line 322: break when _ADHERENCE_MAX_ENTRIES reached."""
 

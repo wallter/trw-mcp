@@ -73,8 +73,6 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
-
-
 def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 

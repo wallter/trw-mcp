@@ -22,6 +22,7 @@ def mock_embed(text: str) -> list[float]:
         return [0.0] * 384
     return [v / norm for v in vec]
 
+
 def write_entry(entries_dir: Path, writer: FileStateWriter, entry_id: str, summary: str, detail: str) -> Path:
     """Write a minimal learning entry YAML for testing."""
     path = entries_dir / f"{entry_id}.yaml"

@@ -108,6 +108,7 @@ class TestMergeEntries:
         returned_path = merge_entries(path, new_data, reader, writer)
         assert returned_path == path
 
+
 class TestMergeEntriesEdgeCases:
     """Additional edge cases for merge_entries coverage."""
 

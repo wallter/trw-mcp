@@ -209,9 +209,7 @@ def step_auto_recall_orchestrated(
             }
             return
         trw_dir_ar = _ceremony.resolve_trw_dir()  # type: ignore[attr-defined]
-        primary_ids = {
-            str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")
-        }
+        primary_ids = {str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")}
         outcome = step_phase_auto_recall(trw_dir_ar, query, config, run_dir, results.get("run"), primary_ids)
         if outcome is None:
             return

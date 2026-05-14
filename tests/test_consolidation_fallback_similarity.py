@@ -55,6 +55,7 @@ class TestSummarizeClusterFallback:
         assert isinstance(result["summary"], str)
         assert isinstance(result["detail"], str)
 
+
 class TestMeanPairwiseSimilarity:
     """FR06: _mean_pairwise_similarity computes mean cosine similarity."""
 
@@ -119,6 +120,7 @@ class TestMeanPairwiseSimilarity:
             result = _mean_pairwise_similarity(cluster)
         assert result == 0.0
 
+
 class TestSummarizeClusterFallbackEdgeCases:
     """Edge cases for _summarize_cluster_fallback selection logic."""
 
@@ -148,6 +150,7 @@ class TestSummarizeClusterFallbackEdgeCases:
         result = _summarize_cluster_fallback(cluster)
         assert result["summary"] == ""
         assert result["detail"] == ""
+
 
 class TestMeanPairwiseSimilarityEdgeCases:
     """Edge cases for _mean_pairwise_similarity computation."""

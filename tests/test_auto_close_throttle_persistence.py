@@ -58,9 +58,7 @@ def _seed_persisted_throttle(trw: Path, age_minutes: float) -> Path:
     return state_path
 
 
-def test_persisted_recent_timestamp_throttles_first_call(
-    trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_persisted_recent_timestamp_throttles_first_call(trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A persisted timestamp <1 hour old throttles the first call after boot."""
     from trw_mcp.state.analytics._stale_runs import (
         _reset_auto_close_throttle,

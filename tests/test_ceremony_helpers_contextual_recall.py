@@ -59,8 +59,7 @@ class TestPhaseContextualRecall:
         config: TRWConfig,
     ) -> None:
         mock_entries = [
-            {"id": f"L-{index:03d}", "summary": f"Entry {index}", "impact": 0.5 + index * 0.01}
-            for index in range(20)
+            {"id": f"L-{index:03d}", "summary": f"Entry {index}", "impact": 0.5 + index * 0.01} for index in range(20)
         ]
 
         with patch(

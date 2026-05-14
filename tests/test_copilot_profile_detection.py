@@ -53,13 +53,7 @@ class TestCopilotProfile:
     def test_copilot_scoring_weights_sum_to_one(self) -> None:
         profile = _PROFILES["copilot"]
         scoring = profile.scoring_weights
-        total = (
-            scoring.outcome
-            + scoring.plan_quality
-            + scoring.implementation
-            + scoring.ceremony
-            + scoring.knowledge
-        )
+        total = scoring.outcome + scoring.plan_quality + scoring.implementation + scoring.ceremony + scoring.knowledge
         assert abs(total - 1.0) < 0.01
 
     def test_copilot_instruction_path(self) -> None:

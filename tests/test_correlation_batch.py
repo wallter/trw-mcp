@@ -46,10 +46,7 @@ class _CountingBackend:
 
 def _make_pending_updates(n: int) -> list[Any]:
     """Build N stub _PendingUpdate tuples."""
-    return [
-        (f"L-{i:04d}", None, {"id": f"L-{i:04d}"}, 0.5, 1, [])
-        for i in range(n)
-    ]
+    return [(f"L-{i:04d}", None, {"id": f"L-{i:04d}"}, 0.5, 1, []) for i in range(n)]
 
 
 @pytest.mark.parametrize(
@@ -88,8 +85,7 @@ def test_batch_sync_chunks_N_updates_into_expected_chunks(
         f"{spy_backend.transaction_enter_count}"
     )
     assert spy_backend.update_call_count == n_updates, (
-        f"FR02: every update must be applied. expected {n_updates} update() "
-        f"calls, got {spy_backend.update_call_count}"
+        f"FR02: every update must be applied. expected {n_updates} update() calls, got {spy_backend.update_call_count}"
     )
 
 
@@ -220,7 +216,7 @@ def test_batch_sync_2000_rows_under_300ms(
     elapsed = time.monotonic() - start
 
     assert elapsed < 0.3, (
-        f"FR02 wall-time regression: 2000-row batch sync took {elapsed*1000:.1f}ms "
+        f"FR02 wall-time regression: 2000-row batch sync took {elapsed * 1000:.1f}ms "
         f"(cap 300ms). Pre-fix this was 91s with one implicit COMMIT per row. "
         f"If this fails, the chunked-transaction wrapper has regressed or new "
         f"per-row work has been added inside _sync_chunk."
@@ -295,7 +291,7 @@ def test_batch_sync_2000_rows_real_sqlite_under_1s(
 
     assert elapsed < 1.0, (
         f"FR02 wall-time regression on REAL SQLite: 2000-row batch sync took "
-        f"{elapsed*1000:.1f}ms (cap 1000ms). Pre-fix this was 91s with one "
+        f"{elapsed * 1000:.1f}ms (cap 1000ms). Pre-fix this was 91s with one "
         f"implicit COMMIT per row. A >1s value here suggests the chunked-"
         f"transaction wrapper has been bypassed (each update() is committing "
         f"on its own again)."

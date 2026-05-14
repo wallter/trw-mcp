@@ -537,5 +537,3 @@ def utility_based_prune_candidates(
             seen_ids.add(entry_id)
 
     return candidates
-
-

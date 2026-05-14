@@ -38,6 +38,7 @@ def _warn(event: str, **kwargs: Any) -> None:
 
     memory_adapter.logger.warning(event, **kwargs)
 
+
 logger = structlog.get_logger(__name__)
 
 _NAMESPACE = DEFAULT_NAMESPACE

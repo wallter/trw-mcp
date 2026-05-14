@@ -50,7 +50,9 @@ class TestSweep:
         cfg = TRWConfig(memory_cold_threshold_days=30)
         _reset_config(cfg)
         trw_dir, mgr = self._cold_setup(tmp_path, cfg)
-        write_entry_yaml(trw_dir / "learnings" / "entries", FileStateWriter(), "old-low", impact=0.2, last_accessed_at=days_ago(60))
+        write_entry_yaml(
+            trw_dir / "learnings" / "entries", FileStateWriter(), "old-low", impact=0.2, last_accessed_at=days_ago(60)
+        )
         result = mgr.sweep()
         assert result.demoted >= 1
         assert len(list((trw_dir / "memory" / "cold").rglob("*.yaml"))) >= 1
@@ -225,7 +227,11 @@ class TestSweep:
         mgr.sweep()
 
         cold_base = trw_dir / "memory" / "cold"
-        cold_ids = {str(reader.read_yaml(path).get("id", "")) for path in cold_base.rglob("*.yaml")} if cold_base.exists() else set()
+        cold_ids = (
+            {str(reader.read_yaml(path).get("id", "")) for path in cold_base.rglob("*.yaml")}
+            if cold_base.exists()
+            else set()
+        )
         warm_ids = {
             str(reader.read_yaml(path).get("id", ""))
             for path in entries_dir.glob("*.yaml")

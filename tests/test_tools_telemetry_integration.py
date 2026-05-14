@@ -139,11 +139,7 @@ class TestTelemetryIntegration:
         guarded_tool()
         guarded_tool()
 
-        tool_events = [
-            r
-            for r in _read_jsonl(run_dir / "meta" / "events.jsonl")
-            if r.get("event") == "tool_invocation"
-        ]
+        tool_events = [r for r in _read_jsonl(run_dir / "meta" / "events.jsonl") if r.get("event") == "tool_invocation"]
         assert len(tool_events) == 0
 
     def test_t23_meta_dir_removed_during_session(

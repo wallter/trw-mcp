@@ -42,6 +42,7 @@ class TestCosineSimilarity:
         result = cosine_similarity([], [])
         assert result == 0.0
 
+
 class TestLearningEntryMergedFrom:
     """Tests for the merged_from field added to LearningEntry."""
 
@@ -63,6 +64,7 @@ class TestLearningEntryMergedFrom:
             merged_from=["L-abc", "L-def"],
         )
         assert entry.merged_from == ["L-abc", "L-def"]
+
 
 class TestDistanceToSimilarity:
     """Tests for the _distance_to_similarity helper."""

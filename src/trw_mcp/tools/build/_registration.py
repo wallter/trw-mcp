@@ -55,8 +55,7 @@ logger = structlog.get_logger(__name__)
 _DispatchThreadState = Literal["launched", "queued", "queue_full"]
 
 _BUILD_CHECK_USAGE = (
-    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, "
-    "static_checks_clean=True, scope='full')"
+    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, static_checks_clean=True, scope='full')"
 )
 
 
@@ -156,9 +155,7 @@ def register_build_tools(server: FastMCP) -> None:
         # to keep ids consistent, otherwise mint a fresh 12-char hex.
         bound_ctx = structlog.contextvars.get_contextvars()
         bound_id = bound_ctx.get("tool_call_id")
-        tool_call_id: str = (
-            bound_id if isinstance(bound_id, str) and bound_id else uuid.uuid4().hex[:12]
-        )
+        tool_call_id: str = bound_id if isinstance(bound_id, str) and bound_id else uuid.uuid4().hex[:12]
 
         reported_tests_passed = _require_tests_passed(tests_passed)
         config = get_config()

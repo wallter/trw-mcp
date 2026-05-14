@@ -148,6 +148,7 @@ class TestTrwClaudeMdSync:
         result = tools["trw_recall"].fn(query="")
         assert len(result["learnings"]) == 2
 
+
 class TestTrwClaudeMdSyncLLM:
     """Tests for LLM-augmented trw_claude_md_sync."""
 
@@ -181,6 +182,7 @@ class TestTrwClaudeMdSyncLLM:
         )
         result = tools["trw_claude_md_sync"].fn(scope="root")
         assert "llm_used" in result
+
 
 class TestClaudeMdSyncAtomicWrite:
     """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""

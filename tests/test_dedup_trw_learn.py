@@ -209,6 +209,7 @@ class TestTrwLearnDedup:
         # Should be merge, skip, or recorded (all are valid near-duplicate responses)
         assert result["status"] in ("merged", "skipped", "recorded")
 
+
 class TestTrwLearnGracefulDegradation:
     """CORE-042-FR01: When embed() returns None, trw_learn falls back to 'store' (recorded)."""
 

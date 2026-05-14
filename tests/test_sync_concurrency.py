@@ -90,15 +90,14 @@ async def test_pull_does_not_block_concurrent_coroutine() -> None:
     # would have been delayed the full ~1s.
     fast_elapsed = float(results[1])
     assert fast_elapsed < 0.3, (
-        f"Fast coroutine took {fast_elapsed*1000:.1f}ms (cap 300ms) — event loop was blocked "
+        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 300ms) — event loop was blocked "
         f"by sync pull (regression to sync httpx). With AsyncClient + await, "
         f"the fast coro should complete almost immediately while the slow pull "
         f"awaits."
     )
     # Sanity: the gather still took ~1s overall (slow pull dominates).
     assert elapsed >= 0.9, (
-        f"Total gather time {elapsed*1000:.1f}ms — slow handler did not actually "
-        f"sleep for 1s as configured."
+        f"Total gather time {elapsed * 1000:.1f}ms — slow handler did not actually sleep for 1s as configured."
     )
 
 
@@ -159,7 +158,7 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
 
     fast_elapsed = float(results[1])
     assert fast_elapsed < 0.3, (
-        f"Fast coroutine took {fast_elapsed*1000:.1f}ms (cap 300ms) — event loop was blocked "
+        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 300ms) — event loop was blocked "
         f"by sync push. AsyncClient + await must yield."
     )
     assert elapsed >= 0.9
@@ -192,7 +191,7 @@ async def test_negative_control_sync_httpx_would_block_event_loop() -> None:
     # coroutine couldn't run until after the block released, so its
     # wall-clock elapsed should be >= 0.4s.
     assert fast_elapsed >= 0.4, (
-        f"Negative control: fast coroutine completed in {fast_elapsed*1000:.1f}ms "
+        f"Negative control: fast coroutine completed in {fast_elapsed * 1000:.1f}ms "
         f"despite a blocking time.sleep(0.5). The test mechanic is broken — "
         f"the positive tests above cannot be trusted."
     )

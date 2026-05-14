@@ -182,8 +182,7 @@ class TestPreserveManualMarkers:
 
     def test_paired_markers_preserved(self) -> None:
         existing = (
-            "<!-- trw:auto-generated -->\nOld content\n"
-            "<!-- trw:manual-start -->Custom notes<!-- trw:manual-end -->"
+            "<!-- trw:auto-generated -->\nOld content\n<!-- trw:manual-start -->Custom notes<!-- trw:manual-end -->"
         )
         new = "New auto-generated content"
         result = preserve_manual_markers(existing, new)

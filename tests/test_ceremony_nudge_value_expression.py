@@ -129,7 +129,9 @@ class TestNudgeValueExpression:
         for state in states:
             result = compute_nudge(state, available_learnings=3).lower()
             for word in forbidden_decision:
-                assert word not in result, f"Forbidden decision language '{word}' found for state {state!r}:\n{result!r}"
+                assert word not in result, (
+                    f"Forbidden decision language '{word}' found for state {state!r}:\n{result!r}"
+                )
 
     def test_fr02_build_check_nudge_content(self, tmp_path: Path) -> None:
         """Build check nudge includes fact (not run) AND consequence (ships broken code)."""

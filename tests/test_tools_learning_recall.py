@@ -102,6 +102,7 @@ class TestTrwRecall:
         result = tools["trw_recall"].fn(query="kubernetes helm")
         assert result["total_matches"] == 0
 
+
 class TestTrwRecallAccessTracking:
     """Tests for PRD-CORE-004 Phase 1a — access tracking in trw_recall."""
 

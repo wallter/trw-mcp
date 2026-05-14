@@ -150,7 +150,9 @@ class TestNudgeEngine:
         for state in states:
             result = compute_nudge(state, available_learnings=0).lower()
             for word in forbidden:
-                assert word not in result, f"Forbidden language '{word}' found in nudge for state {state!r}:\n{result!r}"
+                assert word not in result, (
+                    f"Forbidden language '{word}' found in nudge for state {state!r}:\n{result!r}"
+                )
 
     def test_fr01_nudge_failopen_on_error(self, tmp_path: Path) -> None:
         """compute_nudge returns empty string on unexpected errors (fail-open)."""

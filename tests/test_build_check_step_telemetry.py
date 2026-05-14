@@ -63,8 +63,7 @@ def test_step_durations_ms_has_required_keys(
     keys = set(durations.keys())
 
     assert _REQUIRED_KEYS.issubset(keys), (
-        f"FR03: step_durations_ms must contain {_REQUIRED_KEYS}, "
-        f"missing {_REQUIRED_KEYS - keys}, got {keys}"
+        f"FR03: step_durations_ms must contain {_REQUIRED_KEYS}, missing {_REQUIRED_KEYS - keys}, got {keys}"
     )
 
 
@@ -130,9 +129,7 @@ def test_step_durations_total_is_max(
     assert isinstance(durations, dict)
     others = [float(v) for k, v in durations.items() if k != "total"]
     total = float(durations["total"])
-    assert total >= max(others), (
-        f"FR03: total ({total}ms) must be >= max of other steps ({max(others)}ms)"
-    )
+    assert total >= max(others), f"FR03: total ({total}ms) must be >= max of other steps ({max(others)}ms)"
 
 
 def test_step_durations_ms_mirrored_on_log_event(
@@ -156,9 +153,7 @@ def test_step_durations_ms_mirrored_on_log_event(
         result = build_check_invoke()
 
     complete_events = [e for e in logs if e.get("event") == "build_check_complete"]
-    assert complete_events, (
-        "FR03 #2: build_check_complete log event must fire on every success path"
-    )
+    assert complete_events, "FR03 #2: build_check_complete log event must fire on every success path"
     event = complete_events[-1]
 
     assert "step_durations_ms" in event, (

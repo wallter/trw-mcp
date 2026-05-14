@@ -49,9 +49,7 @@ def test_generate_cursor_hooks_smart_merge_preserves_user(tmp_path: Path) -> Non
 
     data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
     commands = [h.get("command", "") for h in data["hooks"]]
-    assert any("user-stop" in cmd for cmd in commands), (
-        "User hook was lost during generate_cursor_hooks smart merge"
-    )
+    assert any("user-stop" in cmd for cmd in commands), "User hook was lost during generate_cursor_hooks smart merge"
 
 
 @pytest.mark.integration

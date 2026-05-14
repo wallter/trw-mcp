@@ -41,6 +41,7 @@ class TestToolDocstrings:
         assert "trw_claude_md_sync" in tools, "trw_claude_md_sync alias must remain for backward compatibility"
         assert "trw_instructions_sync" in tools, "canonical name trw_instructions_sync must be registered"
 
+
 class TestTrwLearn:
     """Tests for trw_learn tool."""
 
@@ -73,6 +74,7 @@ class TestTrwLearn:
 
         index = reader.read_yaml(tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml")
         assert index["total_count"] == 2
+
 
 class TestTrwLearnUpdate:
     """Tests for trw_learn_update tool."""
@@ -232,6 +234,7 @@ class TestTrwLearnUpdate:
         index = reader.read_yaml(tmp_path / _CFG.trw_dir / _CFG.learnings_dir / "index.yaml")
         # Entry should still be in the index
         assert index["total_count"] >= 1
+
 
 class TestTrwLearnAnalytics:
     """Tests for trw_learn analytics counter."""

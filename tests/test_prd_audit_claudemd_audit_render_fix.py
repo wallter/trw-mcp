@@ -250,6 +250,7 @@ class TestFormatMarkdownEdgeCases:
 # state/claude_md.py — missing lines
 # =============================================================================
 
+
 class TestAuditRunFixEnvVarRestored:
     """Cover audit.py line 384: env var restoration in fix path."""
 

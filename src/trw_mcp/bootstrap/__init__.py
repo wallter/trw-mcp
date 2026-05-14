@@ -294,4 +294,3 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
     ("gitignore.txt", ".trw/.gitignore"),
     ("settings.json", ".claude/settings.json"),
 ]
-

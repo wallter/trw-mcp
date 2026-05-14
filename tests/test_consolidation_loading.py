@@ -160,6 +160,7 @@ class TestFindClustersSQLite:
         # Only 1 entry passes filters (< min_cluster_size=2), so no clusters
         assert result == []
 
+
 class TestLoadActiveEntries:
     """Direct unit tests for _load_active_entries."""
 

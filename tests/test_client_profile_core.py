@@ -50,7 +50,15 @@ def test_ceremony_weights_valid_sum_100() -> None:
         build_check=15,
         review=0,
     )
-    assert weights.session_start + weights.deliver + weights.checkpoint + weights.learn + weights.build_check + weights.review == 100
+    assert (
+        weights.session_start
+        + weights.deliver
+        + weights.checkpoint
+        + weights.learn
+        + weights.build_check
+        + weights.review
+        == 100
+    )
 
 
 @pytest.mark.unit

@@ -154,9 +154,7 @@ class RegistryDecision(BaseModel):
 
     allowed: bool
     reason: str = ""
-    match_type: Literal[
-        "canonical", "overlay", "unsigned_admission", "quarantined", "missing"
-    ]
+    match_type: Literal["canonical", "overlay", "unsigned_admission", "quarantined", "missing"]
     entry: MCPServer | None = None
     drift_detected: bool = False
     quarantine_reason: str = ""

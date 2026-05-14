@@ -36,7 +36,9 @@ def _wire_telemetry_dependencies(monkeypatch: pytest.MonkeyPatch, trw_dir: Path)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: TRWConfig())
     monkeypatch.setattr("trw_mcp.state._paths.resolve_installation_id", lambda: "install-test")
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
-    monkeypatch.setattr("trw_mcp.state.analytics.report.compute_ceremony_score", lambda *_args, **_kwargs: {"score": 100})
+    monkeypatch.setattr(
+        "trw_mcp.state.analytics.report.compute_ceremony_score", lambda *_args, **_kwargs: {"score": 100}
+    )
     monkeypatch.setattr("trw_mcp.telemetry.client.TelemetryClient", _DummyTelemetryClient)
     monkeypatch.setattr("trw_mcp.telemetry.pipeline.TelemetryPipeline.get_instance", lambda: _DummyPipeline())
 
@@ -49,9 +51,7 @@ def _session_summary(trw_dir: Path) -> dict[str, object]:
     return summaries[0]
 
 
-def test_session_summary_includes_static_checks_clean(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_session_summary_includes_static_checks_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
     FileStateWriter().write_yaml(

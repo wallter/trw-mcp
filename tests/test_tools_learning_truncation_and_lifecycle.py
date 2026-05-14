@@ -73,6 +73,7 @@ class TestMarkerAwareTruncation:
         assert TRW_MARKER_START in content
         assert TRW_MARKER_END in content
 
+
 class TestAutoObsoleteOnCompendium:
     """PRD-FIX-052-FR04: trw_learn auto-marks consolidated_from entries as obsolete."""
 
@@ -165,6 +166,7 @@ class TestAutoObsoleteOnCompendium:
             consolidated_from=["L-nonexistent-id-999"],
         )
         assert result["status"] == "recorded"
+
 
 class TestPatternTagAutoSuggestion:
     """PRD-FIX-052-FR05: trw_learn auto-adds 'pattern' tag for solution summaries."""

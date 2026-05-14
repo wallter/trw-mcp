@@ -26,7 +26,9 @@ class TestTelemetryExceptionPaths:
             patch("trw_mcp.tools.telemetry.get_config", return_value=cfg),
             patch("trw_mcp.tools.telemetry._get_cached_run_dir", return_value=None),
             patch("trw_mcp.tools.telemetry._write_tool_event"),
-            patch("trw_mcp.tools.telemetry._write_telemetry_record", side_effect=RuntimeError("telemetry write failed")),
+            patch(
+                "trw_mcp.tools.telemetry._write_telemetry_record", side_effect=RuntimeError("telemetry write failed")
+            ),
         ):
             result = wrapped()
 

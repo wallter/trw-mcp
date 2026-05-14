@@ -78,9 +78,7 @@ def test_no_warn_when_scan_called_outside_hot_path(
         find_run_via_mtime_scan()
 
     warn_events = [e for e in logs if e.get("event") == "hot_path_legacy_scan_attempted"]
-    assert warn_events == [], (
-        f"Legitimate scan use should not warn; got {warn_events}"
-    )
+    assert warn_events == [], f"Legitimate scan use should not warn; got {warn_events}"
 
 
 def test_strict_mode_raises_on_hot_path_scan(
@@ -149,8 +147,7 @@ def test_hot_path_set_during_session_start() -> None:
     # if no scan was triggered at all, captured is empty.
     if captured:
         assert all(captured), (
-            "If find_run_via_mtime_scan is called during session_start, HOT_PATH must be True. "
-            f"Got: {captured}"
+            f"If find_run_via_mtime_scan is called during session_start, HOT_PATH must be True. Got: {captured}"
         )
 
     # Sanity: the call returned a result dict.

@@ -57,22 +57,42 @@ def _score_ai_operational_evidence(content: str) -> tuple[float, float, float]:
     if "Evaluation Plan" in content:
         eval_section = content.split("Evaluation Plan")[-1].lower()
         eval_keywords = [
-            "baseline", "criteria", "threshold", "accuracy", "latency",
-            "reliability", "A/B", "test", "user study", "metric",
+            "baseline",
+            "criteria",
+            "threshold",
+            "accuracy",
+            "latency",
+            "reliability",
+            "A/B",
+            "test",
+            "user study",
+            "metric",
         ]
         ai_evaluation_score = min(sum(1 for kw in eval_keywords if kw in eval_section) / len(eval_keywords), 1.0)
     if "Release Gate" in content:
         release_section = content.split("Release Gate")[-1].lower()
         release_keywords = [
-            "canary", "phased", "rollback", "trigger", "threshold",
-            "error rate", "latency", "confidence",
+            "canary",
+            "phased",
+            "rollback",
+            "trigger",
+            "threshold",
+            "error rate",
+            "latency",
+            "confidence",
         ]
         ai_release_score = min(sum(1 for kw in release_keywords if kw in release_section) / len(release_keywords), 1.0)
     if "Monitoring Plan" in content:
         monitoring_section = content.split("Monitoring Plan")[-1].lower()
         monitoring_keywords = [
-            "primary signal", "target threshold", "escalation", "alert",
-            "drift", "latency", "error rate", "trust",
+            "primary signal",
+            "target threshold",
+            "escalation",
+            "alert",
+            "drift",
+            "latency",
+            "error rate",
+            "trust",
         ]
         ai_monitoring_score = min(
             sum(1 for kw in monitoring_keywords if kw in monitoring_section) / len(monitoring_keywords),

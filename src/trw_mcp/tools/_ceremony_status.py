@@ -100,8 +100,6 @@ def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
         return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
 
 
-
-
 def build_ceremony_status_line(state: CeremonyState) -> str:
     """Render a compact, deterministic summary of current ceremony progress."""
     parts = [
@@ -120,7 +118,6 @@ def build_ceremony_status_line(state: CeremonyState) -> str:
     if state.deliver_called:
         parts.append("deliver_called")
     return "; ".join(parts)
-
 
 
 def append_ceremony_status(
