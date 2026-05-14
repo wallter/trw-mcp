@@ -31,6 +31,7 @@ import threading
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
+from typing import Any, TextIO, cast
 
 # ── Configuration (substituted by build_installer.py) ────────────────
 TRW_VERSION = "{{VERSION}}"
@@ -279,14 +280,14 @@ class _Spinner:
 # ── Input helpers ────────────────────────────────────────────────────
 
 
-def _open_tty():  # noqa: ANN202 — returns TextIO | None
+def _open_tty() -> TextIO | None:
     """Open a TTY for reading, or None if unavailable.
 
     Uses /dev/tty on Unix and CON on Windows.
     """
     for tty_path in ("/dev/tty", "CON"):
         try:
-            return open(tty_path)  # noqa: SIM115
+            return open(tty_path, encoding="utf-8")
         except OSError:
             continue
     return None
@@ -426,15 +427,16 @@ def _parse_ide_argument(raw: str | None) -> list[str] | None:
     return normalized
 
 
-def _read_single_key(tty):  # noqa: ANN202 — platform-specific key reader
+def _read_single_key(tty: TextIO) -> str | None:
     """Read a single keypress from *tty* for checkbox navigation."""
     if os.name == "nt":
         try:
             import msvcrt
 
-            ch = msvcrt.getwch()
+            getwch = getattr(msvcrt, "getwch")
+            ch = str(getwch())
             if ch in ("\x00", "\xe0"):
-                arrow = msvcrt.getwch()
+                arrow = str(getwch())
                 if arrow == "H":
                     return "UP"
                 if arrow == "P":
@@ -579,18 +581,33 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
         if "sqlite_vec_enabled" in flat:
             prior["sqlite_vec"] = flat["sqlite_vec_enabled"].lower() == "true"
         target_platforms: list[str] = []
+        platform_urls: list[str] = []
         in_target_platforms = False
+        in_platform_urls = False
         for line in raw_text.splitlines():
             stripped = line.strip()
+            if stripped.startswith("platform_urls:"):
+                in_platform_urls = True
+                in_target_platforms = False
+                continue
             if stripped.startswith("target_platforms:"):
                 in_target_platforms = True
+                in_platform_urls = False
                 continue
+            if in_platform_urls:
+                if stripped.startswith("- "):
+                    platform_urls.append(stripped[2:].strip().strip('"').strip("'"))
+                    continue
+                if stripped and not stripped.startswith("#"):
+                    in_platform_urls = False
             if in_target_platforms:
                 if stripped.startswith("- "):
                     target_platforms.append(stripped[2:].strip().strip('"').strip("'"))
                     continue
                 if stripped and not stripped.startswith("#"):
                     in_target_platforms = False
+        if platform_urls:
+            prior["platform_urls"] = [url for url in platform_urls if url]
         if target_platforms:
             # Non-strict: legacy aliases are applied, unknown entries dropped.
             # A stale / renamed identifier in a user's prior config must never
@@ -980,6 +997,7 @@ def update_config(
     embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
     target_platforms: list[str] | None = None,
+    rewrite_platform_urls: bool = True,
 ) -> bool:
     """Update .trw/config.yaml with installation settings.
 
@@ -991,6 +1009,7 @@ def update_config(
 
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     platform_url = "https://api.trwframework.com"
+    effective_target_platforms = target_platforms or None
 
     updated: set[str] = set()
     out: list[str] = []
@@ -1000,14 +1019,15 @@ def update_config(
     for line in lines:
         normalized_line = line if line.endswith("\n") else line + "\n"
         s = normalized_line.lstrip()
+        stripped = s.strip()
 
         if replacing_target_platforms:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_target_platforms = False
 
         if replacing_platform_urls:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_platform_urls = False
 
@@ -1032,15 +1052,15 @@ def update_config(
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
             continue
-        if s.startswith("target_platforms:") and target_platforms is not None:
+        if s.startswith("target_platforms:") and effective_target_platforms is not None:
             out.append("target_platforms:\n")
-            out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+            out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
             updated.add("target_platforms")
             replacing_target_platforms = True
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
-            if api_key or telemetry_enabled:
+            if rewrite_platform_urls and (api_key or telemetry_enabled):
                 out.append("platform_urls:\n")
                 out.append(f'  - "{platform_url}"\n')
                 updated.add("platform_urls_written")
@@ -1069,16 +1089,16 @@ def update_config(
         out.append(f'platform_api_key: "{api_key}"\n')
     if telemetry_enabled and "platform_telemetry_enabled" not in updated:
         out.append("platform_telemetry_enabled: true\n")
-    if (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
+    if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
     if embeddings_enabled and "embeddings_enabled" not in updated:
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
         out.append("sqlite_vec_enabled: true\n")
-    if target_platforms and "target_platforms" not in updated:
+    if effective_target_platforms and "target_platforms" not in updated:
         out.append("target_platforms:\n")
-        out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+        out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
 
     config_path.write_text("".join(out), encoding="utf-8")
     return True
@@ -1093,8 +1113,8 @@ def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
     Uses only stdlib — no external dependencies.
     """
     import json
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     health_url = f"{url.rstrip('/')}/v1/health"
     try:
@@ -1270,6 +1290,40 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
         )
     except OSError:
         pass  # Best-effort
+
+    _write_version_yaml_metadata(target_dir)
+
+
+def _write_version_yaml_metadata(target_dir: Path) -> None:
+    """Best-effort VERSION.yaml refresh for upgrade-only installer runs.
+
+    `init-project` / `update-project` already write this file through the
+    installed package. The standalone installer must also refresh it when
+    `--upgrade` skips project setup, otherwise `.trw/installed-version.json`
+    and `.trw/frameworks/VERSION.yaml` drift apart.
+    """
+    version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
+    existing: dict[str, str] = {}
+    try:
+        if version_path.is_file():
+            existing = _parse_simple_yaml(version_path.read_text(encoding="utf-8"))
+        version_path.parent.mkdir(parents=True, exist_ok=True)
+        framework_version = existing.get("framework_version", "v25_TRW")
+        aaref_version = existing.get("aaref_version", "v2.0.0")
+        version_path.write_text(
+            "\n".join(
+                [
+                    f"framework_version: {framework_version}",
+                    f"aaref_version: {aaref_version}",
+                    f"trw_mcp_version: {TRW_VERSION}",
+                    f"deployed_at: '{_iso_now()}'",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # Best-effort; the sentinel remains the runtime restart signal.
 
 
 def _iso_now() -> str:
@@ -1799,8 +1853,8 @@ def phase_install_packages(
                 sys.exit(1)
         except subprocess.TimeoutExpired:
             ui.step_fail(
-                f"trw-mcp binary hung during MCP preflight probe "
-                f"(timed out waiting for tools/list response)"
+                "trw-mcp binary hung during MCP preflight probe "
+                "(timed out waiting for tools/list response)"
             )
             sys.exit(1)
         except (OSError, ValueError) as exc:
@@ -2084,7 +2138,11 @@ def phase_configure(
                 ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
     else:
         # Script mode: use flags
-        project_name = sanitize_project_name(opt_name) if opt_name else default_name
+        project_name = (
+            sanitize_project_name(opt_name)
+            if opt_name
+            else str(prior_config.get("project_name") or default_name)
+        )
         # PRD-FIX-067-FR02: Check prior_config before opt_api_key
         if prior_config.get("api_key"):
             api_key = str(prior_config["api_key"])
@@ -2101,6 +2159,8 @@ def phase_configure(
         if opt_telemetry is False:
             telemetry_enabled = False
         ui.step_ok(f"Project: {project_name}")
+
+    preserve_prior_platform_urls = bool(prior_config.get("platform_urls")) and not opt_api_key and opt_telemetry is None
 
     # Write to config (including feature flags for future reinstall detection)
     config_path = target_dir / ".trw" / "config.yaml"
@@ -2119,7 +2179,8 @@ def phase_configure(
             install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None
         ),
         sqlite_vec_enabled=install_vec or None,
-        target_platforms=target_platforms,
+        target_platforms=target_platforms or None,
+        rewrite_platform_urls=not preserve_prior_platform_urls,
     ):
         ui.step_ok("Configuration saved to .trw/config.yaml")
     else:
@@ -2185,7 +2246,7 @@ def _prompt_api_key(ui: UI) -> str:
     return ""
 
 
-def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
+def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any] | None:
     """Perform RFC 8628 device authorization -- stdlib only.
 
     Inline implementation that avoids importing trw_mcp.cli.auth (which may
@@ -2266,7 +2327,7 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
-                return _json.loads(resp.read().decode("utf-8"))
+                return cast("dict[str, Any]", _json.loads(resp.read().decode("utf-8")))
         except urllib.error.HTTPError as exc:
             err_code = ""
             try:

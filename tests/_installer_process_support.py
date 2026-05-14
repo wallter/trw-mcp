@@ -142,9 +142,21 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
     try:
         raw_text = config_path.read_text(encoding="utf-8")
         in_target_platforms = False
+        in_platform_urls = False
         target_platforms: list[str] = []
+        platform_urls: list[str] = []
         for line in raw_text.splitlines():
             line = line.strip()
+            if line.startswith("platform_urls:"):
+                in_platform_urls = True
+                in_target_platforms = False
+                continue
+            if in_platform_urls:
+                if line.startswith("- "):
+                    platform_urls.append(line[2:].strip().strip('"').strip("'"))
+                    continue
+                if line and not line.startswith("#"):
+                    in_platform_urls = False
             if in_target_platforms:
                 if line.startswith("- "):
                     target_platforms.append(line[2:].strip().strip('"').strip("'"))
@@ -168,6 +180,9 @@ def _load_prior_config(target_dir: Path) -> dict[str, object]:
                 prior["sqlite_vec"] = value.lower() == "true"
             elif key == "target_platforms":
                 in_target_platforms = True
+                in_platform_urls = False
+        if platform_urls:
+            prior["platform_urls"] = [url for url in platform_urls if url]
         if target_platforms:
             prior["target_platforms"] = _normalize_ide_targets(target_platforms)
     except (OSError, UnicodeDecodeError):
@@ -229,11 +244,13 @@ def update_config(
     embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
     target_platforms: list[str] | None = None,
+    rewrite_platform_urls: bool = True,
 ) -> bool:
     if not config_path.is_file():
         return False
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     platform_url = "https://api.trwframework.com"
+    effective_target_platforms = target_platforms or None
     updated: set[str] = set()
     out: list[str] = []
     replacing_platform_urls = False
@@ -241,12 +258,13 @@ def update_config(
     for line in lines:
         normalized_line = line if line.endswith("\n") else line + "\n"
         s = normalized_line.lstrip()
+        stripped = s.strip()
         if replacing_target_platforms:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_target_platforms = False
         if replacing_platform_urls:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_platform_urls = False
         if s.startswith("installation_id:"):
@@ -270,15 +288,15 @@ def update_config(
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
             continue
-        if s.startswith("target_platforms:") and target_platforms is not None:
+        if s.startswith("target_platforms:") and effective_target_platforms is not None:
             out.append("target_platforms:\n")
-            out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+            out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
             updated.add("target_platforms")
             replacing_target_platforms = True
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
-            if api_key or telemetry_enabled:
+            if rewrite_platform_urls and (api_key or telemetry_enabled):
                 out.append("platform_urls:\n")
                 out.append(f'  - "{platform_url}"\n')
                 updated.add("platform_urls_written")
@@ -293,16 +311,16 @@ def update_config(
         out.append(f'platform_api_key: "{api_key}"\n')
     if telemetry_enabled and "platform_telemetry_enabled" not in updated:
         out.append("platform_telemetry_enabled: true\n")
-    if (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
+    if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
     if embeddings_enabled and "embeddings_enabled" not in updated:
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
         out.append("sqlite_vec_enabled: true\n")
-    if target_platforms and "target_platforms" not in updated:
+    if effective_target_platforms and "target_platforms" not in updated:
         out.append("target_platforms:\n")
-        out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+        out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
     config_path.write_text("".join(out), encoding="utf-8")
     return True
 

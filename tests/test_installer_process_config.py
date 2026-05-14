@@ -66,6 +66,21 @@ class TestLoadPriorConfig:
         result = _load_prior_config(tmp_path)
         assert result["target_platforms"] == ["cursor-ide", "codex"]
 
+    def test_platform_urls_list_is_loaded(self, tmp_path: Path) -> None:
+        """platform_urls list is parsed so reinstall/upgrade can preserve custom backends."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text(
+            "platform_urls:\n"
+            "# - https://api.trwframework.com  # intentionally disabled\n"
+            "- http://localhost:5002\n",
+            encoding="utf-8",
+        )
+
+        result = _load_prior_config(tmp_path)
+
+        assert result["platform_urls"] == ["http://localhost:5002"]
+
 
 class TestCheckBackendHealth:
     """FR03: Real backend health check via HTTP probe."""
@@ -227,6 +242,43 @@ class TestUpdateConfig:
         assert '"https://api.trwframework.com"' in content
         assert '"http://old.example.com"' not in content
 
+    def test_rewrites_platform_urls_with_comments_without_yaml_corruption(self, tmp_path: Path) -> None:
+        """Replacement consumes comments and list items from the old block, even when list items are unindented."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "platform_urls:\n"
+            "# - https://api.trwframework.com  # temporarily disabled\n"
+            "- http://localhost:5002\n"
+            "platform_telemetry_enabled: true\n",
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "trw_key_123", True)
+
+        content = config.read_text(encoding="utf-8")
+        assert content.count("platform_urls:") == 1
+        assert '"https://api.trwframework.com"' in content
+        assert "localhost:5002" not in content
+        assert "platform_telemetry_enabled: true" in content
+
+    def test_preserves_existing_platform_urls_when_requested(self, tmp_path: Path) -> None:
+        """Upgrade-only reinstalls with prior platform URLs should not clobber custom backend routing."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "platform_urls:\n"
+            "# - https://api.trwframework.com  # intentionally disabled\n"
+            "- http://localhost:5002\n"
+            "platform_telemetry_enabled: true\n",
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "trw_key_123", True, rewrite_platform_urls=False)
+
+        content = config.read_text(encoding="utf-8")
+        assert "# - https://api.trwframework.com" in content
+        assert "- http://localhost:5002" in content
+        assert '"https://api.trwframework.com"' not in content
+
     def test_persists_target_platforms(self, tmp_path: Path) -> None:
         """Selected client targets are written to config.yaml."""
         config = tmp_path / "config.yaml"
@@ -252,6 +304,20 @@ class TestUpdateConfig:
         assert '"claude-code"' not in content
         assert '"opencode"' not in content
         assert '"cursor-cli"' in content
+        assert '"codex"' in content
+
+    def test_empty_target_platforms_preserves_existing_block(self, tmp_path: Path) -> None:
+        """Upgrade-only project setup returns an empty selection; that must not erase prior clients."""
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            'target_platforms:\n  - "claude-code"\n  - "codex"\nplatform_api_key: ""\n',
+            encoding="utf-8",
+        )
+
+        update_config(config, "test", "", False, target_platforms=[])
+
+        content = config.read_text(encoding="utf-8")
+        assert '"claude-code"' in content
         assert '"codex"' in content
 
 

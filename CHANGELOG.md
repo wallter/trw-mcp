@@ -6,6 +6,12 @@ All notable changes to the TRW MCP server package.
 
 _No unreleased changes yet._
 
+## [0.48.7] — 2026-05-14
+
+### Fixed
+
+- **Installer upgrades preserve existing TRW config instead of corrupting YAML or erasing client surfaces** (PRD-FIX-095). `install-trw.py --upgrade --script --skip-auth` now keeps the prior installation id when `--name` is omitted, treats an empty project-setup target list as "preserve target_platforms", preserves custom platform URLs unless a new API key/telemetry override is supplied, safely replaces commented/list YAML blocks without leaving stale list items behind, and refreshes `.trw/frameworks/VERSION.yaml` during upgrade-only installs.
+
 ## [0.48.6] — 2026-05-14
 
 ### Fixed
