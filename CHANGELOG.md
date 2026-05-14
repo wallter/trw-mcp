@@ -4,6 +4,33 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+_No unreleased changes yet._
+
+## [0.48.3] — 2026-05-14
+
+> Versioned from `main` after the `0.48.2` release tag (`4f3b69a2d`). Itemized here so the changelog tracks the current shared MCP server hardening work. See `git log 4f3b69a2d..HEAD -- trw-mcp/` for the authoritative list.
+
+### Added
+
+- **Per-client capability-tier resolver** (`agents/tier_resolver.py`, PRD-INFRA-104 FR-01/FR-02/FR-08). Translates the framework's tier vocabulary (`frontier|balanced|local-large|local-small`) into the concrete model identifiers each client harness accepts (`_CLIENT_MAPS`). Wired into `bootstrap/_init_project_skills.py::_install_agents` on every Claude Code install (FR-03/FR-07/FR-10/FR-11, commit `d9b7065fe`), into `scripts/sync-agents.py` for the dev repo's `.claude/agents/`, and restores `model:frontier` pins on bundled agents (FR-04/FR-05/FR-06, commit `e907cd828`). Documented in `CLAUDE.md` (commit `90a198008`). New client adapters add one `_CLIENT_MAPS` entry. (Unresolvable `model:frontier` pins on 3 bundled agents were first dropped in `20fb923e7`, then restored via the resolver.)
+- **`store_learning(metadata)` cross-package extension** (PRD-DIST-254, commit `95d2e77b1`) — `trw-mcp`-side support for carrying distill metadata on stored learnings (consumed by `trw-distill`'s bulk-store path).
+- **`_search_entries` accepts `allow_cold_embedding_init` kwarg** (commit `a44b1f72c`) — recall path can opt into initializing a cold embedding provider when needed instead of silently degrading.
+
+### Fixed
+
+- **Shared MCP stdio reconnect handshakes are bounded** (PRD-FIX-089, commit `d0b125605`) — the stdio proxy now caps upstream capability discovery with `mcp_proxy_handshake_timeout_seconds` so clients such as Claude Code do not spend their full reconnect budget waiting before local stdio serving is ready.
+- **Backend sync local scans no longer starve foreground MCP requests** (PRD-FIX-090, commit `2bb4ff689`) — dirty-entry discovery, delivered-run outcome scans, synced marker writes, and mark-synced bookkeeping now run off the FastMCP event loop; validated against the Copilot `MCP error -32001: Request timed out` incident.
+- **Backend sync HTTP push/pull uses async clients on the shared MCP server path** (PRD-FIX-087, commit `a7010dbe5`) — avoids synchronous HTTP calls inside the background sync cycle and reduces request-latency coupling between backend sync and foreground tools.
+- **`trw_prd_validate` hung on bare-filename resolution at repo scale** (commit `8b2dbf165`) — resolving a PRD by bare filename did an unbounded scan; bounded/short-circuited.
+- **`_extract_fr_id` silently zeroed `trw_prd_validate`'s traceability `matrix_score` for the `FR-01` form** (commit `ed11bacbc`) — the regex didn't recognize the zero-padded `FR-01` style, so any PRD using it scored 0 on the traceability matrix; fixed to accept both `FR1` and `FR-01` forms.
+- **`db_integrity` false-positive at the deliver path** (PRD-DIST-432, commit `96bc2ba50`) — `trw_deliver` flagged a healthy memory DB as integrity-failed under a benign condition; corrected the check.
+- **`trw-memory` consumer: canary state keyed per `(quarantine, backend)` pair** (commit `4c52caa47`) — corrects canary-verification state isolation for the trw-memory security stack used by trw-mcp.
+
+### Internal
+
+- **`tools/ceremony.py` and `tools/_ceremony_status.py` decomposed below the 350-LOC review gate** (DIST-243 batches 60–74, commits `8db04a5f2` … `794900821`) — `ceremony.py` 745 → 331 LOC; `_ceremony_status.py` 449 → 337 LOC; `_ceremony_runtime_helpers.py` 389 → 202 LOC; `_prd_scoring.py` 475 → 213 LOC — via `_*.py` helper splits. No behavior change.
+- **PRD-FIX-088 transaction-batch + thread-safety fixes** (commits `a68d5a22d`, `db0de53d2`) — closed 6 P1 + 8 P1.5 audit findings; real-SQLite benchmark for the `_batch_sync_to_sqlite` path (which now uses `trw-memory`'s `SQLiteBackend.transaction()` re-entrant bracket instead of per-row commits).
+
 ## [0.48.2] — 2026-05-04
 
 ### Changed
@@ -588,7 +615,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
   - Codex guidance, sync, and bootstrap now follow the declared light-profile contract instead of separate hardcoded assumptions.
   - `.codex/INSTRUCTIONS.md` is wired through `model_instructions_file`, and Codex instruction sync now reports instruction-file results consistently.
   - Codex-facing instructions no longer claim a fixed 200K context window, mandatory framework reading, universal hook coverage, or implicit background delegation.
-  - `_codex.py` now defaults `features.codex_hooks` to `false`, only generates `.codex/hooks.json` when the repo explicitly opts in, and preserves user-edited `.codex/agents/*.toml` plus `.agents/skills/*` helper artifacts unless regeneration is forced.
+  - `_codex.py` now defaults `features.hooks` to `false`, migrates legacy `features.codex_hooks` values on write, only generates `.codex/hooks.json` when the repo explicitly opts in, warns users to review generated hooks through `/hooks`, and preserves user-edited `.codex/agents/*.toml` plus `.agents/skills/*` helper artifacts unless regeneration is forced.
   - Codex docs now explicitly distinguish the profile-layer `skills_enabled = false` flag from installer-managed helper skill directories referenced via `skills.config`.
 
 ### Fixed
