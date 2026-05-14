@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -27,5 +28,5 @@ def _make_config(**overrides: object) -> SimpleNamespace:
 
 
 @contextmanager
-def _acquired_lock() -> object:
+def _acquired_lock() -> Iterator[bool]:
     yield True

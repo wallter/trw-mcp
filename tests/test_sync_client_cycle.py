@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,6 +51,68 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
         pull_seq=7,
         pull_completed=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Local scans/bookkeeping must not block foreground MCP requests."""
+    from trw_mcp.sync import client as sync_client
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.outcomes import PendingOutcome
+    from trw_mcp.sync.pull import PullResult
+    from trw_mcp.sync.push import PushResult
+
+    offloaded: list[object] = []
+
+    async def fake_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    def fake_load_pending_outcomes(*_args: Any, **_kwargs: Any) -> list[PendingOutcome]:
+        return [
+            PendingOutcome(
+                payload={"session_id": "run-1"},
+                line_no=1,
+                run_dir=tmp_path / "runs" / "task" / "run-1",
+                sync_hash="hash-1",
+                run_id="run-1",
+            )
+        ]
+
+    fake_write_markers = MagicMock()
+    monkeypatch.setattr(sync_client.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(sync_client, "load_pending_outcomes", fake_load_pending_outcomes)
+    monkeypatch.setattr(sync_client, "_write_synced_markers", fake_write_markers)
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_outcome_line.return_value = 0
+    client._coordinator.get_last_pull_seq.return_value = 5
+    client._cache = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
+    dirty_entry = SimpleNamespace(id="L-1", sync_seq=7)
+    client._get_dirty_entries = MagicMock(return_value=[dirty_entry])
+    client._mark_synced = MagicMock()
+    client._fanout_push = AsyncMock(
+        return_value=(
+            {"localhost": {"error": None}},
+            PushResult(pushed=1, failed=0, skipped=0),
+            True,
+        )
+    )
+
+    await client._run_one_cycle()
+
+    assert client._get_dirty_entries in offloaded
+    assert fake_load_pending_outcomes in offloaded
+    assert client._mark_synced in offloaded
+    assert fake_write_markers in offloaded
+    client._mark_synced.assert_called_once_with([dirty_entry])
+    fake_write_markers.assert_called_once()
 
 
 @pytest.mark.asyncio

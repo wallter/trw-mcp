@@ -12,6 +12,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -50,7 +51,7 @@ from trw_mcp.sync._client_runtime import (
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
-from trw_mcp.sync.outcomes import load_pending_outcomes, write_synced_marker
+from trw_mcp.sync.outcomes import PendingOutcome, load_pending_outcomes, write_synced_marker
 from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -60,6 +61,42 @@ if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
+
+
+async def _offload_sync_work(label: str, func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run blocking sync-local work off the FastMCP event loop.
+
+    Backend sync is a background task in the shared MCP server process. Local
+    SQLite/file/YAML scans can take seconds in this monorepo; running them on
+    the event loop starves foreground MCP requests. Keep network I/O async, but
+    move synchronous local preparation/bookkeeping to a worker thread.
+    """
+
+    started = perf_counter()
+    try:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    finally:
+        elapsed_ms = (perf_counter() - started) * 1000
+        if elapsed_ms >= 1000:
+            logger.info(
+                "sync_local_work_offloaded",
+                label=label,
+                duration_ms=round(elapsed_ms, 2),
+            )
+
+
+def _write_synced_markers(pending_outcomes: list[PendingOutcome], target_label: str) -> None:
+    """Write synced markers for successfully pushed outcome payloads."""
+
+    for item in pending_outcomes:
+        if item.run_dir is None or not item.sync_hash:
+            continue
+        write_synced_marker(
+            item.run_dir,
+            run_id=item.run_id,
+            sync_hash=item.sync_hash,
+            target_label=target_label,
+        )
 
 
 @dataclass(frozen=True)
@@ -207,13 +244,15 @@ class BackendSyncClient:
             if not acquired:
                 return
 
-            dirty = self._get_dirty_entries()
+            dirty = await _offload_sync_work("get_dirty_entries", self._get_dirty_entries)
             if dirty:
                 logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
             else:
                 logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
 
-            pending_outcomes = load_pending_outcomes(
+            pending_outcomes = await _offload_sync_work(
+                "load_pending_outcomes",
+                load_pending_outcomes,
                 self._trw_dir,
                 since_line=self._coordinator.get_last_outcome_line(),
             )
@@ -235,7 +274,11 @@ class BackendSyncClient:
             push_seq = 0
             if dirty and any_target_succeeded and push_result.failed == 0:
                 push_seq = max((entry.sync_seq for entry in dirty), default=0)
-                self._mark_synced(dirty[: push_result.pushed + push_result.skipped])
+                await _offload_sync_work(
+                    "mark_synced",
+                    self._mark_synced,
+                    dirty[: push_result.pushed + push_result.skipped],
+                )
             if push_failed:
                 # Preserve legacy single-target failure message format when possible.
                 if dirty and len(self._targets) == 1:
@@ -253,15 +296,12 @@ class BackendSyncClient:
                 # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
                 # next pusher pass skips already-synced runs.
                 successful_labels = ",".join(lbl for lbl, rep in report.items() if rep.get("error") is None)
-                for item in pending_outcomes:
-                    if item.run_dir is None or not item.sync_hash:
-                        continue
-                    write_synced_marker(
-                        item.run_dir,
-                        run_id=item.run_id,
-                        sync_hash=item.sync_hash,
-                        target_label=successful_labels or "unknown",
-                    )
+                await _offload_sync_work(
+                    "write_synced_markers",
+                    _write_synced_markers,
+                    pending_outcomes,
+                    successful_labels or "unknown",
+                )
 
             pulled = 0
             merged = 0
