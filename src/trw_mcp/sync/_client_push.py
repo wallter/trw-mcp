@@ -15,6 +15,10 @@ logger = structlog.get_logger(__name__)
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
+_TARGET_STATUS_SUCCESS = "success"
+_TARGET_STATUS_PARTIAL_ERROR = "partial_error"
+_TARGET_STATUS_ERROR = "error"
+
 
 class _TargetLike(Protocol):
     @property
@@ -150,15 +154,18 @@ async def fanout_push(
                 "skipped": 0,
                 "failed": 1,
                 "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                "status": _TARGET_STATUS_ERROR,
             }
             continue
+        status = _TARGET_STATUS_PARTIAL_ERROR if result.failed > 0 else _TARGET_STATUS_SUCCESS
         report[target.label] = {
             "pushed": result.pushed,
             "skipped": result.skipped,
             "failed": result.failed,
             "error": None,
+            "status": status,
         }
-        if result.failed == 0:
+        if status == _TARGET_STATUS_SUCCESS:
             any_success = True
             if aggregate.pushed == 0 and aggregate.skipped == 0:
                 aggregate = result

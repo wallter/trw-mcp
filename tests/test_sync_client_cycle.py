@@ -326,3 +326,96 @@ async def test_run_one_cycle_records_pull_failures_as_failures(tmp_path) -> None
 
     client._coordinator.record_sync_failure.assert_called_once_with("pull failed")
     client._coordinator.record_sync_success.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_one_cycle_reports_partial_target_failures_truthfully(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Cycle summary counts payload failures as partial errors, not success."""
+    from trw_mcp.sync import client as sync_client
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+    from trw_mcp.sync.push import PushResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 3
+    client._coordinator.get_last_outcome_line.return_value = 0
+    client._coordinator.get_consecutive_failures.return_value = 1
+    client._puller = MagicMock()
+    client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=5)])
+    client._mark_synced = MagicMock()
+    client._fanout_push = AsyncMock(
+        return_value=(
+            {
+                "example.com": {
+                    "pushed": 0,
+                    "skipped": 98,
+                    "failed": 2,
+                    "error": None,
+                    "status": "partial_error",
+                }
+            },
+            PushResult(pushed=0, failed=2, skipped=98),
+            False,
+        )
+    )
+    log = MagicMock()
+    monkeypatch.setattr(sync_client, "logger", log)
+
+    await client._run_one_cycle()
+
+    cycle_reports = [
+        call.kwargs
+        for call in log.info.call_args_list
+        if call.args and call.args[0] == "sync_cycle_report"
+    ]
+    assert cycle_reports
+    assert cycle_reports[-1]["successful"] == 0
+    assert cycle_reports[-1]["partial_error"] == 1
+    assert cycle_reports[-1]["failed"] == 0
+    assert cycle_reports[-1]["unhealthy"] == 1
+    client._coordinator.record_sync_failure.assert_called_once_with("push failed: 2 entries")
+    client._coordinator.record_pull_success.assert_called_once_with(pull_seq=3)
+    assert client._next_sleep_seconds == 600.0
+    assert client._scheduled_interval_seconds == 600.0
+    client._mark_synced.assert_not_called()
+
+
+def test_failure_backoff_delay_is_bounded() -> None:
+    """Persistent sync failures back off without exceeding the fixed safety cap."""
+    from trw_mcp.sync.client import _failure_backoff_delay_seconds
+
+    assert _failure_backoff_delay_seconds(300, 1) == 600
+    assert _failure_backoff_delay_seconds(300, 2) == 1200
+    assert _failure_backoff_delay_seconds(300, 10) == 3600
+
+
+@pytest.mark.asyncio
+async def test_offload_sync_work_warns_for_pathological_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Slow offloaded local work carries explicit warning telemetry."""
+    from trw_mcp.sync import client as sync_client
+
+    ticks = iter([0.0, 12.5])
+    log = MagicMock()
+    monkeypatch.setattr(sync_client, "perf_counter", lambda: next(ticks))
+    monkeypatch.setattr(sync_client, "logger", log)
+
+    result = await sync_client._offload_sync_work("load_pending_outcomes", lambda: "ok")
+
+    assert result == "ok"
+    log.warning.assert_called_once_with(
+        "sync_local_work_offloaded",
+        label="load_pending_outcomes",
+        duration_ms=12500.0,
+        slow=True,
+        slow_threshold_ms=10000,
+    )
+    log.info.assert_not_called()

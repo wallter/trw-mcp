@@ -18,6 +18,14 @@ if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
 
+def _http_status_from_exception(exc: BaseException) -> int | None:
+    """Extract an HTTP status code from httpx-style exceptions when present."""
+
+    response = getattr(exc, "response", None)
+    raw_status = getattr(response, "status_code", None)
+    return int(raw_status) if isinstance(raw_status, int) else None
+
+
 class PullResult(BaseModel):
     """Result of a pull operation."""
 
@@ -160,8 +168,11 @@ class SyncPuller:
             logger.warning(
                 "sync_pull_error",
                 event_type="sync_pull_error",
+                endpoint="/v1/intel/state",
+                timeout_seconds=self._timeout,
                 error_type=type(exc).__name__,
                 error_message=str(exc)[:200],
+                status_code=_http_status_from_exception(exc),
                 duration_ms=int((perf_counter() - started_at) * 1000),
                 since_seq=since_seq,
                 client_id=effective_client_id,

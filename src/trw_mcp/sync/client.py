@@ -62,6 +62,33 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_SLOW_LOCAL_WORK_LOG_MS = 1_000.0
+_PATHOLOGICAL_LOCAL_WORK_MS = 10_000.0
+_SYNC_FAILURE_BACKOFF_CAP_SECONDS = 3_600.0
+
+
+def _target_report_status(report: dict[str, object]) -> str:
+    """Return the normalized health status for one sync target report."""
+
+    raw_status = report.get("status")
+    if raw_status in {"success", "partial_error", "error"}:
+        return str(raw_status)
+    if report.get("error") is not None:
+        return "error"
+    raw_failed = report.get("failed", 0)
+    failed = int(raw_failed) if isinstance(raw_failed, (int, float)) else 0
+    return "partial_error" if failed > 0 else "success"
+
+
+def _failure_backoff_delay_seconds(base_interval_seconds: float, consecutive_failures: int) -> float:
+    """Compute bounded exponential backoff for background sync failure churn."""
+
+    base_interval = max(1.0, float(base_interval_seconds))
+    failure_count = max(1, int(consecutive_failures))
+    multiplier = 2 ** min(failure_count, 4)
+    cap = max(base_interval, _SYNC_FAILURE_BACKOFF_CAP_SECONDS)
+    return float(min(base_interval * multiplier, cap))
+
 
 async def _offload_sync_work(label: str, func: Any, *args: Any, **kwargs: Any) -> Any:
     """Run blocking sync-local work off the FastMCP event loop.
@@ -77,11 +104,15 @@ async def _offload_sync_work(label: str, func: Any, *args: Any, **kwargs: Any) -
         return await asyncio.to_thread(func, *args, **kwargs)
     finally:
         elapsed_ms = (perf_counter() - started) * 1000
-        if elapsed_ms >= 1000:
-            logger.info(
+        if elapsed_ms >= _SLOW_LOCAL_WORK_LOG_MS:
+            slow = elapsed_ms >= _PATHOLOGICAL_LOCAL_WORK_MS
+            log = logger.warning if slow else logger.info
+            log(
                 "sync_local_work_offloaded",
                 label=label,
                 duration_ms=round(elapsed_ms, 2),
+                slow=slow,
+                slow_threshold_ms=int(_PATHOLOGICAL_LOCAL_WORK_MS),
             )
 
 
@@ -265,8 +296,10 @@ class BackendSyncClient:
                 "sync_cycle_report",
                 client_id=self._client_id,
                 targets=len(self._targets),
-                successful=sum(1 for r in report.values() if r["error"] is None),
-                failed=sum(1 for r in report.values() if r["error"] is not None),
+                successful=sum(1 for r in report.values() if _target_report_status(r) == "success"),
+                partial_error=sum(1 for r in report.values() if _target_report_status(r) == "partial_error"),
+                failed=sum(1 for r in report.values() if _target_report_status(r) == "error"),
+                unhealthy=sum(1 for r in report.values() if _target_report_status(r) != "success"),
                 report=report,
             )
 
@@ -295,7 +328,9 @@ class BackendSyncClient:
                 self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
                 # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
                 # next pusher pass skips already-synced runs.
-                successful_labels = ",".join(lbl for lbl, rep in report.items() if rep.get("error") is None)
+                successful_labels = ",".join(
+                    lbl for lbl, rep in report.items() if _target_report_status(rep) == "success"
+                )
                 await _offload_sync_work(
                     "write_synced_markers",
                     _write_synced_markers,
@@ -316,12 +351,14 @@ class BackendSyncClient:
             if pull_result is None:
                 self._reset_poll_schedule()
                 self._coordinator.record_sync_failure("pull failed")
+                self._apply_failure_backoff(reason="pull failed")
                 return
 
             if pull_result.not_modified:
                 self._restore_poll_schedule()
                 if push_failed:
                     self._coordinator.record_pull_success(pull_seq=pull_seq)
+                    self._apply_failure_backoff(reason="push failed")
                 else:
                     self._coordinator.record_sync_success(
                         pushed=push_result.pushed,
@@ -362,6 +399,7 @@ class BackendSyncClient:
             )
             if push_failed:
                 self._coordinator.record_pull_success(pull_seq=next_pull_seq)
+                self._apply_failure_backoff(reason="push failed")
             else:
                 self._coordinator.record_sync_success(
                     pushed=push_result.pushed,
@@ -439,6 +477,28 @@ class BackendSyncClient:
             self._next_cycle_force,
             self._consecutive_immediate_repolls,
         ) = _restore_poll_schedule_impl(self._last_applied_schedule_seconds)
+
+    def _apply_failure_backoff(self, *, reason: str) -> None:
+        """Slow future background sync cycles after repeated remote failures."""
+
+        raw_failures = self._coordinator.get_consecutive_failures()
+        consecutive_failures = int(raw_failures) if isinstance(raw_failures, (int, float)) else 1
+        delay_seconds = _failure_backoff_delay_seconds(
+            float(self._config.sync_interval_seconds),
+            consecutive_failures,
+        )
+        self._next_sleep_seconds = delay_seconds
+        self._scheduled_interval_seconds = delay_seconds
+        self._last_applied_schedule_seconds = delay_seconds
+        self._next_cycle_force = False
+        self._consecutive_immediate_repolls = 0
+        logger.warning(
+            "sync_failure_backoff_applied",
+            client_id=self._client_id,
+            reason=reason,
+            consecutive_failures=consecutive_failures,
+            next_delay_seconds=delay_seconds,
+        )
 
     def _consume_next_cycle_force(self) -> bool:
         force, self._next_cycle_force = _consume_next_cycle_force_impl(self._next_cycle_force)

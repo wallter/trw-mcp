@@ -197,6 +197,34 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fanout_reports_partial_error_for_payload_failures() -> None:
+    """Payload-level push failures are unhealthy even when the target call returns."""
+    from trw_mcp.sync._client_push import fanout_push
+    from trw_mcp.sync.push import PushResult
+
+    target = SimpleNamespace(label="localhost", url="http://localhost:5002", api_key="pk")
+    pusher = MagicMock()
+    pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=0, failed=2, skipped=98))
+
+    report, aggregate, any_success = await fanout_push(
+        client_id="c1",
+        targets=[target],
+        primary_pusher=pusher,
+        pusher_map={"localhost": pusher},
+        batch_size=100,
+        timeout=5.0,
+        dirty=[SimpleNamespace(id="L-1", sync_seq=1)],
+        outcomes=[],
+    )
+
+    assert report["localhost"]["status"] == "partial_error"
+    assert report["localhost"]["failed"] == 2
+    assert report["localhost"]["error"] is None
+    assert aggregate == PushResult()
+    assert any_success is False
+
+
+@pytest.mark.asyncio
 async def test_429_on_one_target_does_not_stop_others(tmp_path) -> None:
     """Rate-limit/HTTP error on first target leaves second target unaffected."""
     import httpx

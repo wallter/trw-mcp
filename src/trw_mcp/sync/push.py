@@ -22,6 +22,14 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _http_status_from_exception(exc: BaseException) -> int | None:
+    """Extract an HTTP status code from httpx-style exceptions when present."""
+
+    response = getattr(exc, "response", None)
+    raw_status = getattr(response, "status_code", None)
+    return int(raw_status) if isinstance(raw_status, int) else None
+
+
 class PushResult(BaseModel):
     """Result of a push operation."""
 
@@ -103,11 +111,13 @@ class SyncPusher:
                     "sync_push_error",
                     event_type="sync_push_error",
                     client_id=self._client_id,
+                    endpoint="/v1/sync/learnings",
                     batch_index=i // self._batch_size,
                     count=len(batch),
                     duration_ms=int((perf_counter() - started_at) * 1000),
                     error_type=type(exc).__name__,
                     error_message=str(exc)[:200],
+                    status_code=_http_status_from_exception(exc),
                     outcome="error",
                     exc_info=True,
                 )
@@ -166,11 +176,13 @@ class SyncPusher:
                     "sync_push_outcomes_error",
                     event_type="sync_push_outcomes_error",
                     client_id=self._client_id,
+                    endpoint="/v1/sync/outcomes",
                     batch_index=i // self._batch_size,
                     count=len(batch),
                     duration_ms=int((perf_counter() - started_at) * 1000),
                     error_type=type(exc).__name__,
                     error_message=str(exc)[:200],
+                    status_code=_http_status_from_exception(exc),
                     outcome="error",
                     exc_info=True,
                 )

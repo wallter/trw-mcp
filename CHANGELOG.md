@@ -6,6 +6,13 @@ All notable changes to the TRW MCP server package.
 
 _No unreleased changes yet._
 
+## [0.48.5] — 2026-05-14
+
+### Fixed
+
+- **Backend sync telemetry is now truthful and backs off on persistent failures** (PRD-FIX-092). `sync_cycle_report` counts only zero-failure targets as successful, reports payload-level failures as `partial_error`, includes `unhealthy` target counts, and applies bounded exponential backoff after failed cycles so backend drift does not churn the shared MCP server every base interval.
+- **Sync observability now distinguishes pathological local scans and remote boundary failures** (PRD-FIX-092). Offloaded local sync work over 10s emits warning-level telemetry with `slow` and threshold fields; push/pull boundary warnings include structured endpoint/status/timeout metadata where available.
+
 ## [0.48.4] — 2026-05-14
 
 ### Fixed

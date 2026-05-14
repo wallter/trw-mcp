@@ -144,6 +144,11 @@ class SyncCoordinator:
         state = self._read_state()
         return self._int_field(state, "last_outcome_line")
 
+    def get_consecutive_failures(self) -> int:
+        """Read the current consecutive sync failure count."""
+        state = self._read_state()
+        return self._int_field(state, "consecutive_failures")
+
     @staticmethod
     def _int_field(state: dict[str, object], key: str) -> int:
         """Extract an integer field from state, defaulting to 0 if missing/invalid."""
