@@ -321,7 +321,7 @@ class TestConsolidateCycleEdgeCases:
 
         assert result["consolidated_count"] == 0
         assert "errors" in result
-        errors = list(result["errors"])  # type: ignore[arg-type]
+        errors = list(result["errors"])
         assert len(errors) == 1
         assert "boom" in errors[0]
 
@@ -339,5 +339,5 @@ class TestConsolidateCycleEdgeCases:
             result = consolidate_cycle(trw_dir, dry_run=True, config=cfg)
 
         assert result["dry_run"] is True
-        assert list(result["clusters"]) == []  # type: ignore[arg-type]
+        assert list(result["clusters"]) == []
         assert result["consolidated_count"] == 0

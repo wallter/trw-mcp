@@ -51,7 +51,7 @@ class TestComponentFingerprint:
     def test_frozen_raises_validation_error(self) -> None:
         fp = ComponentFingerprint(digest="abc", file_count=1, total_bytes=10)
         with pytest.raises(ValidationError):
-            fp.digest = "xyz"  # type: ignore[misc]
+            fp.digest = "xyz"
 
     def test_extra_field_forbidden(self) -> None:
         with pytest.raises(ValidationError):
@@ -80,7 +80,7 @@ class TestSurfaceArtifact:
             source_path="x",
         )
         with pytest.raises(ValidationError):
-            a.surface_id = "y"  # type: ignore[misc]
+            a.surface_id = "y"
 
     def test_extra_field_forbidden(self) -> None:
         with pytest.raises(ValidationError):

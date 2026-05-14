@@ -279,5 +279,5 @@ class TestHashContent:
     def test_mixed_content_types(self) -> None:
         """Non-TextContent blocks should be ignored in hash."""
         text_only = [TextContent(type="text", text="hello")]
-        mixed = [TextContent(type="text", text="hello"), object()]  # type: ignore[list-item]
+        mixed = [TextContent(type="text", text="hello"), object()]
         assert hash_content(text_only) == hash_content(mixed)

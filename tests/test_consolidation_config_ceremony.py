@@ -31,7 +31,7 @@ class TestCeremonyWiring:
             learning_auto_prune_on_deliver=False,
         )
         try:
-            ceremony_mod._config = cfg  # type: ignore[attr-defined]
+            ceremony_mod._config = cfg
             # Patch consolidate_cycle — should NOT be called
             with patch("trw_mcp.state.consolidation.consolidate_cycle") as mock_cons:
                 with patch_trw_deliver_deps(trw_dir):
@@ -54,7 +54,7 @@ class TestCeremonyWiring:
             assert results["consolidation"]["status"] == "skipped"
             assert results["consolidation"]["reason"] == "disabled"
         finally:
-            ceremony_mod._config = old_config  # type: ignore[attr-defined]
+            ceremony_mod._config = old_config
 
     def test_consolidation_exception_is_fail_open(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When consolidate_cycle raises, error is collected and result has status=failed."""
@@ -71,7 +71,7 @@ class TestCeremonyWiring:
             learning_auto_prune_on_deliver=False,
         )
         try:
-            ceremony_mod._config = cfg  # type: ignore[attr-defined]
+            ceremony_mod._config = cfg
             with patch("trw_mcp.state.consolidation.consolidate_cycle", side_effect=RuntimeError("consolidation boom")):
                 with patch_trw_deliver_deps(trw_dir):
                     # Mirror ceremony.py step 2.6 logic exactly
@@ -95,7 +95,7 @@ class TestCeremonyWiring:
             assert results["consolidation"]["status"] == "failed"
             assert "consolidation boom" in str(results["consolidation"]["error"])
         finally:
-            ceremony_mod._config = old_config  # type: ignore[attr-defined]
+            ceremony_mod._config = old_config
 
     def test_consolidation_result_key_present_when_enabled(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """When enabled, trw_deliver result dict contains 'consolidation' key."""
@@ -113,7 +113,7 @@ class TestCeremonyWiring:
         )
         consolidation_result = {"status": "no_clusters", "clusters_found": 0, "consolidated_count": 0}
         try:
-            ceremony_mod._config = cfg  # type: ignore[attr-defined]
+            ceremony_mod._config = cfg
             with patch("trw_mcp.state.consolidation.consolidate_cycle", return_value=consolidation_result):
                 with patch_trw_deliver_deps(trw_dir):
                     results: dict[str, Any] = {}
@@ -132,7 +132,7 @@ class TestCeremonyWiring:
             assert "consolidation" in results
             assert results["consolidation"]["status"] == "no_clusters"
         finally:
-            ceremony_mod._config = old_config  # type: ignore[attr-defined]
+            ceremony_mod._config = old_config
 
 
 # ---------------------------------------------------------------------------

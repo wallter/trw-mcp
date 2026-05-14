@@ -40,11 +40,11 @@ class TestComputeImpactDistributionReadException:
                     raise StateError("parse error", path=str(path))
                 return real_read(path)
 
-            scoring_mod._reader.read_yaml = patched_read  # type: ignore[method-assign]
+            scoring_mod._reader.read_yaml = patched_read
             result = compute_impact_distribution(entries_dir)
             assert result["total_active"] == 1
         finally:
-            scoring_mod._reader.read_yaml = real_read  # type: ignore[method-assign]
+            scoring_mod._reader.read_yaml = real_read
 
 
 class TestUtilityBasedPruneCandidatesTier3:

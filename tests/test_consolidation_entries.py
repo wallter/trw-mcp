@@ -61,7 +61,7 @@ class TestCreateConsolidatedEntry:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        evidence = list(entry["evidence"])  # type: ignore[arg-type]
+        evidence = list(entry["evidence"])
         assert sorted(evidence) == ["ev1", "ev2", "ev3", "ev4"]
 
     def test_recurrence_is_cluster_size(self, tmp_path: Path, writer: FileStateWriter) -> None:
@@ -106,7 +106,7 @@ class TestCreateConsolidatedEntry:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        consolidated_from = list(entry["consolidated_from"])  # type: ignore[arg-type]
+        consolidated_from = list(entry["consolidated_from"])
         assert "L-entry000" in consolidated_from
         assert "L-entry001" in consolidated_from
         assert "L-entry002" in consolidated_from
@@ -166,7 +166,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        consolidated_from = list(entry["consolidated_from"])  # type: ignore[arg-type]
+        consolidated_from = list(entry["consolidated_from"])
         assert "e1" in consolidated_from
         assert "e3" in consolidated_from
         assert len(consolidated_from) == 2
@@ -181,7 +181,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        evidence = list(entry["evidence"])  # type: ignore[arg-type]
+        evidence = list(entry["evidence"])
         # dict.fromkeys preserves insertion order: third, first, second
         assert evidence == ["third", "first", "second"]
 
@@ -208,7 +208,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entries_dir.mkdir()
 
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        assert list(entry["evidence"]) == []  # type: ignore[arg-type]
+        assert list(entry["evidence"]) == []
 
     def test_single_entry_cluster_aggregation(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Single-entry cluster uses that entry's values directly."""
@@ -228,7 +228,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         entry = _create_consolidated_entry(cluster, "summary", "detail", entries_dir, writer)
         assert entry["impact"] == pytest.approx(0.9)
         assert entry["tags"] == ["solo"]
-        assert list(entry["evidence"]) == ["proof"]  # type: ignore[arg-type]
+        assert list(entry["evidence"]) == ["proof"]
         assert entry["recurrence"] == 1  # FIX-071-FR06: len(cluster), not original recurrence
         assert entry["q_value"] == pytest.approx(0.7)
 

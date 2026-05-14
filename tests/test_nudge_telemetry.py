@@ -341,16 +341,16 @@ class TestStructlogNudgeTelemetry:
         orig_build_state = _recall_ctx_mod.build_recall_context
         orig_recall = memory_adapter.recall_learnings
 
-        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
-        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
-        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]  # type: ignore[assignment]
+        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context
+        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context
+        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]
         try:
             with structlog.testing.capture_logs() as captured:
                 append_ceremony_status({}, trw_dir=trw_dir)
         finally:
-            _recall_impl.build_recall_context = orig_build  # type: ignore[assignment]
-            _recall_ctx_mod.build_recall_context = orig_build_state  # type: ignore[assignment]
-            memory_adapter.recall_learnings = orig_recall  # type: ignore[assignment]
+            _recall_impl.build_recall_context = orig_build
+            _recall_ctx_mod.build_recall_context = orig_build_state
+            memory_adapter.recall_learnings = orig_recall
             _ = monkey_build, monkey_recall  # silence ruff
 
         shown = [e for e in captured if e.get("event") == "nudge_shown"]
@@ -441,16 +441,16 @@ class TestStructlogNudgeTelemetry:
         orig_build = _recall_impl.build_recall_context
         orig_build_state = _recall_ctx_mod.build_recall_context
         orig_recall = memory_adapter.recall_learnings
-        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
-        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context  # type: ignore[assignment]
-        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]  # type: ignore[assignment]
+        _recall_impl.build_recall_context = lambda *a, **kw: fake_recall_context
+        _recall_ctx_mod.build_recall_context = lambda *a, **kw: fake_recall_context
+        memory_adapter.recall_learnings = lambda *a, **kw: [fake_learning]
         try:
             with structlog.testing.capture_logs() as captured:
                 selected, _ = _select_learning_injection_candidate(state, trw_dir, skip_phase_duplicates=True)
         finally:
-            _recall_impl.build_recall_context = orig_build  # type: ignore[assignment]
-            _recall_ctx_mod.build_recall_context = orig_build_state  # type: ignore[assignment]
-            memory_adapter.recall_learnings = orig_recall  # type: ignore[assignment]
+            _recall_impl.build_recall_context = orig_build
+            _recall_ctx_mod.build_recall_context = orig_build_state
+            memory_adapter.recall_learnings = orig_recall
 
         assert selected is None, "phase-shown learning must be filtered out"
         skipped = [e for e in captured if e.get("event") == "nudge_skipped" and e.get("reason") == "phase_dedup"]

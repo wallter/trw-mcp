@@ -281,7 +281,7 @@ def _reset_run_pin() -> Iterator[None]:
     tests. Without invalidating it, a prior test's empty-dict read caches into
     the next test's malformed-file scenario and the warning never fires.
     """
-    from trw_mcp.state._paths import _pinned_runs  # type: ignore[attr-defined]
+    from trw_mcp.state._paths import _pinned_runs
     from trw_mcp.state._pin_store import invalidate_pin_store_cache
 
     _pinned_runs.clear()
@@ -601,7 +601,7 @@ def build_check_invoke(tmp_project: Path) -> Any:
         server = make_test_server("build")
         fn = extract_tool_fn(server, "trw_build_check")
         original_resolve = reg_mod.resolve_trw_dir
-        reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"  # type: ignore[assignment]
+        reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"
         try:
             defaults: dict[str, Any] = {
                 "tests_passed": True,
@@ -611,6 +611,6 @@ def build_check_invoke(tmp_project: Path) -> Any:
             defaults.update(kwargs)
             return fn(**defaults)  # type: ignore[no-any-return]
         finally:
-            reg_mod.resolve_trw_dir = original_resolve  # type: ignore[assignment]
+            reg_mod.resolve_trw_dir = original_resolve
 
     return _invoke

@@ -172,7 +172,7 @@ class TestMemoryToLearningDict:
         many_tags = [f"tag-{i}" for i in range(100)]
         entry = self._make_entry(tags=many_tags)
         result = _memory_to_learning_dict(entry, compact=True)
-        tags = list(result["tags"])  # type: ignore[arg-type]
+        tags = list(result["tags"])
         assert len(tags) == COMPACT_TAGS_CAP
         assert tags == many_tags[:COMPACT_TAGS_CAP]
 
@@ -193,7 +193,7 @@ class TestMemoryToLearningDict:
         exact_tags = [f"tag-{i}" for i in range(COMPACT_TAGS_CAP)]
         entry = self._make_entry(tags=exact_tags)
         result = _memory_to_learning_dict(entry, compact=True)
-        tags = list(result["tags"])  # type: ignore[arg-type]
+        tags = list(result["tags"])
         assert tags == exact_tags
         assert len(tags) == COMPACT_TAGS_CAP
 
@@ -208,7 +208,7 @@ class TestMemoryToLearningDict:
         many_tags = [f"tag-{i}" for i in range(500)]
         entry = self._make_entry(tags=many_tags)
         result = _memory_to_learning_dict(entry, compact=False)
-        tags = list(result["tags"])  # type: ignore[arg-type]
+        tags = list(result["tags"])
         assert tags == many_tags
         assert len(tags) == 500
 

@@ -25,12 +25,12 @@ class TestSearchErrorPath:
                 return real_conn.execute(sql, params)  # type: ignore[arg-type]
 
             mock_conn.execute = mock_execute
-            store._conn = mock_conn  # type: ignore[assignment]
+            store._conn = mock_conn
 
             results = store.search([1.0, 0.0, 0.0, 0.0], top_k=5)
             assert results == []
         finally:
-            store._conn = real_conn  # type: ignore[assignment]
+            store._conn = real_conn
             store.close()
 
 

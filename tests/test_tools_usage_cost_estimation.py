@@ -21,7 +21,7 @@ class TestUsageReportCostEstimation:
         """Patch resolve_trw_dir and call the registered tool function."""
         monkeypatch.setattr("trw_mcp.tools.usage.resolve_trw_dir", lambda: tmp_path / ".trw")
         report_fn = _get_report_tool_fn()
-        return report_fn()  # type: ignore[return-value]
+        return report_fn()
 
     async def test_usage_report_cost_haiku(
         self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch

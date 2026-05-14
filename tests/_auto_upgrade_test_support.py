@@ -12,7 +12,7 @@ from trw_mcp.models.config import _reset_config
 @pytest.fixture(autouse=True)
 def reset_cfg() -> None:
     _reset_config()
-    yield  # type: ignore[misc]
+    yield
     _reset_config()
 
 

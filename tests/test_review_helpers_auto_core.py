@@ -210,7 +210,7 @@ class TestHandleAutoMode:
             },
         ]
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
-            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)  # type: ignore[arg-type]
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
 
     def test_finding_missing_confidence_defaults_to_zero(self, run_dir: Path) -> None:

@@ -87,7 +87,7 @@ class TestClearScoreModel:
             total_wall_ms=0,
         )
         with pytest.raises(ValidationError):
-            s.cost = 0.5  # type: ignore[misc]
+            s.cost = 0.5
 
 
 class TestComputeEmptySession:

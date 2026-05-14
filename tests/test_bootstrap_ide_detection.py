@@ -31,7 +31,7 @@ class TestIDEDetection:
         def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
             if cmd in {"cursor", "cursor-agent"}:
                 return None
-            return original_which(cmd, *args, **kwargs)  # type: ignore[arg-type]
+            return original_which(cmd, *args, **kwargs)
 
         monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
         monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)

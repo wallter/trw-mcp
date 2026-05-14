@@ -283,6 +283,6 @@ class TestEnsureMigratedErrors:
                     assert result["skipped"] == 1
                     assert result["migrated"] == 0
             finally:
-                backend.store = original_store  # type: ignore[assignment]
+                backend.store = original_store
         finally:
             backend.close()

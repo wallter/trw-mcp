@@ -39,4 +39,4 @@ def _get_report_tool_fn() -> Callable[..., Any]:
     """Extract the trw_usage_report fn from the FastMCP server."""
     from tests.conftest import extract_tool_fn, make_test_server
 
-    return extract_tool_fn(make_test_server("usage"), "trw_usage_report")  # type: ignore[return-value]
+    return extract_tool_fn(make_test_server("usage"), "trw_usage_report")

@@ -425,4 +425,4 @@ class TestWriteTargetsInstructionPath:
 
         targets = WriteTargets()
         with pytest.raises(Exception):
-            targets.instruction_path = "new-value"  # type: ignore[misc]
+            targets.instruction_path = "new-value"

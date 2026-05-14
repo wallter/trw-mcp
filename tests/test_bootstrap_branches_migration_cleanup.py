@@ -44,7 +44,7 @@ class TestPrefixMigrationExtra:
             call_count += 1
             if call_count == 1:
                 raise OSError("permission denied")
-            original_rmtree(path)  # type: ignore[arg-type]
+            original_rmtree(path)
 
         with patch("trw_mcp.bootstrap.shutil.rmtree", side_effect=failing_rmtree):
             _migrate_prefix_predecessors(target, result)

@@ -243,7 +243,7 @@ class TestTransportWiring:
         assert isinstance(mw_list, list)
         assert len(mw_list) == 1
         # The Middleware wrapper carries the class it will instantiate
-        assert mw_list[0].cls is OriginGuardMiddleware  # type: ignore[attr-defined]
+        assert mw_list[0].cls is OriginGuardMiddleware
 
     def test_wiring_empty_when_kill_switch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_MCP_DISABLE_ORIGIN_CHECK", "1")

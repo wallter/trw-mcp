@@ -153,14 +153,14 @@ class TestParseMutmutResultsEdgeCases:
 
     def test_returns_parse_error_on_none_input(self) -> None:
         """None input (TypeError in json.loads) → parse_error returned, no crash."""
-        result = _parse_mutmut_results(None)  # type: ignore[arg-type]
+        result = _parse_mutmut_results(None)
         assert "parse_error" in result
         assert result["killed"] == 0
         assert result["mutation_score"] is None
 
     def test_returns_parse_error_on_non_string_int_input(self) -> None:
         """Integer input (TypeError in json.loads) → parse_error returned."""
-        result = _parse_mutmut_results(42)  # type: ignore[arg-type]
+        result = _parse_mutmut_results(42)
         assert "parse_error" in result
 
     def test_valid_dict_missing_all_optional_keys(self) -> None:

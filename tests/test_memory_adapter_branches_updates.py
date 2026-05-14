@@ -119,4 +119,4 @@ class TestAccessTrackingException:
         try:
             update_access_tracking(trw_dir, ["L-ae1", "L-ae2"])
         finally:
-            backend.update = original_update  # type: ignore[assignment]
+            backend.update = original_update

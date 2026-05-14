@@ -68,10 +68,10 @@ def test_surface_config_is_frozen() -> None:
     surfaces = cfg.surfaces
 
     with pytest.raises(Exception):
-        surfaces.hooks_enabled = False  # type: ignore[misc]
+        surfaces.hooks_enabled = False
 
     with pytest.raises(Exception):
-        surfaces.nudge.enabled = False  # type: ignore[misc]
+        surfaces.nudge.enabled = False
 
 
 @pytest.mark.unit

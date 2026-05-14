@@ -47,7 +47,7 @@ class TestRenderClusterDocuments:
             "slug": "bad",
             "tags": ["b"],
             "entry_ids": ["L-002"],
-            "entries": "not-a-list",  # type: ignore[dict-item]
+            "entries": "not-a-list",
             "avg_importance": 0.5,
         }
         docs, errors = _render_cluster_documents([bad_cluster, good_cluster], {})

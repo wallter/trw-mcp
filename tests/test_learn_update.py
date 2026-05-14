@@ -74,7 +74,7 @@ class TestLearnUpdateNewFields:
         ):
             mock_update.return_value = {"learning_id": "L-test", "changes": "updated", "status": "updated"}
             result = fn(learning_id="L-test", **kwargs)
-        return result  # type: ignore[return-value]
+        return result
 
     def test_update_type(self, tmp_project: Path) -> None:
         """Updating type to 'incident' is accepted."""

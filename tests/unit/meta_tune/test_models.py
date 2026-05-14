@@ -115,7 +115,7 @@ def test_frozen_models_reject_mutation(factory: object) -> None:
     """Every meta-tune model is frozen: attribute assignment raises."""
     instance = factory()  # type: ignore[operator]
     with pytest.raises(ValidationError):
-        instance.edit_id = "mutated"  # type: ignore[misc]
+        instance.edit_id = "mutated"
 
 
 @pytest.mark.parametrize(

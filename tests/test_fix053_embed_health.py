@@ -213,7 +213,7 @@ class TestEmbedFailureCounter:
         # Set the counter to a known value by direct module attribute assignment.
         # _embed_failures is a module-level int with no public setter API —
         # direct assignment is the only way to set it to an arbitrary value for testing.
-        memory_adapter._embed_failures = 7  # type: ignore[attr-defined]
+        memory_adapter._embed_failures = 7
 
         result = memory_adapter.check_embeddings_status()
 

@@ -101,7 +101,7 @@ class TestComplexitySignals:
     def test_frozen_model(self) -> None:
         signals = ComplexitySignals()
         with pytest.raises(ValidationError):
-            signals.files_affected = 5  # type: ignore[misc]
+            signals.files_affected = 5
 
 
 class TestComplexityOverride:

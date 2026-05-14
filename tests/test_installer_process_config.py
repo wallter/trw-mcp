@@ -92,7 +92,7 @@ class TestCheckBackendHealth:
                 500,
                 "ISE",
                 {},
-                None,  # type: ignore[arg-type]
+                None,
             ),
         ):
             result = _check_backend_health("http://example.com")

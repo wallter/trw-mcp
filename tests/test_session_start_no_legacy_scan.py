@@ -112,7 +112,7 @@ def test_session_start_reads_only_pinned_run_yaml_when_pin_exists(
     pinned_run_id = "20260503T000002Z-aaaaaaaa"
     pinned_run = trw_dir / "runs" / pinned_task / pinned_run_id
 
-    from trw_mcp.state._paths import _pinned_runs, pin_active_run  # type: ignore[attr-defined]
+    from trw_mcp.state._paths import _pinned_runs, pin_active_run
     from trw_mcp.state._pin_store import invalidate_pin_store_cache
 
     _pinned_runs.clear()

@@ -112,7 +112,7 @@ class TestCompactionGate:
                     fastmcp_context=session_b,
                 ),
                 call_next,
-            )  # type: ignore[arg-type]
+            )
             _seed_compaction_marker(tmp_path)
             await middleware.on_call_tool(start_a_ctx, call_next)  # type: ignore[arg-type]
             blocked_out = await middleware.on_call_tool(checkpoint_b_ctx, call_next)  # type: ignore[arg-type]

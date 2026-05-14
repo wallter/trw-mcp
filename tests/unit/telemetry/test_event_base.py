@@ -70,7 +70,7 @@ def test_hpo_telemetry_event_pydantic_strict_rejects_extras() -> None:
 def test_hpo_telemetry_event_frozen_rejects_mutation() -> None:
     ev = HPOTelemetryEvent(session_id="s1", emitter="x", event_type="x")
     with pytest.raises(ValidationError):
-        ev.session_id = "s2"  # type: ignore[misc]
+        ev.session_id = "s2"
 
 
 def test_event_id_autopopulates_with_evt_prefix_and_unique() -> None:
@@ -144,7 +144,7 @@ def test_subclass_inherits_base_config_extra_forbid() -> None:
 def test_subclass_inherits_frozen() -> None:
     ev = LLMCallEvent(session_id="s1")
     with pytest.raises(ValidationError):
-        ev.session_id = "other"  # type: ignore[misc]
+        ev.session_id = "other"
 
 
 def test_run_id_defaults_none_and_accepts_str() -> None:
@@ -194,7 +194,7 @@ def test_emit_h1_observe_mode_warning_frozen() -> None:
         buffered_event_count_since_start=0,
     )
     with pytest.raises(ValidationError):
-        ev.session_id = "nope"  # type: ignore[misc]
+        ev.session_id = "nope"
 
 
 # ---- PRD-HPO-MEAS-001 FR-13: EVENT_TYPE_REGISTRY + DefaultResolutionError ---

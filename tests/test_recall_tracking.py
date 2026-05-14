@@ -170,7 +170,7 @@ def test_get_recall_stats_fail_open(trw_dir: Path, monkeypatch: pytest.MonkeyPat
     """get_recall_stats must not raise on unexpected errors."""
     monkeypatch.setattr(
         "trw_mcp.state.recall_tracking.resolve_trw_dir",
-        lambda: (_ for _ in ()).throw(RuntimeError("unexpected")),  # type: ignore[arg-type]
+        lambda: (_ for _ in ()).throw(RuntimeError("unexpected")),
     )
     stats = get_recall_stats()
     assert stats["total_recalls"] == 0

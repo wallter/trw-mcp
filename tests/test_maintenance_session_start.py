@@ -42,7 +42,7 @@ class TestSessionStartAutoClose:
         fn = self._get_session_start_fn()
 
         try:
-            stale_mod.auto_close_stale_runs = mock_close  # type: ignore[method-assign]
+            stale_mod.auto_close_stale_runs = mock_close
             with (
                 patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
@@ -53,7 +53,7 @@ class TestSessionStartAutoClose:
             ):
                 result = fn()
         finally:
-            stale_mod.auto_close_stale_runs = original_fn  # type: ignore[method-assign]
+            stale_mod.auto_close_stale_runs = original_fn
 
         mock_close.assert_called_once()
         assert result.get("stale_runs_closed") == close_result
@@ -103,13 +103,13 @@ class TestSessionStartAutoClose:
 
             original_fn = ar_mod.auto_close_stale_runs
             try:
-                ar_mod.auto_close_stale_runs = MagicMock(  # type: ignore[method-assign]
+                ar_mod.auto_close_stale_runs = MagicMock(
                     side_effect=RuntimeError("disk full")
                 )
                 fn = self._get_session_start_fn()
                 result = fn()
             finally:
-                ar_mod.auto_close_stale_runs = original_fn  # type: ignore[method-assign]
+                ar_mod.auto_close_stale_runs = original_fn
 
         assert result is not None
         assert "stale_runs_closed" not in result

@@ -167,7 +167,7 @@ def _run_validate(prd_text: str, tmp_path: Path) -> dict[str, Any]:
     prd_path.write_text(prd_text, encoding="utf-8")
     tools = _get_tools()
     result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
-    return result  # type: ignore[return-value]
+    return result
 
 
 # ---------------------------------------------------------------------------

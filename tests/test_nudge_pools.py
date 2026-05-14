@@ -85,7 +85,7 @@ def test_nudge_pool_weights_frozen() -> None:
     """NudgePoolWeights is frozen — assignment raises."""
     w = NudgePoolWeights()
     with pytest.raises((ValidationError, TypeError)):
-        w.workflow = 99  # type: ignore[misc]
+        w.workflow = 99
 
 
 # ---------------------------------------------------------------------------

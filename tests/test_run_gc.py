@@ -437,7 +437,7 @@ def test_sweep_terminal_runs_skip_yaml_parse(tmp_path: Path) -> None:
 
         report = sweep_stale_runs(runs_root, 24, 12, [], dry_run=True)
     finally:
-        _run_gc._load_run_yaml = original  # type: ignore[assignment]
+        _run_gc._load_run_yaml = original
 
     assert report.runs_skipped_terminal == 3
     assert call_count["n"] == 0, "prefilter must short-circuit terminal runs"
@@ -463,7 +463,7 @@ def test_sweep_active_protected_skips_yaml_parse(tmp_path: Path) -> None:
 
         report = sweep_stale_runs(runs_root, 24, 12, [], dry_run=True)
     finally:
-        _run_gc._load_run_yaml = original  # type: ignore[assignment]
+        _run_gc._load_run_yaml = original
 
     assert report.runs_preserved_protected == 1
     assert call_count["n"] == 0, "prefilter resolves protected without YAML parse"

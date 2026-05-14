@@ -220,7 +220,7 @@ def test_to_payload_shape_round_trip() -> None:
     payload = result.to_payload()
     assert payload["verdict"] == "fail"
     assert isinstance(payload["flagged_collections"], list)
-    assert payload["flagged_collections"][0]["entry_count"] == 8  # type: ignore[index]
+    assert payload["flagged_collections"][0]["entry_count"] == 8
     assert payload["evidence_section_present"] is False
     assert payload["acknowledged"] is False
 

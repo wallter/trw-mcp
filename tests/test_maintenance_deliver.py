@@ -59,10 +59,10 @@ class TestDeliverAutoPrune:
 
             original = analytics_mod_state.auto_prune_excess_entries
             try:
-                analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = mock_prune
                 _run_deferred_steps(trw_dir, None, {})
             finally:
-                analytics_mod_state.auto_prune_excess_entries = original  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = original
 
         mock_prune.assert_called_once()
 
@@ -108,10 +108,10 @@ class TestDeliverAutoPrune:
 
             original = analytics_mod_state.auto_prune_excess_entries
             try:
-                analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = mock_prune
                 fn(skip_reflect=False, skip_index_sync=False)
             finally:
-                analytics_mod_state.auto_prune_excess_entries = original  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = original
 
         mock_prune.assert_not_called()
 
@@ -153,12 +153,12 @@ class TestDeliverAutoPrune:
 
             original = analytics_mod_state.auto_prune_excess_entries
             try:
-                analytics_mod_state.auto_prune_excess_entries = MagicMock(  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = MagicMock(
                     side_effect=RuntimeError("storage error")
                 )
                 _run_deferred_steps(trw_dir, None, {})
             finally:
-                analytics_mod_state.auto_prune_excess_entries = original  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = original
 
         import json
 
@@ -204,10 +204,10 @@ class TestDeliverAutoPrune:
 
             original = analytics_mod_state.auto_prune_excess_entries
             try:
-                analytics_mod_state.auto_prune_excess_entries = mock_prune  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = mock_prune
                 fn(skip_reflect=False, skip_index_sync=False)
             finally:
-                analytics_mod_state.auto_prune_excess_entries = original  # type: ignore[method-assign]
+                analytics_mod_state.auto_prune_excess_entries = original
 
         call_kwargs = mock_prune.call_args
         assert call_kwargs is not None

@@ -93,7 +93,7 @@ class TestEdgeCases:
                 raise ValueError("CRLF normalize error")
 
         bad_existing = BreakingStr("bad content <!-- trw:manual-start -->")
-        result = preserve_manual_markers(bad_existing, new)  # type: ignore[arg-type]
+        result = preserve_manual_markers(bad_existing, new)
         assert result == bad_existing
 
     def test_execute_sync_oserror_reading_existing_file(self, tmp_path: Path) -> None:

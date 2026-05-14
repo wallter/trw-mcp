@@ -114,7 +114,7 @@ class TestStopDrain:
             time.sleep(10)
             return {"sent": 0, "failed": 0, "overflow": 0, "skipped_reason": "test"}
 
-        p.flush_now = _slow_flush  # type: ignore[method-assign]
+        p.flush_now = _slow_flush
         p.start()
 
         t0 = time.monotonic()

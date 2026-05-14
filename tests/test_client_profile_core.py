@@ -187,7 +187,7 @@ def test_client_profile_frozen_raises_on_assignment() -> None:
     """Frozen ClientProfile raises ValidationError on attribute assignment."""
     profile = resolve_client_profile("claude-code")
     with pytest.raises((ValidationError, TypeError)):
-        profile.client_id = "hacked"  # type: ignore[misc]
+        profile.client_id = "hacked"
 
 
 @pytest.mark.unit
@@ -195,7 +195,7 @@ def test_ceremony_weights_frozen_raises_on_assignment() -> None:
     """Frozen CeremonyWeights raises TypeError on attribute assignment."""
     weights = CeremonyWeights()
     with pytest.raises((ValidationError, TypeError)):
-        weights.session_start = 99  # type: ignore[misc]
+        weights.session_start = 99
 
 
 @pytest.mark.unit
@@ -203,7 +203,7 @@ def test_write_targets_frozen_raises_on_assignment() -> None:
     """Frozen WriteTargets raises TypeError on attribute assignment."""
     write_targets = WriteTargets(claude_md=True)
     with pytest.raises((ValidationError, TypeError)):
-        write_targets.claude_md = False  # type: ignore[misc]
+        write_targets.claude_md = False
 
 
 @pytest.mark.unit

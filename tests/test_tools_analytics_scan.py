@@ -94,7 +94,7 @@ class TestScanAllRuns:
     def test_ceremony_trend_sorted_ascending(self, multi_run_project: Path) -> None:
         """T-17: ceremony_trend is sorted by started_at ascending."""
         result = scan_all_runs()
-        trend = result["aggregate"]["ceremony_trend"]  # type: ignore[index]
+        trend = result["aggregate"]["ceremony_trend"]
         assert isinstance(trend, list)
         assert len(trend) == 3
 
@@ -126,18 +126,18 @@ class TestScanAllRuns:
         result = scan_all_runs()
         aggregate = result["aggregate"]
         expected_avg = round((45 + 70 + 25) / 3, 2)
-        assert aggregate["avg_ceremony_score"] == expected_avg  # type: ignore[index]
+        assert aggregate["avg_ceremony_score"] == expected_avg
 
     def test_aggregate_build_pass_rate(self, multi_run_project: Path) -> None:
         """Aggregate build_pass_rate is 1.0 when only one build run passed."""
         result = scan_all_runs()
         aggregate = result["aggregate"]
-        assert aggregate["build_pass_rate"] == 1.0  # type: ignore[index]
+        assert aggregate["build_pass_rate"] == 1.0
 
     def test_aggregate_total_runs(self, multi_run_project: Path) -> None:
         """Aggregate total_runs matches runs_scanned."""
         result = scan_all_runs()
-        assert result["aggregate"]["total_runs"] == result["runs_scanned"]  # type: ignore[index]
+        assert result["aggregate"]["total_runs"] == result["runs_scanned"]
 
     def test_runs_sorted_ascending_by_started_at(self, multi_run_project: Path) -> None:
         """Returned runs list is sorted by started_at ascending."""

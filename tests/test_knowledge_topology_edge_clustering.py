@@ -257,7 +257,7 @@ class TestFormJaccardClustersEdge:
             _entry("L-002", tags=["z", "a", "m"]),
         ]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=1)
-        assert list(clusters[0]["tags"]) == ["a", "m", "z"]  # type: ignore[arg-type]
+        assert list(clusters[0]["tags"]) == ["a", "m", "z"]
 
     def test_entry_ids_match_input_ids(self) -> None:
         entries = [
@@ -265,7 +265,7 @@ class TestFormJaccardClustersEdge:
             _entry("L-bbb", tags=["x"]),
         ]
         clusters = form_jaccard_clusters(entries, threshold=0.3, min_size=1)
-        ids = set(clusters[0]["entry_ids"])  # type: ignore[arg-type]
+        ids = set(clusters[0]["entry_ids"])
         assert ids == {"L-aaa", "L-bbb"}
 
     def test_large_min_size_drops_everything(self) -> None:

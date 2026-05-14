@@ -84,7 +84,7 @@ class TestConsolidateCycle:
                 with patch("trw_mcp.state.memory_adapter.embed_text_batch", return_value=vecs):
                     result = consolidate_cycle(trw_dir, dry_run=True, config=cfg)
 
-        clusters = list(result["clusters"])  # type: ignore[arg-type]
+        clusters = list(result["clusters"])
         if clusters:
             preview = clusters[0]
             assert "entry_ids" in preview
