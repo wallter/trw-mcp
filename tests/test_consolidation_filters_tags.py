@@ -175,6 +175,66 @@ class TestTagOverlapClusters:
 
         mock_tag.assert_called_once()
 
+    def test_find_clusters_no_cold_embedder_load_uses_tag_fallback(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Maintenance callers can forbid cold embedding model loads."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        fake_entries = [
+            {
+                "id": f"e{i:03d}",
+                "tags": ["gotcha", "pydantic-v2", "trw-mcp"],
+                "summary": f"s{i}",
+                "status": "active",
+                "source_type": "agent",
+            }
+            for i in range(5)
+        ]
+
+        with (
+            patch("trw_mcp.state.memory_adapter.embedding_available", side_effect=AssertionError("cold load")),
+            patch("trw_mcp.state._memory_connection.get_initialized_embedder", return_value=None),
+            patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries),
+            patch(
+                "trw_mcp.state.consolidation._clustering._tag_overlap_clusters",
+                wraps=lambda entries, **kw: [],
+            ) as mock_tag,
+        ):
+            find_clusters(entries_dir, reader, min_cluster_size=3, allow_cold_embedder_load=False)
+
+        mock_tag.assert_called_once()
+
+    def test_find_clusters_tag_fallback_respects_max_entries(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
+    ) -> None:
+        """Tag-overlap fallback is capped too; it is O(n^2) maintenance work."""
+        entries_dir = tmp_path / "entries"
+        entries_dir.mkdir()
+        fake_entries = [
+            {
+                "id": f"e{i:03d}",
+                "tags": ["gotcha", "pydantic-v2", "trw-mcp"],
+                "summary": f"s{i}",
+                "status": "active",
+                "source_type": "agent",
+            }
+            for i in range(20)
+        ]
+
+        with (
+            patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False),
+            patch("trw_mcp.state.memory_adapter.list_active_learnings", return_value=fake_entries),
+            patch(
+                "trw_mcp.state.consolidation._clustering._tag_overlap_clusters",
+                wraps=lambda entries, **kw: [],
+            ) as mock_tag,
+        ):
+            find_clusters(entries_dir, reader, min_cluster_size=3, max_entries=4)
+
+        tag_entries = mock_tag.call_args.args[0]
+        assert len(tag_entries) == 4
+
     def test_find_clusters_tag_fallback_returns_cluster(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:

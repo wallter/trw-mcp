@@ -16,6 +16,23 @@ from trw_mcp.tools._deferred_delivery import (
 )
 
 
+def test_deferred_consolidation_forbids_cold_embedder_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delivery maintenance must not cold-load heavy embedding runtimes in-server."""
+    from trw_mcp.tools import _deferred_steps_memory as memory_steps
+
+    captured: dict[str, object] = {}
+
+    def fake_consolidate_cycle(*args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"status": "no_clusters"}
+
+    monkeypatch.setattr("trw_mcp.state.consolidation.consolidate_cycle", fake_consolidate_cycle)
+    result = memory_steps._step_consolidation(tmp_path / ".trw")
+
+    assert result["status"] == "no_clusters"
+    assert captured["allow_cold_embedder_load"] is False
+
+
 class TestDeferredLock:
     """Non-blocking file lock prevents concurrent deferred batches."""
 

@@ -24,6 +24,7 @@ import structlog
 from structlog.testing import capture_logs
 
 from trw_mcp.models.config import TRWConfig, reload_config
+from trw_mcp.state.validation import _prd_integrity_duplicates as duplicate_checks
 from trw_mcp.state.validation.prd_integrity import (
     BUILTIN_PRD_CATEGORIES,
     _check_allowed_category,
@@ -498,3 +499,73 @@ def test_batch_revalidation_zero_flips(tmp_path: Path) -> None:
         )
     # At least one warning emitted (prompts.py + the 3 zero-match tokens).
     assert sum(1 for f in failures if f.severity == "warning") >= 4
+
+
+# --- PRD-FIX-091: duplicate overlap scan is bounded and quiet ----------------
+
+
+def test_duplicate_overlap_scan_does_not_parse_snapshot_yaml(tmp_path: Path) -> None:
+    """Duplicate overlap warnings should not YAML-parse every historical PRD."""
+    repo = tmp_path
+    prds_dir = repo / "docs/requirements-aare-f/prds"
+    prds_dir.mkdir(parents=True)
+    _mk_tree(repo, ["src/hot_path.py"])
+    (prds_dir / "PRD-FIX-001.md").write_text(
+        """---
+prd:
+  id: PRD-FIX-001
+  title: Existing MCP hot path validation bounds
+  status: draft
+  malformed: [this is intentionally invalid
+---
+
+Shares `src/hot_path.py`.
+""",
+        encoding="utf-8",
+    )
+    current = """---
+prd:
+  id: PRD-FIX-999
+  title: MCP hot path validation bounds
+  status: draft
+---
+
+Touches `src/hot_path.py`.
+"""
+
+    warnings = duplicate_checks._check_duplicate_candidates(
+        current,
+        {"id": "PRD-FIX-999", "title": "MCP hot path validation bounds"},
+        repo,
+        "docs/requirements-aare-f/prds",
+    )
+
+    assert any("PRD-FIX-001" in warning for warning in warnings)
+
+
+def test_duplicate_overlap_scan_truncates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Catalogue-scale duplicate warnings are advisory, so they must be time/file bounded."""
+    repo = tmp_path
+    prds_dir = repo / "docs/requirements-aare-f/prds"
+    prds_dir.mkdir(parents=True)
+    for idx in range(3):
+        (prds_dir / f"PRD-FIX-{idx:03d}.md").write_text(
+            f"""---
+prd:
+  id: PRD-FIX-{idx:03d}
+  title: Duplicate scan candidate {idx}
+  status: draft
+---
+""",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(duplicate_checks, "_DUPLICATE_SCAN_MAX_FILES", 1)
+
+    warnings = duplicate_checks._check_duplicate_candidates(
+        "Current PRD with `src/current.py`.",
+        {"id": "PRD-FIX-999", "title": "Duplicate scan candidate"},
+        repo,
+        "docs/requirements-aare-f/prds",
+    )
+
+    assert any("Duplicate overlap scan was truncated" in warning for warning in warnings)

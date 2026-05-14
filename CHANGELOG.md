@@ -6,6 +6,13 @@ All notable changes to the TRW MCP server package.
 
 _No unreleased changes yet._
 
+## [0.48.4] — 2026-05-14
+
+### Fixed
+
+- **`trw_prd_validate` no longer scales with generated workspace size or PRD-catalogue debug noise** (PRD-FIX-091). Grounding checks now use bounded per-reference path probes instead of building a whole-repo file set; the diagnostic file census prunes runtime/vendor/build trees; advisory duplicate-overlap warnings use a bounded, tolerant scan instead of YAML-parsing every historical PRD body. Local validation benchmark for PRD-FIX-091 improved from 11.581s / 481112 cached files to 0.112s and `valid=True`.
+- **Deferred delivery consolidation cannot cold-load sentence-transformers/torch inside the shared MCP server process** (PRD-FIX-091). Delivery maintenance passes `allow_cold_embedder_load=False`, semantic clustering is still used when an embedder is already initialized, and tag-overlap fallback now respects `max_entries`.
+
 ## [0.48.3] — 2026-05-14
 
 > Versioned from `main` after the `0.48.2` release tag (`4f3b69a2d`). Itemized here so the changelog tracks the current shared MCP server hardening work. See `git log 4f3b69a2d..HEAD -- trw-mcp/` for the authoritative list.

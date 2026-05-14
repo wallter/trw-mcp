@@ -156,6 +156,7 @@ def consolidate_cycle(
     max_entries: int = 50,
     dry_run: bool = False,
     config: TRWConfig | None = None,
+    allow_cold_embedder_load: bool = True,
 ) -> dict[str, object]:
     """Run one consolidation cycle across all active learning entries.
 
@@ -171,6 +172,10 @@ def consolidate_cycle(
         max_entries: Maximum entries to consider for clustering.
         dry_run: If True, skip writes and return cluster preview.
         config: TRWConfig with consolidation thresholds. Uses get_config() if None.
+        allow_cold_embedder_load: When False, semantic clustering only runs if
+            an embedding provider is already initialized; otherwise the cycle
+            uses tag-overlap fallback. This keeps delivery maintenance from
+            cold-loading heavy embedding runtimes inside the shared MCP server.
 
     Returns:
         Dict with consolidation results including cluster count and
@@ -182,7 +187,7 @@ def consolidate_cycle(
     writer = FileStateWriter()
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    active_entries = _load_active_entries(entries_dir, reader, max_entries=10_000) if entries_dir.exists() else []
+    active_entries = _load_active_entries(entries_dir, reader, max_entries=max_entries) if entries_dir.exists() else []
     audit_pattern_promotions = detect_audit_finding_recurrence(
         [dict(entry) for entry in active_entries],
         threshold=cfg.audit_pattern_promotion_threshold,
@@ -198,6 +203,7 @@ def consolidate_cycle(
         similarity_threshold=cfg.memory_consolidation_similarity_threshold,
         min_cluster_size=cfg.memory_consolidation_min_cluster,
         max_entries=max_entries,
+        allow_cold_embedder_load=allow_cold_embedder_load,
     )
 
     if dry_run:

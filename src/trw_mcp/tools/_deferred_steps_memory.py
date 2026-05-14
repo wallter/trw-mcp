@@ -51,6 +51,7 @@ def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
             consolidate_cycle(
                 trw_dir,
                 max_entries=config.memory_consolidation_max_per_cycle,
+                allow_cold_embedder_load=False,
             )
         ),
     )

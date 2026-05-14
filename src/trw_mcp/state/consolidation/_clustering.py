@@ -182,6 +182,7 @@ def find_clusters(
     similarity_threshold: float = 0.75,
     min_cluster_size: int = 3,
     max_entries: int = 50,
+    allow_cold_embedder_load: bool = True,
 ) -> list[list[LearningEntryDict]]:
     """Detect clusters of semantically similar active learning entries.
 
@@ -192,8 +193,8 @@ def find_clusters(
 
     When embeddings are unavailable, falls back to tag-overlap clustering
     (PRD-FIX-052-FR03): entries sharing >= 2 tags are considered similar.
-    The max_entries cap is NOT applied to the tag-based path (cap was for
-    embedding API cost, irrelevant for local tag comparison).
+    The max_entries cap applies to both paths because tag-overlap clustering
+    is O(n²) and runs on MCP maintenance paths.
 
     Args:
         entries_dir: Path to the learnings/entries/ directory.
@@ -201,6 +202,10 @@ def find_clusters(
         similarity_threshold: Minimum pairwise similarity to merge into cluster.
         min_cluster_size: Clusters smaller than this are discarded.
         max_entries: Cap on number of entries loaded for the embedding path.
+        allow_cold_embedder_load: When False, use embeddings only if the
+            provider is already initialized. Deferred delivery uses False so a
+            background maintenance pass cannot cold-load sentence-transformers
+            and saturate the shared MCP server process.
 
     Returns:
         List of clusters; each cluster is a list of entry dicts.
@@ -210,12 +215,18 @@ def find_clusters(
 
     _t0 = time.monotonic()
 
-    if not embedding_available():
+    if allow_cold_embedder_load:
+        embeddings_ready = embedding_available()
+    else:
+        from trw_mcp.state._memory_connection import get_initialized_embedder
+
+        embeddings_ready = get_initialized_embedder() is not None
+
+    if not embeddings_ready:
         logger.debug("consolidation_embed_unavailable_using_tag_fallback")
         if not entries_dir.exists():
             return []
-        # Tag-fallback: load ALL active entries (no max_entries cap)
-        all_entries = _load_active_entries(entries_dir, reader, max_entries=10_000)
+        all_entries = _load_active_entries(entries_dir, reader, max_entries=max_entries)
         # FIX-071-FR01/FR05: Load max_cluster_size from config
         from trw_mcp.models.config import get_config as _get_cfg
 
