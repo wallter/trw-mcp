@@ -277,6 +277,7 @@ class TestMinCoverageThreshold:
         )
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -325,6 +326,7 @@ class TestMinCoverageThreshold:
         )
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")
@@ -371,6 +373,7 @@ class TestMinCoverageThreshold:
         )
 
         from fastmcp import FastMCP
+
         from trw_mcp.tools.build import register_build_tools
 
         server = FastMCP("test")

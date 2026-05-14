@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """CLI entry point and argument parser for trw-mcp.
 
 Provides ``main()`` which is the ``trw-mcp`` console_script entry point,
@@ -12,7 +13,6 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp import __version__
 from trw_mcp._logging import configure_logging
 from trw_mcp.models.config import TRWConfig, get_config, reload_config
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
@@ -68,7 +68,6 @@ def _check_mcp_json_portability(cwd: Path | None = None) -> None:
 # _build_arg_parser extracted to _cli_argparse (PRD-DIST-243 batch 20).
 # Re-exported for back-compat with test_devex_fix065 + test_cli_auth_subcommand.
 from trw_mcp.server._cli_argparse import _build_arg_parser as _build_arg_parser
-
 
 
 def _suggest_command(unknown: str, parser: argparse.ArgumentParser) -> str | None:

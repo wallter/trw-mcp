@@ -11,6 +11,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import make_cluster
 
+
 class TestCreateConsolidatedEntry:
     """FR03: _create_consolidated_entry aggregates fields and writes atomically."""
 

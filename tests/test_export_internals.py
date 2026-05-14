@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tests._test_export_support import _make_entry, _setup_project, _writer
 from trw_mcp.export import (
     _collect_analytics,
     _collect_learnings,
@@ -12,8 +13,6 @@ from trw_mcp.export import (
     temp_project_root,
 )
 from trw_mcp.models.config import TRWConfig
-
-from tests._test_export_support import _make_entry, _setup_project, _writer
 
 
 class TestTempProjectRoot:

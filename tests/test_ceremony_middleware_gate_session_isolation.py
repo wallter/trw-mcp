@@ -15,11 +15,8 @@ from tests._test_ceremony_middleware_gate_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
-    _clean_state,
     _seed_compaction_marker,
     _text,
-    middleware,
-    session_ctx,
 )
 from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active
 

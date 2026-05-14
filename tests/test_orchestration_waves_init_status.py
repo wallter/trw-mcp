@@ -8,8 +8,6 @@ import pytest
 
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from ._orchestration_waves_support import orch_tools, set_project_root
-
 
 class TestTrwInitConfigOverrides:
     """Tests for trw_init config_overrides parameter (line 103)."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tests._ceremony_feedback_support import FeedbackEnv, record_sessions
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.ceremony_feedback import (
     TaskClass,
@@ -10,8 +11,6 @@ from trw_mcp.state.ceremony_feedback import (
     read_feedback_data,
     record_session_outcome,
 )
-
-from tests._ceremony_feedback_support import FeedbackEnv, feedback_env, record_sessions
 
 
 class TestTaskClassifier:

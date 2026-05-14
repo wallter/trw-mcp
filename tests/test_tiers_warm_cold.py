@@ -7,10 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests._tiers_test_support import days_ago, make_tier_manager, write_entry_yaml
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager
-
-from tests._tiers_test_support import days_ago, make_tier_manager, write_entry_yaml
 
 
 class TestWarmTier:

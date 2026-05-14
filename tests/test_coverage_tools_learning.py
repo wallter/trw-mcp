@@ -5,11 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._coverage_tools_support import _extract_tool, _make_server
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.learning import register_learning_tools
-
-from tests._coverage_tools_support import _extract_tool, _make_server
 
 
 class TestLearningExceptionPaths:

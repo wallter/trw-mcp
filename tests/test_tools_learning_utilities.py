@@ -16,7 +16,6 @@ from trw_mcp.state.claude_md import collect_context_data, collect_patterns, coll
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.recall_search import search_patterns
 
-from tests._tools_learning_shared import set_project_root
 
 class TestRecallSearch:
     """Unit tests for state.recall_search functions."""

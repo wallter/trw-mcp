@@ -5,10 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.mutations import cache_mutation_status, run_mutation_check
+
+from ._mutations_support import _make_completed_process
 
 
 class TestCacheMutationStatus:

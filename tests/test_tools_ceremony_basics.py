@@ -10,8 +10,6 @@ from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import _do_reflect, _get_run_status
 from trw_mcp.tools.checkpoint import _do_checkpoint
 
-from tests._tools_ceremony_support import run_dir, trw_project
-
 
 class TestFindActiveRun:
     """Helper function for locating active runs."""

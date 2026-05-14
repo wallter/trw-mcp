@@ -6,11 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests._tiers_test_support import make_entry, make_tier_manager
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager
-
-from tests._tiers_test_support import make_entry, make_tier_manager
 
 
 class TestHotTier:

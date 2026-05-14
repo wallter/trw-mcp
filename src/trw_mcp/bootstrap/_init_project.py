@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """init_project flow — bootstraps TRW framework in a target directory.
 
 PRD-INFRA-006: ``trw-mcp init-project`` CLI command that copies all
@@ -7,11 +8,8 @@ required framework files into a target git repository.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
 
 import structlog
-
-from trw_mcp.models.typed_dicts import BootstrapFileResult
 
 from ._utils import (
     _DATA_DIR,
@@ -64,7 +62,6 @@ from trw_mcp.bootstrap._init_project_ide import (
 from trw_mcp.bootstrap._init_project_ide import (
     _run_copilot_installer as _run_copilot_installer,
 )
-
 
 
 def _create_directory_structure(
@@ -211,7 +208,6 @@ from trw_mcp.bootstrap._init_project_skills import (
 from trw_mcp.bootstrap._init_project_skills import (
     _validate_skill as _validate_skill,
 )
-
 
 
 def _generate_root_files(

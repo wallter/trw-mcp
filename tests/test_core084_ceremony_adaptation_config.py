@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests._test_core084_ceremony_adaptation_support import _run_agents_md_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
-
-from tests._test_core084_ceremony_adaptation_support import _run_agents_md_sync
 
 
 class TestCeremonyModeConfig:

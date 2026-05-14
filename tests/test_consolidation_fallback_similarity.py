@@ -10,6 +10,7 @@ from trw_mcp.state.consolidation import _mean_pairwise_similarity, _summarize_cl
 
 from ._consolidation_test_helpers import make_cluster, make_vec
 
+
 class TestSummarizeClusterFallback:
     """FR05: _summarize_cluster_fallback selects best entry without LLM."""
 

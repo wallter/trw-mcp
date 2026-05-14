@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Shared path resolution -- single source of truth for project root, .trw dir, and run paths.
 
 All modules that need to resolve TRW_PROJECT_ROOT, the .trw directory,
@@ -18,7 +19,6 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.state._pin_store import get_pin_entry, remove_pin_entry, upsert_pin_entry
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -350,10 +350,13 @@ def _resolve_session_id(
 # tools/report, tools/review, telemetry).
 from trw_mcp.state._paths_pin_mgmt import (
     get_pinned_run as get_pinned_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
     pin_active_run as pin_active_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
     unpin_active_run as unpin_active_run,
 )
-
 
 
 def resolve_memory_store_path() -> Path:

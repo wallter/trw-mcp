@@ -8,11 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 from trw_mcp.tools.ceremony import _do_reflect
 from trw_mcp.tools.checkpoint import _do_checkpoint
-
-from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
 
 @pytest.mark.integration

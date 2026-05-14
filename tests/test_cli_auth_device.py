@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests._test_cli_auth_support import _DeviceAuthHandler, _reset_handler, mock_server
+from tests._test_cli_auth_support import _DeviceAuthHandler
 from trw_mcp.cli.auth import _post_json, device_auth_login
 
 

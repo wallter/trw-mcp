@@ -9,11 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._tiers_test_support import days_ago, make_entry, make_tier_manager, write_entry_yaml
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager, TierSweepResult
-
-from tests._tiers_test_support import days_ago, make_entry, make_tier_manager, write_entry_yaml
 
 
 class TestSweep:

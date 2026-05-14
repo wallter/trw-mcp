@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from trw_mcp.state.validation import validate_prd_quality_v2
-
 from tests._test_prd_template_hardening_support import _assert_no_ai_detection_flags, _make_prd
+from trw_mcp.state.validation import validate_prd_quality_v2
 
 
 def _make_ai_incomplete_prd() -> str:

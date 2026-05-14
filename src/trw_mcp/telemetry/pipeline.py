@@ -11,11 +11,11 @@ import collections
 import json
 import threading
 import time
-import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
 
+import httpx
 import structlog
 from typing_extensions import TypedDict
 

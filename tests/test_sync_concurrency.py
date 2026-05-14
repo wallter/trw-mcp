@@ -21,7 +21,6 @@ import time
 from typing import Any
 
 import httpx
-import pytest
 
 
 def _slow_then_concurrent_handler(delay: float) -> Any:
@@ -108,6 +107,7 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
     from unittest.mock import MagicMock
 
     from trw_memory.models.memory import MemoryEntry
+
     from trw_mcp.sync.push import SyncPusher
 
     pusher = SyncPusher(
@@ -178,7 +178,7 @@ async def test_negative_control_sync_httpx_would_block_event_loop() -> None:
     async def blocking_call() -> None:
         # Simulates what sync httpx.Client.get(...) does: blocks the
         # current thread without yielding to the event loop.
-        time.sleep(0.5)
+        time.sleep(0.5)  # noqa: ASYNC251 - intentional negative-control blocking call.
 
     start = time.monotonic()
     results = await asyncio.gather(

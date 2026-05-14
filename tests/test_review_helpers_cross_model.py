@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._review_helpers_support import _make_config, run_dir
+from tests._review_helpers_support import _make_config
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_helpers import handle_cross_model_mode
 

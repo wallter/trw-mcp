@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests._memory_adapter_branches_support import trw_dir
 from trw_memory.models.memory import MemoryEntry
+
 from trw_mcp.state.memory_adapter import backfill_embeddings, get_backend, store_learning
 
 

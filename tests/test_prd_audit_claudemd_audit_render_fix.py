@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.models.config import _reset_config
 
 from ._prd_audit_claudemd_support import _setup_project, _writer
 

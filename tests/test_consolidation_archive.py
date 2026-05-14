@@ -13,6 +13,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import write_entry
 
+
 class TestArchiveOriginals:
     """FR04: _archive_originals marks originals as consolidated_into."""
 

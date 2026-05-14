@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.build import _detect_unlisted_imports, _run_npm_audit, _run_pip_audit
+
+from ._mutations_support import _make_completed_process
 
 
 class TestRunPipAudit:

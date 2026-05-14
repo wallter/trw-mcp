@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-import trw_mcp as _mod
 
+import trw_mcp as _mod
 from tests._auto_upgrade_test_support import reset_cfg  # noqa: F401
 from trw_mcp.state.auto_upgrade import (
     _compare_versions,

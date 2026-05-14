@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from mcp.types import TextContent
 
-from tests._test_middleware_context_budget_support import _clean_state
 from trw_mcp.middleware._compression import hash_content
 from trw_mcp.middleware.context_budget import get_turn_count, get_verbosity_tier, reset_state
 

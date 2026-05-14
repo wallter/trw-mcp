@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from tests._test_memory_store_support import _sqlite_vec
-
 
 class TestExtensionLoadFailureDegradesGracefully:
     """Regression: fresh macOS installs hit this when the system Python is

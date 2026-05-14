@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._dedup_test_support import mock_embed, write_entry
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from tests._dedup_test_support import mock_embed, write_entry
 
 class TestBatchDedup:
     """Tests for FR05 — batch_dedup and is_migration_needed."""

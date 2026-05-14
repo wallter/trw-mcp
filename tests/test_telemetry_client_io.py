@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests._telemetry_client_support import _INSTALL_ID, _FW_VERSION, _base_event
+from tests._telemetry_client_support import _FW_VERSION, _INSTALL_ID, _base_event
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.models import SessionEndEvent, SessionStartEvent, ToolInvocationEvent
 

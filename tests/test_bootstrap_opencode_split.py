@@ -16,6 +16,7 @@ from trw_mcp.bootstrap._opencode import (
     merge_opencode_json,
 )
 
+
 class TestOpenCodeBootstrap:
     """FR11: OpenCode Bootstrap Configuration."""
 

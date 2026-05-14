@@ -11,7 +11,6 @@ from tests._test_memory_store_support import _make_store
 class TestMigrate:
     def test_migrate_returns_zero_when_conn_none(self, tmp_path: Path) -> None:
         import trw_mcp.state.memory_store as ms_mod
-
         from trw_mcp.state.persistence import FileStateReader
 
         original = ms_mod._SQLITE_VEC_AVAILABLE

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests._analytics_branches_support import _reader, _write_run, _writer, analytics_mod, trw_dir
+from tests._analytics_branches_support import _reader, _write_run, _writer, analytics_mod
 from trw_mcp.state.analytics import compute_reflection_quality
 from trw_mcp.state.analytics.report import (
     _analyze_single_run,

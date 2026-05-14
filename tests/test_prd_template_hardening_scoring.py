@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from trw_mcp.state.validation import score_structural_completeness, score_traceability_v2, validate_prd_quality_v2
-
 from tests._test_prd_template_hardening_support import _REQUIRED_SECTIONS, _make_prd
+from trw_mcp.state.validation import score_structural_completeness, score_traceability_v2, validate_prd_quality_v2
 
 
 def test_structural_completeness_rewards_required_subsections() -> None:

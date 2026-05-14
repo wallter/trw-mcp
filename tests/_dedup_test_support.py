@@ -6,6 +6,7 @@ from pathlib import Path
 
 from trw_mcp.state.persistence import FileStateWriter
 
+
 def mock_embed(text: str) -> list[float]:
     """Return a deterministic 384-dim vector based on text content.
 

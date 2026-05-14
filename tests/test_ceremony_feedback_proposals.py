@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._ceremony_feedback_support import FeedbackEnv, record_sessions
 from trw_mcp.state.ceremony_feedback import (
     apply_auto_escalation,
     approve_proposal,
@@ -15,8 +16,6 @@ from trw_mcp.state.ceremony_feedback import (
     register_proposal,
     revert_change,
 )
-
-from tests._ceremony_feedback_support import FeedbackEnv, feedback_env, record_sessions
 
 
 class TestReductionProposal:

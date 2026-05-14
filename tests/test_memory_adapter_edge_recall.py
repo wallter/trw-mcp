@@ -12,8 +12,6 @@ from trw_memory.models.memory import MemoryEntry
 from trw_mcp.state import memory_adapter as memory_adapter_module
 from trw_mcp.state.memory_adapter import get_backend, recall_learnings, store_learning, update_learning
 
-from ._memory_adapter_edge_support import trw_dir
-
 
 class TestRecallLearningsBoundary:
     def test_store_learning_retries_once_after_corruption(self, trw_dir: Path) -> None:

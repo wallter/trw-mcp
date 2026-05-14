@@ -12,6 +12,7 @@ from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+
 class TestSkipUpdatesAccessCount:
     """Tests for FR04 — skip action updates access_count on existing entry."""
 

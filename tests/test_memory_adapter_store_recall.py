@@ -8,8 +8,6 @@ import pytest
 
 from trw_mcp.state.memory_adapter import find_entry_by_id, get_backend, recall_learnings, store_learning
 
-from ._memory_adapter_support import trw_dir, trw_dir_with_entries
-
 
 class TestStoreLearning:
     def test_basic_store(self, trw_dir: Path) -> None:

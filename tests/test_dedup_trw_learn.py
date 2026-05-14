@@ -11,6 +11,7 @@ from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+
 class TestTrwLearnDedup:
     """Integration tests for the dedup check in trw_learn()."""
 

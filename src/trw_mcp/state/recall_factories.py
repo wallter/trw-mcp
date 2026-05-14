@@ -12,8 +12,9 @@ caller declares INTENT instead of assembling ad-hoc parameters.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 

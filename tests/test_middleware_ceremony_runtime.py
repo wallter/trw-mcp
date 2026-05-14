@@ -13,7 +13,6 @@ from tests._test_middleware_ceremony_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
-    _clean_state,
 )
 from trw_mcp.middleware.ceremony import CEREMONY_WARNING, CeremonyMiddleware, is_session_active
 

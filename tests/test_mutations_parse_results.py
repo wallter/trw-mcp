@@ -4,8 +4,9 @@ import json
 
 import pytest
 
-from . import _mutations_support as _mutations_support
 from trw_mcp.tools.mutations import _parse_mutmut_results
+
+from . import _mutations_support as _mutations_support
 
 
 class TestParseMutmutResults:

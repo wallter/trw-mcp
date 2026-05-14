@@ -15,7 +15,6 @@ from tests._test_middleware_context_budget_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
-    _clean_state,
 )
 from trw_mcp.middleware.context_budget import ContextBudgetMiddleware, get_turn_count
 

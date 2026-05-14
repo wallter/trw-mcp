@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._coverage_tools_support import _extract_tool, _make_server
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.ceremony import register_ceremony_tools
-
-from tests._coverage_tools_support import _extract_tool, _make_server
 
 
 class TestCeremonySessionStartFailurePaths:

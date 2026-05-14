@@ -183,8 +183,8 @@ class TestPathsCoverage:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """detect_current_phase skips task_dirs without valid run subdirectories."""
-        from trw_mcp.state import _paths
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _paths
 
         runs_root = tmp_path / ".trw" / "runs"
         runs_root.mkdir(parents=True)
@@ -213,8 +213,8 @@ class TestPathsCoverage:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """detect_current_phase returns None when status != active."""
-        from trw_mcp.state import _paths
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _paths
 
         runs_root = tmp_path / ".trw" / "runs"
         task_dir = runs_root / "my-task"
@@ -238,8 +238,8 @@ class TestPathsCoverage:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Positive: detect_current_phase returns phase when status == active."""
-        from trw_mcp.state import _paths
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _paths
 
         runs_root = tmp_path / ".trw" / "runs"
         task_dir = runs_root / "my-task"

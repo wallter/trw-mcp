@@ -8,7 +8,6 @@ from unittest.mock import patch
 from trw_mcp.state.consolidation import _is_clusterable, find_clusters
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from ._consolidation_test_helpers import write_entry
 
 class TestIsClusterable:
     """Direct unit tests for _is_clusterable filtering predicate."""

@@ -20,48 +20,110 @@ from trw_mcp.models.requirements import (
 )
 from trw_mcp.state.validation._prd_scoring_ai import (
     _AI_KEYWORD_RE as _AI_KEYWORD_RE,
-    _AI_OPERATIONAL_HEADINGS as _AI_OPERATIONAL_HEADINGS,
-    _is_ai_agentic_prd as _is_ai_agentic_prd,
-    _score_ai_operational_evidence as _score_ai_operational_evidence,
 )
-from trw_mcp.state.validation._prd_scoring_fr import (
-    _FR_HEADING_RE as _FR_HEADING_RE,
-    _extract_fr_sections as _extract_fr_sections,
-    _score_assertion_coverage as _score_assertion_coverage,
-    _score_file_path_coverage as _score_file_path_coverage,
+from trw_mcp.state.validation._prd_scoring_ai import (
+    _AI_OPERATIONAL_HEADINGS as _AI_OPERATIONAL_HEADINGS,
+)
+from trw_mcp.state.validation._prd_scoring_ai import (
+    _is_ai_agentic_prd as _is_ai_agentic_prd,
+)
+from trw_mcp.state.validation._prd_scoring_ai import (
+    _score_ai_operational_evidence as _score_ai_operational_evidence,
 )
 from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_BLOCK_RE as _ASSERTION_BLOCK_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_JSON_TYPE_RE as _ASSERTION_JSON_TYPE_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_LINE_RE as _ASSERTION_LINE_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_RE as _ASSERTION_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTIONS_HEADING_RE as _ASSERTIONS_HEADING_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _VERIFICATION_COMMAND_RE as _VERIFICATION_COMMAND_RE,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _count_impl_refs as _count_impl_refs,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _count_planned_requirements as _count_planned_requirements,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _count_test_refs as _count_test_refs,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _count_verification_commands as _count_verification_commands,
+)
+from trw_mcp.state.validation._prd_scoring_counts import (
     _has_assertion_evidence as _has_assertion_evidence,
+)
+from trw_mcp.state.validation._prd_scoring_fr import (
+    _FR_HEADING_RE as _FR_HEADING_RE,
+)
+from trw_mcp.state.validation._prd_scoring_fr import (
+    _extract_fr_sections as _extract_fr_sections,
+)
+from trw_mcp.state.validation._prd_scoring_fr import (
+    _score_assertion_coverage as _score_assertion_coverage,
+)
+from trw_mcp.state.validation._prd_scoring_fr import (
+    _score_file_path_coverage as _score_file_path_coverage,
 )
 from trw_mcp.state.validation._prd_scoring_grounding import (
     compute_grounding_penalty as compute_grounding_penalty,
+)
+from trw_mcp.state.validation._prd_scoring_grounding import (
     get_project_files as get_project_files,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _HEADING_RE as _HEADING_RE,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _HIGH_WEIGHT_SECTIONS as _HIGH_WEIGHT_SECTIONS,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _PLACEHOLDER_RE as _PLACEHOLDER_RE,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _REQUIRED_SUBSECTIONS_BY_VARIANT as _REQUIRED_SUBSECTIONS_BY_VARIANT,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _REQUIREMENT_LINE_RE as _REQUIREMENT_LINE_RE,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _SECTION_WEIGHTS as _SECTION_WEIGHTS,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _SUBHEADING_RE as _SUBHEADING_RE,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _VAGUE_TERMS_RE as _VAGUE_TERMS_RE,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _compute_ambiguity_rate as _compute_ambiguity_rate,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _extract_subheadings as _extract_subheadings,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _get_section_weights as _get_section_weights,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _is_substantive_line as _is_substantive_line,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _parse_section_content as _parse_section_content,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _validation_profile as _validation_profile,
 )
 from trw_mcp.state.validation._prd_scoring_readiness import (
@@ -72,18 +134,44 @@ from trw_mcp.state.validation._prd_scoring_structural import (
 )
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _BARE_IMPL_REF_RE as _BARE_IMPL_REF_RE,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _BARE_TEST_REF_RE as _BARE_TEST_REF_RE,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _IMPL_REF_RE as _IMPL_REF_RE,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _KNOWN_TEST_PATTERNS as _KNOWN_TEST_PATTERNS,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _TEST_REF_RE as _TEST_REF_RE,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _collect_reference_matches as _collect_reference_matches,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _count_populated_trace_fields as _count_populated_trace_fields,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _count_table_rows as _count_table_rows,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _extract_fr_id as _extract_fr_id,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _extract_traceability_matrix_rows as _extract_traceability_matrix_rows,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _has_impl_reference as _has_impl_reference,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _has_test_reference as _has_test_reference,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _normalize_reference_token as _normalize_reference_token,
+)
+from trw_mcp.state.validation._prd_scoring_traceability import (
     _score_traceability_matrix as _score_traceability_matrix,
 )
 

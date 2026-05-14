@@ -8,9 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.state.persistence import FileStateWriter
-
 from tests._recall_scoring_report_support import make_recall_tracking_log, patch_scoring_runs_root
+from trw_mcp.state.persistence import FileStateWriter
 
 
 class TestFindSessionStartTs:

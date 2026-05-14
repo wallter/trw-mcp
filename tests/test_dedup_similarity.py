@@ -8,6 +8,7 @@ from tests._dedup_test_support import mock_embed
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.state.dedup import cosine_similarity
 
+
 class TestCosineSimilarity:
     def test_identical_vectors_return_one(self) -> None:
         """Two identical unit vectors → similarity 1.0."""

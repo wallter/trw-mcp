@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Phase gate validation -- exit and input criteria checks.
 
 Implements check_phase_exit() and check_phase_input() which enforce
@@ -22,18 +23,34 @@ from trw_mcp.models.requirements import ValidationFailure, ValidationResult
 from trw_mcp.models.run import Phase
 from trw_mcp.state.validation.phase_gates_build import (
     _BUILD_STALENESS_SECS as _BUILD_STALENESS_SECS,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_build_check as _best_effort_build_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_dry_check as _best_effort_dry_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_integration_check as _best_effort_integration_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_migration_check as _best_effort_migration_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_orphan_check as _best_effort_orphan_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _best_effort_semantic_check as _best_effort_semantic_check,
+)
+from trw_mcp.state.validation.phase_gates_build import (
     _check_build_status as _check_build_status,
 )
 
 # Re-export from sub-modules for backward compatibility
 from trw_mcp.state.validation.phase_gates_prd import (
     _STATUS_ORDER as _STATUS_ORDER,
+)
+from trw_mcp.state.validation.phase_gates_prd import (
     _check_prd_enforcement as _check_prd_enforcement,
 )
 
@@ -135,11 +152,23 @@ def _build_phase_result(
 
 from trw_mcp.state.validation._phase_gates_exits import (
     _EXIT_CHECKERS,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_deliver_exit as _check_deliver_exit,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_implement_exit as _check_implement_exit,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_plan_exit as _check_plan_exit,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_research_exit as _check_research_exit,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_review_exit as _check_review_exit,
+)
+from trw_mcp.state.validation._phase_gates_exits import (
     _check_validate_exit as _check_validate_exit,
 )
 
@@ -175,10 +204,20 @@ def check_phase_exit(
 
 from trw_mcp.state.validation._phase_gates_inputs import (
     _INPUT_CHECKERS,
+)
+from trw_mcp.state.validation._phase_gates_inputs import (
     _check_deliver_input as _check_deliver_input,
+)
+from trw_mcp.state.validation._phase_gates_inputs import (
     _check_implement_input as _check_implement_input,
+)
+from trw_mcp.state.validation._phase_gates_inputs import (
     _check_plan_input as _check_plan_input,
+)
+from trw_mcp.state.validation._phase_gates_inputs import (
     _check_review_input as _check_review_input,
+)
+from trw_mcp.state.validation._phase_gates_inputs import (
     _check_validate_input as _check_validate_input,
 )
 

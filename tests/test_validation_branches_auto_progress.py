@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from tests._validation_branches_support import _make_prd_file, _make_run_dir
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation import auto_progress_prds
-
-from tests._validation_branches_support import _make_prd_file, _make_run_dir
 
 
 class TestAutoProgressPrds:

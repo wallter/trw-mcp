@@ -11,6 +11,7 @@ from trw_mcp.state.consolidation import _parse_consolidation_response, _summariz
 
 from ._consolidation_test_helpers import make_cluster
 
+
 class TestParseConsolidationResponse:
     """FR02: _parse_consolidation_response extracts JSON from LLM output."""
 

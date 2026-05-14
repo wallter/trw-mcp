@@ -10,9 +10,6 @@ import pytest
 from tests._telemetry_pipeline_support import (
     _make_event,
     _read_jsonl,
-    _reset_pipeline_singleton,
-    fast_pipeline,
-    pipeline_cls,
 )
 
 

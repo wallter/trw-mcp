@@ -8,14 +8,13 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.tools._deferred_delivery import _run_deferred_steps
-
 from tests._tools_ceremony_support import (
     _apply_stubs,
     _make_deferred_trw_dir,
     _read_deferred_log,
     _stub_all_deferred_steps,
 )
+from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 
 
 @pytest.mark.integration

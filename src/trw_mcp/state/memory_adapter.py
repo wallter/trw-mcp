@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Adapter layer between trw-mcp learning tools and trw-memory SQLite backend.
 
 Provides singleton backend access, one-time YAML-to-SQLite migration, and
@@ -40,24 +41,50 @@ from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 # Re-export: connection mgmt + embedding ops + query routing + transforms.
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
+)
+from trw_mcp.state._memory_connection import (
     backfill_embeddings as backfill_embeddings,
+)
+from trw_mcp.state._memory_connection import (
     embed_text as embed_text,
+)
+from trw_mcp.state._memory_connection import (
     embed_text_batch as embed_text_batch,
+)
+from trw_mcp.state._memory_connection import (
     embedding_available as embedding_available,
+)
+from trw_mcp.state._memory_connection import (
     ensure_migrated as ensure_migrated,
+)
+from trw_mcp.state._memory_connection import (
     get_backend as get_backend,
+)
+from trw_mcp.state._memory_connection import (
     get_embed_failure_count as get_embed_failure_count,
+)
+from trw_mcp.state._memory_connection import (
     get_embedder as get_embedder,
+)
+from trw_mcp.state._memory_connection import (
     reset_backend as reset_backend,
+)
+from trw_mcp.state._memory_connection import (
     reset_embedder as reset_embedder,
 )
 from trw_mcp.state._memory_queries import (
     _apply_entry_filters as _apply_entry_filters,
+)
+from trw_mcp.state._memory_queries import (
     _keyword_search as _keyword_search,
+)
+from trw_mcp.state._memory_queries import (
     _search_entries as _search_entries,
 )
 from trw_mcp.state._memory_transforms import (
     _learning_to_memory_entry as _learning_to_memory_entry,
+)
+from trw_mcp.state._memory_transforms import (
     _memory_to_learning_dict as _memory_to_learning_dict,
 )
 
@@ -76,15 +103,25 @@ _embed_failures: int | None = None
 # (PRD-DIST-243 batch 44).
 from trw_mcp.state._memory_recovery import (
     _is_corruption_error as _is_corruption_error,
+)
+from trw_mcp.state._memory_recovery import (
     _log_terminal_recovery as _log_terminal_recovery,
+)
+from trw_mcp.state._memory_recovery import (
     _recover_and_reset_backend as _recover_and_reset_backend,
+)
+from trw_mcp.state._memory_recovery import (
     check_embeddings_status as check_embeddings_status,
+)
+from trw_mcp.state._memory_recovery import (
     reset_embed_failure_count as reset_embed_failure_count,
+)
+from trw_mcp.state._memory_recovery import (
     set_embed_failure_count_for_testing as set_embed_failure_count_for_testing,
 )
+
 # update_learning extracted to _memory_update (PRD-DIST-243 batch 59).
 from trw_mcp.state._memory_update import update_learning as update_learning
-
 
 # ---------------------------------------------------------------------------
 # CRUD operations (return shapes match original YAML tools)
@@ -323,11 +360,25 @@ def recall_learnings(
 # _memory_lookups.py (PRD-DIST-243 batch 43).
 from trw_mcp.state._memory_lookups import (
     count_entries as count_entries,
+)
+from trw_mcp.state._memory_lookups import (
     find_entry_by_id as find_entry_by_id,
+)
+from trw_mcp.state._memory_lookups import (
     find_yaml_path_for_entry as find_yaml_path_for_entry,
+)
+from trw_mcp.state._memory_lookups import (
     increment_session_counts as increment_session_counts,
+)
+from trw_mcp.state._memory_lookups import (
     list_active_learnings as list_active_learnings,
+)
+from trw_mcp.state._memory_lookups import (
     list_entries_by_status as list_entries_by_status,
+)
+from trw_mcp.state._memory_lookups import (
     maybe_checkpoint_wal as maybe_checkpoint_wal,
+)
+from trw_mcp.state._memory_lookups import (
     update_access_tracking as update_access_tracking,
 )

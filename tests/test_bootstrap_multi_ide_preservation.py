@@ -12,6 +12,7 @@ from trw_mcp.state.persistence import FileStateReader
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+
 @pytest.mark.unit
 class TestUpdateProjectMultiIDE:
     """FR15: Update-project supports multiple IDEs (PRD-CORE-074)."""

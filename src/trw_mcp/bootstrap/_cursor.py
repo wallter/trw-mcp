@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Shared Cursor bootstrap helpers — used by both cursor-ide and cursor-cli surfaces.
 
 Named exports (PRD-CORE-136-FR02):
@@ -19,7 +20,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import structlog
 
@@ -38,25 +39,24 @@ _CURSOR_HOOKS_DATA_DIR = _DATA_DIR / "hooks" / "cursor"
 # Cursor-config TypedDicts extracted to _cursor_models (PRD-DIST-243 batch 11).
 # Re-exported here for backward compatibility with sibling bootstrap modules
 # (_cursor_cli.py, _cursor_ide.py) that import HookHandlerEntry via this facade.
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     CursorHookEntry as CursorHookEntry,
 )
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     CursorHooksConfig as CursorHooksConfig,
 )
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     CursorHooksV1Config as CursorHooksV1Config,
 )
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     CursorMcpConfig as CursorMcpConfig,
 )
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     CursorServerEntry as CursorServerEntry,
 )
-from trw_mcp.bootstrap._cursor_models import (  # noqa: E402
+from trw_mcp.bootstrap._cursor_models import (
     HookHandlerEntry as HookHandlerEntry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers

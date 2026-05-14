@@ -12,9 +12,7 @@ from tests._auto_upgrade_test_support import _mock_httpx_response
 from tests._telemetry_pipeline_support import (
     _make_event,
     _make_fake_cfg,
-    _reset_pipeline_singleton,
     make_configured_pipeline,
-    pipeline_cls,
 )
 
 

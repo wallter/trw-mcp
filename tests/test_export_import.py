@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from trw_mcp.export import import_learnings
-
 from tests._test_export_support import _make_entry, _setup_project
+from trw_mcp.export import import_learnings
 
 
 class TestImportLearnings:

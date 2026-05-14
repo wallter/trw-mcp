@@ -9,7 +9,6 @@ All functions receive pre-computed state/urgency/context as arguments.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import structlog
@@ -17,7 +16,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from trw_mcp.state._nudge_state import _STEPS as _STEPS
-from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName, _step_complete
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._client_profile import ClientProfile
@@ -168,7 +167,6 @@ from trw_mcp.state._nudge_template_select import (
 from trw_mcp.state._nudge_template_select import (
     _select_nudge_template as _select_nudge_template,
 )
-
 
 
 def _build_check_message(context: NudgeContext, urgency: str) -> str | None:

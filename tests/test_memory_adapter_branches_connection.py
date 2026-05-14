@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from tests._memory_adapter_branches_support import _make_backend, trw_dir
 from trw_memory.models.memory import MemoryEntry
+
+from tests._memory_adapter_branches_support import _make_backend
 from trw_mcp.state.memory_adapter import (
     _embed_and_store,
     check_embeddings_status,

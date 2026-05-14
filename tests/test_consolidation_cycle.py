@@ -12,6 +12,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import make_vec, write_entry
 
+
 class TestConsolidateCycle:
     """FR06: consolidate_cycle orchestrates the full consolidation pipeline."""
 

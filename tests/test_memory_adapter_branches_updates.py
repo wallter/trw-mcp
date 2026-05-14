@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tests._memory_adapter_branches_support import trw_dir
 from trw_mcp.state.memory_adapter import (
     find_yaml_path_for_entry,
     get_backend,

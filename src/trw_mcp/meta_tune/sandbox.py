@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Shared sandbox primitive for PRD-HPO-SAFE-001 and PRD-CORE-144.
 
 This module defines :class:`ProbeIsolationContext` — a reusable subprocess +
@@ -362,6 +363,8 @@ class SandboxRunner:
 
 from trw_mcp.meta_tune._sandbox_context import (
     ProbeIsolationContext as ProbeIsolationContext,
+)
+from trw_mcp.meta_tune._sandbox_context import (
     run_sandboxed as run_sandboxed,
 )
 

@@ -12,7 +12,6 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -25,7 +24,11 @@ from trw_mcp.models.typed_dicts._opencode import (
 from ._file_ops import _new_result
 from ._opencode_instructions import (
     detect_model_family as detect_model_family,
+)
+from ._opencode_instructions import (
     generate_codex_instructions as generate_codex_instructions,
+)
+from ._opencode_instructions import (
     generate_opencode_instructions as generate_opencode_instructions,
 )
 from ._utils import _DATA_DIR

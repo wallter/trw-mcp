@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -74,9 +73,9 @@ def test_session_start_does_not_scan_run_yamls_when_no_pin(
     monkeypatch.setattr(FileStateReader, "read_yaml", counting_read_yaml)
 
     # Import lazily so monkeypatch is in effect.
-    from trw_mcp.tools._ceremony_helpers import perform_session_recalls
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_trw_dir
+    from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
     config = get_config()
     reader = FileStateReader()
@@ -113,7 +112,7 @@ def test_session_start_reads_only_pinned_run_yaml_when_pin_exists(
     pinned_run_id = "20260503T000002Z-aaaaaaaa"
     pinned_run = trw_dir / "runs" / pinned_task / pinned_run_id
 
-    from trw_mcp.state._paths import pin_active_run, _pinned_runs  # type: ignore[attr-defined]
+    from trw_mcp.state._paths import _pinned_runs, pin_active_run  # type: ignore[attr-defined]
     from trw_mcp.state._pin_store import invalidate_pin_store_cache
 
     _pinned_runs.clear()
@@ -129,9 +128,9 @@ def test_session_start_reads_only_pinned_run_yaml_when_pin_exists(
 
     monkeypatch.setattr(FileStateReader, "read_yaml", counting_read_yaml)
 
-    from trw_mcp.tools._ceremony_helpers import perform_session_recalls
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_trw_dir
+    from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
     config = get_config()
     reader = FileStateReader()

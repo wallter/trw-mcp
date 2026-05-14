@@ -12,6 +12,7 @@ from trw_mcp.models.config import TRWConfig
 
 from ._consolidation_test_helpers import patch_trw_deliver_deps
 
+
 class TestCeremonyWiring:
     """FR07: trw_deliver includes memory consolidation at step 2.6."""
 

@@ -14,8 +14,8 @@ from trw_mcp.scoring import apply_time_decay
 _TIME_DECAY_FLOOR: float = 0.3
 _impact = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 _past_datetime = st.datetimes(
-    min_value=datetime(2020, 1, 1),
-    max_value=datetime(2026, 12, 31),
+    min_value=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    max_value=datetime(2026, 12, 31, tzinfo=timezone.utc),
     timezones=st.just(timezone.utc),
 )
 

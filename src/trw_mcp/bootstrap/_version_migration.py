@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Version migration — predecessor cleanup and stale artifact removal.
 
 Handles:
@@ -229,7 +230,6 @@ from trw_mcp.bootstrap._version_migration_predecessors import (
 from trw_mcp.bootstrap._version_migration_predecessors import (
     _migrate_prefix_predecessors as _migrate_prefix_predecessors,
 )
-
 
 # ---------------------------------------------------------------------------
 # Stale artifact removal

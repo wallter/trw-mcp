@@ -41,24 +41,50 @@ from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE as _FRONTMATTER_RE,
+)
+from trw_mcp.state.prd_utils import (
     extract_sections as _extract_sections,
+)
+from trw_mcp.state.prd_utils import (
     next_prd_sequence,
 )
 from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
+)
+from trw_mcp.state.validation import (
     validate_prd_quality_v2,
 )
 from trw_mcp.tools._prd_template_helpers import (
     _CACHED_TEMPLATE_BODY as _CACHED_TEMPLATE_BODY,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _CACHED_TEMPLATE_VERSION as _CACHED_TEMPLATE_VERSION,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _apply_prefill as _apply_prefill,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _extract_prefill as _extract_prefill,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _filter_sections_for_category as _filter_sections_for_category,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _generate_prd_body as _generate_prd_body,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _load_template_body as _load_template_body,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _render_prd as _render_prd,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _strip_deprecated_fields as _strip_deprecated_fields,
+)
+from trw_mcp.tools._prd_template_helpers import (
     _substitute_template as _substitute_template,
+)
+from trw_mcp.tools._prd_template_helpers import (
     reset_template_cache as reset_template_cache,
 )
 from trw_mcp.tools.telemetry import log_tool_call

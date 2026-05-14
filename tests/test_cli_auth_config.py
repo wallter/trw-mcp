@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._test_cli_auth_support import config_file
 from trw_mcp.cli.auth import (
     _save_api_key,
     _save_config_field,

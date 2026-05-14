@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._analytics_branches_support import _write_entry, trw_dir
+from tests._analytics_branches_support import _write_entry
 from trw_mcp.state.analytics import (
     _iter_entry_files,
     detect_tool_sequences,

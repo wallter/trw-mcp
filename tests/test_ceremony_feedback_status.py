@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from tests._ceremony_feedback_support import FeedbackEnv, record_sessions
 from trw_mcp.state.ceremony_feedback import (
     _pending_proposals,
     generate_reduction_proposal,
     get_ceremony_status,
     read_feedback_data,
 )
-
-from tests._ceremony_feedback_support import FeedbackEnv, feedback_env, record_sessions
 
 
 class TestCeremonyStatus:

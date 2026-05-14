@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.bootstrap import update_project
 
-from ._bootstrap_test_support import fake_git_repo, initialized_repo
 
 class TestUpdatePrefixScopedCleanup:
     """Test that _remove_stale_artifacts only removes trw- prefixed items."""

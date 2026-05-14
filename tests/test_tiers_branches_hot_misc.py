@@ -8,11 +8,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._tiers_branches_support import _make_entry, _setup_entries_dir
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager
-
-from tests._tiers_branches_support import _make_entry, _setup_entries_dir
 
 
 class TestFlushLastAccessedException:

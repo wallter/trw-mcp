@@ -7,6 +7,7 @@ from pathlib import Path
 from trw_mcp.state.dedup import merge_entries
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+
 class TestMergeAuditTrail:
     """Tests for FR03 — audit trail format in merge_entries."""
 

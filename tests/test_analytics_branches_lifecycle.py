@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._analytics_branches_support import _reader, _write_entry, trw_dir
+from tests._analytics_branches_support import _reader, _write_entry
 from trw_mcp.models.learning import LearningStatus
 from trw_mcp.state.analytics import (
     apply_status_update,

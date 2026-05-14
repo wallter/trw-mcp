@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-from tests._test_middleware_context_budget_support import _clean_state
 from trw_mcp.middleware._compression import compress_text_block
 
 

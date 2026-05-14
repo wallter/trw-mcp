@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from mcp.types import TextContent
 
-from tests._test_middleware_ceremony_support import FakeToolResult, _clean_state
+from tests._test_middleware_ceremony_support import FakeToolResult
 from trw_mcp.middleware.ceremony import (
     _compaction_gate_sessions,
     _extract_session_start_payload,

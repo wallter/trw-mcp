@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+
 def test_recall_context_construction(tmp_path: Path) -> None:
     """build_recall_context returns valid RecallContext with phase when detect_current_phase returns a phase."""
     from trw_mcp.scoring._recall import RecallContext

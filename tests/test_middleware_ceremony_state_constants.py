@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from tests._test_middleware_ceremony_support import _clean_state
 from trw_mcp.middleware.ceremony import (
     CEREMONY_TOOLS,
     CEREMONY_WARNING,

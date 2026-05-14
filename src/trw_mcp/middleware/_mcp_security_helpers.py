@@ -308,8 +308,8 @@ def record_anomalies(
     Returns the trimmed list (caller rebinds; in-place append + slice).
     """
     now = datetime.now(tz=timezone.utc).isoformat()
-    for anomaly_type in fired:
-        recent_anomalies.append(
+    recent_anomalies.extend(
+        [
             {
                 "ts": now,
                 "transport": transport,
@@ -320,7 +320,9 @@ def record_anomalies(
                 "session_id": session_id,
                 "arg_hash": args_hash,
             }
-        )
+            for anomaly_type in fired
+        ]
+    )
     return recent_anomalies[-25:]
 
 

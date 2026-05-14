@@ -8,8 +8,6 @@ from unittest.mock import patch
 from trw_mcp.tools._deferred_delivery import _do_auto_progress, _do_index_sync
 from trw_mcp.tools.ceremony import _do_instruction_sync
 
-from tests._tools_ceremony_support import trw_project
-
 
 class TestDoClaudeMdSync:
     """CLAUDE.md sync during delivery ceremony."""

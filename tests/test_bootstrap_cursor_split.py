@@ -11,6 +11,7 @@ from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+
 @pytest.mark.integration
 class TestCursorBootstrap:
     """FR05+FR06+FR07: Cursor IDE bootstrap — hooks, rules, mcp config."""

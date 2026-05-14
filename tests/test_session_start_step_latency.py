@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -109,7 +108,6 @@ def test_session_start_step_durations_logged_with_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """session_start_ok event payload includes step_durations_ms field."""
-    import structlog
     from structlog.testing import capture_logs
 
     fn = _get_session_start_fn()

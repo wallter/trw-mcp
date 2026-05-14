@@ -18,8 +18,6 @@ from trw_mcp.state.memory_adapter import (
     update_learning,
 )
 
-from ._memory_adapter_edge_support import trw_dir
-
 
 class TestIncrementSessionCounts:
     def test_deduplicates_ids_and_defaults_none_to_zero(self, trw_dir: Path) -> None:

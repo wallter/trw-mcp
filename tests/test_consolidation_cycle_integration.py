@@ -11,6 +11,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import make_vec, write_entry
 
+
 class TestConsolidationIntegration:
     """End-to-end tests combining clustering, summarization, creation, and archival."""
 

@@ -55,13 +55,13 @@ def compute_nudge_stepback(
 
     Prompts the agent to hypothesize and identify core principles when stalled.
     """
+    from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
     from trw_mcp.state.ceremony_nudge import (
         _MINIMAL_HEADER,
         _is_agent_in_distress,
         compute_nudge_contextual,
         compute_nudge_minimal,
     )
-    from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
 
     try:
         if _is_agent_in_distress(state):
@@ -80,8 +80,8 @@ def compute_nudge_stepback(
 
 def compute_nudge_cod(state: CeremonyState) -> str:
     """Render a 'Chain of Draft' (CoD) shorthand nudge."""
-    from trw_mcp.state.ceremony_nudge import _MINIMAL_HEADER, compute_nudge_minimal
     from trw_mcp.state._nudge_status_lines import _build_done_next_then_status_light
+    from trw_mcp.state.ceremony_nudge import _MINIMAL_HEADER, compute_nudge_minimal
 
     try:
         status = _build_done_next_then_status_light(state)
@@ -105,12 +105,12 @@ def compute_nudge_anchor(state: CeremonyState, trw_dir: Path, context: NudgeCont
 
 def compute_nudge_negative(state: CeremonyState) -> str:
     """Render a nudge using negative constraints (anti-patterns)."""
+    from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
     from trw_mcp.state.ceremony_nudge import (
         _MINIMAL_HEADER,
         _highest_priority_pending_step,
         compute_nudge_minimal,
     )
-    from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
 
     try:
         status = _build_minimal_status_line(state)
@@ -137,8 +137,8 @@ def compute_nudge_negative(state: CeremonyState) -> str:
 
 def compute_nudge_governance(state: CeremonyState, available_learnings: int = 0) -> str:
     """Render a governance-only nudge (status line only, no prompt text)."""
-    from trw_mcp.state.ceremony_nudge import _MINIMAL_HEADER
     from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
+    from trw_mcp.state.ceremony_nudge import _MINIMAL_HEADER
 
     try:
         status_line = _build_minimal_status_line(state)

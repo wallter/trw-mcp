@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Core recall logic — extracted from learning.py for module-size compliance.
 
 Dependencies that test suites patch at ``trw_mcp.tools.learning.*`` are

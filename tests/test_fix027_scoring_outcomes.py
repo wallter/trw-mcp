@@ -37,8 +37,8 @@ class TestProcessOutcomeForEvent:
     def test_outcome_history_appended(self, tmp_path: Path) -> None:
         """Outcome history grows with each process_outcome call."""
         import trw_mcp.scoring as _sc
-        from trw_mcp.scoring import process_outcome as po
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.scoring import process_outcome as po
 
         writer = FileStateWriter()
         reader = FileStateReader()
@@ -97,8 +97,8 @@ class TestProcessOutcomeForEvent:
     def test_negative_outcome_decreases_q_value(self, tmp_path: Path) -> None:
         """Negative reward (build_failed) decreases q_value for correlated entries."""
         import trw_mcp.scoring as _sc
-        from trw_mcp.scoring import process_outcome as po
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.scoring import process_outcome as po
 
         writer = FileStateWriter()
         reader = FileStateReader()

@@ -18,8 +18,6 @@ from trw_mcp.bootstrap import (
     update_project,
 )
 
-from ._bootstrap_test_support import fake_git_repo, initialized_repo
-
 
 @pytest.mark.unit
 class TestPrefixMigrationExtra:

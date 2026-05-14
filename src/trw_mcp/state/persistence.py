@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Atomic YAML/JSONL read/write with advisory file locks.
 
 All state persistence goes through this module. Writes are atomic
@@ -36,21 +37,16 @@ logger = structlog.get_logger(__name__)
 from trw_mcp.state._persistence_helpers import (
     INTERNAL_EVENT_TYPES as INTERNAL_EVENT_TYPES,
 )
-from trw_mcp.state._persistence_helpers import (
-    _suppress_internal_events as _suppress_internal_events,
-)
-
-
-# _resolve_hpo_event_context extracted to _persistence_helpers (PRD-DIST-243 batch 15b).
-from trw_mcp.state._persistence_helpers import (
-    _resolve_hpo_event_context as _resolve_hpo_event_context,
-)
-
 
 # YAML factories + json/model utilities extracted to _persistence_helpers
 # (PRD-DIST-243 batch 12). Re-exported for backward compatibility.
 from trw_mcp.state._persistence_helpers import (
     _new_yaml as _new_yaml,
+)
+
+# _resolve_hpo_event_context extracted to _persistence_helpers (PRD-DIST-243 batch 15b).
+from trw_mcp.state._persistence_helpers import (
+    _resolve_hpo_event_context as _resolve_hpo_event_context,
 )
 from trw_mcp.state._persistence_helpers import (
     _roundtrip_yaml as _roundtrip_yaml,
@@ -58,7 +54,14 @@ from trw_mcp.state._persistence_helpers import (
 from trw_mcp.state._persistence_helpers import (
     _safe_yaml as _safe_yaml,
 )
+from trw_mcp.state._persistence_helpers import (
+    _suppress_internal_events as _suppress_internal_events,
+)
 
+# json_serializer extracted to _persistence_helpers (PRD-DIST-243 batch 12).
+from trw_mcp.state._persistence_helpers import (
+    json_serializer as json_serializer,
+)
 
 # Protocol interfaces extracted to _persistence_protocols (PRD-DIST-243 batch 16).
 # Re-exported here for backward compatibility with callers that type-annotate
@@ -71,12 +74,6 @@ from trw_mcp.state._persistence_protocols import (
 )
 from trw_mcp.state._persistence_protocols import (
     StateWriter as StateWriter,
-)
-
-
-# json_serializer extracted to _persistence_helpers (PRD-DIST-243 batch 12).
-from trw_mcp.state._persistence_helpers import (
-    json_serializer as json_serializer,
 )
 
 

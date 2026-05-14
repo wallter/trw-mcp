@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.mutations import run_mutation_check
+
+from ._mutations_support import _make_completed_process
 
 
 class TestRunMutationCheck:

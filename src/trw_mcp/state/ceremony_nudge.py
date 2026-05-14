@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Legacy ceremony-nudge compatibility surface.
 
 Live tool paths are isolated behind ``ceremony_progress`` and
@@ -348,6 +349,20 @@ def compute_nudge_contextual_distress(
 
 # Specialized compute_nudge_* variants extracted to _ceremony_nudge_specialized
 # (PRD-DIST-243 batch 24). Re-exported for back-compat with _ceremony_status.py.
+# Selectors extracted to _ceremony_nudge_selectors (PRD-DIST-243 batch 25).
+# Re-exported for back-compat with _ceremony_status.py.
+from trw_mcp.state._ceremony_nudge_selectors import (
+    _contextual_next_step_message as _contextual_next_step_message,
+)
+from trw_mcp.state._ceremony_nudge_selectors import (
+    _select_learning_injection_candidate as _select_learning_injection_candidate,
+)
+from trw_mcp.state._ceremony_nudge_selectors import (
+    select_contextual_nudge_content as select_contextual_nudge_content,
+)
+from trw_mcp.state._ceremony_nudge_selectors import (
+    select_learning_injection_content as select_learning_injection_content,
+)
 from trw_mcp.state._ceremony_nudge_specialized import (
     compute_nudge_anchor as compute_nudge_anchor,
 )
@@ -365,23 +380,5 @@ from trw_mcp.state._ceremony_nudge_specialized import (
 )
 from trw_mcp.state._ceremony_nudge_specialized import (
     compute_nudge_stepback as compute_nudge_stepback,
-)
-
-
-
-
-# Selectors extracted to _ceremony_nudge_selectors (PRD-DIST-243 batch 25).
-# Re-exported for back-compat with _ceremony_status.py.
-from trw_mcp.state._ceremony_nudge_selectors import (
-    _contextual_next_step_message as _contextual_next_step_message,
-)
-from trw_mcp.state._ceremony_nudge_selectors import (
-    _select_learning_injection_candidate as _select_learning_injection_candidate,
-)
-from trw_mcp.state._ceremony_nudge_selectors import (
-    select_contextual_nudge_content as select_contextual_nudge_content,
-)
-from trw_mcp.state._ceremony_nudge_selectors import (
-    select_learning_injection_content as select_learning_injection_content,
 )
 

@@ -309,7 +309,7 @@ def _batch_sync_to_sqlite(
         # ``transaction``/``update`` (no-op pass-through on backends
         # without batching support); the cast is the documented contract
         # boundary, replacing two ``# type: ignore[attr-defined]``.
-        backend = cast(_TransactionalBackend, get_backend(trw_dir))
+        backend = cast("_TransactionalBackend", get_backend(trw_dir))
     except Exception:  # justified: fail-open, SQLite batch sync is best-effort
         logger.debug("q_value_sqlite_batch_sync_failed", exc_info=True)
         return

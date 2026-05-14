@@ -7,6 +7,7 @@ from pathlib import Path
 from trw_mcp.state.dedup import merge_entries
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+
 class TestMergeEntries:
     """Tests for the merge_entries() function.
 

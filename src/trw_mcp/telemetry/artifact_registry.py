@@ -39,14 +39,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trw_mcp.telemetry._artifact_discovery import (
     _COMPONENTS,
-    _artifacts_snapshot_id as _artifacts_snapshot_id,
-    _component_rollup as _component_rollup,
     _discover_artifacts,
     _discover_repo_artifacts,
     _framework_version,
     _package_version,
     _resolve_data_root,
     _resolve_repo_root,
+)
+from trw_mcp.telemetry._artifact_discovery import (
+    _artifacts_snapshot_id as _artifacts_snapshot_id,
+)
+from trw_mcp.telemetry._artifact_discovery import (
+    _component_rollup as _component_rollup,
 )
 
 logger = structlog.get_logger(__name__)

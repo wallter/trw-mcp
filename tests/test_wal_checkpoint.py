@@ -48,8 +48,8 @@ def test_truncate_shrinks_wal_when_no_concurrent_readers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With only a passive holder connection, TRUNCATE shrinks the WAL."""
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
     from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
@@ -95,8 +95,8 @@ def test_passive_fallback_when_truncate_busy(
     Simulated by patching sqlite3.Connection.execute to return busy=1 for
     the TRUNCATE pragma; the function must then run PASSIVE without raising.
     """
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
     from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
@@ -136,8 +136,8 @@ def test_skipped_when_under_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When WAL is under threshold, function returns skipped without opening a connection."""
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
     from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()

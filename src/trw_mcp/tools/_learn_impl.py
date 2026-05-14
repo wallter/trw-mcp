@@ -19,26 +19,42 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import LearnResultDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+# Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
+# Re-exported so existing test imports continue to work.
+from trw_mcp.tools._learn_side_effects import (
+    _LEARN_INJECTION_PATTERNS as _LEARN_INJECTION_PATTERNS,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _MAX_DETAIL_CHARS as _MAX_DETAIL_CHARS,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _MAX_SUMMARY_CHARS as _MAX_SUMMARY_CHARS,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _append_provenance_signed as _append_provenance_signed,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _content_policy_reject as _content_policy_reject,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _default_is_solution as _default_is_solution,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _handle_consolidation as _handle_consolidation,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _save_yaml_backup as _save_yaml_backup,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _store_accepts_positional_trw_dir as _store_accepts_positional_trw_dir,
+)
 from trw_mcp.tools._learning_helpers import (
     LearningParams,
     calibrate_impact,
     check_soft_cap,
     enforce_distribution,
     is_noise_summary,
-)
-
-# Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
-# Re-exported so existing test imports continue to work.
-from trw_mcp.tools._learn_side_effects import (
-    _LEARN_INJECTION_PATTERNS as _LEARN_INJECTION_PATTERNS,
-    _MAX_DETAIL_CHARS as _MAX_DETAIL_CHARS,
-    _MAX_SUMMARY_CHARS as _MAX_SUMMARY_CHARS,
-    _append_provenance_signed as _append_provenance_signed,
-    _content_policy_reject as _content_policy_reject,
-    _default_is_solution as _default_is_solution,
-    _handle_consolidation as _handle_consolidation,
-    _save_yaml_backup as _save_yaml_backup,
-    _store_accepts_positional_trw_dir as _store_accepts_positional_trw_dir,
 )
 
 logger = structlog.get_logger(__name__)

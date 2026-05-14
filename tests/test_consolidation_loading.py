@@ -10,6 +10,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import make_vec, write_entry
 
+
 class TestFindClustersSQLite:
     """PRD-FIX-033-FR04: find_clusters loads entries from SQLite when available."""
 

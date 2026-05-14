@@ -6,11 +6,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests._tiers_branches_support import _make_old_entry, _setup_entries_dir, _write_yaml_entry
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.tiers import TierManager
-
-from tests._tiers_branches_support import _make_old_entry, _setup_entries_dir, _write_yaml_entry
 
 
 class TestSweepHotToWarmException:

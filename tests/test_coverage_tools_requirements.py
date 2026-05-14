@@ -5,10 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._coverage_tools_support import _extract_tool, _make_server
 from trw_mcp.exceptions import StateError, ValidationError
 from trw_mcp.tools.requirements import register_requirements_tools
-
-from tests._coverage_tools_support import _extract_tool, _make_server
 
 
 class TestRequirementsFailurePaths:

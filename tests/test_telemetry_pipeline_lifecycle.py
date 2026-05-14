@@ -12,10 +12,7 @@ import pytest
 from tests._telemetry_pipeline_support import (
     _make_event,
     _make_fake_cfg,
-    _reset_pipeline_singleton,
-    fast_pipeline,
     make_configured_pipeline,
-    pipeline_cls,
 )
 
 

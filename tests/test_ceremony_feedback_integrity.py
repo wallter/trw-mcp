@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+from tests._ceremony_feedback_support import FeedbackEnv
 from trw_mcp.state.ceremony_feedback import (
     TaskClass,
     _derive_agent_id,
@@ -17,8 +18,6 @@ from trw_mcp.state.ceremony_feedback import (
     record_session_outcome,
     sanitize_ceremony_feedback,
 )
-
-from tests._ceremony_feedback_support import FeedbackEnv, feedback_env
 
 
 class TestDeriveAgentId:

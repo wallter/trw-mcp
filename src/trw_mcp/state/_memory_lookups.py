@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-
 from trw_memory.exceptions import StorageError
 from trw_memory.models.memory import MemoryStatus
 

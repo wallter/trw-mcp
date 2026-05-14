@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -17,13 +16,10 @@ from trw_mcp.bootstrap import (
     _files_identical,
     _get_bundled_names,
     _pip_install_package,
-    _read_manifest,
     _remove_stale_artifacts,
     _write_if_missing,
     update_project,
 )
-
-from ._bootstrap_test_support import fake_git_repo, initialized_repo
 
 
 @pytest.mark.unit

@@ -9,8 +9,6 @@ import pytest
 from trw_mcp.models.config import get_config
 from trw_mcp.state.memory_adapter import ensure_migrated, find_yaml_path_for_entry, get_backend
 
-from ._memory_adapter_support import trw_dir, trw_dir_with_entries
-
 
 class TestEnsureMigrated:
     def test_migrates_yaml_entries(self, trw_dir_with_entries: Path) -> None:

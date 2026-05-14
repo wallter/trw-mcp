@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from trw_mcp.models.config import TRWConfig
-
 from tests._test_core084_ceremony_adaptation_support import _run_agents_md_sync
+from trw_mcp.models.config import TRWConfig
 
 
 class TestAgentsMdLearningInjection:

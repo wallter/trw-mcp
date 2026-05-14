@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     render_adherence,
@@ -17,7 +18,6 @@ from trw_mcp.state.claude_md import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics, set_project_root
 
 class TestProgressiveDisclosure:
     """Tests for PRD-CORE-061 progressive disclosure and PRD-CORE-062 context optimization."""

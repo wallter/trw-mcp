@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools, set_project_root
 
 class TestClaudeMdSyncQValuePromotion:
     """Tests for PRD-CORE-004 Phase 1c — q_value-based promotion in claude_md_sync."""

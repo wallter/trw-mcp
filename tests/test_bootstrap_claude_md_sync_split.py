@@ -8,7 +8,6 @@ import pytest
 
 from trw_mcp.bootstrap import init_project
 
-from ._bootstrap_test_support import fake_git_repo
 
 class TestRunClaudeMdSync:
     """Tests for _run_claude_md_sync — fail-open + stdout suppression."""

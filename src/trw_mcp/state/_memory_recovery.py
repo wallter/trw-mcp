@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
 
 logger = structlog.get_logger(__name__)

@@ -55,9 +55,10 @@ from trw_mcp.state._paths import iter_run_dirs
 from trw_mcp.state._run_gc_io import (
     _append_event_best_effort,
     _dump_run_yaml_atomic,
-    _iso_utc_now,
     _load_run_yaml,
     _prefilter_protected,
+)
+from trw_mcp.state._run_gc_io import (
     _prefilter_status as _prefilter_status,
 )
 

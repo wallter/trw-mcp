@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests._validation_branches_support import _make_run_dir
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation import check_phase_exit
-
-from tests._validation_branches_support import _make_run_dir
 
 
 class TestCheckPhaseExitResearch:

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from trw_mcp.state.persistence import FileStateReader
 
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools, set_project_root
 
 class TestToolDocstrings:
     """PRD-CORE-119: learning tool schema guidance stays accurate and high-signal."""

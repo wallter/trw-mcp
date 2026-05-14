@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _reader = FileStateReader()

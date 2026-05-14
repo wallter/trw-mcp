@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,10 +14,7 @@ from tests._telemetry_pipeline_support import (
     _make_event,
     _make_fake_cfg,
     _read_jsonl,
-    _reset_pipeline_singleton,
-    fast_pipeline,
     make_configured_pipeline,
-    pipeline_cls,
 )
 
 

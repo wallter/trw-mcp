@@ -4,10 +4,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.build import _DEP_AUDIT_FILE, _cache_to_context, _run_dep_audit
+
+from ._mutations_support import _make_completed_process
 
 
 class TestRunDepAudit:

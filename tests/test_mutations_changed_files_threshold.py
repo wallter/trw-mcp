@@ -6,9 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.mutations import _classify_threshold_tier, _get_changed_files
+
+from ._mutations_support import _make_completed_process
 
 
 class TestGetChangedFiles:

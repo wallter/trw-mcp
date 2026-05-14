@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from tests.conftest import get_tools_sync, make_test_server
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools, set_project_root
+
 
 class TestToolDelegationIntact:
     """Verify all learning tool functions remain registered and callable."""

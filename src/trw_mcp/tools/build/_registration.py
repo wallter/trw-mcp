@@ -379,13 +379,12 @@ def _q_learning_worker(
         # ``_q_lock``-guarded helper; prevents torn reads from
         # ``get_q_learning_health()``.
         new_count = _qls.record_error(exc)
-        logger.error(
+        logger.exception(
             "q_learning_worker_crashed",
             event_type=initial_event_type,
             scope=scope,
             error_count=new_count,
             tool_call_id=tool_call_id,
-            exc_info=True,
         )
     finally:
         with _qls._q_lock:

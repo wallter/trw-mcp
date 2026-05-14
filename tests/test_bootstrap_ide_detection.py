@@ -8,6 +8,7 @@ import pytest
 
 from trw_mcp.bootstrap import detect_ide, detect_installed_clis, resolve_ide_targets
 
+
 class TestIDEDetection:
     """Tests for detect_ide, detect_installed_clis, and resolve_ide_targets."""
 

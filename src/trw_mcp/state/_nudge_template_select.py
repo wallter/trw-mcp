@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import structlog
 
-from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext, ToolName, _step_complete
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
 
 logger = structlog.get_logger(__name__)
 

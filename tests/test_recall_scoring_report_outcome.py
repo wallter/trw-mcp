@@ -8,10 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._recall_scoring_report_support import make_recall_tracking_log
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-from tests._recall_scoring_report_support import make_recall_tracking_log
 
 
 class TestProcessOutcome:

@@ -10,6 +10,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 from ._consolidation_test_helpers import make_vec, write_entry
 
+
 class TestFindClusters:
     """FR01: find_clusters detects semantically similar entry clusters."""
 

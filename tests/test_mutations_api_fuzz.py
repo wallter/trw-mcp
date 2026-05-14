@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ._mutations_support import _make_completed_process
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools.build import _API_FUZZ_FILE, _cache_to_context, _run_api_fuzz
+
+from ._mutations_support import _make_completed_process
 
 
 class TestRunApiFuzz:

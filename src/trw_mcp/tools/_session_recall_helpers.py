@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Session recall helpers for ceremony.py — live session-start recall logic."""
 
 from __future__ import annotations
@@ -10,11 +11,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
 from trw_mcp.models.typed_dicts import (
     AutoRecalledItemDict,
-    RunStatusDict,
     SessionRecallExtrasDict,
 )
-from trw_mcp.scoring import rank_by_utility
-from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.propensity_log import log_ranked_selections
 from trw_mcp.state.receipts import log_recall_receipt
@@ -215,7 +213,6 @@ def perform_session_recalls(
         logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
         return [], [], {}
 
-    from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
 
     is_focused = query.strip() not in ("", "*")
     extra: SessionRecallExtrasDict = {}

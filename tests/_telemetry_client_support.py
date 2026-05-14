@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from trw_mcp.telemetry.models import TelemetryEvent
 
 _INSTALL_ID = "abcd1234abcd1234"

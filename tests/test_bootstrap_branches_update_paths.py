@@ -12,8 +12,6 @@ import pytest
 from trw_mcp.bootstrap import update_project
 from trw_mcp.bootstrap._update_project import _run_auto_maintenance
 
-from ._bootstrap_test_support import fake_git_repo, initialized_repo
-
 
 @pytest.mark.unit
 class TestDryRunWouldCreate:

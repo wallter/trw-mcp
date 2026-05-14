@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.scoring import (
     compute_initial_q_value,
@@ -17,7 +18,6 @@ from trw_mcp.scoring import (
 )
 from trw_mcp.state.persistence import FileStateReader
 
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools, set_project_root
 
 class TestOutcomeCorrelation:
     """Tests for PRD-CORE-004 Phase 1c — automatic outcome correlation."""

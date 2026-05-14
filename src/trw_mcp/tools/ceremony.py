@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """TRW session ceremony tools — trw_session_start, trw_deliver.
 
 PRD-CORE-019: Composite tools that reduce ceremony from 7 manual calls
@@ -25,10 +26,7 @@ from fastmcp import Context, FastMCP
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
-    ClaudeMdSyncResultDict,
     DeliverResultDict,
-    ReflectResultDict,
-    RunStatusDict,
     SessionStartResultDict,
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
@@ -36,7 +34,6 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.state._paths import (
     TRWCallContext,
     find_active_run,
-    pin_active_run,
     resolve_pin_key,
     resolve_trw_dir,
 )
@@ -45,12 +42,12 @@ from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
 )
+from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,
     step_clear_score,
     unpack_gate_result,
 )
-from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._deferred_delivery import (
     _launch_deferred,
@@ -107,27 +104,58 @@ def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
 # Runtime helpers extracted to _ceremony_runtime_helpers (PRD-DIST-243 batch 53).
 from trw_mcp.tools._ceremony_runtime_helpers import (
     _candidate_run_hints as _candidate_run_hints,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _compute_run_age_hours as _compute_run_age_hours,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _do_instruction_sync as _do_instruction_sync,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _do_reflect as _do_reflect,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _get_run_status as _get_run_status,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _learning_reflection_message as _learning_reflection_message,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _mark_run_complete as _mark_run_complete,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _no_active_run_hint as _no_active_run_hint,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _parse_iso_utc as _parse_iso_utc,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _persist_surface_snapshot_pointer as _persist_surface_snapshot_pointer,
+)
+from trw_mcp.tools._ceremony_runtime_helpers import (
     _timedelta_hours as _timedelta_hours,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
     finalize_session_start as finalize_session_start,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health as step_assertion_health,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_auto_recall_orchestrated as step_auto_recall_orchestrated,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_phase_auto_recall as step_phase_auto_recall,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_recall_learnings as step_recall_learnings,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_run_resolve as step_run_resolve,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_surface_stamp as step_surface_stamp,
 )
-
 
 # ── Tool registration ─────────────────────────────────────────────────
 

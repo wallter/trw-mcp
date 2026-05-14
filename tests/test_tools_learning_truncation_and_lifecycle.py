@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._tools_learning_shared import _CFG, _get_tools, set_project_root
+from tests._tools_learning_shared import _CFG, _get_tools
+
 
 class TestMarkerAwareTruncation:
     """QUAL-018 FR02: Marker-aware truncation preserves TRW section."""
