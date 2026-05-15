@@ -4,7 +4,9 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
-_No unreleased changes yet._
+### Removed
+
+- **Two dead test files that referenced Sprint-79-removed build/mutations symbols** (PRD-DIST-880, PRD-DIST-916). Sprint 79 (commit `f65c813ae`, 2026-03-30) consolidated build tooling and removed `trw_mcp.tools.build._audit`, `_subprocess`, `_runners`, and `mutations`. The post-split test files `tests/test_analytics_branches_reporting.py` and `tests/test_mutations_api_fuzz.py` continued to import the removed symbols and have produced collection errors since. They contributed zero passing tests and are deleted without replacement. No production source under `trw-mcp/src/` is affected; the 8446-test passing footprint is preserved. Six additional `tests/test_mutations_*.py` files share the same root cause and are surfaced as an operator-decision in PRD-DIST-919 (cycle 275+ follow-up).
 
 ## [0.48.7] — 2026-05-14
 
