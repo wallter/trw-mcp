@@ -418,7 +418,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # Steps 0, 0b, premature guard: extracted to helper
         from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
-        gate_result = check_delivery_gates(resolved_run, reader)
+        gate_result = check_delivery_gates(resolved_run, reader, trw_dir)
         unpack_gate_result(gate_result, results)
 
         # Step 0c: Copy compliance artifacts (INFRA-027-FR05)

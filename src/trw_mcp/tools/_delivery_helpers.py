@@ -18,6 +18,7 @@ Internal helpers (also re-exported for test access):
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import structlog
@@ -389,6 +390,42 @@ def _check_build_and_work_events(
     return build_warning, premature_warning
 
 
+def _check_no_active_run_build_gate(trw_dir: Path | None, reader: FileStateReader) -> str | None:
+    """Require build-check evidence for deliver when no run pin exists.
+
+    Eval containers commonly run without ``trw_init``/``trw_adopt_run``. In
+    that state there is no run ``events.jsonl`` for the normal delivery gate,
+    but the local ceremony state still records session_start/build_check
+    progress. Without this fallback, ``trw_deliver`` can silently mark
+    ``deliver_called=True`` after a failed task.
+    """
+    if trw_dir is None:
+        return None
+
+    state_path = trw_dir / "context" / "ceremony-state.json"
+    try:
+        if not reader.exists(state_path):
+            return None
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict) or not state.get("session_started"):
+            return None
+
+        build_result = state.get("build_check_result")
+        build_passed = build_result is True or (
+            isinstance(build_result, str) and build_result.lower() in {"pass", "passed", "success", "true"}
+        )
+        if build_passed:
+            return None
+        return (
+            "No successful build check found before delivery in this unpinned session. "
+            "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check(), "
+            "or call trw_init()/trw_adopt_run() so run-scoped evidence can be checked."
+        )
+    except Exception:  # justified: fail-open, build gate check must not block delivery on read errors
+        logger.warning("no_active_run_build_gate_failed", exc_info=True)
+        return None
+
+
 def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
     """R-08: Check instruction-tool parity — soft warning gate (PRD-CORE-135).
 
@@ -432,6 +469,7 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
+    trw_dir: Path | None = None,
 ) -> DeliveryGatesDict:
     """Check review/build gates and premature delivery guard.
 
@@ -446,6 +484,9 @@ def check_delivery_gates(
     result: DeliveryGatesDict = {}
 
     if run_path is None:
+        build_warning = _check_no_active_run_build_gate(trw_dir, reader)
+        if build_warning:
+            result["build_gate_warning"] = build_warning
         return result
 
     # Read shared data once — avoids reading events.jsonl 3x and run.yaml 2x
