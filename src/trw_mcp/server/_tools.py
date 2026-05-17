@@ -98,6 +98,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
     from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
@@ -118,6 +119,8 @@ def _register_tools() -> None:
     register_query_tools(mcp)
     # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
     register_mcp_security_status(mcp)
+    # PRD-DIST-1983 (c746): trw-distill before-edit hint consumer (tier-gated)
+    register_before_edit_hint_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)
