@@ -108,7 +108,7 @@ This project uses the TRW (The Real Work) framework for structured AI-assisted d
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On discoveries | Saves findings for future sessions |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action | Persists session work |
+| `trw_deliver()` | Last action after validation | Persists session work only after build-check evidence or an explicit acceptable-failure note |
 
 ## Available MCP Tools
 
