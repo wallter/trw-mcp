@@ -99,6 +99,10 @@ def _register_tools() -> None:
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
+    from trw_mcp.tools.before_edit_hint_batch import (
+        register_before_edit_hint_batch_tools,
+    )
+    from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
     from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
@@ -121,6 +125,10 @@ def _register_tools() -> None:
     register_mcp_security_status(mcp)
     # PRD-DIST-1983 (c746): trw-distill before-edit hint consumer (tier-gated)
     register_before_edit_hint_tools(mcp)
+    # PRD-DIST-1989 (c747): batch sibling of trw_before_edit_hint
+    register_before_edit_hint_batch_tools(mcp)
+    # PRD-DIST-1990 (c747): trw-distill ranked risk report consumer
+    register_codebase_risk_report_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)
