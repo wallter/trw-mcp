@@ -65,15 +65,10 @@ class BeforeYouEditHintPayload(BaseModel):
     risk_score: float | None = None
 
 
-class LearningSummary(BaseModel):
-    """Compact learning entry shown to consumers (subset of full record)."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    id: str
-    summary: str
-    impact: float = 0.0
-    tags: list[str] = Field(default_factory=list)
+# c749 (PRD-DIST-2002): LearningSummary extracted to shared
+# `_learnings_collector` module. Re-exported here for backward
+# compatibility with callers that still import from this module.
+from trw_mcp.tools._learnings_collector import LearningSummary  # noqa: E402, F401
 
 
 class BeforeEditHintResult(BaseModel):
@@ -208,46 +203,17 @@ def _select_distill_hint(
 
 
 def _collect_learnings(file_path: str) -> list[LearningSummary]:
-    """Best-effort trw_recall over file path + basename.
+    """c749 (PRD-DIST-2002): delegate to shared collector.
 
-    NEVER raises — empty list on any error path. Tier-independent.
+    Preserves c746 backward compat (same signature, same semantics) by
+    wrapping the shared `_learnings_collector.collect_learnings` with
+    `build_file_queries`.
     """
-    try:
-        from trw_mcp.state.learning_injection import recall_learnings
-    except Exception:
-        return []
-    queries: list[str] = [file_path]
-    basename = os.path.basename(file_path)
-    if basename and basename != file_path:
-        queries.append(basename)
-    seen: set[str] = set()
-    out: list[LearningSummary] = []
-    for q in queries:
-        try:
-            rows = recall_learnings(q, max_results=_DEFAULT_LEARNINGS_TOP_N)
-        except Exception:
-            continue
-        for r in rows:
-            if not isinstance(r, dict):
-                continue
-            rid = r.get("id")
-            if not isinstance(rid, str) or rid in seen:
-                continue
-            seen.add(rid)
-            summary = r.get("summary")
-            if not isinstance(summary, str):
-                continue
-            impact = r.get("impact", 0.0)
-            tags = r.get("tags", [])
-            out.append(LearningSummary(
-                id=rid,
-                summary=summary,
-                impact=float(impact) if isinstance(impact, (int, float)) else 0.0,
-                tags=[str(t) for t in tags] if isinstance(tags, list) else [],
-            ))
-            if len(out) >= _DEFAULT_LEARNINGS_TOP_N:
-                return out
-    return out
+    from trw_mcp.tools._learnings_collector import (
+        build_file_queries,
+        collect_learnings,
+    )
+    return collect_learnings(build_file_queries(file_path))
 
 
 def compute_before_edit_hint(

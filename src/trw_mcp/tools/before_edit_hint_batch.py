@@ -21,6 +21,11 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.tools._learnings_collector import (
+    LearningSummary,
+    build_file_queries,
+    collect_learnings,
+)
 from trw_mcp.tools._sidecar_substrate import (
     DEFAULT_CACHE_DIR_REL,
     check_tier_for_feature,
@@ -63,6 +68,9 @@ class BeforeEditHintBatchResult(BaseModel):
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
+    learnings: list[LearningSummary] = Field(default_factory=list)
+    """PRD-DIST-2001 (c749): per-hint trw_recall aggregate, deduped."""
+    learnings_count: int = 0
 
 
 def compute_before_edit_hint_batch(
@@ -136,6 +144,11 @@ def compute_before_edit_hint_batch(
             distill_sidecar_sha=load.sidecar_sha,
         )
 
+    queries: list[str] = []
+    for h in batch.hints:
+        queries.extend(build_file_queries(h.target_path))
+    learnings = collect_learnings(queries)
+
     return BeforeEditHintBatchResult(
         tier=gate.tier,
         distill_batch=batch,
@@ -143,6 +156,8 @@ def compute_before_edit_hint_batch(
         distill_action=None,
         distill_sidecar_path=load.sidecar_path,
         distill_sidecar_sha=load.sidecar_sha,
+        learnings=learnings,
+        learnings_count=len(learnings),
     )
 
 

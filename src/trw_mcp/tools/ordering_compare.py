@@ -15,6 +15,11 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.tools._learnings_collector import (
+    LearningSummary,
+    build_file_queries,
+    collect_learnings,
+)
 from trw_mcp.tools._sidecar_substrate import (
     DEFAULT_CACHE_DIR_REL,
     check_tier_for_feature,
@@ -58,6 +63,9 @@ class OrderingCompareResult(BaseModel):
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
+    learnings: list[LearningSummary] = Field(default_factory=list)
+    """PRD-DIST-2001 (c749): learnings for divergent paths (only_in_a + only_in_b)."""
+    learnings_count: int = 0
 
 
 def compute_ordering_compare(
@@ -139,6 +147,11 @@ def compute_ordering_compare(
             distill_sidecar_sha=load.sidecar_sha,
         )
 
+    queries: list[str] = []
+    for path in list(comparison.only_in_a) + list(comparison.only_in_b):
+        queries.extend(build_file_queries(path))
+    learnings = collect_learnings(queries)
+
     return OrderingCompareResult(
         tier=gate.tier,
         comparison=comparison,
@@ -146,6 +159,8 @@ def compute_ordering_compare(
         distill_action=None,
         distill_sidecar_path=load.sidecar_path,
         distill_sidecar_sha=load.sidecar_sha,
+        learnings=learnings,
+        learnings_count=len(learnings),
     )
 
 

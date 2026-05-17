@@ -20,6 +20,10 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.tools._learnings_collector import (
+    LearningSummary,
+    collect_learnings,
+)
 from trw_mcp.tools._sidecar_substrate import (
     SCHEMA_VERSION_ACCEPTED,
     check_tier_for_feature,
@@ -72,6 +76,9 @@ class CrossRepoOrderingResult(BaseModel):
     ] = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
+    learnings: list[LearningSummary] = Field(default_factory=list)
+    """PRD-DIST-2001 (c749): aggregate-level learnings (verdict + per-repo labels)."""
+    learnings_count: int = 0
 
 
 def _find_latest_sidecar(sidecar_dir: Path) -> Path | None:
@@ -189,12 +196,22 @@ def compute_cross_repo_ordering(
             distill_sidecar_path=str(resolved_sidecar_path),
         )
 
+    queries: list[str] = [
+        f"cross-repo ordering {aggregate.summary_verdict}",
+        "risk ordering compare",
+    ]
+    for pr in aggregate.per_repo:
+        queries.append(pr.repo_label)
+    learnings = collect_learnings(queries)
+
     return CrossRepoOrderingResult(
         tier=gate.tier,
         aggregate=aggregate,
         distill_status="hint_available",
         distill_action=None,
         distill_sidecar_path=str(resolved_sidecar_path),
+        learnings=learnings,
+        learnings_count=len(learnings),
     )
 
 

@@ -19,6 +19,11 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.tools._learnings_collector import (
+    LearningSummary,
+    build_file_queries,
+    collect_learnings,
+)
 from trw_mcp.tools._sidecar_substrate import (
     DEFAULT_CACHE_DIR_REL,
     check_tier_for_feature,
@@ -73,6 +78,9 @@ class CodebaseRiskReportResult(BaseModel):
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
     n_scores: int = 0
+    learnings: list[LearningSummary] = Field(default_factory=list)
+    """PRD-DIST-2001 (c749): learnings for top-N risk paths."""
+    learnings_count: int = 0
 
 
 def compute_codebase_risk_report(
@@ -174,6 +182,11 @@ def compute_codebase_risk_report(
     if top_n > 0:
         scores = scores[:top_n]
 
+    queries: list[str] = []
+    for s in scores:
+        queries.extend(build_file_queries(s.target_path))
+    learnings = collect_learnings(queries)
+
     return CodebaseRiskReportResult(
         tier=gate.tier,
         risk_report=scores,
@@ -182,6 +195,8 @@ def compute_codebase_risk_report(
         distill_sidecar_path=load.sidecar_path,
         distill_sidecar_sha=load.sidecar_sha,
         n_scores=len(scores),
+        learnings=learnings,
+        learnings_count=len(learnings),
     )
 
 
