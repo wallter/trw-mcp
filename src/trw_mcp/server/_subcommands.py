@@ -406,3 +406,13 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "check-instructions": _run_check_instructions,
     "gc": _run_gc,
 }
+
+
+# PRD-DIST-1996 (c748): tier entitlement provisioning subcommand.
+# Lazy-imported to avoid circular import with _entitlements.
+def _run_tier_lazy(args: argparse.Namespace) -> None:
+    from trw_mcp.server._subcommands_tier import run_tier
+    run_tier(args)
+
+
+SUBCOMMAND_HANDLERS["tier"] = _run_tier_lazy

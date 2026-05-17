@@ -103,7 +103,9 @@ def _register_tools() -> None:
         register_before_edit_hint_batch_tools,
     )
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
+    from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
+    from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
     from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.query_tools import register_query_tools
@@ -129,6 +131,10 @@ def _register_tools() -> None:
     register_before_edit_hint_batch_tools(mcp)
     # PRD-DIST-1990 (c747): trw-distill ranked risk report consumer
     register_codebase_risk_report_tools(mcp)
+    # PRD-DIST-1994 (c748): trw-distill ordering-compare consumer (4th wire)
+    register_ordering_compare_tools(mcp)
+    # PRD-DIST-1995 (c748): trw-distill cross-repo-ordering consumer (5th wire)
+    register_cross_repo_ordering_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

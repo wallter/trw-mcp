@@ -392,4 +392,45 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="API key for backend authentication (required with --push)",
     )
 
+    # tier (PRD-DIST-1996, c748): operator entitlement provisioning
+    tier_parser = subparsers.add_parser(
+        "tier",
+        help="Manage TRW tier entitlements (.trw/entitlements.yaml)",
+    )
+    tier_sub = tier_parser.add_subparsers(dest="tier_command")
+
+    # tier issue
+    issue_parser = tier_sub.add_parser(
+        "issue", help="Generate a signed entitlement YAML",
+    )
+    issue_parser.add_argument(
+        "--tier",
+        choices=("free", "team", "pro", "enterprise"),
+        required=True,
+        help="Tier to issue",
+    )
+    issue_parser.add_argument(
+        "--issued-to", required=True,
+        help="Operator identifier (email, username, or org name)",
+    )
+    issue_parser.add_argument(
+        "--expires",
+        required=True,
+        help="Expiry date ISO-8601 (e.g. 2027-01-01 or 2027-01-01T00:00:00+00:00)",
+    )
+    issue_parser.add_argument(
+        "--trw-dir",
+        default=".trw",
+        help="Target .trw/ directory (default: ./.trw)",
+    )
+    issue_parser.add_argument(
+        "--print-only", action="store_true",
+        help="Print the YAML to stdout instead of writing to disk",
+    )
+
+    # tier show
+    tier_sub.add_parser(
+        "show", help="Print resolved tier + status from .trw/entitlements.yaml",
+    )
+
     return parser
