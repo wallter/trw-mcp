@@ -65,7 +65,7 @@ _TIPS = [
     "Use explicit file ownership for multi-file work \u2014 portable coordination wins",
     "Run /trw-project-health to check your installation's vitals",
     "Use trw_checkpoint() before large operations to save progress",
-    "Run trw_deliver() at session end to persist your discoveries",
+    "Run trw_build_check() before trw_deliver(); label acceptable failures explicitly",
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",

@@ -134,6 +134,12 @@ class TestGeminiSmartMerge:
         assert content.startswith(_GEMINI_TRW_START_MARKER)
         assert _GEMINI_TRW_END_MARKER in content
 
+    def test_gemini_instructions_deliver_requires_validation(self) -> None:
+        content = _gemini_instructions_content()
+        assert "trw_build_check" in content
+        assert "Last action after validation" in content
+        assert "acceptable-failure" in content
+
     def test_merge_end_before_start_appends(self) -> None:
         """End marker before start marker is treated as corrupted — append instead."""
         existing = f"user\n{_GEMINI_TRW_END_MARKER}\nmiddle\n{_GEMINI_TRW_START_MARKER}"

@@ -29,7 +29,7 @@ memory — patterns, gotchas, and project knowledge accumulate across sessions.
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action | Persists session work |
+| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or an explicit acceptable-failure note |
 
 ### MCP Tools
 
