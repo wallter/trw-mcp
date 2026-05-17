@@ -343,6 +343,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         skip_reflect: bool = False,
         skip_index_sync: bool = False,
+        allow_unverified: bool = False,
+        unverified_reason: str = "",
     ) -> DeliverResultDict:
         """Persist learnings and progress so future sessions inherit this session's work.
 
@@ -363,6 +365,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
         - run_path: path to run directory (auto-detected if None).
         - skip_reflect: skip reflection step (e.g., already reflected).
         - skip_index_sync: skip INDEX/ROADMAP sync step.
+        - allow_unverified: explicit override for delivery without a passing
+          trw_build_check record. Use only for documented acceptable failures.
+        - unverified_reason: required rationale when allow_unverified is true.
 
         Output: DeliverResultDict with fields
         {run_path: str, reflect: dict, checkpoint: dict, deferred: str,
@@ -438,6 +443,26 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["errors"] = errors
             results["success"] = False
             return results
+
+        # PRD-DIST-1865 / iter-29 Track-A: do not let "must call deliver"
+        # override truthfulness.  A run with work events but no successful
+        # trw_build_check can still be delivered through an explicit
+        # acceptable-failure override, but not silently.
+        build_gate_warning = gate_result.get("build_gate_warning")
+        if build_gate_warning:
+            reason = unverified_reason.strip()
+            if not allow_unverified or not reason:
+                block = (
+                    f"Delivery blocked: {build_gate_warning} "
+                    "If this is an acceptable failure, retry with "
+                    "allow_unverified=true and a concrete unverified_reason."
+                )
+                results["build_gate_block"] = block
+                errors.append(block)
+                results["errors"] = errors
+                results["success"] = False
+                return results
+            results["build_gate_override"] = reason
 
         # -- CRITICAL PATH (synchronous) --
         # These 3 steps must complete before returning — they produce the

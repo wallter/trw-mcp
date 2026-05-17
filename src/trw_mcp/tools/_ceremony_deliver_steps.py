@@ -37,6 +37,8 @@ _GATE_KEYS: tuple[str, ...] = (
     "integration_review_warning",
     "untracked_warning",
     "build_gate_warning",
+    "build_gate_block",
+    "build_gate_override",
     "warning",
     "review_scope_block",
     "checkpoint_blocker_warning",

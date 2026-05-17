@@ -39,6 +39,8 @@ class DeliveryGatesDict(TypedDict, total=False):
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    build_gate_block: str
+    build_gate_override: str
     checkpoint_blocker_warning: str
     warning: str
     complexity_drift_warning: str
