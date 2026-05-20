@@ -200,8 +200,7 @@ def compute_cross_repo_ordering(
         f"cross-repo ordering {aggregate.summary_verdict}",
         "risk ordering compare",
     ]
-    for pr in aggregate.per_repo:
-        queries.append(pr.repo_label)
+    queries.extend(pr.repo_label for pr in aggregate.per_repo)
     learnings = collect_learnings(queries)
 
     return CrossRepoOrderingResult(
@@ -223,6 +222,9 @@ def register_cross_repo_ordering_tools(server: FastMCP) -> None:
         sidecar_dir: str | None = None,
     ) -> dict[str, Any]:
         """Return the latest c745 CrossRepoOrderingAggregate.
+
+        Use when comparing structural-risk ordering consistency across
+        multiple repositories from a persisted aggregate sidecar.
 
         Sidecar SHA derived from sorted-repo-names (NOT git HEAD), so
         operator passes sidecar_path/sidecar_dir or the tool searches

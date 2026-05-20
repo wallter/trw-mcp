@@ -172,6 +172,9 @@ def register_ordering_compare_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Return c741 RiskOrderingComparison for the current SHA.
 
+        Use when comparing two persisted risk-ordering sidecars for overlap
+        and rank-correlation drift.
+
         Tier-gated. NEVER raises.
         """
         result = compute_ordering_compare(

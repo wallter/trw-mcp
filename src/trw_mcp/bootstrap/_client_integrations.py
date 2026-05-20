@@ -114,12 +114,30 @@ def _update_gemini(
     _update_gemini_artifacts(target_dir, result, ide_override=ide_override, manifest_hashes=manifest_hashes)
 
 
+def _install_antigravity(target_dir: Path, force: bool, result: dict[str, list[str]], _: list[str] | None) -> None:
+    from ._init_project import _install_antigravity_artifacts
+
+    _install_antigravity_artifacts(target_dir, force=force, result=result)
+
+
+def _update_antigravity(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None,
+    manifest_hashes: dict[str, str] | None,
+) -> None:
+    from ._ide_targets import _update_antigravity_artifacts
+
+    _update_antigravity_artifacts(target_dir, result, ide_override=ide_override, manifest_hashes=manifest_hashes)
+
+
 CLIENT_INTEGRATIONS: tuple[ClientIntegration, ...] = (
     ClientIntegration("opencode", ("opencode",), _install_opencode, _update_opencode),
     ClientIntegration("cursor", ("cursor-ide", "cursor-cli"), _install_cursor, _update_cursor),
     ClientIntegration("codex", ("codex",), _install_codex, _update_codex),
     ClientIntegration("copilot", ("copilot",), _install_copilot, _update_copilot),
     ClientIntegration("gemini", ("gemini",), _install_gemini, _update_gemini),
+    ClientIntegration("antigravity-cli", ("antigravity-cli",), _install_antigravity, _update_antigravity),
 )
 
 

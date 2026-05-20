@@ -312,3 +312,20 @@ def _install_gemini_artifacts(target_dir: Path, *, force: bool, result: dict[str
     )
     for label, installer in installers:
         _run_copilot_installer(result, label, installer, target_dir, force=force)
+
+
+def _install_antigravity_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
+    """Install Antigravity CLI-specific bootstrap artifacts."""
+    from ._antigravity_cli import (
+        generate_antigravity_agents,
+        generate_antigravity_instructions,
+        generate_antigravity_mcp_config,
+    )
+
+    installers = (
+        ("ANTIGRAVITY.md", generate_antigravity_instructions),
+        ("antigravity MCP config", generate_antigravity_mcp_config),
+        ("antigravity agents", generate_antigravity_agents),
+    )
+    for label, installer in installers:
+        _run_copilot_installer(result, label, installer, target_dir, force=force)

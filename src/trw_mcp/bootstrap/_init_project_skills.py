@@ -19,6 +19,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.agents.tier_resolver import rewrite_model_line
+from trw_mcp.models.skill_manifest import validate_skill_markdown
 
 from ._utils import (
     ProgressCallback,
@@ -52,29 +53,31 @@ def _validate_skill(skill_dir: Path) -> tuple[bool, str]:
         return False, f"Missing SKILL.md in {skill_dir.name}"
 
     content = skill_md.read_text(encoding="utf-8")
+    result = validate_skill_markdown(content, path=skill_md, mode="compat")
+    if result.ok and result.manifest is not None:
+        for warning in result.warnings:
+            logger.debug(
+                "skill_manifest_compat_warning",
+                skill=skill_dir.name,
+                field=warning.field,
+                reason=warning.reason,
+            )
+        return True, ""
 
-    # Check for YAML frontmatter (--- delimited)
-    if not content.startswith("---"):
-        return False, f"No YAML frontmatter in {skill_dir.name}/SKILL.md"
-
-    # Parse frontmatter — need at least two --- delimiters
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return False, f"Malformed YAML frontmatter in {skill_dir.name}/SKILL.md"
-
-    try:
-        from ruamel.yaml import YAML
-
-        yaml = YAML(typ="safe")
-        metadata = yaml.load(parts[1])
-        if not isinstance(metadata, dict):
+    if result.errors:
+        reason = result.errors[0].reason
+        field = result.errors[0].field
+        if field == "frontmatter" and "missing" in reason:
+            return False, f"No YAML frontmatter in {skill_dir.name}/SKILL.md"
+        if field == "frontmatter" and "unterminated" in reason:
+            return False, f"Malformed YAML frontmatter in {skill_dir.name}/SKILL.md"
+        if field == "frontmatter" and "must be a mapping" in reason:
             return False, f"Frontmatter is not a dict in {skill_dir.name}/SKILL.md"
-        if not metadata.get("name"):
+        if field == "name":
             return False, f"Missing 'name' in {skill_dir.name}/SKILL.md frontmatter"
-        if not metadata.get("description"):
+        if field == "description":
             return False, f"Missing 'description' in {skill_dir.name}/SKILL.md frontmatter"
-    except Exception as exc:  # justified: boundary — parse errors from user-authored SKILL.md
-        return False, f"YAML parse error in {skill_dir.name}/SKILL.md: {exc}"
+        return False, f"YAML parse error in {skill_dir.name}/SKILL.md: {reason}"
 
     return True, ""
 

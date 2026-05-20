@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trw_mcp.tools._learnings_collector import (
     LearningSummary,
@@ -163,7 +163,7 @@ def compute_codebase_risk_report(
             continue
         try:
             scores.append(FileRiskScorePayload.model_validate(entry))
-        except Exception:
+        except ValidationError:
             # Skip rows the mirror doesn't accept — log via status if total fails
             continue
 
@@ -210,6 +210,9 @@ def register_codebase_risk_report_tools(server: FastMCP) -> None:
         top_n: int = 20,
     ) -> dict[str, Any]:
         """Return c737/c739 ranked composite-risk report for the current SHA.
+
+        Use when a reviewer needs file-level structural risk ordering from
+        a persisted trw-distill sidecar before prioritizing review effort.
 
         Tier-gated. ``top_n=0`` returns all entries; default 20.
         Returns ``CodebaseRiskReportResult.model_dump()``. NEVER raises.

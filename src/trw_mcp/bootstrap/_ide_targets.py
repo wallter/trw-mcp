@@ -374,6 +374,54 @@ def _update_gemini_artifacts(
         result.setdefault("warnings", []).append(f"gemini agents update skipped: {exc}")
 
 
+# ---------------------------------------------------------------------------
+# Antigravity CLI update helper
+# ---------------------------------------------------------------------------
+
+
+def _update_antigravity_artifacts(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
+) -> None:
+    """Update Antigravity CLI artifacts when Antigravity is detected.
+
+    Generates ``ANTIGRAVITY.md``, ``.antigravitycli/settings.json`` MCP config,
+    and ``.antigravitycli/agents/trw-*.md`` subagent definitions.
+
+    Fail-open: errors are captured in ``result["warnings"]`` so they never
+    break the overall update flow.
+    """
+    from ._antigravity_cli import (
+        generate_antigravity_agents,
+        generate_antigravity_instructions,
+        generate_antigravity_mcp_config,
+    )
+
+    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    if "antigravity-cli" not in ide_targets:
+        return
+
+    try:
+        instr_result = generate_antigravity_instructions(target_dir)
+        _absorb_sub_result(result, instr_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"ANTIGRAVITY.md update skipped: {exc}")
+
+    try:
+        mcp_result = generate_antigravity_mcp_config(target_dir)
+        _absorb_sub_result(result, mcp_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"antigravity MCP config update skipped: {exc}")
+
+    try:
+        agents_result = generate_antigravity_agents(target_dir)
+        _absorb_sub_result(result, agents_result)
+    except Exception as exc:  # justified: fail-open
+        result.setdefault("warnings", []).append(f"antigravity agents update skipped: {exc}")
+
+
 def _extract_trw_section_content() -> str:
     """Extract the content between trw:start and trw:end from _minimal_claude_md."""
     full = _minimal_claude_md()

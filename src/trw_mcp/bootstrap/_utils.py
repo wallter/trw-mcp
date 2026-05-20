@@ -331,7 +331,7 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 
 # Supported IDEs - DRY constant for all IDE target operations
 # cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface
-SUPPORTED_IDES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider"]
+SUPPORTED_IDES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider", "antigravity-cli"]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -382,6 +382,8 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("gemini")
     if (target_dir / ".aider.conf.yml").is_file():
         detected.append("aider")
+    if (target_dir / ".antigravitycli").is_dir() or (target_dir / "ANTIGRAVITY.md").is_file():
+        detected.append("antigravity-cli")
     return detected
 
 
@@ -407,6 +409,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("gemini")
     if shutil.which("aider"):
         detected.append("aider")
+    if shutil.which("antigravity-cli"):
+        detected.append("antigravity-cli")
     return detected
 
 

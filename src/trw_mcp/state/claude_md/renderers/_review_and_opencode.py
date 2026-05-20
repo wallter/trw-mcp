@@ -10,6 +10,63 @@ from __future__ import annotations
 _GEMINI_TRW_START_MARKER = "<!-- trw:gemini:start -->"
 _GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
 
+# Shared Antigravity marker constants.
+_ANTIGRAVITY_TRW_START_MARKER = "<!-- trw:antigravity:start -->"
+_ANTIGRAVITY_TRW_END_MARKER = "<!-- trw:antigravity:end -->"
+
+
+def render_antigravity_instructions() -> str:
+    """Render ANTIGRAVITY.md TRW ceremony section."""
+    return f"""{_ANTIGRAVITY_TRW_START_MARKER}
+<!-- TRW AUTO-GENERATED — do not edit between markers -->
+
+## TRW Framework Integration
+
+This project uses the [TRW Framework](https://trwframework.com) for structured
+AI-assisted development. TRW gives your antigravity-cli sessions persistent engineering
+memory — patterns, gotchas, and project knowledge accumulate across sessions.
+
+### Session Protocol
+
+| Tool | When | Why |
+|------|------|-----|
+| `trw_session_start()` | First action | Loads prior learnings |
+| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
+| `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
+| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or an explicit acceptable-failure note |
+
+### MCP Tools
+
+All TRW tools are available via MCP as `mcp_trw_<tool_name>`.
+Call `mcp_trw_trw_session_start` first in every session.
+
+Key tools: `trw_session_start`, `trw_learn`, `trw_checkpoint`, `trw_deliver`,
+`trw_init`, `trw_status`, `trw_recall`, `trw_build_check`, `trw_review`,
+`trw_prd_create`, `trw_prd_validate`.
+
+### Subagents
+
+TRW provides specialized agents in `.antigravitycli/agents/`:
+- `@trw-explorer` — Fast codebase search and analysis (read-only)
+- `@trw-implementer` — TDD implementation with full tool access
+- `@trw-reviewer` — Code review specialist (read-only)
+- `@trw-lead` — Orchestration and delegation
+
+### Memory Routing
+
+- Code patterns, gotchas, build tricks → `mcp_trw_trw_learn()`
+- User preferences → antigravity-cli's built-in memory if applicable
+
+### Conventions
+
+- Run the project-native validation command after each meaningful change — fix failures before moving on
+- Use `trw_learn()` to record discoveries, patterns, and gotchas
+- Use `trw_checkpoint()` after working milestones
+- Commit messages: `feat(scope): msg` (Conventional Commits)
+
+{_ANTIGRAVITY_TRW_END_MARKER}
+"""
+
 
 def render_gemini_instructions() -> str:
     """Render GEMINI.md TRW ceremony section."""

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests._test_bundle_asset_support import _MONOREPO_CLAUDE, _PKG_DATA, _resolve_data_path
+from trw_mcp.models.skill_manifest import validate_skill_markdown
 
 
 class TestSkillDefinitions:
@@ -94,3 +95,16 @@ class TestSkillDefinitions:
             )
             for snippet in required_snippets[skill_kind]:
                 assert snippet in content, f"{variant_name} missing snippet: {snippet}"
+
+    def test_all_bundled_skills_validate_in_compatibility_mode(self, skills_dir: Path) -> None:
+        """PRD-CORE-170 FR-6: every bundled SKILL.md is CI-validated in compat mode."""
+        skill_paths = sorted(skills_dir.glob("*/SKILL.md"))
+
+        assert skill_paths
+        for skill_path in skill_paths:
+            result = validate_skill_markdown(
+                skill_path.read_text(encoding="utf-8"),
+                path=skill_path,
+                mode="compat",
+            )
+            assert result.ok, f"{skill_path} failed compat validation: {result.errors}"

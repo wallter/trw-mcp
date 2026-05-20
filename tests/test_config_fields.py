@@ -68,10 +68,18 @@ def test_all_flat_field_access_works() -> None:
     assert isinstance(config.build_check_enabled, bool)  # build
     assert isinstance(config.trust_crawl_boundary, int)  # trust
     assert isinstance(config.trw_dir, str)  # paths
+    assert config.code_index_enabled is False
+    assert config.code_index_max_file_bytes >= 1
+    assert ".git" in config.code_index_exclude_dirs
+    assert ".py" in config.code_index_include_extensions
 
     # Verify sub-config access still works
     assert isinstance(config.build.build_check_enabled, bool)
     assert isinstance(config.memory.learning_max_entries, int)
+    assert config.tools.code_index_enabled is False
+    assert config.tools.code_index_max_file_bytes == config.code_index_max_file_bytes
+    assert config.tools.code_index_exclude_dirs == config.code_index_exclude_dirs
+    assert config.tools.code_index_include_extensions == config.code_index_include_extensions
 
 
 # -- T03: Environment variable override --

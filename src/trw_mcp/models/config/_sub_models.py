@@ -136,6 +136,10 @@ class ToolsConfig(BaseModel):
     tool_exposure_list: list[str] = Field(default_factory=list)
     tool_descriptions_variant: str = "default"
     mcp_server_instructions_enabled: bool | None = None
+    code_index_enabled: bool = False
+    code_index_max_file_bytes: int = 1_000_000
+    code_index_exclude_dirs: list[str] = Field(default_factory=list)
+    code_index_include_extensions: list[str] = Field(default_factory=list)
 
 
 class CeremonyFeedbackConfig(BaseModel):

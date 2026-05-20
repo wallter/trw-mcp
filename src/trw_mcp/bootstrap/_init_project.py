@@ -38,6 +38,9 @@ from trw_mcp.bootstrap._init_project_ide import (
     _extend_result as _extend_result,
 )
 from trw_mcp.bootstrap._init_project_ide import (
+    _install_antigravity_artifacts as _install_antigravity_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
     _install_codex_artifacts as _install_codex_artifacts,
 )
 from trw_mcp.bootstrap._init_project_ide import (
@@ -338,6 +341,10 @@ def init_project(
     # 7f. Gemini CLI artifacts
     if "gemini" in ide_targets:
         _install_gemini_artifacts(target_dir, force=force, result=result)
+
+    # 7g. Antigravity CLI artifacts
+    if "antigravity-cli" in ide_targets:
+        _install_antigravity_artifacts(target_dir, force=force, result=result)
 
     # 7g. PRD-CORE-149 FR04: write .trw/runtime/hook-env.sh so hook scripts
     # can honor per-profile hooks_enabled / nudge_enabled without re-reading

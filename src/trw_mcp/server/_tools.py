@@ -93,24 +93,27 @@ def _register_tools() -> None:
     from trw_mcp.resources.config import register_config_resources
     from trw_mcp.resources.run_state import register_run_state_resources
     from trw_mcp.resources.templates import register_template_resources
-    from trw_mcp.tools.build import register_build_tools
-    from trw_mcp.tools.ceremony import register_ceremony_tools
-    from trw_mcp.tools.checkpoint import register_checkpoint_tools
-    from trw_mcp.tools.knowledge import register_knowledge_tools
-    from trw_mcp.tools.learning import register_learning_tools
+    from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
     from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
     from trw_mcp.tools.before_edit_hint_batch import (
         register_before_edit_hint_batch_tools,
     )
+    from trw_mcp.tools.build import register_build_tools
+    from trw_mcp.tools.ceremony import register_ceremony_tools
+    from trw_mcp.tools.checkpoint import register_checkpoint_tools
+    from trw_mcp.tools.code_index import register_code_index_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
+    from trw_mcp.tools.knowledge import register_knowledge_tools
+    from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
-    from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
     from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
+    from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
     from trw_mcp.tools.query_tools import register_query_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
+    from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
 
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
@@ -135,6 +138,12 @@ def _register_tools() -> None:
     register_ordering_compare_tools(mcp)
     # PRD-DIST-1995 (c748): trw-distill cross-repo-ordering consumer (5th wire)
     register_cross_repo_ordering_tools(mcp)
+    # PRD-CORE-171: local SHA-256 code-index manifest update tool
+    register_code_index_tools(mcp)
+    # PRD-CORE-168: privacy-safe canonical agent work evidence export
+    register_agent_work_evidence_tools(mcp)
+    # PRD-CORE-170: read-only skill manifest discovery helper
+    register_skill_discovery_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

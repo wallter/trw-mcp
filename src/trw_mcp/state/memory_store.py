@@ -56,8 +56,19 @@ class MemoryStore:
             return
 
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30.0)
+        # cached_statements=0 defends against CPython issue #118172 (statement
+        # cache is not thread-safe under check_same_thread=False on 3.12+).
+        # synchronous=NORMAL is safe in WAL mode; FULL adds fsync without
+        # preventing structural corruption (see trw-memory _connection.py
+        # for the rationale, kept in sync here).
+        conn = sqlite3.connect(
+            str(db_path),
+            check_same_thread=False,
+            timeout=30.0,
+            cached_statements=0,
+        )
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout = 30000")
         try:
             # AttributeError: Python built without SQLITE_ENABLE_LOAD_EXTENSION

@@ -278,6 +278,16 @@ class ProtocolRenderer:
 
         return render_gemini_instructions()
 
+    # ------------------------------------------------------------------
+    # Antigravity CLI instructions
+    # ------------------------------------------------------------------
+
+    def render_antigravity_instructions(self) -> str:
+        """Generate ANTIGRAVITY.md TRW ceremony section."""
+        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_antigravity_instructions
+
+        return render_antigravity_instructions()
+
     # FR03: OpenCode portable instructions
     # ------------------------------------------------------------------
 

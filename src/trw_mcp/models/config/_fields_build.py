@@ -77,6 +77,27 @@ class _BuildFields:
     auto_recall_min_score: float = 0.7
     learning_auto_prune_on_deliver: bool = True
     learning_auto_prune_cap: int = 150
+    # Floor between consecutive auto_prune runs. The full pass walks every
+    # active YAML entry and runs O(N^2) Jaccard dedup, which is wall-clock
+    # expensive at 1k+ entries and held the SQLite writer lock for many
+    # minutes per pass before this throttle. Set to 0 to disable throttling.
+    learning_auto_prune_min_interval_hours: int = 24
+    # Hard wall-clock budget for a single auto_prune pass. When the deadline
+    # fires, the pass returns the partial removal it has computed so far and
+    # records ``status=deadline_exceeded`` for observability.
+    learning_auto_prune_max_seconds: int = 30
+
+    # -- Deferred-delivery batch budgets --
+    #
+    # The deferred-delivery worker runs ~13 maintenance steps after each
+    # trw_deliver. Without budgets, a single slow step (auto_prune,
+    # publish_learnings network hang) can wedge the worker for hours,
+    # blocking every subsequent trw_learn that needs the SQLite writer
+    # lock. The watchdog enforces per-step and per-batch deadlines; on
+    # overrun it flips a cancellation event, logs the runaway step, and
+    # releases the deliver-deferred file lock so the next batch can run.
+    deferred_step_max_seconds: int = 60
+    deferred_batch_max_seconds: int = 300
 
     # -- Quality gates (mutation, cross-model, multi-agent, dep audit, API fuzz) --
 

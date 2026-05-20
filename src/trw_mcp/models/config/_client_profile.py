@@ -119,6 +119,7 @@ class WriteTargets(BaseModel):
     cursor_rules: bool = False
     copilot_instructions: bool = False
     gemini_md: bool = False
+    antigravitycli_md: bool = False
     instruction_path: str = ""
 
 

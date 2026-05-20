@@ -4,6 +4,67 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.8] — 2026-05-17
+
+### Fixed
+
+- **`trw_learn` no longer hangs for minutes behind a wedged deferred-delivery batch.**
+  Diagnosis: the deferred-delivery worker runs ~13 maintenance steps after
+  every `trw_deliver`; one of those (`auto_prune`) was taking 18-35 minutes
+  per pass on a 3,654-entry dataset (O(N²) Jaccard dedup) and holding the
+  SQLite writer lock for the full duration. Every subsequent `trw_learn`
+  blocked on that lock; reads (`trw_recall`, `trw_session_start`) still
+  worked because they don't take the writer lock. Forty-plus
+  `memory.db.corrupt.*` backups had accumulated since 2026-04-13 from the
+  chronic version of this issue. Fix layered in three parts:
+
+  1. **Throttle**: `_step_auto_prune` skips runs falling inside
+     `learning_auto_prune_min_interval_hours` (default 24h). One full pass
+     per day is sufficient; the previous every-deliver cadence was paying
+     the O(N²) cost on near-no-op deltas.
+  2. **Deadline + cancellation**: `auto_prune_excess_entries` now accepts
+     `deadline_seconds` and `cancel_event`. The apply loop polls between
+     SQLite writes and returns its partial removal with
+     `status="deadline_exceeded"` or `status="cancelled"`.
+  3. **Watchdog**: `_run_deferred_steps` enforces per-step and per-batch
+     wall-clock budgets via `threading.Timer`. On overrun it logs
+     `deferred_step_budget_exceeded` / `deferred_batch_budget_exceeded`,
+     flips the cancel event, and subsequent steps short-circuit with
+     `status="cancelled_batch_budget"`. The `watchdog` key on the results
+     record captures the cancellation rationale for audit.
+
+- **Stale `deliver-deferred.lock` is auto-reclaimed on next launch.**
+  `_try_acquire_deferred_lock` now reads the JSON record left by the prior
+  holder. If the recorded PID is gone, or the timestamp is older than
+  `stale_threshold_seconds` (default 10 minutes), it reclaims the lock and
+  logs `deferred_lock_reclaimed_stale` with the original holder for
+  forensics. Live batches inside their budget are never preempted because
+  the threshold is twice the default per-batch budget.
+
+- **Prefer `pysqlite3-binary` over stdlib `sqlite3`.** The trw-memory shim
+  swaps `sys.modules["sqlite3"]` at package import. The dep is listed here
+  as well so installs of the MCP server alone still benefit.
+
+- **`state/memory_store.py` now sets `cached_statements=0`,
+  `synchronous=NORMAL`, and `busy_timeout=30000` on its sqlite-vec
+  connection** for parity with the trw-memory primary backend.
+  `cached_statements=0` defends against CPython issue #118172 (statement
+  cache thread-safety on 3.12+ under `check_same_thread=False`);
+  `synchronous=NORMAL` matches WAL-mode best practice and avoids redundant
+  fsync.
+
+### Added
+
+- **Four new config knobs** in `models/config/_fields_build.py`:
+  `learning_auto_prune_min_interval_hours` (default 24),
+  `learning_auto_prune_max_seconds` (default 30),
+  `deferred_step_max_seconds` (default 60),
+  `deferred_batch_max_seconds` (default 300). All four accept `0` to
+  disable.
+- **`tools/_deferred_state.py`** now exposes `_cancel_event:
+  threading.Event` (cooperative cancellation signal) and
+  `_last_auto_prune_at: float | None` (process-local throttle marker).
+
 ### Removed
 
 - **Eight dead test files that referenced Sprint-79-removed build/mutations symbols** (PRD-DIST-880, PRD-DIST-916, PRD-DIST-919, PRD-DIST-920). Sprint 79 (commit `f65c813ae`, 2026-03-30) consolidated build tooling and removed `trw_mcp.tools.build._audit`, `_subprocess`, `_runners`, and `mutations`. The post-split test files continued to import the removed symbols and have produced collection errors since 2026-03-30. They contributed zero passing tests and are deleted without replacement. Removed: `tests/test_analytics_branches_reporting.py`, `tests/test_mutations_api_fuzz.py`, `tests/test_mutations_changed_files_threshold.py`, `tests/test_mutations_dep_audit_integration.py`, `tests/test_mutations_dep_audit_tools.py`, `tests/test_mutations_parse_results.py`, `tests/test_mutations_run_cache_and_edge.py`, `tests/test_mutations_run_check.py`. The shared helper `tests/_mutations_support.py` is preserved — it is still imported by `tests/test_mutations_build_check_integration.py` (collects cleanly; module-skipped at runtime). No production source under `trw-mcp/src/` is affected; the 8837-test passing footprint is preserved; `pytest --collect-only` now exits 0. Cycle-274 deleted the first 2 enumerated by PRD-DIST-880; cycle-275 deleted the remaining 6 surfaced by PRD-DIST-919.

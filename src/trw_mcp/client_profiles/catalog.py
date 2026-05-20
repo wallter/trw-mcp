@@ -16,6 +16,7 @@ _CLIENT_ORDER: tuple[str, ...] = (
     "codex",
     "copilot",
     "gemini",
+    "antigravity-cli",
     "aider",
 )
 
@@ -79,6 +80,8 @@ def _write_target_label(profile: ClientProfile) -> str:
         return "GEMINI.md"
     if targets.claude_md:
         return "CLAUDE.md"
+    if targets.antigravitycli_md:
+        return "ANTIGRAVITY.md"
     return "AGENTS.md"
 
 

@@ -186,6 +186,7 @@ class TestDeliverBuildGate:
         assert "build_gate_warning" not in result
 
 
+
 # ---------------------------------------------------------------------------
 # RC-004: Parse exit criteria checkboxes from sprint markdown
 # ---------------------------------------------------------------------------

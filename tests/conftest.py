@@ -306,6 +306,34 @@ def _reset_auto_close_throttle_fixture() -> Iterator[None]:
     _reset_auto_close_throttle()
 
 
+@pytest.fixture(autouse=True)
+def _reset_deferred_delivery_state() -> Iterator[None]:
+    """Reset deferred-delivery throttle + cancel event between tests.
+
+    The 2026-05-17 watchdog changes added two pieces of process-local
+    state in ``trw_mcp.tools._deferred_state``:
+
+    - ``_last_auto_prune_at`` — process-local throttle marker so the
+      auto_prune step doesn't pay its O(N^2) Jaccard cost more than
+      once per ``learning_auto_prune_min_interval_hours``.
+    - ``_cancel_event`` — cooperative cancellation signal flipped by
+      the per-step / per-batch watchdog on budget overrun.
+
+    Without this reset, the first test that calls a deliver path sets
+    the throttle, and every subsequent test sees ``status="throttled"``
+    instead of exercising the actual step. Similarly, a watchdog test
+    that leaves the cancel event set causes downstream tests to start
+    with every step short-circuited.
+    """
+    from trw_mcp.tools import _deferred_state as _ds
+
+    _ds._last_auto_prune_at = None
+    _ds._cancel_event.clear()
+    yield
+    _ds._last_auto_prune_at = None
+    _ds._cancel_event.clear()
+
+
 def _join_and_reset_deferred() -> None:
     """Wait for any background deliver thread, then clear the reference.
 

@@ -111,6 +111,9 @@ from ._template_updater import (
     _update_always_overwrite_files as _update_always_overwrite_files,
 )
 from ._template_updater import (
+    _update_antigravity_artifacts as _update_antigravity_artifacts,
+)
+from ._template_updater import (
     _update_claude_md_trw_section as _update_claude_md_trw_section,
 )
 from ._template_updater import (
@@ -299,6 +302,7 @@ def _run_post_update_phases(
     _update_codex_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_copilot_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_gemini_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
+    _update_antigravity_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
 
     # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
     # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.

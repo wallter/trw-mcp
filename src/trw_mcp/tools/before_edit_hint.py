@@ -29,13 +29,18 @@ Honest scope per CONSTITUTION §1:
 from __future__ import annotations
 
 import json
-import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+
+# c749 (PRD-DIST-2002): LearningSummary extracted to shared
+# `_learnings_collector` module. Re-exported here for backward
+# compatibility with callers that still import from this module.
+from trw_mcp.tools._learnings_collector import LearningSummary
 
 _SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
@@ -63,12 +68,6 @@ class BeforeYouEditHintPayload(BaseModel):
     co_change_neighbors: list[str] = Field(default_factory=list)
     hotspot_warnings: list[str] = Field(default_factory=list)
     risk_score: float | None = None
-
-
-# c749 (PRD-DIST-2002): LearningSummary extracted to shared
-# `_learnings_collector` module. Re-exported here for backward
-# compatibility with callers that still import from this module.
-from trw_mcp.tools._learnings_collector import LearningSummary  # noqa: E402, F401
 
 
 class BeforeEditHintResult(BaseModel):
@@ -99,9 +98,12 @@ class BeforeEditHintResult(BaseModel):
 def _resolve_repo_root(repo_root: str | None) -> Path | None:
     if repo_root is not None:
         return Path(repo_root)
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
     try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+        proc = subprocess.run(  # noqa: S603
+            [git_executable, "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=5, check=False,
         )
         if proc.returncode == 0:
@@ -114,9 +116,13 @@ def _resolve_repo_root(repo_root: str | None) -> Path | None:
 
 
 def _resolve_git_sha(repo_root: Path) -> str | None:
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
     try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo_root,
+        proc = subprocess.run(  # noqa: S603
+            [git_executable, "rev-parse", "HEAD"],
+            cwd=repo_root,
             capture_output=True, text=True, timeout=5, check=False,
         )
         if proc.returncode == 0:
@@ -181,7 +187,7 @@ def _select_distill_hint(
     if not isinstance(payload, dict):
         return (
             None, "sidecar_malformed",
-            f"Sidecar payload is not a dict; re-run --persist-sidecar to regenerate",
+            "Sidecar payload is not a dict; re-run --persist-sidecar to regenerate",
         )
     payload_target = payload.get("target_path")
     if payload_target != file_path:
@@ -196,8 +202,8 @@ def _select_distill_hint(
     except Exception:
         return (
             None, "sidecar_malformed",
-            f"Sidecar payload does not match BeforeYouEditHintPayload schema; "
-            f"check trw-distill version compatibility",
+            "Sidecar payload does not match BeforeYouEditHintPayload schema; "
+            "check trw-distill version compatibility",
         )
     return (hint, "hint_available", None)
 
@@ -294,6 +300,9 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
         cache_dir: str | None = None,
     ) -> dict[str, Any]:
         """Return cold-start codebase intelligence for ``file_path``.
+
+        Use when an agent is about to edit a file and needs sidecar-backed
+        risk context plus relevant prior learnings before reading broadly.
 
         Sources:
         - trw-distill sidecar (tier-gated; requires team/pro/enterprise)
