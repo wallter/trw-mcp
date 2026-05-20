@@ -19,11 +19,15 @@ from tests._test_ceremony_middleware_gate_support import (
     middleware,  # noqa: F401
     session_ctx,  # noqa: F401
 )
-from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active
+from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active, reset_state
 
 
 class TestCompactionGate:
     """Tests for the post-compaction gate that blocks trw_* tools."""
+
+    @pytest.fixture(autouse=True)
+    def _local_clean_state(self) -> None:
+        reset_state()
 
     @pytest.mark.asyncio
     @pytest.mark.unit

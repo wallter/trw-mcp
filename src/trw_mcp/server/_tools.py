@@ -102,8 +102,10 @@ def _register_tools() -> None:
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.code_index import register_code_index_tools
+    from trw_mcp.tools.code_search import register_code_search_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
+    from trw_mcp.tools.entity_risk_map import register_entity_risk_map_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
@@ -140,6 +142,10 @@ def _register_tools() -> None:
     register_cross_repo_ordering_tools(mcp)
     # PRD-CORE-171: local SHA-256 code-index manifest update tool
     register_code_index_tools(mcp)
+    # PRD-CORE-172: local indexed lexical/symbol code search
+    register_code_search_tools(mcp)
+    # PRD-CORE-167: public entity-risk sidecar consumer
+    register_entity_risk_map_tools(mcp)
     # PRD-CORE-168: privacy-safe canonical agent work evidence export
     register_agent_work_evidence_tools(mcp)
     # PRD-CORE-170: read-only skill manifest discovery helper

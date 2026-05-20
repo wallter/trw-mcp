@@ -287,3 +287,5 @@ When generating execution plan tasks for FRs that include assertions, add assert
 - SHOULD prefer vertical tracer-bullet slices; horizontal prerequisite tasks need rationale and explicit integration proof
 - SHOULD identify stable interfaces/seams so implementers know what must remain load-bearing
 - If a FR is too large for one micro-task (>35 min), decompose it further
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->

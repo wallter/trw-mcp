@@ -263,3 +263,5 @@ Call `trw_learn(summary="PRD ready pipeline: {PRD-ID} — {score}", tags=["prd-w
 - **Groom convergence at < 0.70**: Stop and report. The feature description likely needs more detail from the user.
 - **Review returns BLOCK**: Stop and report blocking issues. These require human decisions.
 - **Exec plan hits unverifiable files**: Flag in Known Risks section rather than fabricating.
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->

@@ -70,7 +70,7 @@ def _session_start_writer_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bo
             threshold=config.session_start_writer_pressure_threshold,
         )
     except Exception:  # justified: pressure detection is advisory and fail-open
-        logger.debug("session_start_response_pressure_check_failed", exc_info=True)
+        logger.warning("session_start_response_pressure_check_failed", exc_info=True)
         return False, []
 
 
@@ -87,7 +87,7 @@ def _session_start_optional_work_pressure(config: TRWConfig, trw_dir: Path) -> t
             threshold=config.session_start_writer_pressure_threshold,
         )
     except Exception:  # justified: optional-work pressure detection is advisory and fail-open
-        logger.debug("session_start_optional_pressure_check_failed", exc_info=True)
+        logger.warning("session_start_optional_pressure_check_failed", exc_info=True)
         return False, [], ""
 
 

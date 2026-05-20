@@ -50,7 +50,7 @@ def register_code_search_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Search local indexed code chunks.
 
-        Use after ``trw_code_index_update`` when an agent needs ranked code
+        Use when an agent has run ``trw_code_index_update`` and needs ranked code
         context without reading full files.
         """
 
@@ -64,7 +64,11 @@ def register_code_search_tools(server: FastMCP) -> None:
         top_k: int = 10,
         path: str | None = None,
     ) -> dict[str, object]:
-        """Find local indexed symbols with exact matches ranked first."""
+        """Find local indexed symbols with exact matches ranked first.
+
+        Use when an agent needs symbol locations from the local code index
+        without scanning or returning full file bodies.
+        """
 
         return trw_code_symbol(repo_root=repo_root, symbol=symbol, top_k=top_k, path=path)
 

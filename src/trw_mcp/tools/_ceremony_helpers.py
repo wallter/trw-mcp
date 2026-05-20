@@ -309,7 +309,7 @@ def run_auto_maintenance(
                 threshold=config.session_start_writer_pressure_threshold,
             )
         except Exception:  # justified: pressure detection must never block maintenance
-            logger.debug("maintenance_writer_pressure_check_failed", exc_info=True)
+            logger.warning("maintenance_writer_pressure_check_failed", exc_info=True)
 
     # Version sentinel check — detect if installer ran since this process started
     try:

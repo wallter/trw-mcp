@@ -238,3 +238,5 @@ When auditing FRs that include `Assertions:` blocks, use them as objective evide
 - ALWAYS read implementation code directly — tests are not a proxy for behavior
 - ALWAYS provide fix recommendations — findings without fixes are complaints, not audits
 - If PRD acceptance criteria are ambiguous, note as category: prd-ambiguity
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->
