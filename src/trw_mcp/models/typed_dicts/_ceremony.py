@@ -240,6 +240,7 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     total_available: int
     response_compacted: bool
     side_effects_deferred: dict[str, object]
+    recall_degraded: dict[str, object]
 
 
 class FinalizeRunResult(TypedDict, total=False):

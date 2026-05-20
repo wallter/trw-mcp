@@ -148,6 +148,8 @@ def step_recall_learnings(
             results["response_compacted"] = bool(extra["response_compacted"])
         if "side_effects_deferred" in extra:
             results["side_effects_deferred"] = extra["side_effects_deferred"]
+        if "recall_degraded" in extra:
+            results["recall_degraded"] = extra["recall_degraded"]
         if "side_effects_deferred" not in extra:
             _write_session_start_ids(trw_dir, learnings)
     except Exception as exc:  # justified: fail-open, recall failure must not block session start

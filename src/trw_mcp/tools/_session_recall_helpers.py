@@ -51,6 +51,27 @@ _WRITER_PRESSURE_RECALL_CAP = 8
 _SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status")
 
 
+def _is_canary_tamper_error(exc: BaseException) -> bool:
+    """Return True when recall failed closed because memory canaries drifted."""
+    try:
+        from trw_memory.exceptions import CanaryTamperError
+    except Exception:  # justified: optional dependency boundary in tests/install variants
+        return exc.__class__.__name__ == "CanaryTamperError"
+    return isinstance(exc, CanaryTamperError)
+
+
+def _degraded_canary_recall_extra(exc: BaseException) -> SessionRecallExtrasDict:
+    """Build the stable session_start degraded-recall envelope."""
+    return {
+        "recall_degraded": {
+            "reason": "canary_tamper",
+            "detail": "Session-start learning recall was skipped because memory canary tamper was detected.",
+            "exception_type": exc.__class__.__name__,
+        },
+        "total_available": 0,
+    }
+
+
 def _compact_session_start_learning(entry: dict[str, object]) -> dict[str, object]:
     """Return the minimal learning payload needed for session-start context."""
 
@@ -234,54 +255,68 @@ def perform_session_recalls(
         recall_recent_bypass,
     )
 
-    if is_focused:
-        focused = recall_focused(trw_dir, query, max_results=effective_max)
-        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
-        extra["query"] = query
-        extra["query_matched"] = len(focused)
-        seen_ids: set[str] = set()
-        for entry in focused + baseline:
-            learning_id = str(entry.get("id", ""))
-            if learning_id and learning_id not in seen_ids:
-                seen_ids.add(learning_id)
-                learnings.append(entry)
-        learnings = learnings[:effective_max]
-    else:
-        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
-        # L-fovv fix: union the baseline (high-impact, for cross-session tribal
-        # knowledge) with fresh low-impact learnings (for chain-mode + per-
-        # project session context). trw_learn defaults new entries to
-        # impact=0.5, so without this bypass stateful-chain link 2+ recalls
-        # return 0 even when link 1 wrote useful lessons.
-        bypass_days = int(getattr(config, "session_start_recent_bypass_days", 0))
-        learnings = list(baseline)
-        if bypass_days > 0:
-            import datetime as _dt
+    try:
+        if is_focused:
+            focused = recall_focused(trw_dir, query, max_results=effective_max)
+            baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+            extra["query"] = query
+            extra["query_matched"] = len(focused)
+            seen_ids: set[str] = set()
+            for entry in focused + baseline:
+                learning_id = str(entry.get("id", ""))
+                if learning_id and learning_id not in seen_ids:
+                    seen_ids.add(learning_id)
+                    learnings.append(entry)
+            learnings = learnings[:effective_max]
+        else:
+            baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+            # L-fovv fix: union the baseline (high-impact, for cross-session tribal
+            # knowledge) with fresh low-impact learnings (for chain-mode + per-
+            # project session context). trw_learn defaults new entries to
+            # impact=0.5, so without this bypass stateful-chain link 2+ recalls
+            # return 0 even when link 1 wrote useful lessons.
+            bypass_days = int(getattr(config, "session_start_recent_bypass_days", 0))
+            learnings = list(baseline)
+            if bypass_days > 0:
+                import datetime as _dt
 
-            bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
-            cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
-            try:
-                fresh = recall_recent_bypass(
-                    trw_dir,
-                    max_results=effective_max * 2,
-                    min_impact=bypass_min,
-                )
-            except Exception:  # justified: fail-open, recent-bypass recall must not block session start
-                logger.warning(
-                    "session_recent_bypass_recall_failed",
-                    op="session_recall",
-                    outcome="fail_open",
-                    exc_info=True,
-                )
-            else:
-                seen_ids = {str(e.get("id", "")) for e in baseline}
-                fresh_additions = [
-                    e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
-                ]
-                # Fresh entries are highest-priority context for the current
-                # session; surface them before the high-impact baseline.
-                learnings = fresh_additions + learnings
-                learnings = learnings[:effective_max]
+                bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
+                cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
+                try:
+                    fresh = recall_recent_bypass(
+                        trw_dir,
+                        max_results=effective_max * 2,
+                        min_impact=bypass_min,
+                    )
+                except Exception:  # justified: fail-open, recent-bypass recall must not block session start
+                    logger.warning(
+                        "session_recent_bypass_recall_failed",
+                        op="session_recall",
+                        outcome="fail_open",
+                        exc_info=True,
+                    )
+                else:
+                    seen_ids = {str(e.get("id", "")) for e in baseline}
+                    fresh_additions = [
+                        e
+                        for e in fresh
+                        if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
+                    ]
+                    # Fresh entries are highest-priority context for the current
+                    # session; surface them before the high-impact baseline.
+                    learnings = fresh_additions + learnings
+                    learnings = learnings[:effective_max]
+    except Exception as exc:
+        if not _is_canary_tamper_error(exc):
+            raise
+        logger.warning(
+            "session_start_recall_degraded",
+            reason="canary_tamper",
+            op="session_recall",
+            outcome="degraded",
+            exc_info=True,
+        )
+        return [], [], _degraded_canary_recall_extra(exc)
 
     optional_work_deferred, optional_writer_pids, optional_reason = _session_start_optional_work_pressure(
         config,

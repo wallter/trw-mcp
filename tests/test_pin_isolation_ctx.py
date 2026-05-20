@@ -64,6 +64,7 @@ def isolated_project(
 ) -> Path:
     """Point TRW_PROJECT_ROOT and config at a scratch dir; clean pin store."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("TRW_SESSION_ID", raising=False)
     # Ensure pin store lives under tmp_path
     from trw_mcp.models.config import _reset_config
 
@@ -121,19 +122,18 @@ def test_ctx_aware_no_pin_returns_none_not_scan_match(
     assert any(e.get("pin_key") == "fresh-session-no-pin" for e in events)
 
 
-def test_stdio_no_ctx_falls_back_to_scan(
+def test_explicit_legacy_mtime_scan_finds_latest_active_run(
     isolated_project: Path,
 ) -> None:
-    """FR15: legacy callers (no context arg) retain the scan fallback."""
-    from trw_mcp.state._paths import find_active_run
+    """FR15: legacy callers must opt into the mtime scan explicitly."""
+    from trw_mcp.state._paths import find_run_via_mtime_scan
 
     _seed_active_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
     latest = _seed_active_run(isolated_project, "task-b", "20260102T000000Z-bbbb2222")
 
-    # No context, no session_id — mirror the stdio-per-instance path.
-    result = find_active_run()
+    result = find_run_via_mtime_scan()
     assert result == latest, (
-        f"Legacy callers must still scan and return the latest active run (expected {latest}, got {result})"
+        f"Explicit legacy scan should return the latest active run (expected {latest}, got {result})"
     )
 
 

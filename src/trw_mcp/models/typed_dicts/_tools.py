@@ -132,6 +132,7 @@ class SessionStartResultDict(TypedDict, total=False):
     total_available: int
     response_compacted: bool
     side_effects_deferred: dict[str, object]
+    recall_degraded: dict[str, object]
     run: RunStatusDict
     embeddings_advisory: str
     errors: list[str]
