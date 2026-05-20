@@ -7,6 +7,7 @@ import json
 import pytest
 
 from trw_mcp.bootstrap._gemini import _GEMINI_SETTINGS_PATH, generate_gemini_mcp_config
+from ._gemini_test_support import fake_git_repo  # noqa: F401
 
 
 @pytest.mark.unit

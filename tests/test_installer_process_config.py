@@ -71,9 +71,7 @@ class TestLoadPriorConfig:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "config.yaml").write_text(
-            "platform_urls:\n"
-            "# - https://api.trwframework.com  # intentionally disabled\n"
-            "- http://localhost:5002\n",
+            "platform_urls:\n# - https://api.trwframework.com  # intentionally disabled\n- http://localhost:5002\n",
             encoding="utf-8",
         )
 

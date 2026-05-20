@@ -103,9 +103,7 @@ class TestSessionStartAutoClose:
 
             original_fn = ar_mod.auto_close_stale_runs
             try:
-                ar_mod.auto_close_stale_runs = MagicMock(
-                    side_effect=RuntimeError("disk full")
-                )
+                ar_mod.auto_close_stale_runs = MagicMock(side_effect=RuntimeError("disk full"))
                 fn = self._get_session_start_fn()
                 result = fn()
             finally:

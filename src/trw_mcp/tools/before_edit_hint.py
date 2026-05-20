@@ -84,9 +84,14 @@ class BeforeEditHintResult(BaseModel):
     tier: str
     distill_hint: BeforeYouEditHintPayload | None = None
     distill_status: Literal[
-        "hint_available", "tier_required", "sidecar_missing",
-        "sidecar_malformed", "schema_mismatch", "target_not_in_sidecar",
-        "stale_sha", "ok",
+        "hint_available",
+        "tier_required",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "target_not_in_sidecar",
+        "stale_sha",
+        "ok",
     ] = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
@@ -104,7 +109,10 @@ def _resolve_repo_root(repo_root: str | None) -> Path | None:
     try:
         proc = subprocess.run(  # noqa: S603
             [git_executable, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         if proc.returncode == 0:
             stripped = proc.stdout.strip()
@@ -123,7 +131,10 @@ def _resolve_git_sha(repo_root: Path) -> str | None:
         proc = subprocess.run(  # noqa: S603
             [git_executable, "rev-parse", "HEAD"],
             cwd=repo_root,
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         if proc.returncode == 0:
             stripped = proc.stdout.strip()
@@ -153,8 +164,12 @@ def _select_distill_hint(
 ) -> tuple[
     BeforeYouEditHintPayload | None,
     Literal[
-        "hint_available", "sidecar_missing", "sidecar_malformed",
-        "schema_mismatch", "target_not_in_sidecar", "stale_sha",
+        "hint_available",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "target_not_in_sidecar",
+        "stale_sha",
     ],
     str | None,
 ]:
@@ -165,34 +180,37 @@ def _select_distill_hint(
     envelope = _load_sidecar_envelope(sidecar_path)
     if envelope is None:
         return (
-            None, "sidecar_missing",
-            f"Run: cd <repo> && trw-distill self-improve before-edit "
-            f"--repo . --file {file_path} --persist-sidecar",
+            None,
+            "sidecar_missing",
+            f"Run: cd <repo> && trw-distill self-improve before-edit --repo . --file {file_path} --persist-sidecar",
         )
     schema = envelope.get("schema_version")
     if schema != _SCHEMA_VERSION_ACCEPTED:
         return (
-            None, "schema_mismatch",
+            None,
+            "schema_mismatch",
             f"Sidecar schema_version={schema!r}; expected "
             f"{_SCHEMA_VERSION_ACCEPTED!r} — upgrade trw-distill or trw-mcp",
         )
     sidecar_sha = envelope.get("sha")
     if not isinstance(sidecar_sha, str) or sidecar_sha != sidecar_sha_expected:
         return (
-            None, "stale_sha",
-            f"Sidecar SHA={sidecar_sha!r}; HEAD={sidecar_sha_expected} — "
-            f"re-run with --persist-sidecar",
+            None,
+            "stale_sha",
+            f"Sidecar SHA={sidecar_sha!r}; HEAD={sidecar_sha_expected} — re-run with --persist-sidecar",
         )
     payload = envelope.get("payload")
     if not isinstance(payload, dict):
         return (
-            None, "sidecar_malformed",
+            None,
+            "sidecar_malformed",
             "Sidecar payload is not a dict; re-run --persist-sidecar to regenerate",
         )
     payload_target = payload.get("target_path")
     if payload_target != file_path:
         return (
-            None, "target_not_in_sidecar",
+            None,
+            "target_not_in_sidecar",
             f"Sidecar for target_path={payload_target!r}; requested "
             f"{file_path!r} — run: trw-distill self-improve before-edit "
             f"--repo . --file {file_path} --persist-sidecar",
@@ -201,9 +219,9 @@ def _select_distill_hint(
         hint = BeforeYouEditHintPayload.model_validate(payload)
     except Exception:
         return (
-            None, "sidecar_malformed",
-            "Sidecar payload does not match BeforeYouEditHintPayload schema; "
-            "check trw-distill version compatibility",
+            None,
+            "sidecar_malformed",
+            "Sidecar payload does not match BeforeYouEditHintPayload schema; check trw-distill version compatibility",
         )
     return (hint, "hint_available", None)
 
@@ -219,6 +237,7 @@ def _collect_learnings(file_path: str) -> list[LearningSummary]:
         build_file_queries,
         collect_learnings,
     )
+
     return collect_learnings(build_file_queries(file_path))
 
 
@@ -235,21 +254,22 @@ def compute_before_edit_hint(
     resolved_repo_root = _resolve_repo_root(repo_root)
     learnings = _collect_learnings(file_path)
 
-    trw_dir = (
-        (resolved_repo_root / ".trw") if resolved_repo_root is not None
-        else resolve_trw_dir()
-    )
+    trw_dir = (resolved_repo_root / ".trw") if resolved_repo_root is not None else resolve_trw_dir()
     entitlement = load_entitlement(trw_dir)
 
     distill_hint: BeforeYouEditHintPayload | None = None
     distill_status: Literal[
-        "hint_available", "tier_required", "sidecar_missing",
-        "sidecar_malformed", "schema_mismatch", "target_not_in_sidecar",
-        "stale_sha", "ok",
+        "hint_available",
+        "tier_required",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "target_not_in_sidecar",
+        "stale_sha",
+        "ok",
     ] = "tier_required"
     distill_action: str | None = (
-        "Acquire team/pro/enterprise tier to enable trw-distill sidecar "
-        "consumption (see https://trwframework.com/tier)"
+        "Acquire team/pro/enterprise tier to enable trw-distill sidecar consumption (see https://trwframework.com/tier)"
     )
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
@@ -257,13 +277,10 @@ def compute_before_edit_hint(
     if entitlement.has_feature("trw_before_edit_hint:distill_sidecar"):
         if resolved_repo_root is None:
             distill_status = "sidecar_missing"
-            distill_action = (
-                "Could not resolve git repo root — pass --repo or run from inside a git checkout"
-            )
+            distill_action = "Could not resolve git repo root — pass --repo or run from inside a git checkout"
         else:
             resolved_cache_dir = (
-                Path(cache_dir) if cache_dir is not None
-                else resolved_repo_root / _DEFAULT_CACHE_DIR_REL
+                Path(cache_dir) if cache_dir is not None else resolved_repo_root / _DEFAULT_CACHE_DIR_REL
             )
             git_sha = _resolve_git_sha(resolved_repo_root)
             if git_sha is None:
@@ -274,7 +291,9 @@ def compute_before_edit_hint(
                 sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME_SINGLE}-{git_sha}.json"
                 distill_sidecar_path = str(sidecar_path)
                 distill_hint, distill_status, distill_action = _select_distill_hint(
-                    sidecar_path, file_path, git_sha,
+                    sidecar_path,
+                    file_path,
+                    git_sha,
                 )
 
     return BeforeEditHintResult(

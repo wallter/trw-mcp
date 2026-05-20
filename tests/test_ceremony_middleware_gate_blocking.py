@@ -16,6 +16,8 @@ from tests._test_ceremony_middleware_gate_support import (
     FakeToolResult,
     _seed_compaction_marker,
     _text,
+    middleware,  # noqa: F401
+    session_ctx,  # noqa: F401
 )
 from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active, reset_state
 

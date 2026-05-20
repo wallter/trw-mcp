@@ -31,16 +31,23 @@ def _make_git_repo(path: Path) -> str:
     subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
     subprocess.run(["git", "add", "."], cwd=path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=path,
-    ).decode().strip()
+    return (
+        subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=path,
+        )
+        .decode()
+        .strip()
+    )
 
 
 def _write_entitlement(trw_dir: Path, tier: str) -> None:
     trw_dir.mkdir(parents=True, exist_ok=True)
     future = (datetime.now(tz=timezone.utc) + timedelta(days=30)).isoformat()
     sig = sign_entitlement_for_dev(
-        tier=tier, issued_to="t@t", expires_at=future,  # type: ignore[arg-type]
+        tier=tier,
+        issued_to="t@t",
+        expires_at=future,  # type: ignore[arg-type]
     )
     (trw_dir / "entitlements.yaml").write_text(
         f"tier: {tier}\nissued_to: t@t\nexpires_at: '{future}'\nsignature: {sig}\n",
@@ -85,23 +92,32 @@ class TestBatchTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json", sha,
+            cache_dir / f"before-edit-batch-{sha}.json",
+            sha,
             {
                 "total_files": 2,
                 "files_in_map": 2,
                 "total_hotspot_warnings": 1,
                 "hints": [
                     {
-                        "target_path": "foo.py", "target_exists_in_map": True,
-                        "importers": [], "inferred_tests": [],
-                        "doc_references": [], "co_change_neighbors": [],
-                        "hotspot_warnings": ["warn"], "risk_score": 0.3,
+                        "target_path": "foo.py",
+                        "target_exists_in_map": True,
+                        "importers": [],
+                        "inferred_tests": [],
+                        "doc_references": [],
+                        "co_change_neighbors": [],
+                        "hotspot_warnings": ["warn"],
+                        "risk_score": 0.3,
                     },
                     {
-                        "target_path": "bar.py", "target_exists_in_map": True,
-                        "importers": ["foo.py"], "inferred_tests": [],
-                        "doc_references": [], "co_change_neighbors": [],
-                        "hotspot_warnings": [], "risk_score": 0.1,
+                        "target_path": "bar.py",
+                        "target_exists_in_map": True,
+                        "importers": ["foo.py"],
+                        "inferred_tests": [],
+                        "doc_references": [],
+                        "co_change_neighbors": [],
+                        "hotspot_warnings": [],
+                        "risk_score": 0.1,
                     },
                 ],
             },
@@ -117,7 +133,8 @@ class TestBatchTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json", "0" * 40,
+            cache_dir / f"before-edit-batch-{sha}.json",
+            "0" * 40,
             {"total_files": 0, "files_in_map": 0, "total_hotspot_warnings": 0, "hints": []},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
@@ -129,7 +146,8 @@ class TestBatchTool:
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         # Payload missing required fields
         _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json", sha,
+            cache_dir / f"before-edit-batch-{sha}.json",
+            sha,
             {"total_files": 1, "unexpected": "boom"},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
@@ -156,24 +174,39 @@ class TestRiskReportTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"risk-report-{sha}.json", sha,
+            cache_dir / f"risk-report-{sha}.json",
+            sha,
             [
                 {
-                    "target_path": "foo.py", "target_exists_in_map": True,
-                    "composite_score": 0.8, "fanin_score": 1.0,
-                    "fanout_score": 0.2, "untested_score": 1.0,
-                    "undocumented_score": 0.5, "size_score": 0.4,
-                    "churn_score": 0.6, "fanin_count": 10, "fanout_count": 2,
-                    "test_edge_count": 0, "doc_edge_count": 0,
+                    "target_path": "foo.py",
+                    "target_exists_in_map": True,
+                    "composite_score": 0.8,
+                    "fanin_score": 1.0,
+                    "fanout_score": 0.2,
+                    "untested_score": 1.0,
+                    "undocumented_score": 0.5,
+                    "size_score": 0.4,
+                    "churn_score": 0.6,
+                    "fanin_count": 10,
+                    "fanout_count": 2,
+                    "test_edge_count": 0,
+                    "doc_edge_count": 0,
                     "line_count": 500,
                 },
                 {
-                    "target_path": "bar.py", "target_exists_in_map": True,
-                    "composite_score": 0.4, "fanin_score": 0.2,
-                    "fanout_score": 0.1, "untested_score": 0.5,
-                    "undocumented_score": 0.5, "size_score": 0.5,
-                    "churn_score": 0.3, "fanin_count": 2, "fanout_count": 1,
-                    "test_edge_count": 1, "doc_edge_count": 0,
+                    "target_path": "bar.py",
+                    "target_exists_in_map": True,
+                    "composite_score": 0.4,
+                    "fanin_score": 0.2,
+                    "fanout_score": 0.1,
+                    "untested_score": 0.5,
+                    "undocumented_score": 0.5,
+                    "size_score": 0.5,
+                    "churn_score": 0.3,
+                    "fanin_count": 2,
+                    "fanout_count": 1,
+                    "test_edge_count": 1,
+                    "doc_edge_count": 0,
                     "line_count": 200,
                 },
             ],
@@ -190,15 +223,23 @@ class TestRiskReportTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"risk-report-{sha}.json", sha,
+            cache_dir / f"risk-report-{sha}.json",
+            sha,
             [
                 {
-                    "target_path": f"f{i}.py", "target_exists_in_map": True,
-                    "composite_score": 1.0 - i * 0.1, "fanin_score": 0.5,
-                    "fanout_score": 0.5, "untested_score": 0.5,
-                    "undocumented_score": 0.5, "size_score": 0.5,
-                    "churn_score": 0.0, "fanin_count": 0, "fanout_count": 0,
-                    "test_edge_count": 0, "doc_edge_count": 0,
+                    "target_path": f"f{i}.py",
+                    "target_exists_in_map": True,
+                    "composite_score": 1.0 - i * 0.1,
+                    "fanin_score": 0.5,
+                    "fanout_score": 0.5,
+                    "untested_score": 0.5,
+                    "undocumented_score": 0.5,
+                    "size_score": 0.5,
+                    "churn_score": 0.0,
+                    "fanin_count": 0,
+                    "fanout_count": 0,
+                    "test_edge_count": 0,
+                    "doc_edge_count": 0,
                     "line_count": 100,
                 }
                 for i in range(10)
@@ -214,15 +255,23 @@ class TestRiskReportTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"risk-report-{sha}.json", sha,
+            cache_dir / f"risk-report-{sha}.json",
+            sha,
             [
                 {
-                    "target_path": f"f{i}.py", "target_exists_in_map": True,
-                    "composite_score": 0.5, "fanin_score": 0.5,
-                    "fanout_score": 0.5, "untested_score": 0.5,
-                    "undocumented_score": 0.5, "size_score": 0.5,
-                    "churn_score": 0.0, "fanin_count": 0, "fanout_count": 0,
-                    "test_edge_count": 0, "doc_edge_count": 0,
+                    "target_path": f"f{i}.py",
+                    "target_exists_in_map": True,
+                    "composite_score": 0.5,
+                    "fanin_score": 0.5,
+                    "fanout_score": 0.5,
+                    "untested_score": 0.5,
+                    "undocumented_score": 0.5,
+                    "size_score": 0.5,
+                    "churn_score": 0.0,
+                    "fanin_count": 0,
+                    "fanout_count": 0,
+                    "test_edge_count": 0,
+                    "doc_edge_count": 0,
                     "line_count": 100,
                 }
                 for i in range(5)
@@ -236,7 +285,8 @@ class TestRiskReportTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"risk-report-{sha}.json", sha,
+            cache_dir / f"risk-report-{sha}.json",
+            sha,
             {"not_a_list": "boom"},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
@@ -247,25 +297,32 @@ class TestRiskReportTool:
 class TestModelContracts:
     def test_batch_result_frozen(self) -> None:
         r = BeforeEditHintBatchResult(tier="free")
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             r.tier = "pro"  # type: ignore[misc]
 
     def test_risk_report_result_frozen(self) -> None:
         r = CodebaseRiskReportResult(tier="free")
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             r.tier = "pro"  # type: ignore[misc]
 
     def test_file_risk_score_extra_forbid(self) -> None:
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             FileRiskScorePayload(  # type: ignore[call-arg]
-                target_path="x", target_exists_in_map=True,
-                composite_score=0.5, fanin_score=0.5, fanout_score=0.5,
-                untested_score=0.5, undocumented_score=0.5, size_score=0.5,
+                target_path="x",
+                target_exists_in_map=True,
+                composite_score=0.5,
+                fanin_score=0.5,
+                fanout_score=0.5,
+                untested_score=0.5,
+                undocumented_score=0.5,
+                size_score=0.5,
                 unknown_field="boom",
             )
 
     def test_batch_payload_defaults(self) -> None:
         b = BeforeYouEditBatchPayload(
-            total_files=0, files_in_map=0, total_hotspot_warnings=0,
+            total_files=0,
+            files_in_map=0,
+            total_hotspot_warnings=0,
         )
         assert b.hints == []

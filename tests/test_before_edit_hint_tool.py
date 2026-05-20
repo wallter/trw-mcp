@@ -11,10 +11,10 @@ import pytest
 
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools.before_edit_hint import (
+    _SCHEMA_VERSION_ACCEPTED,
     BeforeEditHintResult,
     BeforeYouEditHintPayload,
     LearningSummary,
-    _SCHEMA_VERSION_ACCEPTED,
     _select_distill_hint,
     compute_before_edit_hint,
 )
@@ -29,9 +29,14 @@ def _make_git_repo(repo_path: Path) -> str:
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo_path, check=True)
     subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo_path, check=True)
-    sha = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=repo_path,
-    ).decode().strip()
+    sha = (
+        subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+        )
+        .decode()
+        .strip()
+    )
     return sha
 
 
@@ -82,7 +87,8 @@ class TestFreeTier:
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_sidecar(cache_dir, sha, "foo.py")  # exists but not consumable
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.tier == "free"
         assert r.distill_status == "tier_required"
@@ -92,7 +98,8 @@ class TestFreeTier:
     def test_free_tier_still_returns_learnings(self, tmp_path: Path) -> None:
         # Learnings half is always available — operator gets value at free tier.
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         # Live trw_recall against the repo's memory may return entries
         # for "foo.py" — we assert the type rather than the count to
@@ -108,7 +115,8 @@ class TestPaidTierHappyPath:
         _write_sidecar(cache_dir, sha, "foo.py")
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.tier == "pro"
         assert r.distill_status == "hint_available"
@@ -123,7 +131,8 @@ class TestPaidTierHappyPath:
         _write_sidecar(cache_dir, sha, "foo.py")
         _write_entitlement(tmp_path / ".trw", "enterprise")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.tier == "enterprise"
         assert r.distill_status == "hint_available"
@@ -135,7 +144,8 @@ class TestPaidTierGracefulFailures:
         # No sidecar written
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.tier == "pro"
         assert r.distill_status == "sidecar_missing"
@@ -167,7 +177,8 @@ class TestPaidTierGracefulFailures:
         (cache_dir / f"before-edit-hint-{sha}.json").write_text(json.dumps(envelope))
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.distill_status == "stale_sha"
 
@@ -177,7 +188,8 @@ class TestPaidTierGracefulFailures:
         _write_sidecar(cache_dir, sha, target_path="other.py")
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.distill_status == "target_not_in_sidecar"
 
@@ -185,11 +197,15 @@ class TestPaidTierGracefulFailures:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_sidecar(
-            cache_dir, sha, "foo.py", schema_version="risk-report-sidecar/v99",
+            cache_dir,
+            sha,
+            "foo.py",
+            schema_version="risk-report-sidecar/v99",
         )
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.distill_status == "schema_mismatch"
 
@@ -200,7 +216,8 @@ class TestPaidTierGracefulFailures:
         (cache_dir / f"before-edit-hint-{sha}.json").write_text("{ not json")
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.distill_status == "sidecar_missing"  # JSON load fails → treated as missing
 
@@ -209,12 +226,15 @@ class TestPaidTierGracefulFailures:
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         # Valid envelope, but payload extra field (Pydantic extra=forbid)
         _write_sidecar(
-            cache_dir, sha, "foo.py",
+            cache_dir,
+            sha,
+            "foo.py",
             hint_overrides={"unexpected_field": "boom"},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
-            file_path="foo.py", repo_root=str(tmp_path),
+            file_path="foo.py",
+            repo_root=str(tmp_path),
         )
         assert r.distill_status == "sidecar_malformed"
 
@@ -232,13 +252,14 @@ class TestSelectHintHelper:
 class TestModelContracts:
     def test_result_is_frozen(self) -> None:
         r = BeforeEditHintResult(file_path="x", tier="free")
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             r.file_path = "y"  # type: ignore[misc]
 
     def test_payload_extra_forbid(self) -> None:
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             BeforeYouEditHintPayload(  # type: ignore[call-arg]
-                target_path="x", target_exists_in_map=False,
+                target_path="x",
+                target_exists_in_map=False,
                 some_unknown_field="boom",
             )
 

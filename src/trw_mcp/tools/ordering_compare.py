@@ -56,9 +56,14 @@ class OrderingCompareResult(BaseModel):
     tier: str
     comparison: RiskOrderingComparisonPayload | None = None
     distill_status: Literal[
-        "hint_available", "tier_required", "sidecar_missing",
-        "sidecar_malformed", "schema_mismatch", "stale_sha",
-        "no_repo_root", "no_git_sha",
+        "hint_available",
+        "tier_required",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "stale_sha",
+        "no_repo_root",
+        "no_git_sha",
     ] = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
@@ -100,18 +105,14 @@ def compute_ordering_compare(
             distill_action="Could not run `git rev-parse HEAD` — verify .git/ present",
         )
 
-    resolved_cache_dir = (
-        Path(cache_dir) if cache_dir is not None
-        else resolved_repo_root / DEFAULT_CACHE_DIR_REL
-    )
+    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
     sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME}-{git_sha}.json"
 
     load = load_sidecar_with_sha_check(
-        sidecar_path, expected_sha=git_sha,
+        sidecar_path,
+        expected_sha=git_sha,
         file_path_hint="<ordering-compare>",
-        cli_remediation=(
-            "trw-distill self-improve risk-ordering-compare --repo . --persist-sidecar"
-        ),
+        cli_remediation=("trw-distill self-improve risk-ordering-compare --repo . --persist-sidecar"),
     )
     if load.status != "ok" or load.payload is None:
         return OrderingCompareResult(
@@ -126,9 +127,7 @@ def compute_ordering_compare(
         return OrderingCompareResult(
             tier=gate.tier,
             distill_status="sidecar_malformed",
-            distill_action=(
-                "ordering-compare payload is not a dict; re-run with --persist-sidecar"
-            ),
+            distill_action=("ordering-compare payload is not a dict; re-run with --persist-sidecar"),
             distill_sidecar_path=load.sidecar_path,
             distill_sidecar_sha=load.sidecar_sha,
         )
@@ -178,7 +177,8 @@ def register_ordering_compare_tools(server: FastMCP) -> None:
         Tier-gated. NEVER raises.
         """
         result = compute_ordering_compare(
-            repo_root=repo_root, cache_dir=cache_dir,
+            repo_root=repo_root,
+            cache_dir=cache_dir,
         )
         return result.model_dump()
 

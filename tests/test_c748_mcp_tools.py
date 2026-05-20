@@ -32,16 +32,23 @@ def _make_git_repo(path: Path) -> str:
     subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
     subprocess.run(["git", "add", "."], cwd=path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=path,
-    ).decode().strip()
+    return (
+        subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=path,
+        )
+        .decode()
+        .strip()
+    )
 
 
 def _write_entitlement(trw_dir: Path, tier: str) -> None:
     trw_dir.mkdir(parents=True, exist_ok=True)
     future = (datetime.now(tz=timezone.utc) + timedelta(days=30)).isoformat()
     sig = sign_entitlement_for_dev(
-        tier=tier, issued_to="t@t", expires_at=future,  # type: ignore[arg-type]
+        tier=tier,
+        issued_to="t@t",
+        expires_at=future,  # type: ignore[arg-type]
     )
     (trw_dir / "entitlements.yaml").write_text(
         f"tier: {tier}\nissued_to: t@t\nexpires_at: '{future}'\nsignature: {sig}\n",
@@ -63,7 +70,8 @@ def _valid_comparison_payload() -> dict:
     return {
         "label_a": "high_composite_risk_paths",
         "label_b": "high_risk_paths",
-        "n_a": 10, "n_b": 10,
+        "n_a": 10,
+        "n_b": 10,
         "n_intersection": 5,
         "n_union": 15,
         "jaccard": 0.333,
@@ -92,7 +100,8 @@ class TestOrderingCompareTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"ordering-compare-{sha}.json", sha,
+            cache_dir / f"ordering-compare-{sha}.json",
+            sha,
             _valid_comparison_payload(),
         )
         _write_entitlement(tmp_path / ".trw", "pro")
@@ -106,7 +115,8 @@ class TestOrderingCompareTool:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
-            cache_dir / f"ordering-compare-{sha}.json", sha,
+            cache_dir / f"ordering-compare-{sha}.json",
+            sha,
             {"unexpected": "boom"},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
@@ -120,12 +130,13 @@ class TestCrossRepoOrderingTool:
         sidecar_dir = tmp_path / "shared"
         sidecar_dir.mkdir()
         _write_envelope(
-            sidecar_dir / "cross-repo-aggregate-abc.json", "abc",
-            {"n_repos": 0, "per_repo": [], "overlap_status_counts": {},
-             "summary_verdict": "insufficient"},
+            sidecar_dir / "cross-repo-aggregate-abc.json",
+            "abc",
+            {"n_repos": 0, "per_repo": [], "overlap_status_counts": {}, "summary_verdict": "insufficient"},
         )
         r = compute_cross_repo_ordering(
-            repo_root=str(tmp_path), sidecar_dir=str(sidecar_dir),
+            repo_root=str(tmp_path),
+            sidecar_dir=str(sidecar_dir),
         )
         assert r.tier == "free"
         assert r.distill_status == "tier_required"
@@ -141,7 +152,8 @@ class TestCrossRepoOrderingTool:
         _write_entitlement(tmp_path / ".trw", "pro")
         sidecar = tmp_path / "shared" / "cross-repo-aggregate-abc123.json"
         _write_envelope(
-            sidecar, "abc123",
+            sidecar,
+            "abc123",
             {
                 "n_repos": 2,
                 "per_repo": [
@@ -159,7 +171,8 @@ class TestCrossRepoOrderingTool:
             },
         )
         r = compute_cross_repo_ordering(
-            repo_root=str(tmp_path), sidecar_path=str(sidecar),
+            repo_root=str(tmp_path),
+            sidecar_path=str(sidecar),
         )
         assert r.distill_status == "hint_available"
         assert r.aggregate is not None
@@ -174,9 +187,11 @@ class TestCrossRepoOrderingTool:
         # Two sidecars; tool picks the latest by mtime
         for tag in ("aaa", "bbb"):
             _write_envelope(
-                sidecar_dir / f"cross-repo-aggregate-{tag}.json", tag,
+                sidecar_dir / f"cross-repo-aggregate-{tag}.json",
+                tag,
                 {
-                    "n_repos": 1, "per_repo": [],
+                    "n_repos": 1,
+                    "per_repo": [],
                     "overlap_status_counts": {},
                     "summary_verdict": "insufficient",
                 },
@@ -193,15 +208,20 @@ class TestCrossRepoOrderingTool:
         # May resolve git via parent search; not asserting exact status
         # because the test runner is itself in a git repo.
         assert r.distill_status in (
-            "sidecar_path_required", "tier_required", "sidecar_missing",
+            "sidecar_path_required",
+            "tier_required",
+            "sidecar_missing",
         )
 
 
 class TestTierIssueCLI:
     def test_print_only(self, tmp_path: Path, capsys) -> None:
         args = argparse.Namespace(
-            tier_command="issue", tier="pro", issued_to="x@y",
-            expires="2027-01-01", trw_dir=str(tmp_path / ".trw"),
+            tier_command="issue",
+            tier="pro",
+            issued_to="x@y",
+            expires="2027-01-01",
+            trw_dir=str(tmp_path / ".trw"),
             print_only=True,
         )
         run_tier(args)
@@ -211,8 +231,11 @@ class TestTierIssueCLI:
 
     def test_writes_file(self, tmp_path: Path, capsys) -> None:
         args = argparse.Namespace(
-            tier_command="issue", tier="enterprise", issued_to="x@y",
-            expires="2027-01-01", trw_dir=str(tmp_path / ".trw"),
+            tier_command="issue",
+            tier="enterprise",
+            issued_to="x@y",
+            expires="2027-01-01",
+            trw_dir=str(tmp_path / ".trw"),
             print_only=False,
         )
         run_tier(args)
@@ -223,7 +246,9 @@ class TestTierIssueCLI:
 
     def test_iso_datetime_accepted(self, tmp_path: Path, capsys) -> None:
         args = argparse.Namespace(
-            tier_command="issue", tier="team", issued_to="x@y",
+            tier_command="issue",
+            tier="team",
+            issued_to="x@y",
             expires="2027-06-15T12:00:00+00:00",
             trw_dir=str(tmp_path / ".trw"),
             print_only=True,
@@ -234,8 +259,11 @@ class TestTierIssueCLI:
 
     def test_invalid_expires(self, tmp_path: Path) -> None:
         args = argparse.Namespace(
-            tier_command="issue", tier="pro", issued_to="x@y",
-            expires="not-a-date", trw_dir=str(tmp_path / ".trw"),
+            tier_command="issue",
+            tier="pro",
+            issued_to="x@y",
+            expires="not-a-date",
+            trw_dir=str(tmp_path / ".trw"),
             print_only=True,
         )
         with pytest.raises(SystemExit):
@@ -243,7 +271,8 @@ class TestTierIssueCLI:
 
     def test_show_missing(self, tmp_path: Path, capsys) -> None:
         args = argparse.Namespace(
-            tier_command="show", trw_dir=str(tmp_path / ".trw"),
+            tier_command="show",
+            trw_dir=str(tmp_path / ".trw"),
         )
         run_tier(args)
         captured = capsys.readouterr()
@@ -253,14 +282,18 @@ class TestTierIssueCLI:
     def test_show_pro(self, tmp_path: Path, capsys) -> None:
         # Issue then show
         args_issue = argparse.Namespace(
-            tier_command="issue", tier="pro", issued_to="x@y",
-            expires="2027-01-01", trw_dir=str(tmp_path / ".trw"),
+            tier_command="issue",
+            tier="pro",
+            issued_to="x@y",
+            expires="2027-01-01",
+            trw_dir=str(tmp_path / ".trw"),
             print_only=False,
         )
         run_tier(args_issue)
         capsys.readouterr()  # drain
         args_show = argparse.Namespace(
-            tier_command="show", trw_dir=str(tmp_path / ".trw"),
+            tier_command="show",
+            trw_dir=str(tmp_path / ".trw"),
         )
         run_tier(args_show)
         captured = capsys.readouterr()
@@ -271,19 +304,24 @@ class TestTierIssueCLI:
 class TestModelContracts:
     def test_ordering_compare_frozen(self) -> None:
         r = OrderingCompareResult(tier="free")
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             r.tier = "pro"  # type: ignore[misc]
 
     def test_cross_repo_frozen(self) -> None:
         r = CrossRepoOrderingResult(tier="free")
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             r.tier = "pro"  # type: ignore[misc]
 
     def test_comparison_extra_forbid(self) -> None:
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):
             RiskOrderingComparisonPayload(  # type: ignore[call-arg]
-                label_a="a", label_b="b", n_a=0, n_b=0,
-                n_intersection=0, n_union=0, jaccard=0.0,
+                label_a="a",
+                label_b="b",
+                n_a=0,
+                n_b=0,
+                n_intersection=0,
+                n_union=0,
+                jaccard=0.0,
                 overlap_status="overlap",
                 unknown_field="boom",
             )

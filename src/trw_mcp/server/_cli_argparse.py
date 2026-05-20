@@ -401,7 +401,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     # tier issue
     issue_parser = tier_sub.add_parser(
-        "issue", help="Generate a signed entitlement YAML",
+        "issue",
+        help="Generate a signed entitlement YAML",
     )
     issue_parser.add_argument(
         "--tier",
@@ -410,7 +411,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Tier to issue",
     )
     issue_parser.add_argument(
-        "--issued-to", required=True,
+        "--issued-to",
+        required=True,
         help="Operator identifier (email, username, or org name)",
     )
     issue_parser.add_argument(
@@ -424,13 +426,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Target .trw/ directory (default: ./.trw)",
     )
     issue_parser.add_argument(
-        "--print-only", action="store_true",
+        "--print-only",
+        action="store_true",
         help="Print the YAML to stdout instead of writing to disk",
     )
 
     # tier show
     tier_sub.add_parser(
-        "show", help="Print resolved tier + status from .trw/entitlements.yaml",
+        "show",
+        help="Print resolved tier + status from .trw/entitlements.yaml",
     )
 
     return parser

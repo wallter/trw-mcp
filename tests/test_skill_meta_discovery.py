@@ -73,7 +73,9 @@ meta_discovery: false
 """,
     )
 
-    result = discover_meta_skills([public, tmp_path / "private" / "SKILL.md", tmp_path / "hidden" / "SKILL.md"], query="helper")
+    result = discover_meta_skills(
+        [public, tmp_path / "private" / "SKILL.md", tmp_path / "hidden" / "SKILL.md"], query="helper"
+    )
 
     assert result.executed is False
     assert [candidate.name for candidate in result.candidates] == ["public"]

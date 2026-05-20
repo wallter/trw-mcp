@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from ._gemini_test_support import fake_git_repo  # noqa: F401
+
 
 @pytest.mark.unit
 class TestGeminiInitProject:

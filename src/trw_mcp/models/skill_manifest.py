@@ -59,7 +59,9 @@ class SkillManifest(BaseModel):
     description: str = Field(min_length=1)
     user_invocable: bool = Field(default=True, validation_alias=AliasChoices("user_invocable", "user-invocable"))
     argument_hint: str | None = Field(default=None, validation_alias=AliasChoices("argument_hint", "argument-hint"))
-    allowed_tools: tuple[str, ...] = Field(default_factory=tuple, validation_alias=AliasChoices("allowed_tools", "allowed-tools"))
+    allowed_tools: tuple[str, ...] = Field(
+        default_factory=tuple, validation_alias=AliasChoices("allowed_tools", "allowed-tools")
+    )
     forbidden_tools: tuple[str, ...] = Field(
         default_factory=tuple,
         validation_alias=AliasChoices("forbidden_tools", "forbidden-tools"),
@@ -175,13 +177,23 @@ def _extract_frontmatter(
     mode: SkillValidationMode,
 ) -> tuple[str, str, list[SkillManifestIssue]]:
     if not markdown.startswith("---\n"):
-        return "", markdown, [_issue(path=path, field="frontmatter", reason="missing YAML frontmatter", mode=mode, severity="error")]
+        return (
+            "",
+            markdown,
+            [_issue(path=path, field="frontmatter", reason="missing YAML frontmatter", mode=mode, severity="error")],
+        )
 
     closing = markdown.find("\n---", 4)
     if closing == -1:
-        return "", markdown, [
-            _issue(path=path, field="frontmatter", reason="unterminated YAML frontmatter", mode=mode, severity="error")
-        ]
+        return (
+            "",
+            markdown,
+            [
+                _issue(
+                    path=path, field="frontmatter", reason="unterminated YAML frontmatter", mode=mode, severity="error"
+                )
+            ],
+        )
 
     frontmatter = markdown[4:closing]
     body_start = closing + len("\n---")
@@ -204,12 +216,22 @@ def _load_frontmatter(
     if loaded is None:
         return {}, []
     if not isinstance(loaded, Mapping):
-        return {}, [_issue(path=path, field="frontmatter", reason="frontmatter must be a mapping", mode=mode, severity="error")]
+        return {}, [
+            _issue(path=path, field="frontmatter", reason="frontmatter must be a mapping", mode=mode, severity="error")
+        ]
 
     data: dict[str, object] = {}
     for key, value in loaded.items():
         if not isinstance(key, str):
-            return {}, [_issue(path=path, field="frontmatter", reason="frontmatter keys must be strings", mode=mode, severity="error")]
+            return {}, [
+                _issue(
+                    path=path,
+                    field="frontmatter",
+                    reason="frontmatter keys must be strings",
+                    mode=mode,
+                    severity="error",
+                )
+            ]
         data[key] = value
     return data, []
 
@@ -227,7 +249,11 @@ def _normalize_frontmatter(
         canonical = _ALIAS_TO_FIELD.get(key)
         if canonical is None:
             severity: IssueSeverity = "error" if mode == "strict" else "warning"
-            reason = "unknown field is not allowed in strict mode" if mode == "strict" else "unknown field ignored by compatibility mode"
+            reason = (
+                "unknown field is not allowed in strict mode"
+                if mode == "strict"
+                else "unknown field ignored by compatibility mode"
+            )
             unknown_issues.append(_issue(path=path, field=key, reason=reason, mode=mode, severity=severity))
             continue
 
@@ -310,7 +336,9 @@ def _lint_ordered_steps(
             duplicate_steps.add(step)
         declared_steps.add(step)
     issues.extend(
-        _lint_issue(path=path, field="ordered_steps", reason=f"ordered step {step!r} is declared more than once", mode=mode)
+        _lint_issue(
+            path=path, field="ordered_steps", reason=f"ordered step {step!r} is declared more than once", mode=mode
+        )
         for step in sorted(duplicate_steps)
     )
     previous_index = -1
@@ -328,7 +356,9 @@ def _lint_ordered_steps(
         current_index = body.find(step)
         if current_index < previous_index:
             issues.append(
-                _lint_issue(path=path, field="ordered_steps", reason=f"ordered step {step!r} is out of order", mode=mode)
+                _lint_issue(
+                    path=path, field="ordered_steps", reason=f"ordered step {step!r} is out of order", mode=mode
+                )
             )
         previous_index = current_index
     return issues

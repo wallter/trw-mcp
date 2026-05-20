@@ -60,7 +60,10 @@ class CrossRepoOrderingAggregatePayload(BaseModel):
     n_tau_defined: int = 0
     overlap_status_counts: dict[str, int] = Field(default_factory=dict)
     summary_verdict: Literal[
-        "consistent_overlap", "mixed", "mostly_disjoint", "insufficient",
+        "consistent_overlap",
+        "mixed",
+        "mostly_disjoint",
+        "insufficient",
     ]
 
 
@@ -70,8 +73,12 @@ class CrossRepoOrderingResult(BaseModel):
     tier: str
     aggregate: CrossRepoOrderingAggregatePayload | None = None
     distill_status: Literal[
-        "hint_available", "tier_required", "sidecar_missing",
-        "sidecar_malformed", "schema_mismatch", "no_repo_root",
+        "hint_available",
+        "tier_required",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "no_repo_root",
         "sidecar_path_required",
     ] = "sidecar_missing"
     distill_action: str | None = None
@@ -127,7 +134,8 @@ def compute_cross_repo_ordering(
         latest = _find_latest_sidecar(search_dir)
         if latest is None:
             return CrossRepoOrderingResult(
-                tier="free" if resolved_repo_root is None
+                tier="free"
+                if resolved_repo_root is None
                 else check_tier_for_feature(resolved_repo_root, _TIER_FEATURE).tier,
                 distill_status="sidecar_missing",
                 distill_action=(
@@ -156,10 +164,7 @@ def compute_cross_repo_ordering(
         return CrossRepoOrderingResult(
             tier=gate.tier,
             distill_status="sidecar_malformed",
-            distill_action=(
-                f"Sidecar {resolved_sidecar_path} is missing or malformed; "
-                f"re-run with --persist-sidecar"
-            ),
+            distill_action=(f"Sidecar {resolved_sidecar_path} is missing or malformed; re-run with --persist-sidecar"),
             distill_sidecar_path=str(resolved_sidecar_path),
         )
 
@@ -168,8 +173,7 @@ def compute_cross_repo_ordering(
             tier=gate.tier,
             distill_status="schema_mismatch",
             distill_action=(
-                f"Sidecar schema_version={envelope.get('schema_version')!r}; "
-                f"expected {SCHEMA_VERSION_ACCEPTED!r}"
+                f"Sidecar schema_version={envelope.get('schema_version')!r}; expected {SCHEMA_VERSION_ACCEPTED!r}"
             ),
             distill_sidecar_path=str(resolved_sidecar_path),
         )

@@ -12,6 +12,7 @@ from trw_mcp.bootstrap._gemini import (
     _smart_merge_instructions,
     generate_gemini_instructions,
 )
+from ._gemini_test_support import fake_git_repo  # noqa: F401
 
 
 @pytest.mark.unit

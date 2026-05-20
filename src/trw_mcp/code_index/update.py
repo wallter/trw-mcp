@@ -91,16 +91,8 @@ def update_code_index(
         include_extensions=include_extensions,
     )
     previous_rows = {row.path: row for row in previous.files} if previous is not None else {}
-    scoped_previous = {
-        path: row
-        for path, row in previous_rows.items()
-        if _path_is_in_scope(path, scopes)
-    }
-    preserved_rows = [
-        row
-        for path, row in previous_rows.items()
-        if not _path_is_in_scope(path, scopes)
-    ]
+    scoped_previous = {path: row for path, row in previous_rows.items() if _path_is_in_scope(path, scopes)}
+    preserved_rows = [row for path, row in previous_rows.items() if not _path_is_in_scope(path, scopes)]
 
     now = datetime.now(timezone.utc)
     added = 0

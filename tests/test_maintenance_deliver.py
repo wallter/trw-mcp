@@ -153,9 +153,7 @@ class TestDeliverAutoPrune:
 
             original = analytics_mod_state.auto_prune_excess_entries
             try:
-                analytics_mod_state.auto_prune_excess_entries = MagicMock(
-                    side_effect=RuntimeError("storage error")
-                )
+                analytics_mod_state.auto_prune_excess_entries = MagicMock(side_effect=RuntimeError("storage error"))
                 _run_deferred_steps(trw_dir, None, {})
             finally:
                 analytics_mod_state.auto_prune_excess_entries = original

@@ -30,10 +30,7 @@ def _write_entitlement(
             expires_at=expires_at,
         )
     (trw_dir / "entitlements.yaml").write_text(
-        f"tier: {tier}\n"
-        f"issued_to: {issued_to}\n"
-        f"expires_at: '{expires_at}'\n"
-        f"signature: {signature}\n",
+        f"tier: {tier}\nissued_to: {issued_to}\nexpires_at: '{expires_at}'\nsignature: {signature}\n",
         encoding="utf-8",
     )
 
@@ -74,10 +71,15 @@ class TestBadSignature:
         # Sign as "free" but write tier as "enterprise"
         future = (datetime.now(tz=timezone.utc) + timedelta(days=30)).isoformat()
         free_sig = sign_entitlement_for_dev(
-            tier="free", issued_to="x@x", expires_at=future,
+            tier="free",
+            issued_to="x@x",
+            expires_at=future,
         )
         _write_entitlement(
-            tmp_path, tier="enterprise", expires_at=future, signature=free_sig,
+            tmp_path,
+            tier="enterprise",
+            expires_at=future,
+            signature=free_sig,
         )
         e = load_entitlement(tmp_path)
         assert e.tier == "free"
@@ -127,11 +129,12 @@ class TestMalformed:
 
     def test_unparseable_expiry(self, tmp_path: Path) -> None:
         sig = sign_entitlement_for_dev(
-            tier="pro", issued_to="x@x", expires_at="not-a-date",
+            tier="pro",
+            issued_to="x@x",
+            expires_at="not-a-date",
         )
         (tmp_path / "entitlements.yaml").write_text(
-            f"tier: pro\nissued_to: x@x\nexpires_at: 'not-a-date'\n"
-            f"signature: {sig}\n",
+            f"tier: pro\nissued_to: x@x\nexpires_at: 'not-a-date'\nsignature: {sig}\n",
         )
         e = load_entitlement(tmp_path)
         assert e.reason == "malformed"

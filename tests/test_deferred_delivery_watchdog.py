@@ -28,9 +28,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from trw_memory.storage import _dbapi as memory_dbapi
-
 
 # --- pysqlite3 shim ---
 
@@ -54,7 +52,7 @@ class TestPysqlite3Shim:
         # Pure logic test of the cutoff: 3.51.3 and later are safe, as
         # are the backports 3.44.6 and 3.50.7. Drive via the function
         # directly so we don't depend on the installed wheel.
-        from trw_memory.storage._dbapi import is_wal_reset_safe as _is_safe  # noqa: PLC0415
+        from trw_memory.storage._dbapi import is_wal_reset_safe as _is_safe
 
         # We can't change the global without polluting other tests, so
         # we exercise the equivalent boundary by reading the function's
@@ -64,7 +62,7 @@ class TestPysqlite3Shim:
         assert isinstance(verdict, bool)
 
     def test_sqlite3_module_resolves_to_pysqlite3_when_active(self) -> None:
-        import sqlite3 as resolved_sqlite3  # noqa: PLC0415
+        import sqlite3 as resolved_sqlite3
 
         # If pysqlite3 is installed, the shim swapped it in.
         if memory_dbapi.backend() == "pysqlite3":
@@ -88,7 +86,7 @@ class TestAutoPruneDeadline:
     """Cooperative cancellation in ``auto_prune_excess_entries``."""
 
     def test_deadline_zero_returns_partial(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.state.analytics import dedup as _dedup  # noqa: PLC0415
+        from trw_mcp.state.analytics import dedup as _dedup
 
         # Set up enough entries to exceed the threshold so the apply loop runs.
         trw_dir = tmp_path / ".trw"
@@ -125,7 +123,7 @@ class TestAutoPruneDeadline:
         assert int(result.get("pending_removals", 0)) >= 0
 
     def test_cancel_event_set_returns_partial(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.state.analytics import dedup as _dedup  # noqa: PLC0415
+        from trw_mcp.state.analytics import dedup as _dedup
 
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -161,8 +159,8 @@ class TestAutoPruneThrottle:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from trw_mcp.tools import _deferred_state as _ds  # noqa: PLC0415
-        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune  # noqa: PLC0415
+        from trw_mcp.tools import _deferred_state as _ds
+        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune
 
         # Pretend a successful run happened 1 second ago.
         monkeypatch.setattr(_ds, "_last_auto_prune_at", time.monotonic() - 1.0)
@@ -203,8 +201,8 @@ class TestAutoPruneThrottle:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from trw_mcp.tools import _deferred_state as _ds  # noqa: PLC0415
-        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune  # noqa: PLC0415
+        from trw_mcp.tools import _deferred_state as _ds
+        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune
 
         monkeypatch.setattr(_ds, "_last_auto_prune_at", time.monotonic() - 1.0)
 
@@ -246,39 +244,43 @@ class TestStaleFlockRecovery:
     """``_try_acquire_deferred_lock`` reclaims wedged or dead-PID locks."""
 
     def test_lock_record_with_dead_pid_is_stale(self) -> None:
-        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale  # noqa: PLC0415
+        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale
 
         # PID 1 always exists (init); PID 2^31-1 effectively never does.
         record = {"pid": (2**31) - 1, "ts": datetime.now(timezone.utc).isoformat()}
         assert _is_lock_record_stale(record, max_age_seconds=10_000) is True
 
     def test_lock_record_with_old_timestamp_is_stale(self) -> None:
-        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale  # noqa: PLC0415
-        import os as _os  # noqa: PLC0415
+        import os as _os
+
+        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale
 
         old_ts = (datetime.now(timezone.utc) - timedelta(seconds=3600)).isoformat()
         record = {"pid": _os.getpid(), "ts": old_ts}  # live PID, old timestamp
         assert _is_lock_record_stale(record, max_age_seconds=60) is True
 
     def test_lock_record_recent_and_live_is_not_stale(self) -> None:
-        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale  # noqa: PLC0415
-        import os as _os  # noqa: PLC0415
+        import os as _os
+
+        from trw_mcp.tools._deferred_delivery import _is_lock_record_stale
 
         record = {"pid": _os.getpid(), "ts": datetime.now(timezone.utc).isoformat()}
         assert _is_lock_record_stale(record, max_age_seconds=600) is False
 
     def test_peek_returns_none_for_missing_file(self, tmp_path: Path) -> None:
-        from trw_mcp.tools._deferred_delivery import _peek_deferred_lock_holder  # noqa: PLC0415
+        from trw_mcp.tools._deferred_delivery import _peek_deferred_lock_holder
 
         assert _peek_deferred_lock_holder(tmp_path / "nope.lock") is None
 
     def test_peek_returns_last_record(self, tmp_path: Path) -> None:
-        from trw_mcp.tools._deferred_delivery import _peek_deferred_lock_holder  # noqa: PLC0415
+        from trw_mcp.tools._deferred_delivery import _peek_deferred_lock_holder
 
         lock = tmp_path / "rec.lock"
         lock.write_text(
-            json.dumps({"pid": 1, "ts": "2026-01-01T00:00:00+00:00"}) + "\n"
-            + json.dumps({"pid": 2, "ts": "2026-02-02T00:00:00+00:00"}) + "\n",
+            json.dumps({"pid": 1, "ts": "2026-01-01T00:00:00+00:00"})
+            + "\n"
+            + json.dumps({"pid": 2, "ts": "2026-02-02T00:00:00+00:00"})
+            + "\n",
             encoding="utf-8",
         )
         rec = _peek_deferred_lock_holder(lock)
@@ -297,8 +299,8 @@ class TestWatchdogCancellation:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from trw_mcp.tools import _deferred_delivery as dd  # noqa: PLC0415
-        from trw_mcp.tools import _deferred_state as _ds  # noqa: PLC0415
+        from trw_mcp.tools import _deferred_delivery as dd
+        from trw_mcp.tools import _deferred_state as _ds
 
         # Force the batch-budget watchdog to trip after ~50ms so that
         # the second step sees the cancel event and short-circuits.
@@ -325,9 +327,7 @@ class TestWatchdogCancellation:
 
         # Patch via the parent facade so the test patches match production
         # call paths used inside ``_run_deferred_steps``.
-        for step in (
-            "_step_auto_prune",
-        ):
+        for step in ("_step_auto_prune",):
             monkeypatch.setattr(dd, step, _sleeping_step)
         for step in (
             "_step_consolidation",
@@ -382,8 +382,8 @@ class TestStepAutoPruneSmoke:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from trw_mcp.tools import _deferred_state as _ds  # noqa: PLC0415
-        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune  # noqa: PLC0415
+        from trw_mcp.tools import _deferred_state as _ds
+        from trw_mcp.tools._deferred_steps_memory import _step_auto_prune
 
         monkeypatch.setattr(_ds, "_last_auto_prune_at", time.monotonic())
 

@@ -289,7 +289,11 @@ def _safe_event_refs(events: list[dict[str, object]]) -> list[EvidenceEvent]:
     refs: list[EvidenceEvent] = []
     for index, event in enumerate(events):
         event_type = str(event.get("event", "unknown"))
-        refs.append(EvidenceEvent(id=f"event:{index + 1}:{_slug(event_type)}", event_type=event_type, ts=str(event.get("ts", ""))))
+        refs.append(
+            EvidenceEvent(
+                id=f"event:{index + 1}:{_slug(event_type)}", event_type=event_type, ts=str(event.get("ts", ""))
+            )
+        )
     return refs
 
 

@@ -412,6 +412,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
 # Lazy-imported to avoid circular import with _entitlements.
 def _run_tier_lazy(args: argparse.Namespace) -> None:
     from trw_mcp.server._subcommands_tier import run_tier
+
     run_tier(args)
 
 

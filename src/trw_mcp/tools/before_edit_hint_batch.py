@@ -61,9 +61,14 @@ class BeforeEditHintBatchResult(BaseModel):
     tier: str
     distill_batch: BeforeYouEditBatchPayload | None = None
     distill_status: Literal[
-        "hint_available", "tier_required", "sidecar_missing",
-        "sidecar_malformed", "schema_mismatch", "stale_sha",
-        "no_repo_root", "no_git_sha",
+        "hint_available",
+        "tier_required",
+        "sidecar_missing",
+        "sidecar_malformed",
+        "schema_mismatch",
+        "stale_sha",
+        "no_repo_root",
+        "no_git_sha",
     ] = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
@@ -107,19 +112,14 @@ def compute_before_edit_hint_batch(
             distill_action="Could not run `git rev-parse HEAD` — verify .git/ present",
         )
 
-    resolved_cache_dir = (
-        Path(cache_dir) if cache_dir is not None
-        else resolved_repo_root / DEFAULT_CACHE_DIR_REL
-    )
+    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
     sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME_BATCH}-{git_sha}.json"
 
     load = load_sidecar_with_sha_check(
-        sidecar_path, expected_sha=git_sha,
+        sidecar_path,
+        expected_sha=git_sha,
         file_path_hint="<batch>",
-        cli_remediation=(
-            "trw-distill self-improve before-edit --repo . "
-            "--files-from <changed.txt> --persist-sidecar"
-        ),
+        cli_remediation=("trw-distill self-improve before-edit --repo . --files-from <changed.txt> --persist-sidecar"),
     )
     if load.status != "ok" or load.payload is None:
         return BeforeEditHintBatchResult(
@@ -179,7 +179,8 @@ def register_before_edit_hint_batch_tools(server: FastMCP) -> None:
         ``BeforeEditHintBatchResult.model_dump()``. NEVER raises.
         """
         result = compute_before_edit_hint_batch(
-            repo_root=repo_root, cache_dir=cache_dir,
+            repo_root=repo_root,
+            cache_dir=cache_dir,
         )
         return result.model_dump()
 

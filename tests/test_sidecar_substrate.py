@@ -95,7 +95,9 @@ class TestLoadSidecarWithShaCheck:
         p = tmp_path / "s.json"
         self._write_envelope(p, sha=sha, payload={"k": "v"})
         r = load_sidecar_with_sha_check(
-            p, expected_sha=sha, file_path_hint="foo.py",
+            p,
+            expected_sha=sha,
+            file_path_hint="foo.py",
             cli_remediation="trw-distill ...",
         )
         assert r.status == "ok"
@@ -103,8 +105,10 @@ class TestLoadSidecarWithShaCheck:
 
     def test_missing(self, tmp_path: Path) -> None:
         r = load_sidecar_with_sha_check(
-            tmp_path / "nope.json", expected_sha="a"*40,
-            file_path_hint="x.py", cli_remediation="trw-distill ...",
+            tmp_path / "nope.json",
+            expected_sha="a" * 40,
+            file_path_hint="x.py",
+            cli_remediation="trw-distill ...",
         )
         assert r.status == "sidecar_missing"
         assert "trw-distill ..." in (r.action or "")
@@ -113,8 +117,10 @@ class TestLoadSidecarWithShaCheck:
         p = tmp_path / "s.json"
         self._write_envelope(p, schema_version="risk-report-sidecar/v99")
         r = load_sidecar_with_sha_check(
-            p, expected_sha="a"*40,
-            file_path_hint="x.py", cli_remediation="trw-distill ...",
+            p,
+            expected_sha="a" * 40,
+            file_path_hint="x.py",
+            cli_remediation="trw-distill ...",
         )
         assert r.status == "schema_mismatch"
 
@@ -122,8 +128,10 @@ class TestLoadSidecarWithShaCheck:
         p = tmp_path / "s.json"
         self._write_envelope(p, sha="b" * 40)
         r = load_sidecar_with_sha_check(
-            p, expected_sha="a" * 40,
-            file_path_hint="x.py", cli_remediation="trw-distill ...",
+            p,
+            expected_sha="a" * 40,
+            file_path_hint="x.py",
+            cli_remediation="trw-distill ...",
         )
         assert r.status == "stale_sha"
 
@@ -136,8 +144,10 @@ class TestLoadSidecarWithShaCheck:
         p = tmp_path / "s.json"
         p.write_text(json.dumps(envelope))
         r = load_sidecar_with_sha_check(
-            p, expected_sha="a" * 40,
-            file_path_hint="x.py", cli_remediation="trw-distill ...",
+            p,
+            expected_sha="a" * 40,
+            file_path_hint="x.py",
+            cli_remediation="trw-distill ...",
         )
         assert r.status == "sidecar_malformed"
 
@@ -145,6 +155,7 @@ class TestLoadSidecarWithShaCheck:
 class TestTierGate:
     def test_no_entitlement_returns_free_blocked(self, tmp_path: Path) -> None:
         from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
+
         r = check_tier_for_feature(tmp_path, "trw_before_edit_hint:distill_sidecar")
         assert r.allowed is False
         assert r.tier == "free"

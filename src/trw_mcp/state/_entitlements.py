@@ -68,7 +68,12 @@ class Entitlement:
 
     tier: Tier
     reason: Literal[
-        "ok", "missing", "malformed", "bad_signature", "expired", "invalid_tier",
+        "ok",
+        "missing",
+        "malformed",
+        "bad_signature",
+        "expired",
+        "invalid_tier",
     ]
     expires_at_iso: str | None = None
     signed_payload_keys: tuple[str, ...] = ()
@@ -90,7 +95,7 @@ def _canonical_payload(tier: str, issued_to: str, expires_at: str) -> bytes:
     Field order is FIXED: tier|issued_to|expires_at. Adding new signed
     fields requires a new schema version (deferred to v1).
     """
-    return f"tier={tier}|issued_to={issued_to}|expires_at={expires_at}".encode("utf-8")
+    return f"tier={tier}|issued_to={issued_to}|expires_at={expires_at}".encode()
 
 
 def _verify_signature(tier: str, issued_to: str, expires_at: str, signature_hex: str) -> bool:
@@ -145,8 +150,10 @@ def load_entitlement(
     expires_at = parsed.get("expires_at", "")
     signature = parsed.get("signature", "")
     if (
-        not isinstance(tier, str) or tier not in _VALID_TIERS
-        or not isinstance(issued_to, str) or not isinstance(expires_at, str)
+        not isinstance(tier, str)
+        or tier not in _VALID_TIERS
+        or not isinstance(issued_to, str)
+        or not isinstance(expires_at, str)
         or not isinstance(signature, str)
     ):
         return Entitlement(tier="free", reason="malformed")
@@ -162,7 +169,9 @@ def load_entitlement(
     resolved_now = now or datetime.now(tz=timezone.utc)
     if resolved_now > expiry:
         return Entitlement(
-            tier="free", reason="expired", expires_at_iso=expires_at,
+            tier="free",
+            reason="expired",
+            expires_at_iso=expires_at,
         )
 
     # All checks passed.

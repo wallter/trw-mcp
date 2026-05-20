@@ -373,9 +373,7 @@ async def test_run_one_cycle_reports_partial_target_failures_truthfully(
     await client._run_one_cycle()
 
     cycle_reports = [
-        call.kwargs
-        for call in log.info.call_args_list
-        if call.args and call.args[0] == "sync_cycle_report"
+        call.kwargs for call in log.info.call_args_list if call.args and call.args[0] == "sync_cycle_report"
     ]
     assert cycle_reports
     assert cycle_reports[-1]["successful"] == 0
