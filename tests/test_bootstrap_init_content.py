@@ -250,6 +250,7 @@ class TestSkills:
         "email-template",
         "trw-audit",
         "trw-ceremony-guide",
+        "trw-code-search",
         "trw-commit",
         "trw-deliver",
         "trw-dry-check",
