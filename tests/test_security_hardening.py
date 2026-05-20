@@ -258,6 +258,25 @@ class TestSecretStrApiKey:
         config2 = TRWConfig(platform_api_key="non-empty")
         assert config2.platform_api_key.get_secret_value()
 
+    def test_tracked_trw_config_does_not_contain_platform_api_key(self) -> None:
+        """Repository baseline config must not carry a live platform API key."""
+        repo_root = Path(__file__).resolve().parents[2]
+        config_path = repo_root / ".trw" / "config.yaml"
+
+        key_lines = [
+            line
+            for line in config_path.read_text(encoding="utf-8").splitlines()
+            if line.lstrip().startswith("platform_api_key:")
+        ]
+
+        for line in key_lines:
+            raw_value = line.split(":", 1)[1].strip()
+            normalized_value = raw_value.strip("\"'")
+            assert normalized_value == "", (
+                "Tracked .trw/config.yaml must not contain a platform API key; "
+                "clear the baseline config and rotate any key previously committed."
+            )
+
 
 # ---------------------------------------------------------------------------
 # FR08: Mandatory checksum

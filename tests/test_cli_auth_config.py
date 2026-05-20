@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.cli.auth import (
     _save_api_key,
     _save_config_field,
@@ -12,6 +14,18 @@ from trw_mcp.cli.auth import (
     device_auth_status,
     run_auth_login,
 )
+
+
+@pytest.fixture
+def config_file(tmp_path: Path) -> Path:
+    """Return a temporary config file with a synthetic API key fixture."""
+    cfg = tmp_path / ".trw" / "config.yaml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        'installation_id: "test"\nplatform_api_key: "trw_dk_existing123"\n',
+        encoding="utf-8",
+    )
+    return cfg
 
 
 class TestDeviceAuthLogout:
