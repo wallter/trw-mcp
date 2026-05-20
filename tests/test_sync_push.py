@@ -5,7 +5,10 @@ PRD-FIX-087: push_learnings/push_outcomes are now async + httpx.AsyncClient.
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _build_async_httpx_mock(response_or_responses: object) -> MagicMock:
@@ -28,7 +31,7 @@ def _build_async_httpx_mock(response_or_responses: object) -> MagicMock:
 
 def _make_mock_entry(
     entry_id: str = "L-001",
-    sync_hash: str = "abc123",
+    sync_hash: str = "a" * 64,
     sync_seq: int = 1,
     summary: str = "test",
 ) -> MagicMock:
@@ -94,17 +97,84 @@ def test_serialize_entry_format() -> None:
     """Serialized entry has required fields for backend API."""
     from trw_mcp.sync.push import SyncPusher
 
+    valid_hash = "b" * 64
     pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
-    entry = _make_mock_entry("L-test", sync_hash="hash123", summary="test discovery")
+    entry = _make_mock_entry("L-test", sync_hash=valid_hash, summary="test discovery")
     serialized = pusher._serialize_entry(entry)
 
     assert serialized["source_learning_id"] == "L-test"
-    assert serialized["sync_hash"] == "hash123"
+    # A valid 64-hex stored hash is passed through unchanged.
+    assert serialized["sync_hash"] == valid_hash
     assert "summary" in serialized
     assert "tags" in serialized
     assert serialized["vector_clock"] == {"sync-test": 1}
     assert serialized["metadata"]["source"] == "unit-test"
     assert serialized["metadata"]["installation_id"] != "install-123"
+
+
+# Backend `LearningSync.sync_hash` (backend/routers/sync.py:28) is validated
+# against this pattern under extra="forbid"; an entry that fails it 422-rejects
+# the whole batch. These tests guard the 2026-05-20 MCP-server snare fix.
+_BACKEND_SYNC_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+_MISSING = object()
+
+
+def _serialize_with_hash(raw: object) -> dict[str, object]:
+    """Serialize an entry whose to_dict() carries the given sync_hash value."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    entry = _make_mock_entry("L-coerce", summary="discovery body")
+    payload = entry.to_dict.return_value
+    if raw is _MISSING:
+        payload.pop("sync_hash", None)
+    else:
+        payload["sync_hash"] = raw
+    return pusher._serialize_entry(entry)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [_MISSING, "", "hash123", "ABC" + "d" * 61, "g" * 64, "f" * 63, 12345, None],
+    ids=["missing", "empty", "too-short-legacy", "uppercase", "non-hex", "wrong-length", "int", "none"],
+)
+def test_serialize_entry_synthesizes_valid_hash_for_invalid_input(raw: object) -> None:
+    """Missing/empty/invalid sync_hash is replaced by a backend-valid 64-hex hash."""
+    serialized = _serialize_with_hash(raw)
+    sync_hash = serialized["sync_hash"]
+    assert isinstance(sync_hash, str)
+    assert _BACKEND_SYNC_HASH_PATTERN.fullmatch(sync_hash) is not None
+
+
+def test_serialize_entry_synthesized_hash_is_stable_for_unchanged_content() -> None:
+    """Re-serializing identical content yields the same synthesized hash (idempotency)."""
+    first = _serialize_with_hash("")["sync_hash"]
+    second = _serialize_with_hash(_MISSING)["sync_hash"]
+    assert first == second
+
+
+def test_serialize_entry_synthesized_hash_changes_with_content() -> None:
+    """Different content yields a different synthesized hash (backend UPDATE detection)."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    a = _make_mock_entry("L-x", summary="alpha body")
+    a.to_dict.return_value.pop("sync_hash", None)
+    b = _make_mock_entry("L-x", summary="beta body")
+    b.to_dict.return_value.pop("sync_hash", None)
+    assert pusher._serialize_entry(a)["sync_hash"] != pusher._serialize_entry(b)["sync_hash"]
+
+
+def test_is_valid_sync_hash_helper() -> None:
+    """The validity predicate matches the backend pattern exactly."""
+    from trw_mcp.sync.push import _is_valid_sync_hash
+
+    assert _is_valid_sync_hash("a" * 64) is True
+    assert _is_valid_sync_hash("a" * 63) is False
+    assert _is_valid_sync_hash("A" * 64) is False  # uppercase rejected by backend
+    assert _is_valid_sync_hash("") is False
+    assert _is_valid_sync_hash(None) is False
+    assert _is_valid_sync_hash(123) is False
 
 
 def test_serialize_entry_anonymizes_summary_and_detail() -> None:

@@ -6,7 +6,10 @@ never raises, returns PushResult on all paths.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -20,6 +23,40 @@ if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
 logger = structlog.get_logger(__name__)
+
+# Backend `LearningSync.sync_hash` (backend/routers/sync.py) is validated against
+# this exact pattern under `extra="forbid"`. An empty/invalid hash fails the
+# pattern and FastAPI 422-rejects the ENTIRE batch (up to 500 entries) — the
+# primary driver of the 2026-05-20 MCP-server team-sync snare. Keep a valid
+# stored hash; otherwise synthesize a stable content hash so a single unhashed
+# (e.g. legacy) row can never sink the whole batch.
+_SYNC_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_SYNC_HASH_CONTENT_FIELDS = (
+    "source_learning_id",
+    "summary",
+    "detail",
+    "impact",
+    "tags",
+    "type",
+    "status",
+)
+
+
+def _is_valid_sync_hash(value: object) -> bool:
+    """True when value is a 64-char lowercase-hex string the backend accepts."""
+    return isinstance(value, str) and _SYNC_HASH_RE.fullmatch(value) is not None
+
+
+def _content_sync_hash(payload: dict[str, object]) -> str:
+    """Deterministic SHA-256 (64 hex) over the outgoing content fields.
+
+    Mirrors trw-memory ``DeltaTracker.compute_sync_hash`` serialization (sorted
+    keys, compact separators) so re-pushing unchanged content yields the same
+    hash and the backend idempotency SKIP/UPDATE path keeps working.
+    """
+    canonical = {key: payload.get(key) for key in _SYNC_HASH_CONTENT_FIELDS}
+    raw = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _http_status_from_exception(exc: BaseException) -> int | None:
@@ -219,9 +256,8 @@ class SyncPusher:
         installation_id = metadata.get("installation_id")
         if isinstance(installation_id, str) and installation_id:
             metadata["installation_id"] = anonymize_installation_id(installation_id)
-        return {
+        payload: dict[str, object] = {
             "source_learning_id": d.get("id", ""),
-            "sync_hash": d.get("sync_hash", ""),
             "summary": summary,
             "detail": detail,
             "impact": impact,
@@ -231,6 +267,11 @@ class SyncPusher:
             "vector_clock": vector_clock,
             "metadata": metadata,
         }
+        raw_sync_hash = d.get("sync_hash")
+        payload["sync_hash"] = (
+            raw_sync_hash if _is_valid_sync_hash(raw_sync_hash) else _content_sync_hash(payload)
+        )
+        return payload
 
     def _get_client_id(self) -> str:
         """Generate a stable client identifier."""
