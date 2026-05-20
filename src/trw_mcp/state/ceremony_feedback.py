@@ -91,6 +91,27 @@ def _float_field(entry: dict[str, object], key: str, default: float = 0.0) -> fl
     return float(str(val)) if val is not None else default
 
 
+def _normalize_feedback_run_paths(feedback_data: dict[str, object]) -> None:
+    """Normalize legacy blank run_path scalars before YAML rewrite.
+
+    Older feedback files can contain ``run_path:`` blank scalars, which parse
+    as ``None`` and round-trip as ``run_path: `` with trailing whitespace.
+    Keep the semantic value empty while forcing a stable quoted empty string.
+    """
+    task_classes = feedback_data.get("task_classes", {})
+    if not isinstance(task_classes, dict):
+        return
+    for class_data in task_classes.values():
+        if not isinstance(class_data, dict):
+            continue
+        sessions = class_data.get("sessions", [])
+        if not isinstance(sessions, list):
+            continue
+        for session in sessions:
+            if isinstance(session, dict) and session.get("run_path") is None:
+                session["run_path"] = ""
+
+
 # --- FR01: Task Class Classifier ---
 
 
@@ -228,6 +249,7 @@ def record_session_outcome(
 
     task_classes[class_key]["sessions"] = sessions
     data["task_classes"] = task_classes
+    _normalize_feedback_run_paths(data)
 
     writer = FileStateWriter()
     writer.ensure_dir(_feedback_path(trw_dir).parent)

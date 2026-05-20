@@ -7,6 +7,7 @@ import os
 import pytest
 
 from tests._ceremony_feedback_support import FeedbackEnv
+from tests._ceremony_feedback_support import feedback_env as feedback_env  # noqa: F401
 from trw_mcp.state.ceremony_feedback import (
     TaskClass,
     _derive_agent_id,
@@ -210,6 +211,58 @@ class TestSanitizeCeremonyFeedback:
         sessions = data["task_classes"]["feature"]["sessions"]
         assert isinstance(sessions, list)
         assert len(sessions) == 1
+
+
+class TestCeremonyFeedbackPersistence:
+    """PRD-QUAL-085: ceremony feedback YAML should not churn trailing whitespace."""
+
+    def test_record_session_outcome_rewrites_blank_run_path_without_trailing_whitespace(
+        self,
+        feedback_env: FeedbackEnv,
+    ) -> None:
+        trw_dir, _ = feedback_env
+        feedback_path = trw_dir / "context" / "ceremony-feedback.yaml"
+        feedback_path.parent.mkdir(parents=True, exist_ok=True)
+        feedback_path.write_text(
+            "task_classes:\n"
+            "  feature:\n"
+            "    sessions:\n"
+            "    - session_id: legacy-session\n"
+            "      run_path: \n"
+            "      ceremony_score: 80.0\n"
+            "      outcome_quality: 1.0\n"
+            "      current_tier: STANDARD\n"
+            "      task_name: 'feat: legacy'\n"
+            "      task_class: feature\n"
+            "      completed_at: '2026-05-20T00:00:00+00:00'\n",
+            encoding="utf-8",
+        )
+
+        record_session_outcome(
+            trw_dir,
+            "feat: next",
+            90.0,
+            True,
+            0.0,
+            0,
+            True,
+            "STANDARD",
+            "",
+            "next-session",
+        )
+
+        raw_text = feedback_path.read_text(encoding="utf-8")
+        trailing_lines = [
+            line_number
+            for line_number, line in enumerate(raw_text.splitlines(), start=1)
+            if line.rstrip(" \t") != line
+        ]
+        assert trailing_lines == []
+
+        data = read_feedback_data(trw_dir)
+        sessions = data["task_classes"]["feature"]["sessions"]
+        assert isinstance(sessions, list)
+        assert sessions[0]["run_path"] == ""
 
 
 class TestTaskDescriptionPassThrough:
