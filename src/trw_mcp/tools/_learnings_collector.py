@@ -21,9 +21,12 @@ calls trw-mcp's own ``recall_learnings`` only — no trw_distill import.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
+
+logger = structlog.get_logger(__name__)
 
 DEFAULT_TOP_N: int = 5
 MAX_QUERIES: int = 10
@@ -67,7 +70,8 @@ def collect_learnings(
         return []
     try:
         from trw_mcp.state.learning_injection import recall_learnings
-    except Exception:
+    except Exception:  # justified: scan-resilience -- optional module import failure is handled gracefully
+        logger.warning("learning_injection_import_failed", exc_info=True)
         return []
     deduplicated: set[str] = set()
     out: list[LearningSummary] = []
@@ -76,7 +80,8 @@ def collect_learnings(
             continue
         try:
             rows = recall_learnings(q, max_results=top_n)
-        except Exception:
+        except Exception:  # justified: scan-resilience -- skip failed recall query and continue
+            logger.warning("recall_learnings_failed", query=q, exc_info=True)
             continue
         for r in rows:
             if not isinstance(r, dict):
@@ -90,12 +95,14 @@ def collect_learnings(
                 continue
             impact = r.get("impact", 0.0)
             tags = r.get("tags", [])
-            out.append(LearningSummary(
-                id=rid,
-                summary=summary,
-                impact=float(impact) if isinstance(impact, (int, float)) else 0.0,
-                tags=[str(t) for t in tags] if isinstance(tags, list) else [],
-            ))
+            out.append(
+                LearningSummary(
+                    id=rid,
+                    summary=summary,
+                    impact=float(impact) if isinstance(impact, (int, float)) else 0.0,
+                    tags=[str(t) for t in tags] if isinstance(tags, list) else [],
+                )
+            )
             if len(out) >= top_n:
                 return out
     return out
@@ -126,8 +133,8 @@ def build_file_queries(
 
 __all__ = [
     "DEFAULT_TOP_N",
-    "LearningSummary",
     "MAX_QUERIES",
+    "LearningSummary",
     "build_file_queries",
     "collect_learnings",
 ]

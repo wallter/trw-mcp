@@ -331,7 +331,17 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 
 # Supported IDEs - DRY constant for all IDE target operations
 # cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface
-SUPPORTED_IDES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider", "antigravity-cli"]
+SUPPORTED_IDES = [
+    "claude-code",
+    "cursor-ide",
+    "cursor-cli",
+    "opencode",
+    "codex",
+    "copilot",
+    "gemini",
+    "aider",
+    "antigravity-cli",
+]
 
 
 def detect_ide(target_dir: Path) -> list[str]:

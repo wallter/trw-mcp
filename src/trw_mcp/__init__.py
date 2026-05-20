@@ -41,20 +41,21 @@ and a corresponding log call.
 # The swap is idempotent — if trw_memory loaded first it has already run.
 try:
     import sys as _sys
-    import pysqlite3 as _pysqlite3  # noqa: F401
+
+    import pysqlite3 as _pysqlite3  # type: ignore[import-untyped]
 
     _sys.modules["sqlite3"] = _pysqlite3
     _sys.modules["sqlite3.dbapi2"] = _pysqlite3.dbapi2
-    _pysqlite3._trw_pysqlite3_active = True  # type: ignore[attr-defined]
+    _pysqlite3._trw_pysqlite3_active = True
 except ImportError:
     pass
 
 # Expose the observability shim for callers that want to inspect which
 # driver is active. ``trw_memory`` re-runs the swap idempotently if it
 # happens to load first.
-from trw_memory.storage import _dbapi as _dbapi  # noqa: F401, I001, E402
+from trw_memory.storage import _dbapi as _dbapi  # noqa: I001
 
-from importlib.metadata import version as _pkg_version  # noqa: E402
+from importlib.metadata import version as _pkg_version
 
 __version__: str = _pkg_version("trw-mcp")
 

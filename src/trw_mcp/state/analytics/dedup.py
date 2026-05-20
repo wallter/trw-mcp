@@ -330,7 +330,7 @@ def auto_prune_excess_entries(
     removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
     actions = 0
-    stop_reason: str | None = None
+    stop_reason = None
     if not dry_run:
         for rid, suggested in removal_pairs:
             stop_reason = _deadline_or_cancel_hit(deadline_at, cancel_event)
@@ -342,7 +342,7 @@ def auto_prune_excess_entries(
         if actions > 0:
             resync_learning_index(trw_dir)
 
-    result: dict[str, object] = {
+    result = {
         "dedup_candidates": [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates],
         "utility_candidates": utility_candidates,
         "actions_taken": actions,

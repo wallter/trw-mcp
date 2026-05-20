@@ -29,8 +29,12 @@ SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
 
 SidecarEnvelopeStatus = Literal[
-    "ok", "sidecar_missing", "sidecar_malformed", "schema_mismatch",
-    "stale_sha", "tier_required",
+    "ok",
+    "sidecar_missing",
+    "sidecar_malformed",
+    "schema_mismatch",
+    "stale_sha",
+    "tier_required",
 ]
 
 
@@ -60,8 +64,11 @@ def resolve_repo_root(repo_root: str | None) -> Path | None:
         return Path(repo_root)
     try:
         proc = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, check=False,
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         if proc.returncode == 0:
             stripped = proc.stdout.strip()
@@ -76,8 +83,12 @@ def resolve_git_sha(repo_root: Path) -> str | None:
     """Best-effort ``git rev-parse HEAD`` with validation (40-char hex)."""
     try:
         proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo_root,
-            capture_output=True, text=True, timeout=5, check=False,
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         if proc.returncode != 0:
             return None
@@ -100,15 +111,14 @@ def check_tier_for_feature(
     from trw_mcp.state._entitlements import load_entitlement
     from trw_mcp.state._paths import resolve_trw_dir
 
-    trw_dir = (
-        (repo_root / ".trw") if repo_root is not None
-        else resolve_trw_dir()
-    )
+    trw_dir = (repo_root / ".trw") if repo_root is not None else resolve_trw_dir()
     entitlement = load_entitlement(trw_dir)
     if entitlement.has_feature(feature):
         return TierGateResult(allowed=True, tier=entitlement.tier, reason="ok")
     return TierGateResult(
-        allowed=False, tier=entitlement.tier, reason=entitlement.reason,
+        allowed=False,
+        tier=entitlement.tier,
+        reason=entitlement.reason,
     )
 
 
@@ -147,40 +157,48 @@ def load_sidecar_with_sha_check(
     envelope = load_envelope(sidecar_path)
     if envelope is None:
         return SidecarLoadResult(
-            payload=None, status="sidecar_missing",
+            payload=None,
+            status="sidecar_missing",
             action=f"Run: {cli_remediation}",
-            sidecar_path=sidecar_path_str, sidecar_sha=expected_sha,
+            sidecar_path=sidecar_path_str,
+            sidecar_sha=expected_sha,
         )
     schema = envelope.get("schema_version")
     if schema != SCHEMA_VERSION_ACCEPTED:
         return SidecarLoadResult(
-            payload=None, status="schema_mismatch",
+            payload=None,
+            status="schema_mismatch",
             action=(
                 f"Sidecar schema_version={schema!r}; expected "
                 f"{SCHEMA_VERSION_ACCEPTED!r} — upgrade trw-distill or trw-mcp"
             ),
-            sidecar_path=sidecar_path_str, sidecar_sha=expected_sha,
+            sidecar_path=sidecar_path_str,
+            sidecar_sha=expected_sha,
         )
     sidecar_sha = envelope.get("sha")
     if not isinstance(sidecar_sha, str) or sidecar_sha != expected_sha:
         return SidecarLoadResult(
-            payload=None, status="stale_sha",
-            action=(
-                f"Sidecar SHA={sidecar_sha!r}; HEAD={expected_sha} — "
-                f"re-run with --persist-sidecar"
-            ),
-            sidecar_path=sidecar_path_str, sidecar_sha=expected_sha,
+            payload=None,
+            status="stale_sha",
+            action=(f"Sidecar SHA={sidecar_sha!r}; HEAD={expected_sha} — re-run with --persist-sidecar"),
+            sidecar_path=sidecar_path_str,
+            sidecar_sha=expected_sha,
         )
     payload = envelope.get("payload")
     if payload is None:
         return SidecarLoadResult(
-            payload=None, status="sidecar_malformed",
+            payload=None,
+            status="sidecar_malformed",
             action=f"Sidecar payload missing; re-run: {cli_remediation}",
-            sidecar_path=sidecar_path_str, sidecar_sha=expected_sha,
+            sidecar_path=sidecar_path_str,
+            sidecar_sha=expected_sha,
         )
     return SidecarLoadResult(
-        payload=payload, status="ok", action=None,
-        sidecar_path=sidecar_path_str, sidecar_sha=expected_sha,
+        payload=payload,
+        status="ok",
+        action=None,
+        sidecar_path=sidecar_path_str,
+        sidecar_sha=expected_sha,
     )
 
 
