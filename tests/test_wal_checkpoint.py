@@ -167,9 +167,7 @@ def test_skipped_when_no_wal_file(tmp_path: Path) -> None:
     assert result == {"skipped": True, "reason": "no_wal_file"}
 
 
-def test_routes_through_existing_backend_not_bare_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_routes_through_existing_backend_not_bare_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When a backend owns the db, the checkpoint goes through ITS single
     connection — never a competing bare connection (the corruption trigger).
 
@@ -177,11 +175,12 @@ def test_routes_through_existing_backend_not_bare_connection(
     path a backend always exists, so `peek_backend()` returns it and the
     bare-connection branch is never reached.
     """
+    from trw_memory.models.memory import MemoryEntry
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
     import trw_mcp.state._memory_connection as mc
     from trw_mcp.models.config import get_config
     from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-    from trw_memory.models.memory import MemoryEntry
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
 
     trw_dir = tmp_path / ".trw"
     db_path = trw_dir / "memory" / "memory.db"
@@ -197,12 +196,13 @@ def test_routes_through_existing_backend_not_bare_connection(
         cfg = get_config()
         monkeypatch.setattr(cfg, "wal_checkpoint_threshold_mb", 0)  # any WAL triggers
 
-        calls = {"backend_checkpoint": 0}
+        calls: dict[str, object] = {"backend_checkpoint": 0, "modes": []}
         real = backend.checkpoint_wal
 
         def spy(mode: str = "TRUNCATE") -> dict[str, object]:
-            calls["backend_checkpoint"] += 1
-            return real(mode)
+            calls["backend_checkpoint"] = cast("int", calls["backend_checkpoint"]) + 1
+            cast("list[str]", calls["modes"]).append(mode)
+            return cast("dict[str, object]", real(mode))
 
         monkeypatch.setattr(backend, "checkpoint_wal", spy)
         # A bare second connection is the corruption trigger — forbid it.
@@ -215,6 +215,73 @@ def test_routes_through_existing_backend_not_bare_connection(
         result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
 
         assert calls["backend_checkpoint"] == 1, "must checkpoint via the owning backend"
+        # The owning-backend path requests the resetting TRUNCATE mode (which
+        # the backend safely downgrades internally as needed).
+        assert calls["modes"] == ["TRUNCATE"]
         assert result.get("checkpointed") is True
+        # mode is lowercased at the boundary (FR03): truncate when it actually
+        # truncated, passive when the backend downgraded/fell back.
+        assert result.get("mode") in {"truncate", "passive"}
     finally:
         mc.reset_backend()
+
+
+def test_bare_path_uses_passive_only_when_no_backend_owns_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When no live backend owns the db, the bare fallback issues PASSIVE only.
+
+    A resetting checkpoint (TRUNCATE/RESTART) from a competing bare connection
+    is the WAL-reset corruption trigger. The bare path must therefore only ever
+    run ``PRAGMA wal_checkpoint(PASSIVE)`` — never a resetting mode. We assert
+    that via the real PRAGMA the helper emits (intercepted at sqlite3.connect)
+    plus the observable result fields.
+    """
+    import trw_mcp.state._memory_connection as mc
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+    # No backend owns the db in this process — peek_backend() must return None
+    # so maybe_checkpoint_wal takes the bare branch.
+    assert mc.peek_backend() is None
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    db_path = trw_dir / "memory" / "memory.db"
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "wal_checkpoint_threshold_mb", 1)
+    _, holder = _seed_db_with_wal(db_path, n_writes=2000)
+
+    # The pysqlite3 Connection is immutable, so we cannot patch its `execute`.
+    # Instead intercept the *query string* by wrapping the bare connection in a
+    # tiny proxy that records checkpoint pragmas and delegates everything else.
+    pragmas: list[str] = []
+    real_connect = sqlite3.connect
+
+    class _RecordingConn:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def execute(self, sql: str, *params: object) -> sqlite3.Cursor:
+            if "wal_checkpoint" in sql:
+                pragmas.append(sql)
+            return self._inner.execute(sql, *params)
+
+        def close(self) -> None:
+            self._inner.close()
+
+    def recording_connect(*args: object, **kwargs: object) -> _RecordingConn:
+        return _RecordingConn(real_connect(*args, **kwargs))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", recording_connect)
+    try:
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+    finally:
+        holder.close()
+
+    assert result.get("checkpointed") is True
+    # Exactly one checkpoint pragma, and it is PASSIVE — never a resetting mode.
+    assert pragmas == ["PRAGMA wal_checkpoint(PASSIVE)"]
+    assert result.get("mode") == "passive"
+    # The bare path requested PASSIVE deliberately, so it is NOT a busy
+    # fallback from a TRUNCATE attempt (FR03 truncate_busy semantics).
+    assert result.get("truncate_busy") is False

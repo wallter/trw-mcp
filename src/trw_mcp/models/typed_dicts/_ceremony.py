@@ -7,6 +7,36 @@ from typing import Literal
 from typing_extensions import TypedDict
 
 
+class WalCheckpointResultDict(TypedDict, total=False):
+    """Return shape of ``maybe_checkpoint_wal()`` (PRD-QUAL-050-FR05, PRD-FIX-081).
+
+    Exactly one of three outcomes is populated, distinguished by which key is
+    present:
+
+    * **Skipped** — ``skipped=True`` plus ``reason`` (``"no_wal_file"`` or
+      ``"under_threshold"``). No checkpoint ran.
+    * **Checkpointed** — ``checkpointed=True`` plus the size/mode telemetry
+      (``mode``/``wal_size_before_mb``/``wal_size_after_mb``/
+      ``pages_checkpointed``/``busy``/``truncate_busy``). ``mode`` is the
+      lowercase mode that actually ran (``"truncate"``/``"passive"``;
+      ``"error"`` is mapped from the backend's error sentinel). FR03 requires
+      these telemetry fields on the success path.
+    * **Errored** — ``error=True`` plus ``reason="checkpoint_failed"`` (fail-open:
+      the WAL checkpoint must never block session start).
+    """
+
+    skipped: bool
+    reason: str
+    checkpointed: bool
+    mode: str
+    wal_size_before_mb: float
+    wal_size_after_mb: float
+    pages_checkpointed: int
+    busy: int
+    truncate_busy: bool
+    error: bool
+
+
 class AutoMaintenanceDict(TypedDict, total=False):
     """Return shape of ``run_auto_maintenance()``.
 
@@ -21,7 +51,7 @@ class AutoMaintenanceDict(TypedDict, total=False):
     embeddings_advisory: str
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
-    wal_checkpoint: dict[str, object]  # PRD-QUAL-050-FR05
+    wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
     wal_checkpoint_deferred: dict[str, object]
     auto_upgrade_check_deferred: dict[str, object]
 

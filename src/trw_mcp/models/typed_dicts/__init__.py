@@ -103,6 +103,7 @@ from trw_mcp.models.typed_dicts._ceremony import (
     TierCeremonyScoreResult,
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
+    WalCheckpointResultDict,
 )
 
 # _codex
@@ -412,6 +413,7 @@ __all__ = [
     "UsageReportResult",
     "ValidateResultDict",
     "ValidationFailureDict",
+    "WalCheckpointResultDict",
     "WaveDetailDict",
     "WaveProgressDict",
     "WaveShardCountsDict",
