@@ -198,6 +198,27 @@ class TestVersionStatus:
         with pytest.raises(SystemExit):
             assert_version_status_compatible(tmp_path)
 
+    def test_collects_installed_project_status_without_monorepo_manifests(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Installed user projects should not need monorepo package manifest files."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
+        (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 1.2.3\n",
+            encoding="utf-8",
+        )
+
+        status = collect_version_status(tmp_path)
+        versions = status["versions"]
+
+        assert isinstance(versions, dict)
+        assert versions["packages"]["trw-mcp"] == "1.2.3"
+        assert versions["packages"]["memory-ts"] == "unknown"
+        assert status["compatible"] is True
+
 
 # ---------------------------------------------------------------------------
 # build_release_bundle tests

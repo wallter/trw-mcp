@@ -11,6 +11,7 @@ Three helpers:
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
@@ -34,6 +35,29 @@ def _read_pyproject_version(path: Path) -> str:
     return ""
 
 
+def _installed_distribution_version(distribution: str) -> str:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _read_pyproject_version_or_unknown(path: Path, *, distribution: str | None = None, fallback: str = "unknown") -> str:
+    if path.exists():
+        return _read_pyproject_version(path)
+    if fallback != "unknown":
+        return fallback
+    if distribution:
+        installed = _installed_distribution_version(distribution)
+        if installed != "unknown":
+            return installed
+    return "unknown"
+
+
+def _read_package_json_version_or_unknown(path: Path) -> str:
+    return _read_package_json_version(path) if path.exists() else "unknown"
+
+
 def _read_package_json_version(path: Path) -> str:
     data = json.loads(path.read_text(encoding="utf-8"))
     return str(data.get("version", "")) if isinstance(data, dict) else ""
@@ -49,9 +73,16 @@ def collect_version_status(project_root: Path | None = None) -> dict[str, object
     framework_asset_path = root / ".trw" / "frameworks" / "VERSION.yaml"
     asset = FileStateReader(base_dir=root).read_yaml(framework_asset_path) if framework_asset_path.exists() else {}
     package_versions = {
-        "trw-mcp": _read_pyproject_version(root / "trw-mcp" / "pyproject.toml"),
-        "trw-memory": _read_pyproject_version(root / "trw-memory" / "pyproject.toml"),
-        "memory-ts": _read_package_json_version(root / "packages" / "memory-ts" / "package.json"),
+        "trw-mcp": _read_pyproject_version_or_unknown(
+            root / "trw-mcp" / "pyproject.toml",
+            distribution="trw-mcp",
+            fallback=live_server_version,
+        ),
+        "trw-memory": _read_pyproject_version_or_unknown(
+            root / "trw-memory" / "pyproject.toml",
+            distribution="trw-memory",
+        ),
+        "memory-ts": _read_package_json_version_or_unknown(root / "packages" / "memory-ts" / "package.json"),
     }
     framework_protocol_version = TRWConfig().framework_version
     installed_asset_version = str(asset.get("framework_version", ""))
@@ -59,9 +90,10 @@ def collect_version_status(project_root: Path | None = None) -> dict[str, object
     mismatches: list[str] = []
     if installed_asset_version and installed_asset_version != framework_protocol_version:
         mismatches.append("framework_protocol_vs_installed_asset")
-    if asset_mcp_version and asset_mcp_version != package_versions["trw-mcp"]:
+    mcp_package_version = package_versions["trw-mcp"]
+    if asset_mcp_version and mcp_package_version != "unknown" and asset_mcp_version != mcp_package_version:
         mismatches.append("trw_mcp_package_vs_installed_asset")
-    if live_server_version != package_versions["trw-mcp"]:
+    if mcp_package_version != "unknown" and live_server_version != mcp_package_version:
         mismatches.append("trw_mcp_package_vs_live_server")
     return {
         "taxonomy": {
