@@ -104,6 +104,8 @@ class TestTrwStatus:
         assert status["phase"] == "research"
         assert status["status"] == "active"
         assert status["event_count"] >= 1
+        assert status["phase_durations"]["active_phase"] == "research"
+        assert status["phase_durations"]["phase_seconds"]["research"] >= 0.0
 
 
 class TestTrwCheckpoint:

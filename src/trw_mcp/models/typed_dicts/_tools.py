@@ -39,6 +39,19 @@ class UsageGroupEntryDict(TypedDict):
     cost_estimate_usd: float
 
 
+class RunCostLedgerEntryDict(TypedDict):
+    """Per-run Agent Trace cost ledger entry."""
+
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    model: str
+    provider: str
+    models: list[str]
+    providers: list[str]
+
+
 class UsageReportResult(TypedDict, total=False):
     """Return shape of ``trw_usage_report`` MCP tool.
 
@@ -61,7 +74,7 @@ class UsageReportResult(TypedDict, total=False):
     total_cost_estimate_usd: float
     by_model: dict[str, UsageModelEntryDict]
     by_caller: dict[str, UsageCallerEntryDict]
-    cost_ledger: dict[str, dict[str, object]]
+    cost_ledger: dict[str, RunCostLedgerEntryDict]
     # populated when group_by != "none"
     group_by: str
     grouped_by: dict[str, UsageGroupEntryDict]

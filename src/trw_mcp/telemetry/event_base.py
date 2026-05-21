@@ -75,18 +75,27 @@ class AgentTraceV1Fields(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     schema_version: Literal["agent-trace-v1"] = "agent-trace-v1"
+    event_id: str | None = None
+    parent_event_id: str | None = None
+    tool_call_id: str | None = None
     run_id: str | None = None
     session_id: str | None = None
     phase: str | None = None
+    phase_started_at: datetime | None = None
+    phase_duration_seconds: float = Field(default=0.0, ge=0.0)
     tool_name: str | None = None
     artifact_id: str | None = None
+    artifact_path: str | None = None
     security_decision: str | None = None
+    security_scope: str | None = None
     verdict: str | None = None
     provider: str | None = None
     model: str | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
-    estimated_cost_usd: float = 0.0
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    cost_currency: str = "USD"
+    pricing_version: str | None = None
 
 
 AGENT_TRACE_V1_FIELDS: tuple[str, ...] = tuple(AgentTraceV1Fields.model_fields)

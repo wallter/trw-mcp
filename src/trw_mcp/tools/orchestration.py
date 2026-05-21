@@ -72,7 +72,7 @@ def _phase_duration_summary(events: list[dict[str, object]], current_phase: str)
     return {
         "active_phase": current_phase,
         "active_started_at": active_started_at,
-        "phase_seconds": durations,
+        "phase_seconds": durations or {current_phase: 0.0},
         "transition_count": len(phase_entries),
     }
 
@@ -308,8 +308,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, session boundary must not block run init
             logger.debug("init_session_start_event_skipped", exc_info=True)
 
-        # Framework version is captured in run.yaml; full snapshot removed to save ~20 KB per run.
-
         logger.info(
             "run_init_ok",
             run_id=run_id,
@@ -412,30 +410,25 @@ def register_orchestration_tools(server: FastMCP) -> None:
             if wave_progress:
                 result["wave_progress"] = wave_progress
 
-        # Wave status from run.yaml checkpoints (PRD-INFRA-036-FR03)
         wave_status = state_data.get("wave_status")
         if isinstance(wave_status, dict) and wave_status:
             result["wave_status"] = wave_status
 
-        # Reversion frequency metrics
         reversion_metrics = _compute_reversion_metrics(events)
         result["reversions"] = reversion_metrics
 
-        # Last activity tracking (RC-002: detect stale/abandoned tracks)
         last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
         if last_ts:
             result["last_activity_ts"] = last_ts
         if hours_since is not None:
             result["hours_since_activity"] = hours_since
 
-        # Stale framework version warning
         version_warning = _check_framework_version_staleness(
             str(state_data.get("framework", "")),
         )
         if version_warning:
             result["version_warning"] = version_warning
 
-        # Stale run count (PRD-FIX-028: hour-level TTL reporting)
         try:
             stale = count_stale_runs()
             result["stale_count"] = stale

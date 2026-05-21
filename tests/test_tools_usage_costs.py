@@ -94,5 +94,35 @@ def test_build_run_cost_ledger_aggregates_by_run() -> None:
 
     assert ledger["run-a"]["input_tokens"] == 1500
     assert ledger["run-a"]["output_tokens"] == 1000
+    assert ledger["run-a"]["calls"] == 2
+    assert ledger["run-a"]["model"] == "multiple"
+    assert ledger["run-a"]["provider"] == "anthropic"
     assert ledger["run-a"]["providers"] == ["anthropic"]
     assert float(ledger["run-a"]["estimated_cost_usd"]) > 0.0
+
+
+def test_build_run_cost_ledger_is_deterministic_and_tolerates_bad_rows() -> None:
+    records = [
+        {
+            "run_id": "run-a",
+            "model": "claude-sonnet-4-6",
+            "input_tokens": "not-an-int",
+            "output_tokens": -10,
+        },
+        {
+            "run_id": "run-a",
+            "model": "claude-sonnet-4-6",
+            "provider": "",
+            "input_tokens": 10,
+            "output_tokens": 5,
+        },
+    ]
+
+    first = build_run_cost_ledger(records)
+    second = build_run_cost_ledger(list(reversed(records)))
+
+    assert first == second
+    assert first["run-a"]["input_tokens"] == 10
+    assert first["run-a"]["output_tokens"] == 5
+    assert first["run-a"]["model"] == "claude-sonnet-4-6"
+    assert first["run-a"]["provider"] == "claude"
