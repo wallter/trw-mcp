@@ -12,6 +12,7 @@ the 350-LOC gate.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +24,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_pin_key
 from trw_mcp.state._pin_store import (
     _iso_now,
-    load_pin_store,
+    pin_store_path,
     remove_pin_entry,
     upsert_pin_entry,
 )
@@ -68,6 +69,46 @@ def _validate_adoptable_run(resolved: Path, project_root: Path) -> str:
     return str(data.get("status", "unknown"))
 
 
+def _load_pin_store_for_adoption(target_run: Path) -> dict[str, dict[str, Any]]:
+    """Strictly load ownership markers before adopt-run mutates pin state."""
+    pins_path = pin_store_path()
+    if not pins_path.exists():
+        return {}
+    try:
+        raw = json.loads(pins_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise StateError(
+            f"pin ownership marker is unreadable: {exc}",
+            path=str(pins_path),
+        ) from exc
+    if not isinstance(raw, dict):
+        raise StateError(
+            f"pin ownership marker root must be a mapping, got {type(raw).__name__}",
+            path=str(pins_path),
+        )
+
+    store: dict[str, dict[str, Any]] = {}
+    target_str = str(target_run)
+    for pin_key, entry in raw.items():
+        if not isinstance(pin_key, str) or not pin_key:
+            raise StateError("pin ownership marker contains an invalid pin key", path=str(pins_path))
+        if not isinstance(entry, dict):
+            raise StateError(f"pin ownership marker for {pin_key} must be a mapping", path=str(pins_path))
+        run_path_raw = entry.get("run_path")
+        if not isinstance(run_path_raw, str) or not run_path_raw:
+            raise StateError(f"pin ownership marker for {pin_key} missing run_path", path=str(pins_path))
+        if str(Path(run_path_raw).resolve()) == target_str:
+            heartbeat_raw = entry.get("last_heartbeat_ts")
+            if not isinstance(heartbeat_raw, str) or _parse_iso_utc(heartbeat_raw) is None:
+                raise StateError(
+                    f"pin ownership marker for {pin_key} has invalid last_heartbeat_ts",
+                    path=str(pins_path),
+                    pin_key=pin_key,
+                )
+        store[pin_key] = dict(entry)
+    return store
+
+
 def adopt_run(
     ctx: Context | None,
     run_path: str,
@@ -106,7 +147,7 @@ def adopt_run(
         )
 
     # Find existing pin entry for the target run path.
-    store = load_pin_store()
+    store = _load_pin_store_for_adoption(resolved)
     previous_pin_key: str | None = None
     previous_entry: dict[str, Any] | None = None
     target_str = str(resolved)

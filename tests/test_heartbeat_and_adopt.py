@@ -435,6 +435,44 @@ def test_adopt_refuses_mismatched_run_metadata_before_pin_write(isolated_project
     assert "sess-mismatch" not in load_pin_store()
 
 
+def test_adopt_refuses_malformed_pin_store_before_pin_write(isolated_project: Path) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    pin_store_path().write_text("{not-json}\n", encoding="utf-8")
+    invalidate_pin_store_cache()
+    server = _make_server()
+    adopt = _adopt(server)
+
+    with pytest.raises(StateError, match="pin ownership marker is unreadable"):
+        adopt(ctx=SimpleNamespace(session_id="sess-corrupt-pins"), run_path=str(run))
+
+    assert "sess-corrupt-pins" not in pin_store_path().read_text(encoding="utf-8")
+
+
+def test_adopt_refuses_malformed_matching_pin_entry_before_pin_write(isolated_project: Path) -> None:
+    import json
+
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    pin_store_path().write_text(
+        json.dumps({"sess-owner": {"run_path": str(run), "last_heartbeat_ts": "not-a-date"}}),
+        encoding="utf-8",
+    )
+    invalidate_pin_store_cache()
+    server = _make_server()
+    adopt = _adopt(server)
+
+    with pytest.raises(StateError, match="invalid last_heartbeat_ts"):
+        adopt(ctx=SimpleNamespace(session_id="sess-invalid-owner"), run_path=str(run))
+
+    raw = json.loads(pin_store_path().read_text(encoding="utf-8"))
+    assert "sess-invalid-owner" not in raw
+
+
 def test_file_state_reader_rejects_paths_outside_base(
     isolated_project: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
