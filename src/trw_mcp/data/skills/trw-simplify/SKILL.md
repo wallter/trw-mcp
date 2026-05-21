@@ -24,7 +24,10 @@ For each file:
 1. Read the file completely
 2. Identify simplification opportunities (dead imports, redundant variables, DRY consolidation, cosmetic cleanup)
 3. Apply small, local edits
-4. Do NOT run tests or type-checkers - the calling orchestrator handles verification
+4. For extraction/refactor work, request the optional `make post-extraction-static-audit` gate to catch stale
+   references and high-confidence dead-code signals; treat findings as review evidence unless the caller makes
+   them blocking
+5. Do NOT run tests or type-checkers - the calling orchestrator handles verification
 
 ## 10 Preservation Rules (MANDATORY)
 

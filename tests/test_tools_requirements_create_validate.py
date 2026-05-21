@@ -246,6 +246,29 @@ The system should be fast.
         result = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
         assert result["total_score"] < 80.0
 
+    def test_validation_cache_hits_for_unchanged_content(self, tmp_path: Path) -> None:
+        prd_content = """---
+prd:
+  id: PRD-CORE-086
+  title: "Cache"
+---
+
+# PRD-CORE-086: Cache
+
+## 1. Problem Statement
+Cache validation results by content hash.
+"""
+        prd_path = tmp_path / "cache.md"
+        prd_path.write_text(prd_content, encoding="utf-8")
+
+        tools = _get_tools()
+        first = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        second = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+
+        assert first["cache"]["hit"] is False
+        assert second["cache"]["hit"] is True
+        assert first["cache"]["key"] == second["cache"]["key"]
+
     def test_file_not_found(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import StateError
 

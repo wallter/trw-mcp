@@ -113,3 +113,4 @@ class ValidateResultDict(TypedDict, total=False):
     ceremony_status: str
     # Substrate-First gate (PRD-DIST-218 FR-2)
     substrate_first: dict[str, object]
+    cache: dict[str, object]

@@ -161,6 +161,8 @@ def _persist_review_artifact(
 
     review_path = resolved_run / "meta" / "review.yaml"
     writer.write_yaml(review_path, review_payload)
+    markdown_path = resolved_run / "meta" / "review.md"
+    writer.write_text(markdown_path, render_review_markdown(review_payload))
 
     if events_path.parent.exists():
         verdict = str(review_data.get("verdict", event_fields.get("verdict", ""))).upper()
@@ -178,6 +180,27 @@ def _persist_review_artifact(
         events.log_event(events_path, "review_complete", event_fields)
 
     return str(review_path)
+
+
+def render_review_markdown(review_data: dict[str, object]) -> str:
+    """Render review data as PR-description friendly Markdown."""
+    verdict = str(review_data.get("verdict", "unknown")).upper()
+    mode = str(review_data.get("mode", review_data.get("phase", "manual")))
+    findings = review_data.get("findings", review_data.get("cross_model_findings", []))
+    lines = [f"# TRW Review: {verdict}", "", f"- Mode: `{mode}`"]
+    if isinstance(findings, list):
+        lines.append(f"- Findings: {len(findings)}")
+        lines.append("")
+        lines.append("| Severity | Category | Description |")
+        lines.append("| --- | --- | --- |")
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            severity = str(finding.get("severity", "info"))
+            category = str(finding.get("category", "general"))
+            description = str(finding.get("description", "")).replace("|", "\\|")
+            lines.append(f"| {severity} | {category} | {description} |")
+    return "\n".join(lines) + "\n"
 
 
 def _log_preflight_events(

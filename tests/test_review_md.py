@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from trw_mcp.tools._review_helpers import render_review_markdown
+
 # ---------------------------------------------------------------------------
 # Unit tests: _sanitize_summary
 # ---------------------------------------------------------------------------
@@ -69,6 +71,25 @@ class TestSanitizeSummary:
 
         result = _sanitize_summary("[link](url) and <b>bold</b>")
         assert result == "link and bold"
+
+
+def test_render_review_markdown_exports_verdict_and_findings() -> None:
+    markdown = render_review_markdown(
+        {
+            "verdict": "warn",
+            "mode": "manual",
+            "findings": [
+                {
+                    "severity": "warning",
+                    "category": "tests",
+                    "description": "Missing focused regression coverage",
+                }
+            ],
+        }
+    )
+
+    assert "# TRW Review: WARN" in markdown
+    assert "| warning | tests | Missing focused regression coverage |" in markdown
 
 
 # ---------------------------------------------------------------------------

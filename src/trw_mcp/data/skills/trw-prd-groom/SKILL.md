@@ -54,7 +54,15 @@ Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through sys
    d. If < 5% score improvement after 3 iterations, exit (convergence)
    e. Parse validation failures and draft fixes
 
-7. **Completion**: Call `trw_learn(summary="PRD groomed: {PRD-ID} to {score}", tags=["prd-workflow"])`. Report final quality score and any remaining gaps.
+7. **Completion**: Report final quality score and any remaining gaps. Use `trw_learn` only for a durable
+   requirements-pattern discovery, not for routine "PRD groomed" status.
+
+## Style Guidance
+
+- Use tables when they improve side-by-side comparison (FRs, NFRs, ACs, risk matrices, traceability).
+- Use bullets or prose for rationale, uncertainty, and narrative flow; do not convert everything into tables just
+  to chase a validator score.
+- Preserve meaningful ambiguity as Open Questions instead of padding sections with low-signal rows.
 
 ## Rationalization Watchlist
 
