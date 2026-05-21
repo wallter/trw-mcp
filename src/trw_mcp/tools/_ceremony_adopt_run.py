@@ -48,15 +48,23 @@ def _validate_adoptable_run(resolved: Path, project_root: Path) -> str:
     reader = FileStateReader(base_dir=project_root)
     run_yaml = meta_dir / "run.yaml"
     data = reader.read_yaml(run_yaml)
-    run_id = str(data.get("run_id", "") or data.get("id", "") or resolved.name)
-    if not run_id:
+    run_id_raw = data.get("run_id", "") or data.get("id", "")
+    if not isinstance(run_id_raw, str) or not run_id_raw.strip():
         raise StateError("run metadata missing run_id", path=str(run_yaml))
+    run_id = run_id_raw.strip()
+    if run_id != resolved.name:
+        raise StateError(
+            f"run metadata run_id does not match run directory: {run_id} != {resolved.name}",
+            path=str(run_yaml),
+            run_id=run_id,
+            run_dir=resolved.name,
+        )
     events_jsonl = meta_dir / "events.jsonl"
     if events_jsonl.exists():
         reader.read_jsonl(events_jsonl)
-    checkpoints_jsonl = resolved / "reports" / "checkpoints.jsonl"
-    if checkpoints_jsonl.exists():
-        reader.read_jsonl(checkpoints_jsonl)
+    for checkpoints_jsonl in (meta_dir / "checkpoints.jsonl", resolved / "reports" / "checkpoints.jsonl"):
+        if checkpoints_jsonl.exists():
+            reader.read_jsonl(checkpoints_jsonl)
     return str(data.get("status", "unknown"))
 
 

@@ -403,6 +403,38 @@ def test_adopt_refuses_unreadable_metadata_before_pin_write(isolated_project: Pa
     assert "sess-bad" not in load_pin_store()
 
 
+def test_adopt_refuses_unreadable_meta_checkpoints_before_pin_write(isolated_project: Path) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._pin_store import load_pin_store
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    (run / "meta" / "checkpoints.jsonl").write_text("{not-json}\n", encoding="utf-8")
+    server = _make_server()
+    adopt = _adopt(server)
+
+    with pytest.raises(StateError, match="Failed to parse JSONL"):
+        adopt(ctx=SimpleNamespace(session_id="sess-bad-checkpoints"), run_path=str(run))
+    assert "sess-bad-checkpoints" not in load_pin_store()
+
+
+def test_adopt_refuses_mismatched_run_metadata_before_pin_write(isolated_project: Path) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._pin_store import load_pin_store
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    run_yaml = run / "meta" / "run.yaml"
+    run_yaml.write_text(
+        run_yaml.read_text(encoding="utf-8").replace("run_id: 20260101T000000Z-aaaa1111", "run_id: other-run"),
+        encoding="utf-8",
+    )
+    server = _make_server()
+    adopt = _adopt(server)
+
+    with pytest.raises(StateError, match="metadata run_id does not match"):
+        adopt(ctx=SimpleNamespace(session_id="sess-mismatch"), run_path=str(run))
+    assert "sess-mismatch" not in load_pin_store()
+
+
 def test_file_state_reader_rejects_paths_outside_base(
     isolated_project: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:

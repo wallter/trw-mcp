@@ -56,6 +56,22 @@ class TestDeferredLock:
         finally:
             _release_deferred_lock(fd1)
 
+    def test_second_acquire_preserves_lock_holder_record_while_held(self, tmp_path: Path) -> None:
+        """A contending acquire must not truncate the active holder record."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        fd1 = _try_acquire_deferred_lock(trw_dir)
+        assert fd1 is not None
+        lock_path = trw_dir / "deliver-deferred.lock"
+        record_before = lock_path.read_text(encoding="utf-8")
+        assert '"pid"' in record_before
+        try:
+            fd2 = _try_acquire_deferred_lock(trw_dir)
+            assert fd2 is None
+            assert lock_path.read_text(encoding="utf-8") == record_before
+        finally:
+            _release_deferred_lock(fd1)
+
     def test_reacquire_after_release(self, tmp_path: Path) -> None:
         """Lock can be re-acquired after release."""
         trw_dir = tmp_path / ".trw"

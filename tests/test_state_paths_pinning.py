@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.state._paths import find_active_run, get_pinned_run, pin_active_run, unpin_active_run
+from trw_mcp.state._paths import (
+    find_active_run,
+    find_run_via_mtime_scan,
+    get_pinned_run,
+    pin_active_run,
+    unpin_active_run,
+)
 from trw_mcp.state.persistence import FileStateWriter
 
 from ._state_paths_support import _make_run
@@ -34,7 +40,7 @@ class TestPinActiveRun:
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
-        assert find_active_run() != old_run
+        assert find_run_via_mtime_scan() != old_run
 
         pin_active_run(old_run)
         assert find_active_run() == old_run.resolve()
@@ -54,7 +60,8 @@ class TestPinActiveRun:
         assert find_active_run() == old_run.resolve()
 
         unpin_active_run()
-        assert find_active_run() == new_run
+        assert find_active_run() is None
+        assert find_run_via_mtime_scan() == new_run
 
     def test_get_pinned_run_reflects_state(self, tmp_path: Path) -> None:
         """get_pinned_run returns current pin state."""

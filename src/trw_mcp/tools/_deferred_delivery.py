@@ -234,12 +234,14 @@ def _try_acquire_deferred_lock(
     """
     lock_path = trw_dir / "deliver-deferred.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = lock_path.open("w", encoding="utf-8")
+    fd = lock_path.open("a+", encoding="utf-8")
     try:
         _lock_ex_nb(fd.fileno())
         # Write PID + timestamp as valid JSON so operators can inspect
         import os as _os
 
+        fd.seek(0)
+        fd.truncate()
         fd.write(json.dumps({"pid": _os.getpid(), "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
         fd.flush()
         return fd
@@ -256,10 +258,12 @@ def _try_acquire_deferred_lock(
             stale_threshold_seconds=stale_threshold_seconds,
         )
         try:
-            fd2 = lock_path.open("w", encoding="utf-8")
+            fd2 = lock_path.open("a+", encoding="utf-8")
             _lock_ex_nb(fd2.fileno())
             import os as _os
 
+            fd2.seek(0)
+            fd2.truncate()
             fd2.write(
                 json.dumps(
                     {
