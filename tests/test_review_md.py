@@ -92,6 +92,24 @@ def test_render_review_markdown_exports_verdict_and_findings() -> None:
     assert "| warning | tests | Missing focused regression coverage |" in markdown
 
 
+def test_render_review_markdown_escapes_table_breaking_finding_text() -> None:
+    markdown = render_review_markdown(
+        {
+            "verdict": "block",
+            "mode": "manual",
+            "findings": [
+                {
+                    "severity": "critical|high",
+                    "category": "security\nreview",
+                    "description": "Secret | token\nleaked",
+                }
+            ],
+        }
+    )
+
+    assert "| critical\\|high | security review | Secret \\| token leaked |" in markdown
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: generate_review_md
 # ---------------------------------------------------------------------------

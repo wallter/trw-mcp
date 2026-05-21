@@ -269,12 +269,18 @@ def _extract_prd_diff_items(content: str) -> dict[str, dict[str, str]]:
     for line_number, line in enumerate(content.splitlines(), start=1):
         stripped = line.strip()
         match = _REQ_ROW_RE.match(stripped)
+        is_acceptance_gate = "Given" in stripped and "When" in stripped and "Then" in stripped
         if match:
             key = match.group(1).upper()
-            items[f"requirement:{key}"] = {"line": stripped, "line_number": str(line_number)}
+            if is_acceptance_gate:
+                items[f"acceptance:{key}"] = {"line": stripped, "line_number": str(line_number)}
+                if key.startswith("AC-"):
+                    items[f"requirement:{key}"] = {"line": stripped, "line_number": str(line_number)}
+            else:
+                items[f"requirement:{key}"] = {"line": stripped, "line_number": str(line_number)}
         elif stripped.startswith("|") and _METRIC_HINT_RE.search(stripped):
             items[f"metric:{line_number}"] = {"line": stripped, "line_number": str(line_number)}
-        elif "Given" in stripped and "When" in stripped and "Then" in stripped:
+        elif is_acceptance_gate:
             items[f"acceptance:{line_number}"] = {"line": stripped, "line_number": str(line_number)}
     return items
 

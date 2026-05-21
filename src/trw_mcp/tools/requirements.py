@@ -114,12 +114,16 @@ def _prd_validation_config_hash(config: object) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def _prd_validation_cache_key(content: str, config: object) -> str:
-    payload = {
+def _prd_validation_cache_metadata(content: str, config: object) -> dict[str, str]:
+    return {
         "content_hash": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "config_hash": _prd_validation_config_hash(config),
         "validator_version": _PRD_VALIDATOR_VERSION,
     }
+
+
+def _prd_validation_cache_key(content: str, config: object) -> str:
+    payload = _prd_validation_cache_metadata(content, config)
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -380,16 +384,18 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         config = get_config()
         cache_path = _prd_validation_cache_path(project_root)
+        cache_metadata = _prd_validation_cache_metadata(content, config)
         cache_key = _prd_validation_cache_key(content, config)
         reader = FileStateReader()
         if cache_path.exists():
             cached = reader.read_yaml(cache_path).get(cache_key)
             if isinstance(cached, dict):
                 cached_result = cast("ValidateResultDict", dict(cached))
+                cached_result["path"] = str(path)
                 cached_result["cache"] = {
                     "hit": True,
                     "key": cache_key,
-                    "validator_version": _PRD_VALIDATOR_VERSION,
+                    **cache_metadata,
                 }
                 return cached_result
 
@@ -506,7 +512,7 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             "cache": {
                 "hit": False,
                 "key": cache_key,
-                "validator_version": _PRD_VALIDATOR_VERSION,
+                **cache_metadata,
             },
         }
 

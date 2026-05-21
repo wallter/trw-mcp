@@ -196,11 +196,16 @@ def render_review_markdown(review_data: dict[str, object]) -> str:
         for finding in findings:
             if not isinstance(finding, dict):
                 continue
-            severity = str(finding.get("severity", "info"))
-            category = str(finding.get("category", "general"))
-            description = str(finding.get("description", "")).replace("|", "\\|")
+            severity = _markdown_table_cell(finding.get("severity", "info"))
+            category = _markdown_table_cell(finding.get("category", "general"))
+            description = _markdown_table_cell(finding.get("description", ""))
             lines.append(f"| {severity} | {category} | {description} |")
     return "\n".join(lines) + "\n"
+
+
+def _markdown_table_cell(value: object) -> str:
+    """Escape a value for safe single-line Markdown table rendering."""
+    return " ".join(str(value).replace("|", "\\|").splitlines())
 
 
 def _log_preflight_events(

@@ -91,6 +91,41 @@ def test_prd_diff_report_highlights_requirement_metric_and_acceptance_changes(tm
     assert "requirement:AC-01" in report["added"]
 
 
+def test_prd_diff_report_keeps_functional_and_acceptance_rows_distinct(tmp_path: Path) -> None:
+    before = tmp_path / "before.md"
+    after = tmp_path / "after.md"
+    before.write_text(
+        "\n".join(
+            [
+                "## 4. Functional Requirements",
+                "| FR01 | Login | THE SYSTEM SHALL do A. | 0.8 |",
+                "## Acceptance Criteria",
+                "| FR01 | Given old | When user acts | Then old outcome |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    after.write_text(
+        "\n".join(
+            [
+                "## 4. Functional Requirements",
+                "| FR01 | Login | THE SYSTEM SHALL do B. | 0.8 |",
+                "## Acceptance Criteria",
+                "| FR01 | Given old | When user acts | Then new outcome |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = prd_diff_report(before_path=str(before), after_path=str(after))
+
+    assert "requirement:FR01" in report["changed"]
+    assert "acceptance:FR01" in report["changed"]
+    changes_by_key = {change["key"]: change for change in report["changes"]}
+    assert "THE SYSTEM SHALL do A" in changes_by_key["requirement:FR01"]["before"]
+    assert "Then old outcome" in changes_by_key["acceptance:FR01"]["before"]
+
+
 # ---------- extract_sections ----------
 
 

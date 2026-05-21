@@ -269,6 +269,34 @@ Cache validation results by content hash.
         assert second["cache"]["hit"] is True
         assert first["cache"]["key"] == second["cache"]["key"]
 
+    def test_validation_cache_reports_hash_metadata_and_current_path(self, tmp_path: Path) -> None:
+        prd_content = """---
+prd:
+  id: PRD-CORE-087
+  title: "Cache Metadata"
+---
+
+# PRD-CORE-087: Cache Metadata
+
+## 1. Problem Statement
+Cache validation metadata should be inspectable.
+"""
+        first_path = tmp_path / "first.md"
+        second_path = tmp_path / "second.md"
+        first_path.write_text(prd_content, encoding="utf-8")
+        second_path.write_text(prd_content, encoding="utf-8")
+
+        tools = _get_tools()
+        first = tools["trw_prd_validate"].fn(prd_path=str(first_path))
+        second = tools["trw_prd_validate"].fn(prd_path=str(second_path))
+
+        assert first["cache"]["content_hash"].startswith("sha256:")
+        assert first["cache"]["config_hash"].startswith("sha256:")
+        assert first["cache"]["validator_version"]
+        assert second["cache"]["hit"] is True
+        assert second["path"] == str(second_path.resolve())
+        assert second["cache"]["content_hash"] == first["cache"]["content_hash"]
+
     def test_file_not_found(self, tmp_path: Path) -> None:
         from trw_mcp.exceptions import StateError
 
