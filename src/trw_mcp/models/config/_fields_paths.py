@@ -81,6 +81,20 @@ class _PathsFields:
             "client reconnect windows."
         ),
     )
+    mcp_http_rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable local HTTP MCP token-bucket request limiting for loopback transports.",
+    )
+    mcp_http_rate_limit_capacity: int = Field(
+        default=120,
+        ge=1,
+        description="Maximum burst size for local HTTP MCP token-bucket request limiting.",
+    )
+    mcp_http_rate_limit_refill_per_second: float = Field(
+        default=20.0,
+        ge=0.1,
+        description="Token refill rate per second for local HTTP MCP request limiting.",
+    )
 
     # -- Pin isolation & stale-run lifecycle (PRD-CORE-141 FR13) --
     # Knobs governing per-connection pin isolation, the boot-time stale-run

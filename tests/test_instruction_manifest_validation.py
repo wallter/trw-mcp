@@ -9,6 +9,7 @@ import pytest
 from trw_mcp.state.claude_md._tool_manifest import (
     TOOL_DESCRIPTIONS,
     check_instruction_tool_parity,
+    classify_prescriptive_language,
     validate_instruction_manifest,
 )
 
@@ -139,3 +140,26 @@ class TestCheckInstructionToolParityEdgeCases:
         agents.write_bytes(b"\xff\xfe" + b"\x00" * 100)
         result = check_instruction_tool_parity(tmp_path, frozenset({"trw_learn"}))
         assert result is None
+
+
+class TestPrescriptiveLanguagePolicy:
+    """PRD-QUAL-087 FR01: instruction rewrites classify normative language first."""
+
+    def test_safety_critical_language_is_not_tone_rewriteable(self) -> None:
+        result = classify_prescriptive_language("Never commit secrets or bypass human review approval.")
+
+        assert result.category == "safety-critical"
+        assert result.rewrite_allowed is False
+
+    def test_process_critical_language_preserves_required_action(self) -> None:
+        result = classify_prescriptive_language("You must call trw_build_check before delivery.")
+
+        assert result.category == "process-critical"
+        assert result.rewrite_allowed is True
+        assert "preserve" in result.rationale
+
+    def test_advisory_language_can_be_softened(self) -> None:
+        result = classify_prescriptive_language("Prefer concise summaries when practical.")
+
+        assert result.category == "advisory"
+        assert result.rewrite_allowed is True

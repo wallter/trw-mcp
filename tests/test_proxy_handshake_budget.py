@@ -12,6 +12,7 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server import _transport
 from trw_mcp.server._proxy import discover_proxy_capabilities
+from trw_mcp.server._rate_limit import TokenBucket
 
 
 @dataclass
@@ -105,3 +106,45 @@ def test_http_proxy_transport_passes_configured_handshake_timeout(monkeypatch: p
         "url": "http://127.0.0.1:8100/mcp",
         "handshake_timeout_seconds": 2.5,
     }
+
+
+@pytest.mark.unit
+def test_transport_fallback_diagnostic_names_http_and_local_fallbacks() -> None:
+    diagnostic = _transport.build_transport_fallback_diagnostic("proxy_connect_failed", TRWConfig())
+
+    assert diagnostic["diagnostic_event"] == "trw_transport_fallback_diagnostic"
+    assert diagnostic["http_proxy_url"] == "http://127.0.0.1:8100/mcp"
+    assert "trw-mcp local status|learn|deliver" in str(diagnostic["operator_guidance"])
+
+
+@pytest.mark.unit
+def test_http_token_bucket_denies_when_burst_exhausted() -> None:
+    now = 100.0
+    bucket = TokenBucket(capacity=2, refill_per_second=1.0, now=lambda: now)
+
+    assert bucket.allow() is True
+    assert bucket.allow() is True
+    assert bucket.allow() is False
+
+
+@pytest.mark.unit
+def test_http_transport_kwargs_include_origin_guard_and_rate_limit() -> None:
+    config = TRWConfig(mcp_http_rate_limit_capacity=5, mcp_http_rate_limit_refill_per_second=1.0)
+
+    kwargs = _transport._http_transport_kwargs(config)
+
+    middleware = kwargs["middleware"]
+    assert len(middleware) >= 1
+    assert any(getattr(item, "cls", None).__name__ == "LocalTokenBucketMiddleware" for item in middleware)
+
+
+@pytest.mark.unit
+def test_config_runtime_reload_boundary_is_config_only() -> None:
+    old = TRWConfig(mcp_http_rate_limit_capacity=120)
+    new = TRWConfig(mcp_http_rate_limit_capacity=60)
+
+    summary = _transport.summarize_runtime_reload(old, new)
+
+    assert summary["changed_fields"] == ["mcp_http_rate_limit_capacity"]
+    assert summary["requires_source_restart"] is False
+    assert summary["boundary"] == "config_only_no_python_hot_reload"

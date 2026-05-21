@@ -29,6 +29,7 @@ delegate here; that is out of scope for PRD-INFRA-104 (see OQ-1).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import structlog
 
@@ -85,6 +86,28 @@ _CLIENT_MAPS: dict[str, dict[str, str]] = {
     "claude-code": _CLAUDE_CODE_MAP,
     "cursor-ide": _CURSOR_IDE_MAP,
 }
+
+
+@dataclass(frozen=True)
+class LaunchThrottlePolicy:
+    """Client-agnostic helper launch throttling guidance."""
+
+    stagger_seconds: float
+    max_concurrent_launches: int
+    backoff_multiplier: float
+    max_backoff_seconds: float
+    rationale: str
+
+
+def resolve_launch_throttle_policy(helper_count: int) -> LaunchThrottlePolicy:
+    """Return portable launch throttling guidance for dense helper workloads."""
+    if helper_count <= 0:
+        raise ValueError("helper_count must be positive")
+    if helper_count <= 3:
+        return LaunchThrottlePolicy(0.0, helper_count, 1.5, 10.0, "small batch")
+    if helper_count <= 8:
+        return LaunchThrottlePolicy(1.0, 3, 2.0, 30.0, "moderate dense launch")
+    return LaunchThrottlePolicy(2.0, 4, 2.0, 60.0, "large dense launch")
 
 
 # --- Public API ---------------------------------------------------------------

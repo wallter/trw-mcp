@@ -10,9 +10,12 @@ import pytest
 from trw_mcp.agents.tier_resolver import (
     KNOWN_CLIENTS,
     KNOWN_TIERS,
+    resolve_launch_throttle_policy,
     resolve_tier,
     rewrite_model_line,
 )
+from trw_mcp.server._subcommands_tier import _format_tier_status_table
+from trw_mcp.state._entitlements import Entitlement
 
 
 class TestResolveTier:
@@ -168,3 +171,29 @@ class TestStructlogObservation:
         assert events[0]["tier"] == "frontier"
         assert events[0]["client"] == "claude-code"
         assert events[0]["resolved"] == "opus"
+
+
+class TestLaunchThrottlePolicy:
+    """PRD-QUAL-087 FR03: dense helper launches get portable throttling guidance."""
+
+    def test_large_dense_launch_uses_stagger_and_backoff(self) -> None:
+        policy = resolve_launch_throttle_policy(12)
+
+        assert policy.stagger_seconds == 2.0
+        assert policy.max_concurrent_launches == 4
+        assert policy.backoff_multiplier == 2.0
+        assert policy.max_backoff_seconds == 60.0
+
+    def test_invalid_helper_count_rejected(self) -> None:
+        with pytest.raises(ValueError, match="helper_count"):
+            resolve_launch_throttle_policy(0)
+
+
+class TestTierStatusTable:
+    """PRD-INFRA-119 FR06: tier status has auditable table columns."""
+
+    def test_table_includes_entitlement_limit_and_expiration(self) -> None:
+        table = _format_tier_status_table(Entitlement(tier="pro", reason="ok", expires_at_iso="2027-01-01T00:00:00Z"))
+
+        assert "| state | entitlement | limit | expires |" in table
+        assert "| active | pro | pro | 2027-01-01T00:00:00Z |" in table

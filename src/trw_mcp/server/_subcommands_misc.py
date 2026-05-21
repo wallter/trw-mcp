@@ -39,7 +39,13 @@ def _run_config_reference(args: argparse.Namespace) -> None:
 
 def _run_local(args: argparse.Namespace) -> None:
     """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
-    from trw_mcp.services.orchestration_service import scaffold_run_directory, write_checkpoint
+    from trw_mcp.services.orchestration_service import (
+        mark_local_delivered,
+        read_local_status,
+        scaffold_run_directory,
+        write_checkpoint,
+        write_local_learning,
+    )
 
     local_cmd = getattr(args, "local_command", None)
 
@@ -61,12 +67,52 @@ def _run_local(args: argparse.Namespace) -> None:
         except FileNotFoundError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
+    elif local_cmd == "status":
+        run_path_str = getattr(args, "run_path", None)
+        run_path = Path(run_path_str) if run_path_str else None
+        try:
+            status = read_local_status(run_path=run_path)
+            print(f"Run: {status['run_id']}")
+            print(f"  Task: {status['task']}")
+            print(f"  Status: {status['status']}")
+            print(f"  Phase: {status['phase']}")
+            print(f"  Checkpoints: {status['checkpoints']}")
+            print(f"  Events: {status['events']}")
+            print(f"  Path: {status['run_path']}")
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+    elif local_cmd == "learn":
+        tags = list(getattr(args, "tag", []) or [])
+        try:
+            result = write_local_learning(
+                summary=str(getattr(args, "summary", "")),
+                detail=str(getattr(args, "detail", "")),
+                tags=tags,
+            )
+            print(f"Learning {result.get('status', 'saved')}: {result.get('id', result.get('learning_id', 'unknown'))}")
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+    elif local_cmd == "deliver":
+        run_path_str = getattr(args, "run_path", None)
+        run_path = Path(run_path_str) if run_path_str else None
+        try:
+            status = mark_local_delivered(str(getattr(args, "message", "") or "local delivery"), run_path=run_path)
+            print(f"Run delivered: {status['run_id']}")
+            print(f"  Path: {status['run_path']}")
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
     else:
-        print("Usage: trw-mcp local {init|checkpoint}")
+        print("Usage: trw-mcp local {init|checkpoint|status|learn|deliver}")
         print()
         print("Commands:")
         print("  init        Create a run directory (--task NAME required)")
         print("  checkpoint  Save progress (--message MSG)")
+        print("  status      Show active local run status")
+        print("  learn       Persist a learning (--summary, --detail)")
+        print("  deliver     Mark active run delivered (--message MSG)")
         sys.exit(0)
 
     sys.exit(0)

@@ -303,7 +303,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # local (PRD-FIX-073: offline ceremony fallback)
     local_parser = subparsers.add_parser(
         "local",
-        help="Offline ceremony fallback — init runs and write checkpoints without MCP server",
+        help="Offline ceremony fallback — init/status/learn/deliver without MCP server",
     )
     local_sub = local_parser.add_subparsers(dest="local_command")
     local_init = local_sub.add_parser("init", help="Create a run directory")
@@ -320,6 +320,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Checkpoint message describing progress",
     )
     local_cp.add_argument(
+        "--run-path",
+        default=None,
+        help="Explicit run directory path (auto-detects if omitted)",
+    )
+    local_status = local_sub.add_parser("status", help="Show active local run status")
+    local_status.add_argument(
+        "--run-path",
+        default=None,
+        help="Explicit run directory path (auto-detects if omitted)",
+    )
+    local_learn = local_sub.add_parser("learn", help="Persist a learning without MCP transport")
+    local_learn.add_argument("--summary", required=True, help="One-line learning summary")
+    local_learn.add_argument("--detail", required=True, help="Learning detail")
+    local_learn.add_argument("--tag", action="append", default=[], help="Learning tag; may be passed more than once")
+    local_deliver = local_sub.add_parser("deliver", help="Mark the active local run delivered")
+    local_deliver.add_argument("--message", "-m", default="local delivery", help="Delivery checkpoint message")
+    local_deliver.add_argument(
         "--run-path",
         default=None,
         help="Explicit run directory path (auto-detects if omitted)",
@@ -451,6 +468,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     tier_sub.add_parser(
         "show",
         help="Print resolved tier + status from .trw/entitlements.yaml",
+    )
+    status_parser = tier_sub.add_parser(
+        "status",
+        help="Print tier entitlement status as an auditable table",
+    )
+    status_parser.add_argument(
+        "--trw-dir",
+        default=".trw",
+        help="Target .trw/ directory (default: ./.trw)",
     )
 
     return parser

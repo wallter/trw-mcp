@@ -166,6 +166,28 @@ def requires_human_review(
     return {"required": False, "reason": "risk_based", "override_tier": False}
 
 
+def approval_control_map() -> dict[str, object]:
+    """Map internal approval primitives without claiming external compliance."""
+    return {
+        "compliance_claim": "none",
+        "non_compliance_boundary": "These are operator approval controls, not a SOC 2 attestation or certification.",
+        "controls": {
+            "trust_registry": {
+                "purpose": "graduated review mode by successful session count",
+                "code_path": "trw_mcp.state.trust.trust_level_calculate",
+            },
+            "human_review_gate": {
+                "purpose": "force approval for crawl tier, sampled walk tier, and risk/security changes",
+                "code_path": "trw_mcp.state.trust.requires_human_review",
+            },
+            "ceremony_proposals": {
+                "purpose": "register/approve/revert ceremony tier changes with audit history",
+                "code_path": "trw_mcp.state._ceremony_escalation.approve_proposal",
+            },
+        },
+    }
+
+
 # --- FR05: Session Count Increment ---
 
 

@@ -8,6 +8,7 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.trust import (
+    approval_control_map,
     increment_session_count,
     read_audit_log,
     read_trust_registry,
@@ -274,3 +275,18 @@ class TestAuditLog:
         increment_session_count(trw_dir, "test-agent")
         entries = read_audit_log(trw_dir)
         assert len(entries) == 0
+
+
+class TestApprovalControlMap:
+    """PRD-QUAL-087 FR04: approval controls avoid external compliance claims."""
+
+    def test_control_map_names_primitives_and_non_compliance_boundary(self) -> None:
+        control_map = approval_control_map()
+
+        assert control_map["compliance_claim"] == "none"
+        assert "not a SOC 2" in str(control_map["non_compliance_boundary"])
+        controls = control_map["controls"]
+        assert isinstance(controls, dict)
+        assert "trust_registry" in controls
+        assert "human_review_gate" in controls
+        assert "ceremony_proposals" in controls

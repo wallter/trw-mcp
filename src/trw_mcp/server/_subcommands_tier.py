@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.state._entitlements import (
+    Entitlement,
     load_entitlement,
     sign_entitlement_for_dev,
 )
@@ -82,11 +83,37 @@ def _run_tier_show(args: argparse.Namespace) -> None:
     if entitlement.signed_payload_keys:
         print(f"payload:   {','.join(entitlement.signed_payload_keys)}")
     features_enabled = [
-        feature
-        for feature in ("trw_before_edit_hint:distill_sidecar",)
-        if entitlement.has_feature(feature)
+        feature for feature in ("trw_before_edit_hint:distill_sidecar",) if entitlement.has_feature(feature)
     ]
     print(f"features:  {features_enabled or '(none)'}")
+
+
+def _tier_status_rows(entitlement: Entitlement) -> list[tuple[str, str, str, str]]:
+    """Build rows for the auditable tier status table."""
+    limit_label = {
+        "free": "baseline",
+        "team": "team",
+        "pro": "pro",
+        "enterprise": "enterprise",
+    }[entitlement.tier]
+    expires = entitlement.expires_at_iso or "none"
+    return [("active", entitlement.tier, limit_label, expires), ("reason", entitlement.reason, "-", "-")]
+
+
+def _format_tier_status_table(entitlement: Entitlement) -> str:
+    rows = _tier_status_rows(entitlement)
+    lines = [
+        "| state | entitlement | limit | expires |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines.extend(f"| {state} | {tier} | {limit} | {expires} |" for state, tier, limit, expires in rows)
+    return "\n".join(lines)
+
+
+def _run_tier_status(args: argparse.Namespace) -> None:
+    """Print table-form tier status for operator audit trails."""
+    entitlement = load_entitlement(Path(getattr(args, "trw_dir", ".trw")))
+    print(_format_tier_status_table(entitlement))
 
 
 def run_tier(args: argparse.Namespace) -> None:
@@ -96,8 +123,10 @@ def run_tier(args: argparse.Namespace) -> None:
         _run_tier_issue(args)
     elif subcommand == "show":
         _run_tier_show(args)
+    elif subcommand == "status":
+        _run_tier_status(args)
     else:
-        print("Usage: trw-mcp tier {issue|show} [...]", file=sys.stderr)
+        print("Usage: trw-mcp tier {issue|show|status} [...]", file=sys.stderr)
         sys.exit(2)
 
 
