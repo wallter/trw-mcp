@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,7 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server import _transport
 from trw_mcp.server._proxy import discover_proxy_capabilities
-from trw_mcp.server._rate_limit import TokenBucket
+from trw_mcp.server._rate_limit import LocalTokenBucketMiddleware, TokenBucket
 
 
 @dataclass
@@ -125,6 +126,38 @@ def test_http_token_bucket_denies_when_burst_exhausted() -> None:
     assert bucket.allow() is True
     assert bucket.allow() is True
     assert bucket.allow() is False
+
+
+@pytest.mark.unit
+async def test_local_token_bucket_rejection_is_typed_and_diagnostic() -> None:
+    sent: list[dict[str, Any]] = []
+    downstream_called = False
+
+    async def app(_scope: dict[str, Any], _receive: Any, _send: Any) -> None:
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    middleware = LocalTokenBucketMiddleware(app, capacity=1, refill_per_second=0.1)
+    assert middleware.bucket.allow() is True
+
+    await middleware(
+        {"type": "http", "path": "/mcp", "client": ("127.0.0.1", 12345)},
+        lambda: asyncio.sleep(0, result={"type": "http.request"}),
+        send,
+    )
+
+    assert downstream_called is False
+    assert sent[0]["status"] == 429
+    assert (b"content-type", b"application/json") in sent[0]["headers"]
+    body = json.loads(sent[1]["body"].decode("utf-8"))
+    assert body == {
+        "error": "local_mcp_rate_limit_exceeded",
+        "detail": "Local MCP HTTP rate limit exceeded.",
+        "retry_after": 1,
+    }
 
 
 @pytest.mark.unit
