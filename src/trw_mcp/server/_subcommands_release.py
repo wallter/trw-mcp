@@ -14,10 +14,14 @@ import argparse
 import importlib.metadata
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, TypedDict
 
 import structlog
+
+from trw_mcp.exceptions import StateError
+from trw_mcp.state.persistence import FileStateReader
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -25,6 +29,62 @@ else:
     import tomli as tomllib
 
 logger = structlog.get_logger(__name__)
+
+VersionManifestKind = Literal["authoritative", "optional"]
+PackageVersions = TypedDict(
+    "PackageVersions",
+    {
+        "trw-mcp": str,
+        "trw-memory": str,
+        "memory-ts": str,
+    },
+)
+
+
+class VersionValues(TypedDict):
+    """Machine-readable versions emitted by ``version-status``."""
+
+    packages: PackageVersions
+    framework_protocol_version: str
+    installed_asset_version: str
+    installed_asset_trw_mcp_version: str
+    installed_asset_present: bool
+    live_server_version: str
+
+
+class VersionStatus(TypedDict):
+    """JSON-compatible shape returned by PRD-INFRA-120 version status checks."""
+
+    taxonomy: dict[str, str]
+    versions: VersionValues
+    compatibility_matrix: dict[str, object]
+    compatible: bool
+    mismatches: list[str]
+    warnings: list[str]
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class VersionReadResult:
+    """Result of reading a package/version manifest without raising through CLI boundaries."""
+
+    version: str
+    warning: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class InstalledAssetResult:
+    """Parsed installed framework asset metadata."""
+
+    present: bool
+    data: dict[str, object]
+    error: str | None = None
+
+
+PACKAGE_KEY_TRW_MCP = "trw-mcp"
+PACKAGE_KEY_TRW_MEMORY = "trw-memory"
+PACKAGE_KEY_MEMORY_TS = "memory-ts"
 
 
 def _read_pyproject_version(path: Path) -> str:
@@ -42,20 +102,55 @@ def _installed_distribution_version(distribution: str) -> str:
         return "unknown"
 
 
-def _read_pyproject_version_or_unknown(path: Path, *, distribution: str | None = None, fallback: str = "unknown") -> str:
+def _read_pyproject_version_or_unknown(
+    path: Path,
+    *,
+    label: str,
+    distribution: str | None = None,
+    fallback: str = "unknown",
+    kind: VersionManifestKind = "optional",
+) -> VersionReadResult:
     if path.exists():
-        return _read_pyproject_version(path)
+        try:
+            return VersionReadResult(version=_read_pyproject_version(path))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            message = f"{label} manifest unreadable at {path}: {exc}"
+            logger.warning(
+                "version_manifest_unreadable",
+                op="version_status",
+                outcome="degraded" if kind == "optional" else "failed",
+                label=label,
+                path=str(path),
+                error=str(exc),
+            )
+            if kind == "authoritative":
+                return VersionReadResult(version="unknown", error=message)
+            return VersionReadResult(version="unknown", warning=message)
     if fallback != "unknown":
-        return fallback
+        return VersionReadResult(version=fallback)
     if distribution:
         installed = _installed_distribution_version(distribution)
         if installed != "unknown":
-            return installed
-    return "unknown"
+            return VersionReadResult(version=installed)
+    return VersionReadResult(version="unknown")
 
 
-def _read_package_json_version_or_unknown(path: Path) -> str:
-    return _read_package_json_version(path) if path.exists() else "unknown"
+def _read_package_json_version_or_unknown(path: Path, *, label: str) -> VersionReadResult:
+    if not path.exists():
+        return VersionReadResult(version="unknown")
+    try:
+        return VersionReadResult(version=_read_package_json_version(path))
+    except (OSError, json.JSONDecodeError) as exc:
+        message = f"{label} manifest unreadable at {path}: {exc}"
+        logger.warning(
+            "version_manifest_unreadable",
+            op="version_status",
+            outcome="degraded",
+            label=label,
+            path=str(path),
+            error=str(exc),
+        )
+        return VersionReadResult(version="unknown", warning=message)
 
 
 def _read_package_json_version(path: Path) -> str:
@@ -63,31 +158,103 @@ def _read_package_json_version(path: Path) -> str:
     return str(data.get("version", "")) if isinstance(data, dict) else ""
 
 
-def collect_version_status(project_root: Path | None = None) -> dict[str, object]:
+def _read_installed_asset_versions(root: Path) -> InstalledAssetResult:
+    framework_asset_path = root / ".trw" / "frameworks" / "VERSION.yaml"
+    if not framework_asset_path.exists():
+        return InstalledAssetResult(present=False, data={})
+    try:
+        return InstalledAssetResult(
+            present=True,
+            data=FileStateReader(base_dir=root).read_yaml(framework_asset_path),
+        )
+    except StateError as exc:
+        logger.warning(
+            "installed_asset_manifest_unreadable",
+            op="version_status",
+            outcome="failed",
+            path=str(framework_asset_path),
+            error=str(exc),
+        )
+        return InstalledAssetResult(
+            present=True,
+            data={},
+            error=f"installed asset manifest unreadable at {framework_asset_path}: {exc}",
+        )
+
+
+def _append_diagnostics(
+    result: VersionReadResult,
+    *,
+    warnings: list[str],
+    errors: list[str],
+    mismatches: list[str],
+    mismatch_id: str | None = None,
+) -> None:
+    if result.warning:
+        warnings.append(result.warning)
+    if result.error:
+        errors.append(result.error)
+        if mismatch_id:
+            mismatches.append(mismatch_id)
+
+
+def collect_version_status(project_root: Path | None = None) -> VersionStatus:
     """Collect labeled package/framework/live-server version status."""
-    root = project_root or Path.cwd()
     from trw_mcp import __version__ as live_server_version
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.persistence import FileStateReader
 
-    framework_asset_path = root / ".trw" / "frameworks" / "VERSION.yaml"
-    asset = FileStateReader(base_dir=root).read_yaml(framework_asset_path) if framework_asset_path.exists() else {}
-    package_versions = {
-        "trw-mcp": _read_pyproject_version_or_unknown(
-            root / "trw-mcp" / "pyproject.toml",
-            distribution="trw-mcp",
-            fallback=live_server_version,
-        ),
-        "trw-memory": _read_pyproject_version_or_unknown(
-            root / "trw-memory" / "pyproject.toml",
-            distribution="trw-memory",
-        ),
-        "memory-ts": _read_package_json_version_or_unknown(root / "packages" / "memory-ts" / "package.json"),
+    root = (project_root or Path.cwd()).resolve()
+    warnings: list[str] = []
+    errors: list[str] = []
+    mismatches: list[str] = []
+    asset_result = _read_installed_asset_versions(root)
+    asset = asset_result.data
+    trw_mcp_result = _read_pyproject_version_or_unknown(
+        root / "trw-mcp" / "pyproject.toml",
+        label=PACKAGE_KEY_TRW_MCP,
+        distribution=PACKAGE_KEY_TRW_MCP,
+        fallback=live_server_version,
+        kind="authoritative",
+    )
+    trw_memory_result = _read_pyproject_version_or_unknown(
+        root / "trw-memory" / "pyproject.toml",
+        label=PACKAGE_KEY_TRW_MEMORY,
+        distribution=PACKAGE_KEY_TRW_MEMORY,
+    )
+    memory_ts_result = _read_package_json_version_or_unknown(
+        root / "packages" / "memory-ts" / "package.json",
+        label=PACKAGE_KEY_MEMORY_TS,
+    )
+    package_versions: PackageVersions = {
+        "trw-mcp": trw_mcp_result.version,
+        "trw-memory": trw_memory_result.version,
+        "memory-ts": memory_ts_result.version,
     }
+    _append_diagnostics(
+        trw_mcp_result,
+        warnings=warnings,
+        errors=errors,
+        mismatches=mismatches,
+        mismatch_id="trw_mcp_package_manifest_unreadable",
+    )
+    _append_diagnostics(trw_memory_result, warnings=warnings, errors=errors, mismatches=mismatches)
+    _append_diagnostics(memory_ts_result, warnings=warnings, errors=errors, mismatches=mismatches)
+    if asset_result.error:
+        errors.append(asset_result.error)
+        mismatches.append("installed_asset_manifest_unreadable")
+    if not asset_result.present:
+        errors.append("installed asset manifest missing at .trw/frameworks/VERSION.yaml")
+        mismatches.append("installed_asset_manifest_missing")
+
     framework_protocol_version = TRWConfig().framework_version
     installed_asset_version = str(asset.get("framework_version", ""))
     asset_mcp_version = str(asset.get("trw_mcp_version", ""))
-    mismatches: list[str] = []
+    if asset_result.present and not asset_result.error and not installed_asset_version:
+        errors.append("installed asset manifest missing framework_version")
+        mismatches.append("installed_asset_framework_version_missing")
+    if asset_result.present and not asset_result.error and not asset_mcp_version:
+        errors.append("installed asset manifest missing trw_mcp_version")
+        mismatches.append("installed_asset_trw_mcp_version_missing")
     if installed_asset_version and installed_asset_version != framework_protocol_version:
         mismatches.append("framework_protocol_vs_installed_asset")
     mcp_package_version = package_versions["trw-mcp"]
@@ -95,7 +262,7 @@ def collect_version_status(project_root: Path | None = None) -> dict[str, object
         mismatches.append("trw_mcp_package_vs_installed_asset")
     if mcp_package_version != "unknown" and live_server_version != mcp_package_version:
         mismatches.append("trw_mcp_package_vs_live_server")
-    return {
+    status: VersionStatus = {
         "taxonomy": {
             "package_version": "package manifest version (pyproject.toml/package.json)",
             "framework_protocol_version": "TRWConfig.framework_version",
@@ -107,10 +274,11 @@ def collect_version_status(project_root: Path | None = None) -> dict[str, object
             "framework_protocol_version": framework_protocol_version,
             "installed_asset_version": installed_asset_version,
             "installed_asset_trw_mcp_version": asset_mcp_version,
+            "installed_asset_present": asset_result.present,
             "live_server_version": live_server_version,
         },
         "compatibility_matrix": {
-            "independent_packages": ["trw-memory", "memory-ts"],
+            "independent_packages": [PACKAGE_KEY_TRW_MEMORY, PACKAGE_KEY_MEMORY_TS],
             "must_match": [
                 ["packages.trw-mcp", "installed_asset_trw_mcp_version"],
                 ["packages.trw-mcp", "live_server_version"],
@@ -119,14 +287,26 @@ def collect_version_status(project_root: Path | None = None) -> dict[str, object
         },
         "compatible": not mismatches,
         "mismatches": mismatches,
+        "warnings": warnings,
+        "errors": errors,
     }
+    logger.info(
+        "version_status_collected",
+        op="version_status",
+        outcome="compatible" if status["compatible"] else "incompatible",
+        project_root=str(root),
+        mismatches=mismatches,
+        warnings=len(warnings),
+        errors=len(errors),
+    )
+    return status
 
 
-def assert_version_status_compatible(project_root: Path | None = None) -> dict[str, object]:
+def assert_version_status_compatible(project_root: Path | None = None) -> VersionStatus:
     """Return status or raise SystemExit when the release version gate fails."""
     status = collect_version_status(project_root)
     compatible = bool(status["compatible"])
-    mismatches = cast("list[str]", status["mismatches"])
+    mismatches = status["mismatches"]
     if not compatible:
         raise SystemExit(f"version compatibility gate failed: {','.join(mismatches)}")
     return status

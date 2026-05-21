@@ -219,6 +219,73 @@ class TestVersionStatus:
         assert versions["packages"]["memory-ts"] == "unknown"
         assert status["compatible"] is True
 
+    def test_absent_optional_package_manifests_do_not_hide_asset_drift(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Optional package manifests may be absent, but authoritative asset drift still fails closed."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
+        (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 9.9.9\n",
+            encoding="utf-8",
+        )
+
+        status = collect_version_status(tmp_path)
+
+        assert status["compatible"] is False
+        assert status["versions"]["packages"]["memory-ts"] == "unknown"
+        assert status["mismatches"] == ["trw_mcp_package_vs_installed_asset"]
+
+    def test_missing_installed_asset_manifest_is_explicit_and_fails_check(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The gate should not silently pass when no installed asset version can be verified."""
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+
+        status = collect_version_status(tmp_path)
+
+        assert status["compatible"] is False
+        assert status["versions"]["installed_asset_present"] is False
+        assert "installed_asset_manifest_missing" in status["mismatches"]
+        with pytest.raises(SystemExit, match="installed_asset_manifest_missing"):
+            assert_version_status_compatible(tmp_path)
+
+    def test_malformed_optional_package_manifest_warns_without_crashing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Invalid independent package manifests should degrade to unknown instead of crashing status output."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        (tmp_path / "packages" / "memory-ts" / "package.json").write_text("{not-json", encoding="utf-8")
+
+        status = collect_version_status(tmp_path)
+
+        assert status["compatible"] is True
+        assert status["versions"]["packages"]["memory-ts"] == "unknown"
+        assert status["warnings"]
+        assert any("memory-ts" in warning for warning in status["warnings"])
+
+    def test_malformed_installed_asset_manifest_fails_closed_without_crashing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Unreadable authoritative asset metadata should be reported as a gate error, not raised."""
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
+        (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+            "framework_version: [unterminated\n",
+            encoding="utf-8",
+        )
+
+        status = collect_version_status(tmp_path)
+
+        assert status["compatible"] is False
+        assert "installed_asset_manifest_unreadable" in status["mismatches"]
+        assert status["errors"]
+
 
 # ---------------------------------------------------------------------------
 # build_release_bundle tests
