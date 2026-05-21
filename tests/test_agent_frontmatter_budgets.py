@@ -178,4 +178,12 @@ def test_dense_helper_launch_policy_is_client_agnostic() -> None:
 
     assert policy.stagger_seconds > 0
     assert policy.max_concurrent_launches == 4
+    assert policy.backoff_multiplier > 1.0
+    assert policy.max_backoff_seconds >= policy.stagger_seconds
     assert "large dense launch" in policy.rationale
+
+
+def test_launch_policy_rejects_non_positive_helper_count() -> None:
+    """PRD-QUAL-087 FR03: malformed launch requests fail closed."""
+    with pytest.raises(ValueError, match="helper_count must be positive"):
+        resolve_launch_throttle_policy(0)

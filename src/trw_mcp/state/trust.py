@@ -14,6 +14,7 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import HumanReviewResult, TrustLevelResult, TrustSessionIncrementResult
+from trw_mcp.models.typed_dicts._trust import ApprovalControlMapResult
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -166,11 +167,14 @@ def requires_human_review(
     return {"required": False, "reason": "risk_based", "override_tier": False}
 
 
-def approval_control_map() -> dict[str, object]:
+def approval_control_map() -> ApprovalControlMapResult:
     """Map internal approval primitives without claiming external compliance."""
     return {
         "compliance_claim": "none",
         "non_compliance_boundary": "These are operator approval controls, not a SOC 2 attestation or certification.",
+        "operator_diagnostics": (
+            "approval controls require project-specific compliance review before external claims",
+        ),
         "controls": {
             "trust_registry": {
                 "purpose": "graduated review mode by successful session count",

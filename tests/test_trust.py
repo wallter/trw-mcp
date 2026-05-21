@@ -285,6 +285,9 @@ class TestApprovalControlMap:
 
         assert control_map["compliance_claim"] == "none"
         assert "not a SOC 2" in str(control_map["non_compliance_boundary"])
+        assert control_map["operator_diagnostics"] == (
+            "approval controls require project-specific compliance review before external claims",
+        )
         controls = control_map["controls"]
         assert isinstance(controls, dict)
         assert "trust_registry" in controls
