@@ -184,6 +184,21 @@ def reset_backend() -> None:
     reset_embedder()
 
 
+def peek_backend() -> SQLiteBackend | None:
+    """Return the live singleton backend WITHOUT constructing one.
+
+    Used by maintenance paths (e.g. WAL checkpointing) that must reuse the
+    existing connection rather than open a competing one — opening a second
+    connection to checkpoint is what triggered the SQLite WAL-reset corruption
+    bug. Returns None when no backend has been created yet.
+
+    The unlocked read of ``_backend`` is intentional and safe under CPython
+    (reference reads are atomic under the GIL); once set, ``_backend`` is
+    stable until the test-only ``reset_backend()``.
+    """
+    return _backend
+
+
 # ---------------------------------------------------------------------------
 # Embedder lifecycle
 # ---------------------------------------------------------------------------

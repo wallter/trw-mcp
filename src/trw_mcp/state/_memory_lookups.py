@@ -167,6 +167,14 @@ def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
         _warn("session_count_update_failed", exc_info=True, entry_ids=valid_ids)
 
 
+def _same_db_path(a: Path, b: Path) -> bool:
+    """True when two paths resolve to the same database file (fail-safe)."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
 def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
     """Checkpoint the SQLite WAL when it exceeds threshold; fail-open.
 
@@ -189,26 +197,42 @@ def maybe_checkpoint_wal(trw_dir: Path) -> dict[str, object]:
             wal_size_mb=wal_size_mb,
             threshold_mb=config.wal_checkpoint_threshold_mb,
         )
-        conn = sqlite3.connect(str(db_path), timeout=1.0)
-        truncate_busy = False
-        try:
-            conn.execute("PRAGMA busy_timeout = 500")
-            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            busy = int(row[0]) if row else 1
-            checkpointed = int(row[2]) if row and row[2] is not None else 0
-            mode = "truncate"
-            if busy == 1:
-                truncate_busy = True
-                logger.info(
-                    "wal_checkpoint_truncate_busy",
-                    detail="readers held pages; falling back to PASSIVE",
-                )
+        # Prefer the LIVE backend's single connection. Opening a competing bare
+        # connection while the backend writer is active is exactly the
+        # two-connection condition that detonates the SQLite WAL-reset
+        # corruption bug on engines < 3.51.3 (sqlite.org/wal.html §walresetbug).
+        # When no backend owns this db we are the sole accessor, so a bare
+        # checkpoint cannot race. We never CONSTRUCT a backend here (that would
+        # run quick_check/recovery on a maintenance path).
+        from trw_mcp.state._memory_connection import peek_backend
+
+        backend = peek_backend()
+        if backend is not None and _same_db_path(backend.db_path, db_path):
+            result = backend.checkpoint_wal("TRUNCATE")
+            busy = int(str(result.get("busy", 1)))
+            checkpointed = int(str(result.get("checkpointed", 0)))
+            mode = str(result.get("mode", "error")).lower()
+        else:
+            # No live backend owns this db in THIS process — but another process
+            # (e.g. the shared HTTP server) might. Running a resetting checkpoint
+            # (TRUNCATE/RESTART) from a competing connection is the WAL-reset
+            # corruption trigger, so the bare path uses PASSIVE only, which never
+            # resets the WAL and is therefore always safe.
+            conn = sqlite3.connect(str(db_path), timeout=5.0)
+            try:
+                conn.execute("PRAGMA busy_timeout = 5000")
                 row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
                 busy = int(row[0]) if row else 1
                 checkpointed = int(row[2]) if row and row[2] is not None else 0
                 mode = "passive"
-        finally:
-            conn.close()
+            finally:
+                conn.close()
+        truncate_busy = mode == "passive"
+        if truncate_busy:
+            logger.info(
+                "wal_checkpoint_truncate_busy",
+                detail="readers held pages; fell back to PASSIVE",
+            )
         wal_size_after = wal_path.stat().st_size if wal_path.exists() else 0
         wal_size_after_mb = round(wal_size_after / (1024 * 1024), 1)
         logger.info(

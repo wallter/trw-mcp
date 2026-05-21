@@ -165,3 +165,56 @@ def test_skipped_when_no_wal_file(tmp_path: Path) -> None:
 
     result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
     assert result == {"skipped": True, "reason": "no_wal_file"}
+
+
+def test_routes_through_existing_backend_not_bare_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a backend owns the db, the checkpoint goes through ITS single
+    connection — never a competing bare connection (the corruption trigger).
+
+    This is the crux of the WAL-reset fix: in the production session_start
+    path a backend always exists, so `peek_backend()` returns it and the
+    bare-connection branch is never reached.
+    """
+    import trw_mcp.state._memory_connection as mc
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+    from trw_memory.models.memory import MemoryEntry
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    trw_dir = tmp_path / ".trw"
+    db_path = trw_dir / "memory" / "memory.db"
+    db_path.parent.mkdir(parents=True)
+
+    backend = SQLiteBackend(db_path)
+    mc._backend = backend  # make peek_backend() return this live backend
+    try:
+        for i in range(50):
+            backend.store(MemoryEntry(id=f"e{i}", content=f"content {i}"))
+        assert db_path.with_suffix(".db-wal").exists()
+
+        cfg = get_config()
+        monkeypatch.setattr(cfg, "wal_checkpoint_threshold_mb", 0)  # any WAL triggers
+
+        calls = {"backend_checkpoint": 0}
+        real = backend.checkpoint_wal
+
+        def spy(mode: str = "TRUNCATE") -> dict[str, object]:
+            calls["backend_checkpoint"] += 1
+            return real(mode)
+
+        monkeypatch.setattr(backend, "checkpoint_wal", spy)
+        # A bare second connection is the corruption trigger — forbid it.
+        monkeypatch.setattr(
+            sqlite3,
+            "connect",
+            lambda *a, **k: pytest.fail("maybe_checkpoint_wal opened a competing connection"),
+        )
+
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+
+        assert calls["backend_checkpoint"] == 1, "must checkpoint via the owning backend"
+        assert result.get("checkpointed") is True
+    finally:
+        mc.reset_backend()
