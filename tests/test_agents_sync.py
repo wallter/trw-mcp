@@ -15,6 +15,7 @@ Regenerate drift via ``scripts/sync-agents.py``.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 from pathlib import Path
 
@@ -25,6 +26,15 @@ BUNDLED_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
 
 _TOOL_MARKER_RE = re.compile(r"\{tool:(trw_\w+)\}")
+_DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md"}
+
+_MANIFEST_SPEC = importlib.util.spec_from_file_location(
+    "bundle_hash_manifest",
+    REPO_ROOT / "scripts" / "bundle_hash_manifest.py",
+)
+assert _MANIFEST_SPEC is not None and _MANIFEST_SPEC.loader is not None
+_MANIFEST_MODULE = importlib.util.module_from_spec(_MANIFEST_SPEC)
+_MANIFEST_SPEC.loader.exec_module(_MANIFEST_MODULE)
 
 
 def _expand_markers(text: str) -> str:
@@ -62,7 +72,27 @@ def test_parity_after_marker_expansion(agent_name: str) -> None:
 def test_counts_match() -> None:
     """The two dirs have the same set of agent filenames."""
     bundled = {p.name for p in BUNDLED_DIR.glob("*.md")}
-    claude = {p.name for p in CLAUDE_DIR.glob("*.md")}
+    claude = {p.name for p in CLAUDE_DIR.glob("*.md")} - _DEV_ONLY_AGENTS
     assert bundled == claude, (
         f"filename set drift:\n  bundled-only: {sorted(bundled - claude)}\n  claude-only:  {sorted(claude - bundled)}"
     )
+
+
+def test_bundle_hash_manifest_matches_current_bundled_files() -> None:
+    """Committed bundle hash manifest matches bundled agent, hook, and skill files."""
+    assert _MANIFEST_MODULE.check_manifest() == []
+
+
+def test_bundle_hash_manifest_detects_drift(tmp_path: Path) -> None:
+    """Manifest checker reports changed bundled content by relative path."""
+    bundled = tmp_path / "data"
+    (bundled / "agents").mkdir(parents=True)
+    (bundled / "hooks").mkdir()
+    (bundled / "skills").mkdir()
+    agent = bundled / "agents" / "trw-test.md"
+    agent.write_text("old", encoding="utf-8")
+    manifest = tmp_path / "bundle-hashes.json"
+    _MANIFEST_MODULE.write_manifest(manifest, bundled)
+    agent.write_text("new", encoding="utf-8")
+
+    assert _MANIFEST_MODULE.check_manifest(manifest, bundled) == ["agents/trw-test.md"]

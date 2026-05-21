@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """update_project flow — selectively updates TRW framework files.
 
 ``trw-mcp update-project`` selectively updates framework files (hooks,
@@ -11,6 +12,8 @@ This module is a thin orchestrator.  Implementation lives in:
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 
 import structlog
@@ -67,7 +70,7 @@ def _run_auto_maintenance(
         )
 
         _reset_config()
-        config = get_config()
+        get_config()
         trw_dir = target_dir / ".trw"
 
         # Check embeddings status and backfill if available
@@ -175,6 +178,26 @@ from ._version_migration import _write_manifest as _write_manifest
 
 logger = structlog.get_logger(__name__)
 
+_TRANSACTION_DIRS: tuple[str, ...] = (
+    ".trw",
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".opencode",
+    ".github",
+    ".gemini",
+    ".antigravitycli",
+)
+_TRANSACTION_FILES: tuple[str, ...] = (
+    ".mcp.json",
+    "AGENTS.md",
+    "ANTIGRAVITY.md",
+    "CLAUDE.md",
+    "FRAMEWORK.md",
+    "GEMINI.md",
+    "opencode.json",
+)
+
 
 # ---------------------------------------------------------------------------
 # Main update_project entry point
@@ -194,6 +217,43 @@ def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
     if dry_run:
         result["warnings"].append("DRY RUN — no files will be modified.")
     return result
+
+
+def _remove_transaction_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _snapshot_transaction_paths(target_dir: Path) -> Path:
+    snapshot_root = Path(tempfile.mkdtemp(prefix="trw-update-snapshot-"))
+    for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
+        src = target_dir / rel
+        if not src.exists() and not src.is_symlink():
+            continue
+        dest = snapshot_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir() and not src.is_symlink():
+            shutil.copytree(src, dest, symlinks=True)
+        else:
+            shutil.copy2(src, dest, follow_symlinks=False)
+    return snapshot_root
+
+
+def _restore_transaction_snapshot(target_dir: Path, snapshot_root: Path) -> None:
+    for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
+        dest = target_dir / rel
+        if dest.exists() or dest.is_symlink():
+            _remove_transaction_path(dest)
+        src = snapshot_root / rel
+        if not src.exists() and not src.is_symlink():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir() and not src.is_symlink():
+            shutil.copytree(src, dest, symlinks=True)
+        else:
+            shutil.copy2(src, dest, follow_symlinks=False)
 
 
 def _generate_behavioral_protocol_md(
@@ -385,12 +445,31 @@ def update_project(
         return result
 
     prev_manifest = _read_manifest(target_dir)
+    snapshot_root: Path | None = None
+    if not dry_run:
+        try:
+            snapshot_root = _snapshot_transaction_paths(target_dir)
+        except OSError as exc:
+            result["errors"].append(f"Failed to snapshot update targets: {exc}")
+            return result
 
     effective_data = data_dir or _DATA_DIR
-    _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress)
+    try:
+        _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress)
 
-    if not dry_run:
-        _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
+        if not dry_run:
+            _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
+    except Exception as exc:
+        result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
+    finally:
+        if snapshot_root is not None:
+            if result["errors"]:
+                try:
+                    _restore_transaction_snapshot(target_dir, snapshot_root)
+                    result["warnings"].append("update-project rolled back managed directories after write failure")
+                except OSError as exc:
+                    result["errors"].append(f"Failed to restore update snapshot: {exc}")
+            shutil.rmtree(snapshot_root, ignore_errors=True)
 
     result["warnings"].append(
         "Running Claude Code sessions use cached hooks/settings. "

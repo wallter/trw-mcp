@@ -40,6 +40,33 @@ _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers --
 
 _SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
 
+_WRITE_TARGET_RENDERERS: dict[str, tuple[str, ...]] = {
+    "claude_md": ("_run_claude_md_sync",),
+    "agents_md": (
+        "_update_opencode_artifacts",
+        "_update_codex_artifacts",
+        "_update_cursor_cli_artifacts",
+        "_update_copilot_artifacts",
+        "_update_gemini_artifacts",
+        "_update_antigravity_artifacts",
+    ),
+    "agents_md_primary": ("_update_cursor_cli_artifacts",),
+    "cli_config": ("_update_cursor_cli_artifacts",),
+    "cursor_rules": ("_update_cursor_artifacts",),
+    "copilot_instructions": ("_update_copilot_artifacts",),
+    "gemini_md": ("_update_gemini_artifacts",),
+    "antigravitycli_md": ("_update_antigravity_artifacts",),
+}
+_UNSUPPORTED_WRITE_TARGETS: dict[str, str] = {}
+
+
+def write_target_renderer_coverage() -> dict[str, tuple[str, ...] | str]:
+    """Return renderer/update coverage for every supported WriteTargets boolean."""
+    return {
+        **_WRITE_TARGET_RENDERERS,
+        **{flag: f"unsupported:{reason}" for flag, reason in _UNSUPPORTED_WRITE_TARGETS.items()},
+    }
+
 
 def _absorb_sub_result(
     parent: dict[str, list[str]],

@@ -27,6 +27,9 @@ from ._mcp_registry_models import (
 
 logger = structlog.get_logger(__name__)
 
+_SignatureCacheKey = tuple[str, str, str, str]
+_SIGNATURE_CACHE: set[_SignatureCacheKey] = set()
+
 __all__ = [
     "ALL_PHASES",
     "ALL_SCOPES",
@@ -84,7 +87,22 @@ def _load_public_key(path: Path) -> tuple[object, str]:
     return public_key, "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def _verify_registry_signature(payload: dict[str, object], *, public_key_path: Path) -> None:
+def _signature_cache_key(
+    *,
+    registry_path: Path,
+    content_hash: str,
+    signature_hash: str,
+    public_key_fingerprint: str,
+) -> _SignatureCacheKey:
+    return (
+        str(registry_path.resolve()),
+        content_hash,
+        signature_hash,
+        public_key_fingerprint,
+    )
+
+
+def _verify_registry_signature(payload: dict[str, object], *, public_key_path: Path, registry_path: Path) -> None:
     signature_block_raw = payload.get("signature_block")
     if not isinstance(signature_block_raw, dict):
         raise MCPSecurityConfigError("registry signature_block is required")
@@ -96,10 +114,22 @@ def _verify_registry_signature(payload: dict[str, object], *, public_key_path: P
         signature = base64.b64decode(signature_block.signature.encode("ascii"), validate=True)
     except ValueError as exc:
         raise MCPSecurityConfigError("registry signature is not valid base64") from exc
+    content_hash = "sha256:" + hashlib.sha256(canonicalize_registry_payload(payload)).hexdigest()
+    signature_hash = "sha256:" + hashlib.sha256(signature).hexdigest()
+    cache_key = _signature_cache_key(
+        registry_path=registry_path,
+        content_hash=content_hash,
+        signature_hash=signature_hash,
+        public_key_fingerprint=computed_fingerprint,
+    )
+    if cache_key in _SIGNATURE_CACHE:
+        logger.debug("mcp_registry_signature_cache_hit", path=str(registry_path), content_hash=content_hash)
+        return
     try:
         public_key.verify(signature, canonicalize_registry_payload(payload))  # type: ignore[attr-defined]
     except Exception as exc:  # pragma: no cover - exact crypto error type is library-specific
         raise MCPSecurityConfigError("registry signature verification failed") from exc
+    _SIGNATURE_CACHE.add(cache_key)
 
 
 def _parse_allowlist_file(path: Path, *, public_key_path: Path) -> MCPAllowlist:
@@ -109,7 +139,7 @@ def _parse_allowlist_file(path: Path, *, public_key_path: Path) -> MCPAllowlist:
         raise MCPSecurityConfigError(f"unable to read allowlist {path}") from exc
     if not isinstance(raw, dict):
         raise MCPSecurityConfigError(f"allowlist {path} must be a YAML mapping")
-    _verify_registry_signature(raw, public_key_path=public_key_path)
+    _verify_registry_signature(raw, public_key_path=public_key_path, registry_path=path)
     servers = tuple(MCPServer.model_validate(item) for item in raw.get("servers", []))
     return MCPAllowlist(
         version=int(raw.get("version", 1)),
