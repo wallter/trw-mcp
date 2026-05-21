@@ -1,18 +1,15 @@
-"""PRD-FIX-085 FR04: JSONL rotation parity for recall_tracking,
-propensity, and deferred-deliver logs.
-
-Pre-fix: surface_tracking.jsonl rotates at 10 MB; recall_tracking,
-propensity, and deferred-deliver did not. Observed 52 MB / 9 MB / 25 MB
-respectively on the dev repo with no rotation.
-
-Post-fix: all four call rotate_jsonl(max_bytes=10*1024*1024).
-"""
+"""PRD-FIX-085 and PRD-CORE-177 JSONL rotation and retention parity tests."""
 
 from __future__ import annotations
 
+import gzip
+import json
+import sys
 from pathlib import Path
 
 import pytest
+
+from trw_mcp.telemetry.retention import rotate_telemetry_log
 
 
 def _seed_jsonl_over_threshold(path: Path, target_mb: float = 11) -> int:
@@ -88,3 +85,31 @@ def test_deferred_deliver_log_rotates_when_oversized(tmp_path: Path) -> None:
     rotated = log_path.with_suffix(log_path.suffix + ".1")
     assert rotated.exists(), "deferred-deliver.jsonl.1 should exist after rotation"
     assert log_path.stat().st_size < pre_size
+
+
+def test_buffered_swarm_emitter_flushes_by_event_count(tmp_path: Path) -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "trw-swarm" / "src"))
+    from trw_swarm.runtime.loop_runtime import BufferedTelemetryEmitter
+
+    path = tmp_path / "events.jsonl"
+    emitter = BufferedTelemetryEmitter(path, max_events=2, max_interval_seconds=60)
+    emitter.emit({"event": "one"})
+    assert not path.exists()
+    emitter.emit({"event": "two"})
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [{"event": "one"}, {"event": "two"}]
+
+
+def test_rotate_telemetry_log_compresses_dense_jsonl(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text('{"event":"one"}\n' * 10, encoding="utf-8")
+
+    result = rotate_telemetry_log(path, max_bytes=10, compress=True)
+
+    assert result["rotated"] is True
+    archive = Path(str(result["archive_path"]))
+    assert archive.suffix == ".gz"
+    with gzip.open(archive, "rt", encoding="utf-8") as handle:
+        assert '"event":"one"' in handle.read()
+    assert path.read_text(encoding="utf-8") == ""

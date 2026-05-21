@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.tools.usage import _compute_cost
+from trw_mcp.tools.usage import _compute_cost, build_run_cost_ledger
 
 
 class TestComputeCost:
@@ -70,3 +70,29 @@ class TestOpus47Pricing:
     def test_opus_47_cost_compute_roundtrips(self) -> None:
         """FR02: _compute_cost resolves 4.7 without falling back to default."""
         assert _compute_cost("claude-opus-4-7", 1_000_000, 1_000_000) == 90.0
+
+
+def test_build_run_cost_ledger_aggregates_by_run() -> None:
+    ledger = build_run_cost_ledger(
+        [
+            {
+                "run_id": "run-a",
+                "model": "claude-sonnet-4-6",
+                "provider": "anthropic",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+            },
+            {
+                "run_id": "run-a",
+                "model": "claude-haiku-4-5-20251001",
+                "provider": "anthropic",
+                "input_tokens": 500,
+                "output_tokens": 500,
+            },
+        ]
+    )
+
+    assert ledger["run-a"]["input_tokens"] == 1500
+    assert ledger["run-a"]["output_tokens"] == 1000
+    assert ledger["run-a"]["providers"] == ["anthropic"]
+    assert float(ledger["run-a"]["estimated_cost_usd"]) > 0.0

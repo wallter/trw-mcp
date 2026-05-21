@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from trw_mcp.telemetry.event_base import AGENT_TRACE_V1_FIELDS, AgentTraceV1Fields
 from trw_mcp.telemetry.trace_context import build_tool_trace_fields, stable_payload_hash, with_task_profile_hash
+from trw_mcp.tools.orchestration import _phase_duration_summary
 
 
 def test_trace_hashes_are_deterministic_and_redacted() -> None:
@@ -45,3 +47,36 @@ def test_stable_payload_hash_handles_unjsonable_values() -> None:
         pass
 
     assert stable_payload_hash(Unjsonable())
+
+
+def test_agent_trace_v1_schema_has_required_forensics_fields() -> None:
+    fields = set(AGENT_TRACE_V1_FIELDS)
+    assert {
+        "run_id",
+        "session_id",
+        "phase",
+        "tool_name",
+        "artifact_id",
+        "security_decision",
+        "verdict",
+        "provider",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "estimated_cost_usd",
+    } <= fields
+    assert AgentTraceV1Fields().schema_version == "agent-trace-v1"
+
+
+def test_phase_duration_summary_uses_phase_enter_events() -> None:
+    summary = _phase_duration_summary(
+        [
+            {"event": "phase_enter", "phase": "plan", "ts": "2026-05-21T00:00:00+00:00"},
+            {"event": "phase_enter", "phase": "implement", "ts": "2026-05-21T00:00:05+00:00"},
+        ],
+        "implement",
+    )
+
+    assert summary["active_phase"] == "implement"
+    assert summary["transition_count"] == 2
+    assert summary["phase_seconds"]["plan"] == 5.0

@@ -125,6 +125,7 @@ class TrwStatusDict(TypedDict, total=False):
     framework: str
     event_count: int
     reflection: StatusReflectionDict
+    phase_durations: dict[str, object]
     waves: list[dict[str, object]]
     wave_progress: WaveProgressDict
     wave_status: dict[str, object]

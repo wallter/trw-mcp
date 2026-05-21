@@ -61,6 +61,7 @@ class UsageReportResult(TypedDict, total=False):
     total_cost_estimate_usd: float
     by_model: dict[str, UsageModelEntryDict]
     by_caller: dict[str, UsageCallerEntryDict]
+    cost_ledger: dict[str, dict[str, object]]
     # populated when group_by != "none"
     group_by: str
     grouped_by: dict[str, UsageGroupEntryDict]

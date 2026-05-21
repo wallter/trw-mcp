@@ -22,7 +22,7 @@ references produce a WARN log and a returned list, never an exception.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import structlog
@@ -67,6 +67,29 @@ class HPOTelemetryEvent(BaseModel):
     surface_snapshot_id: str = ""
     parent_event_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTraceV1Fields(BaseModel):
+    """Stable Agent Trace v1 vocabulary for cross-emitter run forensics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal["agent-trace-v1"] = "agent-trace-v1"
+    run_id: str | None = None
+    session_id: str | None = None
+    phase: str | None = None
+    tool_name: str | None = None
+    artifact_id: str | None = None
+    security_decision: str | None = None
+    verdict: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+AGENT_TRACE_V1_FIELDS: tuple[str, ...] = tuple(AgentTraceV1Fields.model_fields)
 
 
 class CeremonyEvent(HPOTelemetryEvent):

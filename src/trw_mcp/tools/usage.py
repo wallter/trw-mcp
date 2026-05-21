@@ -40,6 +40,14 @@ _COST_RATES: dict[str, dict[str, float]] = {
 _DEFAULT_RATE: dict[str, float] = {"input": 3.00, "output": 15.00}
 
 
+def _as_int(value: object) -> int:
+    return int(str(value or 0))
+
+
+def _as_float(value: object) -> float:
+    return float(str(value or 0.0))
+
+
 def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Compute cost estimate in USD for a given model and token counts.
 
@@ -54,6 +62,34 @@ def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     rates = _COST_RATES.get(model, _DEFAULT_RATE)
     cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
     return round(cost, 6)
+
+
+def build_run_cost_ledger(records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    """Aggregate run-level token/cost ledger entries from usage records."""
+    ledger: dict[str, dict[str, object]] = {}
+    for record in records:
+        run_id = str(record.get("run_id", "") or "unknown")
+        model = str(record.get("model", "unknown"))
+        provider = str(record.get("provider", model.split("-", 1)[0] if model != "unknown" else "unknown"))
+        input_tokens = int(str(record.get("input_tokens", 0)))
+        output_tokens = int(str(record.get("output_tokens", 0)))
+        cost = _compute_cost(model, input_tokens, output_tokens)
+        entry = ledger.setdefault(
+            run_id,
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "estimated_cost_usd": 0.0,
+                "models": [],
+                "providers": [],
+            },
+        )
+        entry["input_tokens"] = _as_int(entry["input_tokens"]) + input_tokens
+        entry["output_tokens"] = _as_int(entry["output_tokens"]) + output_tokens
+        entry["estimated_cost_usd"] = round(_as_float(entry["estimated_cost_usd"]) + cost, 6)
+        entry["models"] = sorted({*cast("list[str]", entry["models"]), model})
+        entry["providers"] = sorted({*cast("list[str]", entry["providers"]), provider})
+    return ledger
 
 
 def register_usage_tools(server: FastMCP) -> None:
@@ -108,8 +144,9 @@ def register_usage_tools(server: FastMCP) -> None:
                 "total_input_tokens": 0,
                 "total_output_tokens": 0,
                 "total_cost_estimate_usd": 0.0,
-                "by_model": {},
-                "by_caller": {},
+            "by_model": {},
+            "by_caller": {},
+            "cost_ledger": {},
             }
 
         total_calls = 0
@@ -186,6 +223,7 @@ def register_usage_tools(server: FastMCP) -> None:
             "total_cost_estimate_usd": total_cost_rounded,
             "by_model": by_model,
             "by_caller": by_caller,
+            "cost_ledger": build_run_cost_ledger(records),
         }
 
         # Group-by breakdown (INFRA-029 FR02)
