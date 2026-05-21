@@ -40,6 +40,26 @@ logger = structlog.get_logger(__name__)
 _events = FileEventLogger(FileStateWriter())
 
 
+def _validate_adoptable_run(resolved: Path, project_root: Path) -> str:
+    """Validate run metadata and event-log readability before pin mutation."""
+    meta_dir = resolved / "meta"
+    if not meta_dir.is_dir():
+        raise StateError(f"run metadata directory missing: {meta_dir}", path=str(resolved))
+    reader = FileStateReader(base_dir=project_root)
+    run_yaml = meta_dir / "run.yaml"
+    data = reader.read_yaml(run_yaml)
+    run_id = str(data.get("run_id", "") or data.get("id", "") or resolved.name)
+    if not run_id:
+        raise StateError("run metadata missing run_id", path=str(run_yaml))
+    events_jsonl = meta_dir / "events.jsonl"
+    if events_jsonl.exists():
+        reader.read_jsonl(events_jsonl)
+    checkpoints_jsonl = resolved / "reports" / "checkpoints.jsonl"
+    if checkpoints_jsonl.exists():
+        reader.read_jsonl(checkpoints_jsonl)
+    return str(data.get("status", "unknown"))
+
+
 def adopt_run(
     ctx: Context | None,
     run_path: str,
@@ -68,15 +88,7 @@ def adopt_run(
 
     caller_pin_key = resolve_pin_key(ctx=ctx, explicit=None)
 
-    run_yaml = resolved / "meta" / "run.yaml"
-    target_status = "unknown"
-    if run_yaml.exists():
-        try:
-            reader = FileStateReader()
-            data = reader.read_yaml(run_yaml)
-            target_status = str(data.get("status", "unknown"))
-        except Exception:  # justified: fail-open, unreadable run.yaml treated as unknown
-            logger.debug("adopt_run_read_status_failed", run_path=str(resolved), exc_info=True)
+    target_status = _validate_adoptable_run(resolved, project_root)
 
     if target_status in ("delivered", "complete", "failed") and not force:
         raise StateError(

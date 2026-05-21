@@ -35,6 +35,7 @@ import structlog
 
 import trw_mcp.tools._deferred_state as _ds
 from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
+from trw_mcp.models.config import get_config
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.
@@ -366,7 +367,10 @@ def _run_deferred_steps(
     Test patches should target this module directly:
     ``patch("trw_mcp.tools._deferred_delivery._step_foo")``.
     """
-    lock_fd = _try_acquire_deferred_lock(trw_dir)
+    lock_fd = _try_acquire_deferred_lock(
+        trw_dir,
+        stale_threshold_seconds=float(get_config().deferred_lock_stale_seconds),
+    )
     if lock_fd is None:
         logger.info("deferred_deliver_skipped", reason="another_batch_running")
         return {"status": "skipped", "reason": "another_batch_running"}

@@ -80,6 +80,15 @@ from trw_mcp.state._persistence_protocols import (
 class FileStateReader:
     """File-based implementation of StateReader."""
 
+    def __init__(self, base_dir: Path | None = None) -> None:
+        self._base_dir = base_dir.resolve() if base_dir is not None else None
+
+    def _check_contained(self, path: Path) -> Path:
+        resolved = path.resolve()
+        if self._base_dir is not None and not resolved.is_relative_to(self._base_dir):
+            raise StateError(f"state read path escapes base directory: {resolved}", path=str(resolved))
+        return resolved
+
     def read_yaml(self, path: Path) -> dict[str, object]:
         """Read and parse a YAML file.
 
@@ -92,10 +101,11 @@ class FileStateReader:
         Raises:
             StateError: If file cannot be read or parsed.
         """
-        if not path.exists():
-            raise StateError(f"YAML file not found: {path}", path=str(path))
+        checked_path = self._check_contained(path)
+        if not checked_path.exists():
+            raise StateError(f"YAML file not found: {checked_path}", path=str(checked_path))
         try:
-            with path.open("r", encoding="utf-8") as fh:
+            with checked_path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
                     data = _safe_yaml().load(fh)
@@ -104,14 +114,14 @@ class FileStateReader:
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read YAML: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
         if data is None:
             return {}
         if not isinstance(data, dict):
             raise StateError(
                 f"YAML root must be a mapping, got {type(data).__name__}",
-                path=str(path),
+                path=str(checked_path),
             )
         result: dict[str, object] = dict(data)
         return result
@@ -128,11 +138,12 @@ class FileStateReader:
         Raises:
             StateError: If file cannot be read or parsed.
         """
-        if not path.exists():
+        checked_path = self._check_contained(path)
+        if not checked_path.exists():
             return []
         try:
             records: list[dict[str, object]] = []
-            with path.open("r", encoding="utf-8") as fh:
+            with checked_path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
                     for line_num, line in enumerate(fh, start=1):
@@ -145,7 +156,7 @@ class FileStateReader:
                         else:
                             logger.warning(
                                 "jsonl_non_dict_line",
-                                path=str(path),
+                                path=str(checked_path),
                                 line=line_num,
                             )
                 finally:
@@ -154,14 +165,14 @@ class FileStateReader:
         except json.JSONDecodeError as exc:
             raise StateError(
                 f"Failed to parse JSONL: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
         except StateError:
             raise
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read JSONL: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
 
     def exists(self, path: Path) -> bool:
@@ -173,7 +184,7 @@ class FileStateReader:
         Returns:
             True if path exists.
         """
-        return path.exists()
+        return self._check_contained(path).exists()
 
 
 class FileStateWriter:

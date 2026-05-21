@@ -98,6 +98,7 @@ class _BuildFields:
     # releases the deliver-deferred file lock so the next batch can run.
     deferred_step_max_seconds: int = 60
     deferred_batch_max_seconds: int = 300
+    deferred_lock_stale_seconds: int = 600
 
     # -- Quality gates (mutation, cross-model, multi-agent, dep audit, API fuzz) --
 

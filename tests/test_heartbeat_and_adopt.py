@@ -389,6 +389,34 @@ def test_adopt_refuses_terminal_status_without_force(
     assert "terminal" in str(exc.value).lower()
 
 
+def test_adopt_refuses_unreadable_metadata_before_pin_write(isolated_project: Path) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._pin_store import load_pin_store
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    (run / "meta" / "events.jsonl").write_text("{not-json}\n", encoding="utf-8")
+    server = _make_server()
+    adopt = _adopt(server)
+
+    with pytest.raises(StateError, match="Failed to parse JSONL"):
+        adopt(ctx=SimpleNamespace(session_id="sess-bad"), run_path=str(run))
+    assert "sess-bad" not in load_pin_store()
+
+
+def test_file_state_reader_rejects_paths_outside_base(
+    isolated_project: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state.persistence import FileStateReader
+
+    outside = tmp_path_factory.mktemp("outside-state") / "state.yaml"
+    outside.write_text("ok: true\n", encoding="utf-8")
+
+    reader = FileStateReader(base_dir=isolated_project)
+    with pytest.raises(StateError, match="escapes base directory"):
+        reader.read_yaml(outside)
+
+
 def test_adopt_succeeds_terminal_status_with_force(
     isolated_project: Path,
 ) -> None:
