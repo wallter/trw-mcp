@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import structlog
@@ -29,6 +30,7 @@ logger = structlog.get_logger(__name__)
 
 _SignatureCacheKey = tuple[str, str, str, str]
 _SIGNATURE_CACHE: set[_SignatureCacheKey] = set()
+_SIGNATURE_CACHE_LOCK = threading.RLock()
 
 __all__ = [
     "ALL_PHASES",
@@ -95,10 +97,10 @@ def _signature_cache_key(
     public_key_fingerprint: str,
 ) -> _SignatureCacheKey:
     return (
+        public_key_fingerprint,
         str(registry_path.resolve()),
         content_hash,
         signature_hash,
-        public_key_fingerprint,
     )
 
 
@@ -122,14 +124,15 @@ def _verify_registry_signature(payload: dict[str, object], *, public_key_path: P
         signature_hash=signature_hash,
         public_key_fingerprint=computed_fingerprint,
     )
-    if cache_key in _SIGNATURE_CACHE:
-        logger.debug("mcp_registry_signature_cache_hit", path=str(registry_path), content_hash=content_hash)
-        return
-    try:
-        public_key.verify(signature, canonicalize_registry_payload(payload))  # type: ignore[attr-defined]
-    except Exception as exc:  # pragma: no cover - exact crypto error type is library-specific
-        raise MCPSecurityConfigError("registry signature verification failed") from exc
-    _SIGNATURE_CACHE.add(cache_key)
+    with _SIGNATURE_CACHE_LOCK:
+        if cache_key in _SIGNATURE_CACHE:
+            logger.debug("mcp_registry_signature_cache_hit", path=str(registry_path), content_hash=content_hash)
+            return
+        try:
+            public_key.verify(signature, canonicalize_registry_payload(payload))  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - exact crypto error type is library-specific
+            raise MCPSecurityConfigError("registry signature verification failed") from exc
+        _SIGNATURE_CACHE.add(cache_key)
 
 
 def _parse_allowlist_file(path: Path, *, public_key_path: Path) -> MCPAllowlist:

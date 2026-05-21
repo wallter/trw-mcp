@@ -96,3 +96,19 @@ def test_bundle_hash_manifest_detects_drift(tmp_path: Path) -> None:
     agent.write_text("new", encoding="utf-8")
 
     assert _MANIFEST_MODULE.check_manifest(manifest, bundled) == ["agents/trw-test.md"]
+
+
+def test_bundle_hash_manifest_ignores_python_runtime_cache(tmp_path: Path) -> None:
+    """Generated runtime cache files under bundled mirrors are never manifest inputs."""
+    bundled = tmp_path / "data"
+    (bundled / "agents").mkdir(parents=True)
+    (bundled / "hooks" / "__pycache__").mkdir(parents=True)
+    (bundled / "skills").mkdir()
+    (bundled / "agents" / "trw-test.md").write_text("agent", encoding="utf-8")
+    (bundled / "hooks" / "__pycache__" / "hook.cpython-312.pyc").write_bytes(b"cache")
+
+    manifest = _MANIFEST_MODULE.build_manifest(bundled)
+    entries = manifest["entries"]
+
+    assert isinstance(entries, dict)
+    assert set(entries) == {"agents/trw-test.md"}

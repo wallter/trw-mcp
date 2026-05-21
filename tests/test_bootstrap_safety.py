@@ -72,3 +72,19 @@ def test_update_project_rolls_back_directories_after_mid_write_failure(initializ
     assert any("update-project failed" in error for error in result["errors"])
     assert any("rolled back" in warning for warning in result["warnings"])
     assert framework_path.read_text(encoding="utf-8") == original
+
+
+def test_update_project_rolls_back_new_managed_directories_after_late_failure(initialized_repo: Path) -> None:
+    """A late failure removes managed directories that did not exist before the update."""
+    opencode_dir = initialized_repo / ".opencode"
+    assert not opencode_dir.exists()
+
+    with patch(
+        "trw_mcp.bootstrap._update_project._verify_installation",
+        side_effect=RuntimeError("verify failed"),
+    ):
+        result = update_project(initialized_repo, ide="opencode")
+
+    assert any("update-project failed" in error for error in result["errors"])
+    assert any("rolled back" in warning for warning in result["warnings"])
+    assert not opencode_dir.exists()
