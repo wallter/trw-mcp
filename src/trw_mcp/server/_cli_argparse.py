@@ -392,6 +392,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="API key for backend authentication (required with --push)",
     )
 
+    # version-status
+    version_parser = subparsers.add_parser(
+        "version-status",
+        help="Print authoritative package/framework/live-server version status.",
+    )
+    version_parser.add_argument(
+        "--project-root",
+        default=".",
+        help="Project root containing package manifests and .trw/frameworks/VERSION.yaml.",
+    )
+    version_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero when authoritative version surfaces drift.",
+    )
+
     # tier (PRD-DIST-1996, c748): operator entitlement provisioning
     tier_parser = subparsers.add_parser(
         "tier",

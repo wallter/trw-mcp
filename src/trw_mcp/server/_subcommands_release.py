@@ -11,12 +11,93 @@ Three helpers:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import structlog
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 logger = structlog.get_logger(__name__)
+
+
+def _read_pyproject_version(path: Path) -> str:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    project = data.get("project", {})
+    if isinstance(project, dict):
+        return str(project.get("version", ""))
+    return ""
+
+
+def _read_package_json_version(path: Path) -> str:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return str(data.get("version", "")) if isinstance(data, dict) else ""
+
+
+def collect_version_status(project_root: Path | None = None) -> dict[str, object]:
+    """Collect labeled package/framework/live-server version status."""
+    root = project_root or Path.cwd()
+    from trw_mcp import __version__ as live_server_version
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.persistence import FileStateReader
+
+    framework_asset_path = root / ".trw" / "frameworks" / "VERSION.yaml"
+    asset = FileStateReader(base_dir=root).read_yaml(framework_asset_path) if framework_asset_path.exists() else {}
+    package_versions = {
+        "trw-mcp": _read_pyproject_version(root / "trw-mcp" / "pyproject.toml"),
+        "trw-memory": _read_pyproject_version(root / "trw-memory" / "pyproject.toml"),
+        "memory-ts": _read_package_json_version(root / "packages" / "memory-ts" / "package.json"),
+    }
+    framework_protocol_version = TRWConfig().framework_version
+    installed_asset_version = str(asset.get("framework_version", ""))
+    asset_mcp_version = str(asset.get("trw_mcp_version", ""))
+    mismatches: list[str] = []
+    if installed_asset_version and installed_asset_version != framework_protocol_version:
+        mismatches.append("framework_protocol_vs_installed_asset")
+    if asset_mcp_version and asset_mcp_version != package_versions["trw-mcp"]:
+        mismatches.append("trw_mcp_package_vs_installed_asset")
+    if live_server_version != package_versions["trw-mcp"]:
+        mismatches.append("trw_mcp_package_vs_live_server")
+    return {
+        "taxonomy": {
+            "package_version": "package manifest version (pyproject.toml/package.json)",
+            "framework_protocol_version": "TRWConfig.framework_version",
+            "installed_asset_version": ".trw/frameworks/VERSION.yaml framework_version",
+            "live_server_version": "imported trw_mcp.__version__ for the running process",
+        },
+        "versions": {
+            "packages": package_versions,
+            "framework_protocol_version": framework_protocol_version,
+            "installed_asset_version": installed_asset_version,
+            "installed_asset_trw_mcp_version": asset_mcp_version,
+            "live_server_version": live_server_version,
+        },
+        "compatibility_matrix": {
+            "independent_packages": ["trw-memory", "memory-ts"],
+            "must_match": [
+                ["packages.trw-mcp", "installed_asset_trw_mcp_version"],
+                ["packages.trw-mcp", "live_server_version"],
+                ["framework_protocol_version", "installed_asset_version"],
+            ],
+        },
+        "compatible": not mismatches,
+        "mismatches": mismatches,
+    }
+
+
+def assert_version_status_compatible(project_root: Path | None = None) -> dict[str, object]:
+    """Return status or raise SystemExit when the release version gate fails."""
+    status = collect_version_status(project_root)
+    compatible = bool(status["compatible"])
+    mismatches = cast("list[str]", status["mismatches"])
+    if not compatible:
+        raise SystemExit(f"version compatibility gate failed: {','.join(mismatches)}")
+    return status
 
 
 def _run_build_release(args: argparse.Namespace) -> None:
@@ -46,6 +127,15 @@ def _run_build_release(args: argparse.Namespace) -> None:
             sys.exit(1)
         _push_release(result, backend_url, api_key)
 
+    sys.exit(0)
+
+
+def _run_version_status(args: argparse.Namespace) -> None:
+    """Handle the ``version-status`` subcommand."""
+    status = collect_version_status(Path(getattr(args, "project_root", ".")).resolve())
+    print(json.dumps(status, indent=2, sort_keys=True))
+    if getattr(args, "check", False) and not bool(status["compatible"]):
+        sys.exit(1)
     sys.exit(0)
 
 

@@ -10,6 +10,21 @@ import pytest
 
 from trw_mcp import release_builder as rb_mod
 from trw_mcp.release_builder import _read_version, _sha256, build_release_bundle
+from trw_mcp.server._subcommands_release import assert_version_status_compatible, collect_version_status
+
+
+def _write_version_root(root: Path, *, mcp_version: str, framework_version: str) -> None:
+    """Create the version manifests needed by release status checks."""
+    (root / "trw-mcp").mkdir()
+    (root / "trw-mcp" / "pyproject.toml").write_text(f'[project]\nversion = "{mcp_version}"\n')
+    (root / "trw-memory").mkdir()
+    (root / "trw-memory" / "pyproject.toml").write_text('[project]\nversion = "0.8.3"\n')
+    (root / "packages" / "memory-ts").mkdir(parents=True)
+    (root / "packages" / "memory-ts" / "package.json").write_text('{"version":"0.4.0"}\n')
+    (root / ".trw" / "frameworks").mkdir(parents=True)
+    (root / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+        f"framework_version: {framework_version}\ntrw_mcp_version: {mcp_version}\n"
+    )
 
 # ---------------------------------------------------------------------------
 # _sha256 tests
@@ -144,6 +159,44 @@ class TestReadVersion:
         # will find the module but getattr will fail with AttributeError.
         result = _read_version()
         assert result == "0.0.0"
+
+
+class TestVersionStatus:
+    """Tests for authoritative release version gate status."""
+
+    def test_collects_labeled_version_taxonomy(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Status separates package, framework, installed asset, and live server versions."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+
+        status = collect_version_status(tmp_path)
+
+        versions = status["versions"]
+        assert isinstance(versions, dict)
+        assert versions["live_server_version"] == "1.2.3"
+        assert versions["installed_asset_trw_mcp_version"] == "1.2.3"
+        assert status["compatible"] is True
+        assert "package_version" in status["taxonomy"]
+        assert "must_match" in status["compatibility_matrix"]
+
+    def test_detects_manifest_asset_drift(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Release status fails when trw-mcp package and installed asset versions drift."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 9.9.9\n"
+        )
+
+        status = collect_version_status(tmp_path)
+
+        assert status["compatible"] is False
+        assert "trw_mcp_package_vs_installed_asset" in status["mismatches"]
+        with pytest.raises(SystemExit):
+            assert_version_status_compatible(tmp_path)
 
 
 # ---------------------------------------------------------------------------

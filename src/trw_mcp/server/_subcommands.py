@@ -42,6 +42,9 @@ from trw_mcp.server._subcommands_release import (
 from trw_mcp.server._subcommands_release import (
     _run_build_release as _run_build_release,
 )
+from trw_mcp.server._subcommands_release import (
+    _run_version_status as _run_version_status,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -399,6 +402,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "export": _run_export,
     "import-learnings": _run_import_learnings,
     "build-release": _run_build_release,
+    "version-status": _run_version_status,
     "auth": _run_auth,
     "uninstall": _run_uninstall,
     "config-reference": _run_config_reference,
