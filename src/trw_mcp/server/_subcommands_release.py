@@ -31,14 +31,7 @@ else:
 logger = structlog.get_logger(__name__)
 
 VersionManifestKind = Literal["authoritative", "optional"]
-PackageVersions = TypedDict(
-    "PackageVersions",
-    {
-        "trw-mcp": str,
-        "trw-memory": str,
-        "memory-ts": str,
-    },
-)
+PackageVersions = dict[str, str]
 
 
 class VersionValues(TypedDict):
@@ -85,6 +78,22 @@ class InstalledAssetResult:
 PACKAGE_KEY_TRW_MCP = "trw-mcp"
 PACKAGE_KEY_TRW_MEMORY = "trw-memory"
 PACKAGE_KEY_MEMORY_TS = "memory-ts"
+PYPROJECT_PACKAGE_KEYS: tuple[tuple[str, str], ...] = (
+    (PACKAGE_KEY_TRW_MCP, "trw-mcp"),
+    (PACKAGE_KEY_TRW_MEMORY, "trw-memory"),
+    ("trw-eval", "trw-eval"),
+    ("backend", "backend"),
+    ("trw-distill", "trw-distill"),
+    ("trw-loop", "trw-loop"),
+    ("trw-swarm", "trw-swarm"),
+    ("trw-autoresearch", "trw-autoresearch"),
+)
+PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = (
+    (PACKAGE_KEY_MEMORY_TS, "packages/memory-ts"),
+    ("platform", "platform"),
+    ("trw-video", "trw-video"),
+    ("trw-symphony", "trw-symphony"),
+)
 
 
 def _read_pyproject_version(path: Path) -> str:
@@ -209,36 +218,30 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
     mismatches: list[str] = []
     asset_result = _read_installed_asset_versions(root)
     asset = asset_result.data
-    trw_mcp_result = _read_pyproject_version_or_unknown(
-        root / "trw-mcp" / "pyproject.toml",
-        label=PACKAGE_KEY_TRW_MCP,
-        distribution=PACKAGE_KEY_TRW_MCP,
-        fallback=live_server_version,
-        kind="authoritative",
-    )
-    trw_memory_result = _read_pyproject_version_or_unknown(
-        root / "trw-memory" / "pyproject.toml",
-        label=PACKAGE_KEY_TRW_MEMORY,
-        distribution=PACKAGE_KEY_TRW_MEMORY,
-    )
-    memory_ts_result = _read_package_json_version_or_unknown(
-        root / "packages" / "memory-ts" / "package.json",
-        label=PACKAGE_KEY_MEMORY_TS,
-    )
-    package_versions: PackageVersions = {
-        "trw-mcp": trw_mcp_result.version,
-        "trw-memory": trw_memory_result.version,
-        "memory-ts": memory_ts_result.version,
-    }
-    _append_diagnostics(
-        trw_mcp_result,
-        warnings=warnings,
-        errors=errors,
-        mismatches=mismatches,
-        mismatch_id="trw_mcp_package_manifest_unreadable",
-    )
-    _append_diagnostics(trw_memory_result, warnings=warnings, errors=errors, mismatches=mismatches)
-    _append_diagnostics(memory_ts_result, warnings=warnings, errors=errors, mismatches=mismatches)
+    package_versions: PackageVersions = {}
+    for package_key, package_dir in PYPROJECT_PACKAGE_KEYS:
+        result = _read_pyproject_version_or_unknown(
+            root / package_dir / "pyproject.toml",
+            label=package_key,
+            distribution=package_key if package_key in {PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY} else None,
+            fallback=live_server_version if package_key == PACKAGE_KEY_TRW_MCP else "unknown",
+            kind="authoritative" if package_key == PACKAGE_KEY_TRW_MCP else "optional",
+        )
+        package_versions[package_key] = result.version
+        _append_diagnostics(
+            result,
+            warnings=warnings,
+            errors=errors,
+            mismatches=mismatches,
+            mismatch_id="trw_mcp_package_manifest_unreadable" if package_key == PACKAGE_KEY_TRW_MCP else None,
+        )
+    for package_key, package_dir in PACKAGE_JSON_KEYS:
+        result = _read_package_json_version_or_unknown(
+            root / package_dir / "package.json",
+            label=package_key,
+        )
+        package_versions[package_key] = result.version
+        _append_diagnostics(result, warnings=warnings, errors=errors, mismatches=mismatches)
     if asset_result.error:
         errors.append(asset_result.error)
         mismatches.append("installed_asset_manifest_unreadable")
@@ -278,7 +281,9 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
             "live_server_version": live_server_version,
         },
         "compatibility_matrix": {
-            "independent_packages": [PACKAGE_KEY_TRW_MEMORY, PACKAGE_KEY_MEMORY_TS],
+            "independent_packages": sorted(
+                package for package in package_versions if package not in {PACKAGE_KEY_TRW_MCP}
+            ),
             "must_match": [
                 ["packages.trw-mcp", "installed_asset_trw_mcp_version"],
                 ["packages.trw-mcp", "live_server_version"],

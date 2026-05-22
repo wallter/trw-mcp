@@ -26,6 +26,7 @@ def _write_version_root(root: Path, *, mcp_version: str, framework_version: str)
         f"framework_version: {framework_version}\ntrw_mcp_version: {mcp_version}\n"
     )
 
+
 # ---------------------------------------------------------------------------
 # _sha256 tests
 # ---------------------------------------------------------------------------
@@ -268,6 +269,27 @@ class TestVersionStatus:
         assert status["versions"]["packages"]["memory-ts"] == "unknown"
         assert status["warnings"]
         assert any("memory-ts" in warning for warning in status["warnings"])
+
+    def test_collects_extended_monorepo_package_versions(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Version status covers proprietary and newer monorepo packages, not only public packages."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        (tmp_path / "trw-autoresearch").mkdir()
+        (tmp_path / "trw-autoresearch" / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+        (tmp_path / "platform").mkdir()
+        (tmp_path / "platform" / "package.json").write_text('{"version":"0.32.9"}\n')
+        (tmp_path / "trw-video").mkdir()
+        (tmp_path / "trw-video" / "package.json").write_text('{"version":"0.1.0"}\n')
+
+        status = collect_version_status(tmp_path)
+
+        packages = status["versions"]["packages"]
+        assert packages["trw-autoresearch"] == "0.1.0"
+        assert packages["platform"] == "0.32.9"
+        assert packages["trw-video"] == "0.1.0"
+        assert "trw-autoresearch" in status["compatibility_matrix"]["independent_packages"]
 
     def test_malformed_installed_asset_manifest_fails_closed_without_crashing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
