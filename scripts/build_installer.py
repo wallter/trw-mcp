@@ -38,6 +38,7 @@ DEFAULT_FORMAT = "py"
 # wheel filenames appears in the embed step.
 _PROPRIETARY_WHEEL_PREFIXES: tuple[str, ...] = (
     "trw_distill-",
+    "trw_harness-",  # PRD-INFRA-128: cross-monorepo dep of trw-distill
     "trw_loop-",
     "trw_swarm-",
 )
