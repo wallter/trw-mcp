@@ -1986,6 +1986,63 @@ PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
 )
 
 
+def _fetch_proprietary_license(
+    backend_url: str,
+    platform_api_key: str,
+    timeout: int = 10,
+) -> str:
+    """Auto-derive a proprietary license from the configured platform API key.
+
+    PRD-INFRA-129 FR02. Calls GET /v1/me/proprietary-license with the
+    platform_api_key in the Authorization header and returns the
+    plaintext license_key. The returned value lives only in the caller's
+    memory; do not persist it to disk (NFR01).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"{backend_url.rstrip('/')}/me/proprietary-license",
+        headers={
+            "Authorization": f"Bearer {platform_api_key}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    delays = (1.0, 2.0, 4.0)
+    last_err: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                payload = json.loads(resp.read().decode())
+            license_key = payload.get("license_key")
+            if not isinstance(license_key, str) or not license_key:
+                raise RuntimeError("malformed auto-license response")
+            return license_key
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                reason = f"http {exc.code}"
+                try:
+                    detail = json.loads(exc.read().decode())
+                    reason = str(
+                        detail.get("error") or detail.get("reason") or reason
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
+                raise RuntimeError(
+                    f"auto-license denied ({exc.code}): {reason}"
+                ) from None
+            last_err = exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_err = exc
+        if attempt < len(delays) - 1:
+            time.sleep(delay)
+    raise RuntimeError(
+        f"auto-license network failure after retries: {type(last_err).__name__}"
+    )
+
+
 def _post_proprietary_entitlement(
     backend_url: str,
     license_key: str,
@@ -2689,12 +2746,20 @@ def main() -> None:
     parser.add_argument(
         "--with-proprietary",
         action="store_true",
-        help="Install trw-distill, trw-harness, trw-loop, trw-swarm (requires --license-key)",
+        help=(
+            "Install trw-distill, trw-harness, trw-loop, trw-swarm. "
+            "Auto-derives a license from the platform_api_key in "
+            ".trw/config.yaml; falls back to --license-key for explicit overrides."
+        ),
     )
     parser.add_argument(
         "--license-key",
         default="",
-        help="License key for proprietary packages (or set TRW_LICENSE_KEY)",
+        help=(
+            "Explicit proprietary license key (or set TRW_LICENSE_KEY). "
+            "Overrides the auto-derive path. Use for customers without a "
+            "platform dashboard account."
+        ),
     )
     parser.add_argument(
         "--proprietary-version",
@@ -2720,10 +2785,11 @@ def main() -> None:
         "TRW_WITH_PROPRIETARY", ""
     ).lower() in {"1", "true", "yes"}
     license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
-    if with_proprietary and not license_key:
-        parser.error(
-            "--with-proprietary requires --license-key=<key> or TRW_LICENSE_KEY env var"
-        )
+    # PRD-INFRA-129 FR02 — auto-derive license from the configured
+    # platform_api_key when --with-proprietary is given without an
+    # explicit license. Defers the actual fetch until after target_dir
+    # is resolved (config.yaml lives there).
+    auto_derive_license = with_proprietary and not license_key
     proprietary_pins: dict[str, str] = {}
     for pin in args.proprietary_version:
         if "==" not in pin:
@@ -2768,6 +2834,27 @@ def main() -> None:
 
     if is_reinstall and interactive:
         ui.info("Existing TRW installation detected \u2014 reusing prior settings")
+
+    # \u2500\u2500 PRD-INFRA-129 FR02 \u2014 auto-derive proprietary license from
+    # the existing platform_api_key (no second user-handled secret).
+    # `_load_prior_config` normalizes the YAML field `platform_api_key`
+    # to the dict key `api_key`, so look it up under that name.
+    if auto_derive_license:
+        platform_api_key = ""
+        raw = prior_config.get("api_key", "") if prior_config else ""
+        if isinstance(raw, str):
+            platform_api_key = raw.strip()
+        if not platform_api_key:
+            parser.error(
+                "--with-proprietary requires --license-key=<key>, "
+                "TRW_LICENSE_KEY env var, or a configured platform_api_key "
+                "in .trw/config.yaml (run install-trw.py without "
+                "--with-proprietary first to authenticate)"
+            )
+        try:
+            license_key = _fetch_proprietary_license(backend_url, platform_api_key)
+        except RuntimeError as exc:
+            parser.error(f"Auto-license fetch failed: {exc}")
 
     if interactive:
         draw_divider("Preflight")
