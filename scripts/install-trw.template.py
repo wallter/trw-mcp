@@ -1977,8 +1977,13 @@ def phase_install_extras(
     return features
 
 
-# \u2500\u2500 Proprietary package install (PRD-INFRA-126) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = ("trw-distill", "trw-loop", "trw-swarm")
+# \u2500\u2500 Proprietary package install (PRD-INFRA-126; PRD-INFRA-128 adds trw-harness) \u2500\u2500
+PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
+    "trw-distill",
+    "trw-harness",
+    "trw-loop",
+    "trw-swarm",
+)
 
 
 def _post_proprietary_entitlement(
@@ -2140,7 +2145,12 @@ def phase_install_proprietary(
             return []
     installed: list[str] = []
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
+    # Two-pass: download every wheel first so cross-package deps (e.g.
+    # trw-distill depending on trw-harness) resolve via pip --find-links
+    # regardless of which order the packages appear in the tuple.
+    downloaded: list[tuple[str, Path, str]] = []  # (package, wheel_path, resolved_version)
     try:
+        # Pass 1 \u2014 fetch all
         for package in PROPRIETARY_PACKAGES_TUPLE:
             version = pins.get(package, "latest")
             try:
@@ -2158,6 +2168,15 @@ def phase_install_proprietary(
                     payload["url"], payload["sha256"], tmpdir
                 )
                 ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
+                downloaded.append((package, wheel, resolved_version))
+            except RuntimeError as exc:
+                # FR05 \u2014 log and continue; do NOT roll back the public install.
+                ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+
+        # Pass 2 \u2014 install every fetched wheel. find-links now has every
+        # package available so cross-dependent installs resolve correctly.
+        for package, wheel, resolved_version in downloaded:
+            try:
                 ui.start_spinner(f"Installing {package} into venv...")
                 if _install_proprietary_wheel(python, wheel, package, target_dir):
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
@@ -2165,7 +2184,6 @@ def phase_install_proprietary(
                 else:
                     ui.stop_spinner(False, "", f"pip install failed for {package}")
             except RuntimeError as exc:
-                # FR05 \u2014 log and continue; do NOT roll back the public install.
                 ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -2671,7 +2689,7 @@ def main() -> None:
     parser.add_argument(
         "--with-proprietary",
         action="store_true",
-        help="Install trw-distill, trw-loop, trw-swarm (requires --license-key)",
+        help="Install trw-distill, trw-harness, trw-loop, trw-swarm (requires --license-key)",
     )
     parser.add_argument(
         "--license-key",
