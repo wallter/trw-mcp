@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import importlib.metadata as importlib_metadata
 import os
 import random
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
@@ -1975,6 +1977,225 @@ def phase_install_extras(
     return features
 
 
+# \u2500\u2500 Proprietary package install (PRD-INFRA-126) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = ("trw-distill", "trw-loop", "trw-swarm")
+
+
+def _post_proprietary_entitlement(
+    backend_url: str,
+    license_key: str,
+    package: str,
+    version: str,
+    timeout: int = 10,
+) -> dict[str, str]:
+    """Call POST /proprietary/entitlement with up-to-3 retries on transient errors.
+
+    Returns the decoded JSON response on success. Raises RuntimeError on
+    permanent failure (4xx, malformed response, exhausted retries). License
+    key never appears in raised messages (NFR04).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps(
+        {"license_key": license_key, "package": package, "version": version}
+    ).encode()
+    req = urllib.request.Request(
+        f"{backend_url.rstrip('/')}/proprietary/entitlement",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    delays = (1.0, 2.0, 4.0)
+    last_err: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 \u2014 trusted backend
+                payload_bytes = resp.read()
+            payload = json.loads(payload_bytes.decode())
+            if not all(k in payload for k in ("url", "sha256", "version")):
+                raise RuntimeError(
+                    f"malformed entitlement response: keys={sorted(payload)}"
+                )
+            return payload
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                # Permanent denial \u2014 surface reason without retry
+                reason = f"http {exc.code}"
+                try:
+                    detail_bytes = exc.read()
+                    detail = json.loads(detail_bytes.decode())
+                    reason = str(
+                        detail.get("error") or detail.get("reason") or reason
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
+                raise RuntimeError(
+                    f"entitlement denied ({exc.code}): {reason}"
+                ) from None
+            last_err = exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_err = exc
+        if attempt < len(delays) - 1:
+            time.sleep(delay)
+    raise RuntimeError(
+        f"entitlement network failure after retries: {type(last_err).__name__}"
+    )
+
+
+def _download_proprietary_wheel(
+    url: str, expected_sha256: str, dest_dir: Path
+) -> Path:
+    """Stream-download URL to dest_dir, verify SHA-256, return wheel path."""
+    import urllib.parse
+    import urllib.request
+
+    parsed_path = urllib.parse.urlparse(url).path
+    filename = Path(parsed_path).name or "proprietary.whl"
+    if not filename.endswith(".whl"):
+        filename = filename + ".whl"
+    dest = dest_dir / filename
+    h = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 \u2014 presigned URL
+            with dest.open("wb") as f:
+                for chunk in iter(lambda: resp.read(65536), b""):
+                    h.update(chunk)
+                    f.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    actual = h.hexdigest()
+    if actual != expected_sha256:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(
+            "proprietary_wheel_integrity_failure: "
+            f"sha256 mismatch (expected {expected_sha256[:16]}..., got {actual[:16]}...)"
+        )
+    return dest
+
+
+def _install_proprietary_wheel(
+    python: str, wheel_path: Path, package: str, target_dir: str
+) -> bool:
+    """Install one proprietary wheel using the L-82faa67c rmtree pattern.
+
+    Removes any pre-existing copy of the package from target_dir before
+    reinstalling to prevent the silent PyPI downgrade documented in
+    L-82faa67c. Uses --find-links so transitive dependencies still resolve
+    from PyPI (L-6f488d41 fix).
+    """
+    pkg_module = package.replace("-", "_")
+    if target_dir:
+        target_root = Path(target_dir)
+        for stale in target_root.glob(f"{pkg_module}*"):
+            if stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
+            elif stale.is_file():
+                stale.unlink(missing_ok=True)
+    cmd: list[str] = [
+        python,
+        "-m",
+        "pip",
+        "install",
+        "--find-links",
+        str(wheel_path.parent),
+        str(wheel_path),
+    ]
+    if target_dir:
+        cmd.extend(["--target", target_dir, "--no-warn-script-location"])
+    return _run_quiet(cmd, timeout=180)
+
+
+def phase_install_proprietary(
+    ui: UI,
+    step: int,
+    total: int,
+    python: str,
+    license_key: str,
+    pins: dict[str, str],
+    backend_url: str,
+    target_dir: str = "",
+    auto_confirm: bool = False,
+) -> list[str]:
+    """Install proprietary packages. Returns list of `<pkg> <version>` strings
+    for packages that installed successfully.
+
+    Per PRD-INFRA-126 FR05, failure of any per-package step does NOT roll
+    back the public install \u2014 the function logs the failure, counts it,
+    and continues. The phase prompt runs even if .trw/ already exists
+    (mitigates L-43de9ce3 where the bash bootstrap pre-creates .trw/).
+    """
+    ui.step_header(step, total, "Installing proprietary packages")
+    # FR02 \u2014 confirmation prompt. License key never echoed.
+    if not auto_confirm:
+        ui.info("Proprietary install will fetch from:")
+        ui.info(f"  {backend_url}/proprietary/entitlement")
+        for pkg in PROPRIETARY_PACKAGES_TUPLE:
+            requested = pins.get(pkg, "latest")
+            ui.info(f"  - {pkg} ({requested})")
+        if not prompt_yes_no("Continue with proprietary install?", default="y"):
+            ui.step_warn("Proprietary install skipped by user")
+            return []
+    installed: list[str] = []
+    tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
+    try:
+        for package in PROPRIETARY_PACKAGES_TUPLE:
+            version = pins.get(package, "latest")
+            try:
+                ui.start_spinner(f"Requesting entitlement for {package}...")
+                payload = _post_proprietary_entitlement(
+                    backend_url, license_key, package, version
+                )
+                resolved_version = payload["version"]
+                ui.stop_spinner(
+                    True,
+                    f"Entitlement issued: {package} {resolved_version}",
+                )
+                ui.start_spinner(f"Downloading {package} {resolved_version}...")
+                wheel = _download_proprietary_wheel(
+                    payload["url"], payload["sha256"], tmpdir
+                )
+                ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
+                ui.start_spinner(f"Installing {package} into venv...")
+                if _install_proprietary_wheel(python, wheel, package, target_dir):
+                    ui.stop_spinner(True, f"Installed {package} {resolved_version}")
+                    installed.append(f"{package} {resolved_version}")
+                else:
+                    ui.stop_spinner(False, "", f"pip install failed for {package}")
+            except RuntimeError as exc:
+                # FR05 \u2014 log and continue; do NOT roll back the public install.
+                ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return installed
+
+
+def write_proprietary_marker(
+    target_dir: Path, installed: list[str]
+) -> Path | None:
+    """Persist a record of which proprietary versions are installed.
+
+    Used by subsequent installs to skip already-current packages
+    (PRD-INFRA-126 NFR05 idempotency). Returns the marker path on success
+    or None when no installations succeeded.
+    """
+    if not installed:
+        return None
+    import json
+
+    mapping: dict[str, str] = {}
+    for entry in installed:
+        parts = entry.split()
+        if len(parts) == 2:
+            mapping[parts[0]] = parts[1]
+    marker = target_dir / ".trw" / "proprietary-installed.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
+    return marker
+
+
 def phase_project_setup(
     ui: UI,
     step: int,
@@ -2446,12 +2667,59 @@ def main() -> None:
         default=None,
         help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,gemini (prompted in interactive mode)",
     )
+    # ── Proprietary package install (PRD-INFRA-126) ──────────────────
+    parser.add_argument(
+        "--with-proprietary",
+        action="store_true",
+        help="Install trw-distill, trw-loop, trw-swarm (requires --license-key)",
+    )
+    parser.add_argument(
+        "--license-key",
+        default="",
+        help="License key for proprietary packages (or set TRW_LICENSE_KEY)",
+    )
+    parser.add_argument(
+        "--proprietary-version",
+        action="append",
+        default=[],
+        metavar="PKG==VER",
+        help="Pin a proprietary package version, repeatable (e.g. trw-loop==0.1.0)",
+    )
+    parser.add_argument(
+        "--backend-url",
+        default="",
+        help="Override the entitlement endpoint URL (testing only; defaults to api.trwframework.com)",
+    )
 
     args = parser.parse_args()
     try:
         ide_targets = _parse_ide_argument(args.ide)
     except ValueError as exc:
         parser.error(str(exc))
+
+    # ── Proprietary install env-var fallback + pin validation ────────
+    with_proprietary = bool(args.with_proprietary) or os.environ.get(
+        "TRW_WITH_PROPRIETARY", ""
+    ).lower() in {"1", "true", "yes"}
+    license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
+    if with_proprietary and not license_key:
+        parser.error(
+            "--with-proprietary requires --license-key=<key> or TRW_LICENSE_KEY env var"
+        )
+    proprietary_pins: dict[str, str] = {}
+    for pin in args.proprietary_version:
+        if "==" not in pin:
+            parser.error(f"Malformed --proprietary-version (need PKG==VER): {pin}")
+        pkg_name, pkg_ver = pin.split("==", 1)
+        if pkg_name not in PROPRIETARY_PACKAGES_TUPLE:
+            parser.error(
+                f"Unknown --proprietary-version package: {pkg_name} "
+                f"(allowed: {', '.join(PROPRIETARY_PACKAGES_TUPLE)})"
+            )
+        proprietary_pins[pkg_name] = pkg_ver
+    backend_url = args.backend_url or os.environ.get(
+        "TRW_BACKEND_URL", "https://api.trwframework.com/v1"
+    )
 
     # Mode detection
     interactive = (not args.script) and sys.stdin.isatty()
@@ -2521,6 +2789,8 @@ def main() -> None:
     total = 3  # extract + install + project-setup
     if has_extras:
         total += 1
+    if with_proprietary:
+        total += 1
     if has_config:
         total += 1
 
@@ -2550,6 +2820,24 @@ def main() -> None:
                 install_vec,
                 pip_target=args.pip_target,
             )
+
+        # Step 4 (conditional): Install proprietary packages (PRD-INFRA-126)
+        proprietary_installed: list[str] = []
+        if with_proprietary:
+            step += 1
+            proprietary_installed = phase_install_proprietary(
+                ui,
+                step,
+                total,
+                python,
+                license_key,
+                proprietary_pins,
+                backend_url,
+                target_dir=args.pip_target,
+                auto_confirm=not interactive,
+            )
+            write_proprietary_marker(target_dir, proprietary_installed)
+            features.extend(proprietary_installed)
 
         # Step N: Project setup
         step += 1
