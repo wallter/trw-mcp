@@ -116,6 +116,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
+    from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
 
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
@@ -150,6 +151,8 @@ def _register_tools() -> None:
     register_agent_work_evidence_tools(mcp)
     # PRD-CORE-170: read-only skill manifest discovery helper
     register_skill_discovery_tools(mcp)
+    # PRD-CORE-182: thin client for the backend submission portal
+    register_submit_feedback_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

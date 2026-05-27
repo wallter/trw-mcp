@@ -100,10 +100,8 @@ def scaffold_run_directory(
         "created_at": ts_iso,
         "source": "local_cli",
     }
-    run_yaml_path.write_text(
-        json.dumps(run_data, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    from trw_mcp.state.persistence import FileStateWriter
+    FileStateWriter().write_yaml(run_yaml_path, run_data)
 
     # Write initial event
     events_path = run_root / "meta" / "events.jsonl"
@@ -224,7 +222,8 @@ def read_local_status(*, run_path: Path | None = None) -> LocalStatusResult:
     """Read status for the active local run without requiring MCP transport."""
     resolved = _resolve_run_path(run_path)
     meta = resolved / "meta"
-    run_data = json.loads((meta / "run.yaml").read_text(encoding="utf-8"))
+    from trw_mcp.state.persistence import FileStateReader
+    run_data = FileStateReader().read_yaml(meta / "run.yaml")
     checkpoints = _count_jsonl(meta / "checkpoints.jsonl")
     events = _count_jsonl(meta / "events.jsonl")
     return LocalStatusResult(
@@ -247,10 +246,11 @@ def mark_local_delivered(
     resolved = _resolve_run_path(run_path)
     meta = resolved / "meta"
     run_yaml = meta / "run.yaml"
-    run_data = json.loads(run_yaml.read_text(encoding="utf-8"))
+    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+    run_data = FileStateReader().read_yaml(run_yaml)
     run_data["status"] = "delivered"
     run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
-    run_yaml.write_text(json.dumps(run_data, indent=2) + "\n", encoding="utf-8")
+    FileStateWriter().write_yaml(run_yaml, run_data)
     write_checkpoint(message, run_path=resolved)
     _append_event(meta / "events.jsonl", "deliver", {"message": message, "source": "local_cli"})
     return read_local_status(run_path=resolved)
