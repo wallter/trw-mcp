@@ -37,6 +37,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_memory_harmonization,
     render_shared_learnings,
 )
+from trw_mcp.state.claude_md.sections._feedback import render_feedback_reporting
 from trw_mcp.state.persistence import FileStateReader
 
 if TYPE_CHECKING:
@@ -154,6 +155,9 @@ def dispatch_for_profile(
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
         "shared_learnings": render_shared_learnings(),
+        # PRD-INFRA-132 FR02: discovery surface for /trw-feedback. Empty
+        # string when the active profile opts out (feedback_skill=None).
+        "feedback_reporting": render_feedback_reporting(config.client_profile),
         "closing_reminder": render_closing_reminder(),
     }
 
