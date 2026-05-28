@@ -1,0 +1,87 @@
+# opencode distill channel manifest entries
+# Loaded and merged into .trw/channels/manifest.yaml by
+# bootstrap/_opencode_distill_channels.py::bootstrap_channel_manifest()
+#
+# PRD-DIST-2403 FR27 / FR30.
+---
+channels:
+  - id: opencode-agents-md-segment
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_agents_md_segment
+    file: AGENTS.md
+    lock_file: .trw/channels/agents-md.lock
+    status: active
+    write_strategy: MARKER_REPLACE
+    tier_default: T1
+    tier_min: T0
+    ttl_commits: 10
+    ttl_days: 7
+    quota_total_bytes: 6144
+    human_edit_detection: SHA256_SEGMENT
+    description: "opencode AGENTS.md distill segment — top-5 hotspots + top-3 conventions"
+    regenerate_cmd: "trw-distill self-improve risk-report --repo . --persist-sidecar"
+    sidecar_schema: "risk-report-sidecar/v0"
+
+  - id: opencode-custom-cmd-before-edit
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_custom_cmd_before_edit
+    file: .opencode/commands/trw-before-edit.md
+    status: active
+    write_strategy: FULL_REWRITE
+    tier_default: T2
+    tier_min: T0
+    quota_total_bytes: 4096
+    human_edit_detection: SHA256_SEGMENT
+    description: "opencode custom command — before-edit risk intelligence"
+
+  - id: opencode-custom-cmd-hotspots
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_custom_cmd_hotspots
+    file: .opencode/commands/trw-distill-hotspots.md
+    status: active
+    write_strategy: FULL_REWRITE
+    tier_default: T2
+    tier_min: T0
+    quota_total_bytes: 4096
+    human_edit_detection: SHA256_SEGMENT
+    description: "opencode custom command — project hotspots ranked table"
+
+  - id: opencode-custom-cmd-conventions
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_custom_cmd_conventions
+    file: .opencode/commands/trw-distill-conventions.md
+    status: active
+    write_strategy: FULL_REWRITE
+    tier_default: T2
+    tier_min: T0
+    quota_total_bytes: 4096
+    human_edit_detection: SHA256_SEGMENT
+    description: "opencode custom command — project conventions (single trw_recall call)"
+
+  - id: opencode-tool-return-enrichment
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_tool_return_enrichment
+    status: active
+    write_strategy: EPHEMERAL_STDOUT
+    tier_default: T2
+    tier_min: T0
+    operator_tier_override_key: "opencode.tool_return_enrichment_tier"
+    description: "opencode MCP tool-return enrichment — T2 default (P1-11 fix); T3 requires opt-in"
+
+  - id: opencode-explorer-agent
+    client: opencode
+    surface: opencode_rules_segment
+    telemetry_tag: opencode_explorer_agent
+    file: .opencode/agents/trw-distill-explorer.md
+    status: active
+    write_strategy: FULL_REWRITE
+    tier_default: T2
+    tier_min: T0
+    quota_total_bytes: 8192
+    human_edit_detection: SHA256_SEGMENT
+    description: "opencode trw-distill-explorer read-only specialist subagent"
