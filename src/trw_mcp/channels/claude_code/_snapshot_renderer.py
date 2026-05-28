@@ -14,7 +14,7 @@ Tier output sizes:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 __all__ = [
@@ -30,7 +30,7 @@ SNAPSHOT_T1_MAX_CHARS: int = 600
 
 
 def _utc_date() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _render_provenance_frontmatter(
@@ -115,16 +115,14 @@ def _render_t2_content(
     lines.append("")
     lines.append("## Active Conventions\n")
     if conventions:
-        for conv in conventions:
-            lines.append(f"- {conv}")
+        lines.extend(f"- {conv}" for conv in conventions)
     else:
         lines.append("No convention data in sidecar.")
 
     lines.append("")
     lines.append("## Caution Directories\n")
     if caution_dirs:
-        for d in caution_dirs:
-            lines.append(f"- {d}")
+        lines.extend(f"- {d}" for d in caution_dirs)
     else:
         lines.append("No caution directory data in sidecar.")
 

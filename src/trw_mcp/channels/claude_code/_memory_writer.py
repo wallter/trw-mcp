@@ -29,7 +29,6 @@ from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 from trw_mcp.channels._telemetry import append_channel_event
 from trw_mcp.channels.claude_code._memory_path import (
     resolve_memory_dir,
-    resolve_memory_index_path,
 )
 from trw_mcp.channels.claude_code._snapshot_renderer import (
     SNAPSHOT_QUOTA_BYTES,
@@ -39,9 +38,9 @@ from trw_mcp.channels.claude_code._snapshot_renderer import (
 log = structlog.get_logger(__name__)
 
 __all__ = [
-    "MEMORY_INDEX_NEAR_CAP_THRESHOLD",
     "MEMORY_INDEX_MARKER_END",
     "MEMORY_INDEX_MARKER_START",
+    "MEMORY_INDEX_NEAR_CAP_THRESHOLD",
     "WriteSnapshotResult",
     "update_memory_index",
     "write_distill_snapshot",
@@ -66,7 +65,7 @@ WriteSnapshotStatus = Literal[
 class WriteSnapshotResult:
     """Result of a ``write_distill_snapshot`` call."""
 
-    __slots__ = ("status", "bytes_written", "tier_used", "snapshot_path")
+    __slots__ = ("bytes_written", "snapshot_path", "status", "tier_used")
 
     def __init__(
         self,
@@ -168,7 +167,7 @@ def update_memory_index(
                 tier=None,
                 extra={"line_count": line_count},
             )
-        except Exception:  # noqa: BLE001 — fail-open telemetry
+        except Exception:
             pass
         log.warning(
             "memory_index_near_cap",
@@ -271,7 +270,7 @@ def write_distill_snapshot(
                 bytes_emitted=bytes_written,
                 extra={"sha": sha},
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
         log.debug(
@@ -288,12 +287,12 @@ def write_distill_snapshot(
             snapshot_path=snapshot_path,
         )
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("cc01_snapshot_error", error=str(exc))
         return WriteSnapshotResult(status="error")
 
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass

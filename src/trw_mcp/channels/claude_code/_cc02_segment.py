@@ -20,8 +20,7 @@ false positives from timestamp-only changes (FR20).
 
 from __future__ import annotations
 
-import hashlib
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +37,6 @@ from trw_mcp.channels._manifest_models import (
     MarkersConfig,
     WriteStrategy,
 )
-from trw_mcp.channels._marker_replace import replace_distill_segment
 from trw_mcp.channels.instruction_segment import (
     InstructionSegmentResult,
     render_instruction_segment,
@@ -70,7 +68,7 @@ _T1_MAX_CHARS: int = 600  # ~150 tokens
 
 
 def _utc_date() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _render_metadata_comment(*, sha: str, commits_since: int | None) -> str:
@@ -109,8 +107,7 @@ def _render_t1_content(
     churn_dirs: list[str] = sidecar.get("high_churn_directories", [])[:3]
     if churn_dirs:
         lines.append("**High-churn directories** (caution when editing):")
-        for d in churn_dirs:
-            lines.append(f"- {d}")
+        lines.extend(f"- {d}" for d in churn_dirs)
         lines.append("")
 
     # Top-2 DO-NOT-REMOVE marker locations
@@ -162,8 +159,7 @@ def _render_t2_content(
     conventions: list[str] = sidecar.get("conventions", [])[:3]
     if conventions:
         lines.append("**Conventions:**")
-        for conv in conventions:
-            lines.append(f"- {conv}")
+        lines.extend(f"- {conv}" for conv in conventions)
 
     return "\n".join(lines)
 
@@ -213,10 +209,9 @@ def render_cc02_segment(
     """
     if tier == "T0":
         return _render_t0_beacon()
-    elif tier == "T1":
+    if tier == "T1":
         return _render_t1_content(sha, sidecar, commits_since)
-    else:
-        return _render_t2_content(sha, sidecar, commits_since)
+    return _render_t2_content(sha, sidecar, commits_since)
 
 
 def install_cc02_segment(

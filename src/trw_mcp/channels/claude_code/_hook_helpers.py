@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +31,9 @@ import structlog
 log = structlog.get_logger(__name__)
 
 __all__ = [
-    "_CEREMONY_MODE_FIELD",
     "CC03_HINTS_DIR",
     "DEFAULT_SKIP_EXTENSIONS",
+    "_CEREMONY_MODE_FIELD",
     "format_t0_beacon",
     "format_t1_hint",
     "format_t2_hint",
@@ -91,7 +91,7 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
             yaml_parser = YAML(typ="safe")
             raw = yaml_parser.load(config_path.read_text(encoding="utf-8"))
         except ImportError:
-            import yaml  # type: ignore[import-untyped]
+            import yaml
 
             raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
@@ -120,7 +120,7 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
         if "cc03_hook_enabled" in raw:
             defaults["cc03_hook_enabled"] = bool(raw["cc03_hook_enabled"])
 
-    except Exception:  # noqa: BLE001 — fail-open
+    except Exception:
         pass
 
     return defaults
@@ -178,8 +178,7 @@ def format_t2_hint(
     if risk_score is not None:
         lines.append(f"  RISK: {risk_score:.2f}")
 
-    for warn in hotspot_warnings[:3]:
-        lines.append(f"  WARN: {warn[:60]}")
+    lines.extend(f"  WARN: {warn[:60]}" for warn in hotspot_warnings[:3])
 
     if co_change_neighbors:
         neighbors_str = ", ".join(co_change_neighbors[:2])
@@ -221,7 +220,7 @@ def write_hint_file(
     hints_dir.mkdir(parents=True, exist_ok=True)
     hint_file = hints_dir / f"{tool_use_id}.json"
     record = {
-        "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "file_path": file_path,
         "tier": tier,
         "hint_emitted": hint_emitted,
