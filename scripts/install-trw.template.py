@@ -2201,11 +2201,16 @@ def phase_install_proprietary(
             ui.step_warn("Proprietary install skipped by user")
             return []
     installed: list[str] = []
+    # PRD-INFRA-130 FR04: track per-package metadata for the structured event
+    # written to ``.trw/install-events.jsonl`` on completion. Failures are
+    # collected so observability captures partial-failure installs faithfully.
+    installed_meta: list[dict[str, str]] = []
+    failed_packages: list[str] = []
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
     # Two-pass: download every wheel first so cross-package deps (e.g.
     # trw-distill depending on trw-harness) resolve via pip --find-links
     # regardless of which order the packages appear in the tuple.
-    downloaded: list[tuple[str, Path, str]] = []  # (package, wheel_path, resolved_version)
+    downloaded: list[tuple[str, Path, str, str]] = []  # (package, wheel_path, resolved_version, sha256)
     try:
         # Pass 1 \u2014 fetch all
         for package in PROPRIETARY_PACKAGES_TUPLE:
@@ -2216,35 +2221,79 @@ def phase_install_proprietary(
                     backend_url, license_key, package, version
                 )
                 resolved_version = payload["version"]
+                wheel_sha256 = payload["sha256"]
                 ui.stop_spinner(
                     True,
                     f"Entitlement issued: {package} {resolved_version}",
                 )
                 ui.start_spinner(f"Downloading {package} {resolved_version}...")
                 wheel = _download_proprietary_wheel(
-                    payload["url"], payload["sha256"], tmpdir
+                    payload["url"], wheel_sha256, tmpdir
                 )
                 ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
-                downloaded.append((package, wheel, resolved_version))
+                downloaded.append((package, wheel, resolved_version, wheel_sha256))
             except RuntimeError as exc:
                 # FR05 \u2014 log and continue; do NOT roll back the public install.
                 ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+                failed_packages.append(package)
 
         # Pass 2 \u2014 install every fetched wheel. find-links now has every
         # package available so cross-dependent installs resolve correctly.
-        for package, wheel, resolved_version in downloaded:
+        for package, wheel, resolved_version, wheel_sha256 in downloaded:
             try:
                 ui.start_spinner(f"Installing {package} into venv...")
                 if _install_proprietary_wheel(python, wheel, package, target_dir):
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
+                    installed_meta.append(
+                        {
+                            "name": package,
+                            "version": resolved_version,
+                            "sha256": wheel_sha256,
+                        }
+                    )
                 else:
                     ui.stop_spinner(False, "", f"pip install failed for {package}")
+                    failed_packages.append(package)
             except RuntimeError as exc:
                 ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+                failed_packages.append(package)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+    # PRD-INFRA-130 FR04: emit one structured event per phase invocation.
+    # ``target_dir`` here is the pip target directory string; when empty we
+    # fall back to the current working directory (matching how the public
+    # install phases resolve their write root).
+    events_root = Path(target_dir) if target_dir else Path.cwd()
+    _emit_install_completed_event(events_root, installed_meta, failed_packages)
     return installed
+
+
+def _emit_install_completed_event(
+    target_dir: Path,
+    installed: list[dict[str, str]],
+    failed: list[str],
+) -> None:
+    """Emit a single JSONL line describing the proprietary install outcome.
+
+    PRD-INFRA-130 FR04 + NFR02: the record contains package metadata and
+    timestamps only \u2014 plaintext license keys are NEVER written. The file is
+    append-only so historical runs are preserved (PRD-INFRA-130 NFR04).
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    events_path = target_dir / ".trw" / "install-events.jsonl"
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": "proprietary_install_completed",
+        "target_dir": str(target_dir.resolve()),
+        "packages": installed,
+        "failed_packages": failed,
+    }
+    with events_path.open("a", encoding="utf-8") as fp:
+        fp.write(_json.dumps(record, sort_keys=True) + "\n")
 
 
 def write_proprietary_marker(
