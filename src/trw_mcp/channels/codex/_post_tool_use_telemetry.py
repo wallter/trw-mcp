@@ -2,13 +2,16 @@
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Status: aspirational (PRD-DIST-2402 §6.3, STUB-01). The hook script is
-generated and installed but the channel is marked status=aspirational until
-the Codex v0.131+ hook input delivery mechanism is empirically confirmed.
+Status: active (PRD-DIST-2402 §6.3). Hook input mechanism empirically confirmed
+2026-05-28 via binary string analysis of codex-cli 0.133.0:
+- CODEX_HOOK_INPUT env var is ABSENT from the Rust binary — Codex does NOT use it.
+- "failed to write hook stdin:" error string is PRESENT — Codex delivers hook input via stdin.
+- See scripts/verify-codex-hook-input.sh for the full verification procedure.
 
 Key design decisions (audit compliance):
 - P0-02: Script uses __file__-relative path resolution (NOT Jinja {{ repo_root }})
-- P0-03: Script tries CODEX_HOOK_INPUT env var first, then stdin
+- P0-03 RESOLVED: Script reads stdin as primary mechanism; CODEX_HOOK_INPUT env var
+  kept as forward-compatibility fallback only (Codex never sets this env var).
 - Fail-open: always exits 0 with {"continue": true}
 - No {{ }} template tokens in the installed script (FR07 AC)
 - stdlib-only imports (NFR05)
@@ -45,12 +48,15 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     #!/usr/bin/env python3
     \"\"\"TRW PostToolUse telemetry hook for Codex.
 
-    Installed by trw-mcp channels. Status: aspirational (PRD-DIST-2402 STUB-01).
+    Installed by trw-mcp channels. Status: active (PRD-DIST-2402).
     Always exits 0 — never blocks Codex execution.
 
-    Input delivery (audit P0-03 mitigation):
-    - Tries CODEX_HOOK_INPUT env var first.
-    - Falls back to stdin if env var absent.
+    Input delivery (audit P0-03 RESOLVED — empirically verified 2026-05-28):
+    - Codex cli 0.133.0 delivers hook input via stdin (confirmed via binary
+      string analysis: "failed to write hook stdin:" present; CODEX_HOOK_INPUT absent).
+    - Primary: reads stdin.
+    - Fallback: CODEX_HOOK_INPUT env var (for forward compatibility only; Codex
+      never sets this env var as of 0.133.0).
     \"\"\"
 
     from __future__ import annotations
@@ -80,11 +86,19 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
 
 
     def _read_hook_input() -> str:
-        \"\"\"Read hook input from env var or stdin (audit P0-03).\"\"\"
-        env_val = os.environ.get("CODEX_HOOK_INPUT", "")
-        if env_val:
-            return env_val
-        return sys.stdin.read()
+        \"\"\"Read hook input from stdin or CODEX_HOOK_INPUT env var fallback.
+
+        Empirically verified 2026-05-28 (codex-cli 0.133.0, binary string analysis):
+        Codex delivers PostToolUse hook input via stdin. CODEX_HOOK_INPUT env var
+        is absent from the Codex Rust binary and is never set by Codex. The env
+        var fallback is kept for forward compatibility only.
+        \"\"\"
+        stdin_val = sys.stdin.read()
+        if stdin_val:
+            return stdin_val
+        # Fallback: CODEX_HOOK_INPUT env var (forward compatibility; Codex 0.133.0
+        # does not set this — confirmed via binary string analysis 2026-05-28).
+        return os.environ.get("CODEX_HOOK_INPUT", "")
 
 
     def _write_event(telemetry_path: Path, event: dict[str, object]) -> None:
