@@ -197,6 +197,14 @@ class ClientProfile(BaseModel):
     mcp_instructions_enabled: bool = True
     skills_enabled: bool = True
 
+    # -- Feedback channel discovery (PRD-INFRA-132 FR03) --
+    # Skill name to install for the feedback channel; ``None`` opts the profile
+    # out of skill install (e.g. CI-only profiles), in which case the
+    # bootstrapper writes only the llms.txt link with no skill invocation.
+    # Light-mode gating (FR02) lives in the bootstrap layer, not here -- this
+    # field only carries the per-profile name/opt-out metadata.
+    feedback_skill: str | None = "trw-feedback"
+
     # -- Tool namespace rendering (PRD-FIX-078) --
     # Prepended to bare ``trw_*`` tool names in rendered instructional text.
     # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to
