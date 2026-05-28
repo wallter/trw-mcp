@@ -1,9 +1,10 @@
 """Channel manifest substrate for trw-distill client integration.
 
-Phase A + Phase B + Phase C exports — ChannelEntry schema, locking,
-provenance, manifest loader, conflict detection, state persistence,
-telemetry, marker-replace, quota enforcement, TTL staleness, and
-cleanup actions.
+Phase A + Phase B + Phase C + Phase D1 exports — ChannelEntry schema,
+locking, provenance, manifest loader, conflict detection, state
+persistence, telemetry, marker-replace, quota enforcement, TTL staleness,
+cleanup actions, gitignore management, tool-return telemetry, and the
+generic instruction-segment renderer.
 
 PRD-DIST-2400.
 """
@@ -21,6 +22,17 @@ from trw_mcp.channels._conflict import (
     detect_human_edit,
     reconcile,
     write_atomic,
+)
+from trw_mcp.channels._distill_telemetry import (
+    emit_tool_call,
+    resolve_client_profile,
+)
+from trw_mcp.channels._gitignore import (
+    GITIGNORE_BEGIN,
+    GITIGNORE_END,
+    add_gitignore_entry,
+    list_gitignore_entries,
+    remove_gitignore_entry,
 )
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 from trw_mcp.channels._manifest_loader import (
@@ -85,6 +97,10 @@ from trw_mcp.channels._ttl import (
     CheckResult,
     check_staleness,
 )
+from trw_mcp.channels.instruction_segment import (
+    InstructionSegmentResult,
+    render_instruction_segment,
+)
 
 __all__ = [
     "CHANNEL_EVENT_SCHEMA_VERSION",
@@ -92,6 +108,8 @@ __all__ = [
     "CLIENT_CORRECTION_FACTORS",
     "CLIENT_THROTTLE_THRESHOLDS",
     "DEFAULT_CORRELATION_WINDOW_SECONDS",
+    "GITIGNORE_BEGIN",
+    "GITIGNORE_END",
     "JOIN_KEY_FIELDS",
     "MARKER_REGISTRY",
     "TIER_DOWN_LADDER",
@@ -108,6 +126,7 @@ __all__ = [
     "CleanupConfig",
     "CleanupTrigger",
     "HumanEditDetection",
+    "InstructionSegmentResult",
     "ManifestMissingError",
     "ManifestValidationError",
     "MarkerCollisionError",
@@ -116,6 +135,7 @@ __all__ = [
     "RenderLog",
     "RenderLogEntry",
     "WriteStrategy",
+    "add_gitignore_entry",
     "append_channel_event",
     "auto_recreate_empty",
     "check_marker_collisions",
@@ -123,18 +143,23 @@ __all__ = [
     "check_staleness",
     "cleanup_channel",
     "detect_human_edit",
+    "emit_tool_call",
     "enforce_quota_with_tier_down",
     "extract_segment_interior",
     "is_t0_beacon",
+    "list_gitignore_entries",
     "load",
     "now_utc_iso8601",
     "parse_provenance_comment",
     "prune_channel_events",
     "read_state",
     "reconcile",
+    "remove_gitignore_entry",
+    "render_instruction_segment",
     "render_provenance_comment",
     "render_provenance_frontmatter",
     "replace_distill_segment",
+    "resolve_client_profile",
     "state_path_for",
     "tier_down",
     "tier_index",
