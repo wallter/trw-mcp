@@ -20,20 +20,33 @@ class WriteStrategy(str, Enum):
     FULL_REWRITE = "FULL_REWRITE"
     MARKER_REPLACE = "MARKER_REPLACE"
     APPEND_WITH_TTL = "APPEND_WITH_TTL"
+    APPEND = "APPEND"  # CC-04 posttooluse event log
     JSON_KEY_MERGE = "JSON_KEY_MERGE"
     EPHEMERAL_STDOUT = "EPHEMERAL_STDOUT"
     NONE = "NONE"
 
 
 class ChannelSurface(str, Enum):
+    # Canonical generic surfaces (PRD-DIST-2400 §1.1)
+    INSTRUCTION_FILE_SEGMENT = "instruction_file_segment"
+    INSTRUCTION_FILE_FULL = "instruction_file_full"
     AGENTS_MD_SEGMENT = "agents_md_segment"
+    MEMORY_FILE = "memory_file"  # Claude Code MEMORY.md
+    PATH_SCOPED_FILE = "path_scoped_file"  # Cursor MDC, Copilot path-instructions
+    SUBAGENT_FILE = "subagent_file"
+    HOOK_SCRIPT = "hook_script"
+    HOOK_STDOUT_EPHEMERAL = "hook_stdout_ephemeral"  # CC-03 PreToolUse stdout
+    POSTTOOLUSE_EVENT_LOG = "posttooluse_event_log"  # CC-04 append-only log
+    MCP_TOOL_RETURN = "mcp_tool_return"
+    VSCODE_MCP_CONFIG = "vscode_mcp_config"
+    CUSTOM_COMMAND = "custom_command"  # opencode slash commands
+    # Client-specific aliases (kept for backward compat with already-shipped code)
     CLAUDE_MD_SEGMENT = "claude_md_segment"
     COPILOT_INSTRUCTIONS_SEGMENT = "copilot_instructions_segment"
     CURSOR_MDC_FILE = "cursor_mdc_file"
     CODEX_AGENTS_MD_SEGMENT = "codex_agents_md_segment"
     OPENCODE_RULES_SEGMENT = "opencode_rules_segment"
     ANTIGRAVITY_RULES_SEGMENT = "antigravity_rules_segment"
-    INSTRUCTION_FILE_SEGMENT = "instruction_file_segment"
     VSCODE_MCP_JSON = "vscode_mcp_json"
     GEMINI_MD_SEGMENT = "gemini_md_segment"
     EXPLORER_PANEL = "explorer_panel"
@@ -173,8 +186,8 @@ class ChannelEntry(BaseModel):
     emit_on_conflict_skip: bool = True
     emit_on_lock_skip: bool = True
 
-    # --- Sidecar contract ---
-    sidecar_schema: str = "risk-report-sidecar/v0"
+    # --- Sidecar contract (optional — not all channels consume a sidecar) ---
+    sidecar_schema: str | None = "risk-report-sidecar/v0"
     sidecar_path: str | None = None
 
     # --- Hook integration ---

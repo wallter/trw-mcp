@@ -39,8 +39,29 @@ def test_write_strategy_values() -> None:
     assert WriteStrategy.NONE == "NONE"
 
 
-def test_channel_surface_has_12_values() -> None:
-    assert len(ChannelSurface) == 12
+def test_channel_surface_canonical_values_present() -> None:
+    """The 12 canonical surface types from PRD-DIST-2400 §1.1 must all be present.
+
+    Additional client-specific aliases (CLAUDE_MD_SEGMENT, COPILOT_INSTRUCTIONS_SEGMENT,
+    etc.) are permitted as backward-compat values but the canonical generic types
+    must be available for the substrate to support all 6 client adapters.
+    """
+    values = {s.value for s in ChannelSurface}
+    required_canonical = {
+        "instruction_file_segment",
+        "agents_md_segment",
+        "memory_file",  # Claude Code MEMORY.md (CC-01)
+        "path_scoped_file",  # Cursor MDC, Copilot path-instructions
+        "subagent_file",  # CC-05, AG-02, opencode explorer
+        "hook_script",
+        "hook_stdout_ephemeral",  # CC-03 PreToolUse
+        "posttooluse_event_log",  # CC-04
+        "mcp_tool_return",
+        "vscode_mcp_config",
+        "custom_command",  # opencode slash commands
+    }
+    missing = required_canonical - values
+    assert not missing, f"Missing canonical ChannelSurface values: {missing}"
 
 
 def test_channel_status_values() -> None:
