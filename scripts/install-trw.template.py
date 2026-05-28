@@ -2043,6 +2043,53 @@ def _fetch_proprietary_license(
     )
 
 
+def _resolve_proprietary_license(
+    *,
+    with_proprietary: bool,
+    explicit_license_key: str,
+    backend_url: str,
+    prior_config: dict[str, object],
+    ui: "UI",
+) -> tuple[str, bool]:
+    """Resolve the effective license key + with_proprietary flag.
+
+    PRD-INFRA-130 FR03: factored out of main() so behaviour is testable
+    without invoking the argparse + Path resolution machinery.
+
+    Behavior:
+    - ``with_proprietary=False`` or explicit license already supplied:
+      pass through unchanged.
+    - Auto-derive (with_proprietary + empty license + configured
+      ``platform_api_key``): fetch from the backend; on RuntimeError
+      (network/auth/scope), warn via ``ui`` and downgrade
+      ``with_proprietary=False`` so the public install can still proceed
+      (PRD-126 FR05 + PRD-129 NFR02).
+    - Auto-derive requested but no configured ``platform_api_key``:
+      raise ``ValueError`` so the caller can surface a usage error.
+    """
+    auto_derive = with_proprietary and not explicit_license_key
+    if not auto_derive:
+        return explicit_license_key, with_proprietary
+
+    raw = prior_config.get("api_key", "") if prior_config else ""
+    platform_api_key = raw.strip() if isinstance(raw, str) else ""
+    if not platform_api_key:
+        raise ValueError(
+            "--with-proprietary requires --license-key=<key>, "
+            "TRW_LICENSE_KEY env var, or a configured platform_api_key "
+            "in .trw/config.yaml (run install-trw.py without "
+            "--with-proprietary first to authenticate)"
+        )
+    try:
+        return _fetch_proprietary_license(backend_url, platform_api_key), True
+    except RuntimeError as exc:
+        ui.step_warn(
+            f"Auto-license fetch failed: {exc}. "
+            "Continuing with public install only."
+        )
+        return "", False
+
+
 def _post_proprietary_entitlement(
     backend_url: str,
     license_key: str,
@@ -2836,9 +2883,10 @@ def main() -> None:
     license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
     # PRD-INFRA-129 FR02 — auto-derive license from the configured
     # platform_api_key when --with-proprietary is given without an
-    # explicit license. Defers the actual fetch until after target_dir
-    # is resolved (config.yaml lives there).
-    auto_derive_license = with_proprietary and not license_key
+    # explicit license. The actual fetch (extracted into
+    # ``_resolve_proprietary_license`` for testability — PRD-INFRA-130
+    # FR03) is deferred until after target_dir + prior_config are
+    # resolved (config.yaml lives there).
     proprietary_pins: dict[str, str] = {}
     for pin in args.proprietary_version:
         if "==" not in pin:
@@ -2884,41 +2932,23 @@ def main() -> None:
     if is_reinstall and interactive:
         ui.info("Existing TRW installation detected \u2014 reusing prior settings")
 
-    # \u2500\u2500 PRD-INFRA-129 FR02 \u2014 auto-derive proprietary license from
-    # the existing platform_api_key (no second user-handled secret).
-    # `_load_prior_config` normalizes the YAML field `platform_api_key`
-    # to the dict key `api_key`, so look it up under that name.
-    if auto_derive_license:
-        platform_api_key = ""
-        raw = prior_config.get("api_key", "") if prior_config else ""
-        if isinstance(raw, str):
-            platform_api_key = raw.strip()
-        if not platform_api_key:
-            parser.error(
-                "--with-proprietary requires --license-key=<key>, "
-                "TRW_LICENSE_KEY env var, or a configured platform_api_key "
-                "in .trw/config.yaml (run install-trw.py without "
-                "--with-proprietary first to authenticate)"
-            )
-        try:
-            license_key = _fetch_proprietary_license(backend_url, platform_api_key)
-        except RuntimeError as exc:
-            # P1.2 (audit 2026-05-27): a transient network blip during the
-            # auto-derive flow must NOT block the public install (trw-mcp +
-            # trw-memory). PRD-126 FR05 (no-rollback) + PRD-129 NFR02
-            # (backward-compat: pre-auto-derive invocations always installed
-            # the public phases) imply the user should still get the public
-            # phases when only the proprietary credential lookup fails.
-            # Auth/scope/plan errors are also surfaced here as RuntimeError
-            # (no separate exception type) — same downgrade applies; the
-            # operator can re-run with `--license-key=<value>` once the
-            # issue is resolved.
-            ui.step_warn(
-                f"Auto-license fetch failed: {exc}. "
-                "Continuing with public install only."
-            )
-            with_proprietary = False
-            license_key = ""
+    # PRD-INFRA-129 FR02 / PRD-INFRA-130 FR03 — auto-derive
+    # proprietary license from the existing platform_api_key. Logic
+    # lives in the testable helper ``_resolve_proprietary_license``
+    # so behavior can be exercised without driving main(). A transient
+    # network blip during the fetch must NOT block the public install
+    # (PRD-126 FR05 + PRD-129 NFR02): the helper warns and downgrades
+    # with_proprietary.
+    try:
+        license_key, with_proprietary = _resolve_proprietary_license(
+            with_proprietary=with_proprietary,
+            explicit_license_key=license_key,
+            backend_url=backend_url,
+            prior_config=prior_config,
+            ui=ui,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if interactive:
         draw_divider("Preflight")
