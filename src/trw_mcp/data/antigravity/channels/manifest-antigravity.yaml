@@ -1,0 +1,193 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: ag-01-antigravity-md-distill
+  client: antigravity-cli
+  surface: antigravity_rules_segment
+  telemetry_tag: ag01_antigravity_md_distill
+  file: ANTIGRAVITY.md
+  lock_file: .trw/channels/ag-01-antigravity-md-distill.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key: channels.ag01.tier
+  markers:
+    start: <!-- trw:distill:start -->
+    end: <!-- trw:distill:end -->
+  distill_record_types: []
+  ttl_commits: 50
+  ttl_days: 14
+  quota_total_bytes: 6144
+  quota_warn_bytes: 5632
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: CLEAR_SEGMENT
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: AG-01 ANTIGRAVITY.md distill segment — top-5 risk files, top-3 conventions,
+    pull-more-detail callouts. T1 default.
+  regenerate_cmd: trw-mcp channel-render --channel ag-01-antigravity-md-distill
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - antigravity-cli
+  - instruction-file
+  - hotspots
+  notes:
+- id: ag-02-distill-explorer-subagent
+  client: antigravity-cli
+  surface: antigravity_rules_segment
+  telemetry_tag: ag02_distill_explorer_subagent
+  file: .antigravitycli/agents/trw-distill-explorer.md
+  lock_file: .trw/channels/ag-02-distill-explorer-subagent.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T1
+  operator_tier_override_key: channels.ag02.tier
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits: 50
+  ttl_days: 14
+  quota_total_bytes: 32768
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: DISABLED
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: AG-02 trw-distill-explorer.md subagent — T1 default. Read-only exploration
+    with distill intelligence.
+  regenerate_cmd: trw-mcp channel-render --channel ag-02-distill-explorer-subagent
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - antigravity-cli
+  - subagent
+  - explorer
+  notes:
+- id: ag-03-before-edit-hook
+  client: antigravity-cli
+  surface: instruction_file_segment
+  telemetry_tag: ag03_before_edit_hook
+  file:
+  lock_file:
+  status: aspirational
+  write_strategy: NONE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: DISABLED
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: AG-03 Before-edit hook injection. DEFERRED — hook surface unconfirmed.
+    Status aspirational.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: "OQ-01: Confirm exact hook JSON schema in .antigravitycli/settings.json
+    from official Antigravity CLI documentation.\n"
+  tags:
+  - antigravity-cli
+  - hook
+  - aspirational
+  notes:
+- id: ag-04-tool-return-enrichment
+  client: antigravity-cli
+  surface: ephemeral_stdout
+  telemetry_tag: ag04_tool_return_enrichment
+  file:
+  lock_file:
+  status: active
+  write_strategy: NONE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: DISABLED
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: AG-04 Tool-return telemetry enrichment. Pull-only, no file written.
+    T1 default. Fail-open.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - antigravity-cli
+  - tool-return
+  - telemetry
+  notes:

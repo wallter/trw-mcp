@@ -1,0 +1,253 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: cursor-mdc-conventions
+  client: cursor-ide
+  surface: cursor_mdc_file
+  telemetry_tag: cursor.mdc.conventions
+  file: .cursor/rules/distill-conventions.mdc
+  lock_file: .trw/channels/cursor-mdc-conventions.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types:
+  - convention
+  - hotspot
+  ttl_commits: 50
+  ttl_days: 30
+  quota_total_bytes: 4096
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: TOMBSTONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: CUR-01 conventions.mdc — git_tracked true; deterministic canonical
+    content. alwaysApply false, globs empty.
+  regenerate_cmd: trw-distill self-improve mdc-emit
+  client_version_min:
+  mdc_description: 'TRW distill: project coding conventions and hotspot risk summary'
+  mdc_globs: '[]'
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - cursor-ide
+  - mdc
+  - conventions
+  notes:
+- id: cursor-mdc-hotspots-template
+  client: cursor-ide
+  surface: cursor_mdc_file
+  telemetry_tag: cursor.mdc.hotspots
+  file:
+  lock_file: .trw/channels/cursor-mdc-hotspots.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types:
+  - edge_case_survivor
+  - edge_case_undocumented
+  - hotspot
+  ttl_commits: 30
+  ttl_days: 14
+  quota_total_bytes: 3072
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: TOMBSTONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: CUR-02 distill-hotspots-{dir_slug}.mdc template — max 12 instantiations,
+    per-directory path-scoped rules.
+  regenerate_cmd: trw-distill self-improve mdc-emit
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - cursor-ide
+  - mdc
+  - hotspots
+  - template
+  notes:
+- id: cursor-mdc-dangerous-edits
+  client: cursor-ide
+  surface: cursor_mdc_file
+  telemetry_tag: cursor.mdc.dangerous_edits
+  file: .cursor/rules/distill-dangerous-edits.mdc
+  lock_file: .trw/channels/cursor-mdc-dangerous-edits.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types:
+  - edge_case_survivor
+  - edge_case_undocumented
+  ttl_commits: 40
+  ttl_days: 21
+  quota_total_bytes: 5120
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: TOMBSTONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: CUR-03 dangerous-edits.mdc — survivor patterns and undocumented public
+    symbol traps.
+  regenerate_cmd: trw-distill self-improve mdc-emit
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - cursor-ide
+  - mdc
+  - dangerous-edits
+  notes:
+- id: cursor-mcp-tool-return
+  client: cursor-ide
+  surface: ephemeral_stdout
+  telemetry_tag: cursor.mcp.tool_return
+  file:
+  lock_file:
+  status: active
+  write_strategy: NONE
+  tier_default: T2
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types:
+  - edge_case_survivor
+  - edge_case_undocumented
+  - file_risk_score
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: CUR-04 cursor-ide and cursor-cli MCP tool-return enrichment. No file
+    written; telemetry only.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - cursor-ide
+  - cursor-cli
+  - tool-return
+  - telemetry
+  notes:
+- id: cursor-cli-agents-md-snapshot
+  client: cursor-cli
+  surface: agents_md_segment
+  telemetry_tag: cursor.cli.agents_md
+  file: AGENTS.md
+  lock_file: .trw/channels/cursor-cli-agents-md.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: <!-- TRW:DISTILL:BEGIN -->
+    end: <!-- TRW:DISTILL:END -->
+  distill_record_types:
+  - convention
+  - hotspot
+  - edge_case_survivor
+  ttl_commits: 30
+  ttl_days: 14
+  quota_total_bytes: 1536
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: CLEAR_SEGMENT
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: MARKER_BOUNDARY
+  description: CUR-05 cursor-cli AGENTS.md marker-replace segment. T1 default.
+  regenerate_cmd: trw-distill self-improve mdc-emit
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - cursor-cli
+  - agents-md
+  - marker-replace
+  notes:

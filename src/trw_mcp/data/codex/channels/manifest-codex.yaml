@@ -1,0 +1,147 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: codex-agents-md-hotspots
+  client: codex
+  surface: codex_agents_md_segment
+  telemetry_tag: codex_agents_md_hotspots
+  file: AGENTS.md
+  lock_file: .trw/channels/codex-agents-md-hotspots.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: <!-- trw-distill:hotspots BEGIN -->
+    end: <!-- trw-distill:hotspots END -->
+  distill_record_types: []
+  ttl_commits: 20
+  ttl_days: 7
+  quota_total_bytes: 8192
+  quota_warn_bytes: 7168
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: CLEAR_SEGMENT
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: Codex AGENTS.md hotspot segment — top-N risk files and coding conventions.
+    T1 default (top-3 hotspots + top-3 conventions). T2 operator opt-in.
+  regenerate_cmd: trw-distill self-improve risk-report
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - codex
+  - instruction-file
+  - hotspots
+  notes:
+- id: codex-tool-return-t2
+  client: codex
+  surface: instruction_file_segment
+  telemetry_tag: codex_tool_return_t2
+  file:
+  lock_file:
+  status: active
+  write_strategy: EPHEMERAL_STDOUT
+  tier_default: T2
+  tier_min: T1
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: T2 default for trw_before_edit_hint when TRW_CLIENT_PROFILE=codex.
+    Detection via TRW_CLIENT_PROFILE env var only.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - codex
+  - tool-return
+  - t2
+  notes:
+- id: codex-posttooluse-telemetry
+  client: codex
+  surface: instruction_file_segment
+  telemetry_tag: codex_posttooluse_telemetry
+  file: .codex/hooks/trw_post_edit_telemetry.py
+  lock_file: .trw/channels/codex-posttooluse-telemetry.lock
+  status: aspirational
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: DISABLED
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: PostToolUse hook script for Codex edit telemetry. Status aspirational
+    until Codex v0.131+ hook input confirmed.
+  regenerate_cmd: trw-mcp init-project --client codex
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: "Operator confirms non-null turn_id appears in .trw/telemetry/channel-events.jsonl
+    after a Codex PostToolUse event.\n"
+  tags:
+  - codex
+  - hook
+  - posttooluse
+  - aspirational
+  notes:
