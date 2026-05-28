@@ -1,13 +1,20 @@
 """Channel manifest substrate for trw-distill client integration.
 
-Phase A + Phase B exports — ChannelEntry schema, locking, provenance,
-manifest loader, conflict detection, state persistence, and telemetry.
+Phase A + Phase B + Phase C exports — ChannelEntry schema, locking,
+provenance, manifest loader, conflict detection, state persistence,
+telemetry, marker-replace, quota enforcement, TTL staleness, and
+cleanup actions.
 
 PRD-DIST-2400.
 """
 
 from __future__ import annotations
 
+from trw_mcp.channels._cleanup import (
+    cleanup_channel,
+    is_t0_beacon,
+    tombstone_content,
+)
 from trw_mcp.channels._conflict import (
     RenderLog,
     RenderLogEntry,
@@ -43,11 +50,22 @@ from trw_mcp.channels._manifest_models import (
     ProvenanceConfig,
     WriteStrategy,
 )
+from trw_mcp.channels._marker_replace import (
+    extract_segment_interior,
+    replace_distill_segment,
+)
 from trw_mcp.channels._provenance import (
     now_utc_iso8601,
     parse_provenance_comment,
     render_provenance_comment,
     render_provenance_frontmatter,
+)
+from trw_mcp.channels._quota import (
+    TIER_DOWN_LADDER,
+    check_quota,
+    enforce_quota_with_tier_down,
+    tier_down,
+    tier_index,
 )
 from trw_mcp.channels._state import (
     ChannelState,
@@ -63,6 +81,10 @@ from trw_mcp.channels._telemetry import (
     prune_channel_events,
     validate_record_id,
 )
+from trw_mcp.channels._ttl import (
+    CheckResult,
+    check_staleness,
+)
 
 __all__ = [
     "CHANNEL_EVENT_SCHEMA_VERSION",
@@ -72,6 +94,7 @@ __all__ = [
     "DEFAULT_CORRELATION_WINDOW_SECONDS",
     "JOIN_KEY_FIELDS",
     "MARKER_REGISTRY",
+    "TIER_DOWN_LADDER",
     "VALID_EVENT_TYPES",
     "ChannelEntry",
     "ChannelLock",
@@ -80,6 +103,7 @@ __all__ = [
     "ChannelState",
     "ChannelStatus",
     "ChannelSurface",
+    "CheckResult",
     "CleanupAction",
     "CleanupConfig",
     "CleanupTrigger",
@@ -95,7 +119,13 @@ __all__ = [
     "append_channel_event",
     "auto_recreate_empty",
     "check_marker_collisions",
+    "check_quota",
+    "check_staleness",
+    "cleanup_channel",
     "detect_human_edit",
+    "enforce_quota_with_tier_down",
+    "extract_segment_interior",
+    "is_t0_beacon",
     "load",
     "now_utc_iso8601",
     "parse_provenance_comment",
@@ -104,7 +134,11 @@ __all__ = [
     "reconcile",
     "render_provenance_comment",
     "render_provenance_frontmatter",
+    "replace_distill_segment",
     "state_path_for",
+    "tier_down",
+    "tier_index",
+    "tombstone_content",
     "validate_record_id",
     "write",
     "write_atomic",
