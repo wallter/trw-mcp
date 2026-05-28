@@ -2854,7 +2854,22 @@ def main() -> None:
         try:
             license_key = _fetch_proprietary_license(backend_url, platform_api_key)
         except RuntimeError as exc:
-            parser.error(f"Auto-license fetch failed: {exc}")
+            # P1.2 (audit 2026-05-27): a transient network blip during the
+            # auto-derive flow must NOT block the public install (trw-mcp +
+            # trw-memory). PRD-126 FR05 (no-rollback) + PRD-129 NFR02
+            # (backward-compat: pre-auto-derive invocations always installed
+            # the public phases) imply the user should still get the public
+            # phases when only the proprietary credential lookup fails.
+            # Auth/scope/plan errors are also surfaced here as RuntimeError
+            # (no separate exception type) — same downgrade applies; the
+            # operator can re-run with `--license-key=<value>` once the
+            # issue is resolved.
+            ui.step_warn(
+                f"Auto-license fetch failed: {exc}. "
+                "Continuing with public install only."
+            )
+            with_proprietary = False
+            license_key = ""
 
     if interactive:
         draw_divider("Preflight")
