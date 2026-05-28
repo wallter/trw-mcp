@@ -364,6 +364,19 @@ def _run_post_update_phases(
     _update_gemini_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
     _update_antigravity_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
 
+    # Claude Code distill channels — always update (claude-code is the default client)
+    if "claude-code" in ide_targets or not ide_targets:
+        try:
+            from ._claude_code_distill_channels import install_claude_code_distill_channels
+
+            cc_dc = install_claude_code_distill_channels(target_dir)
+            for _key in ("created", "updated", "preserved", "errors"):
+                _items = cc_dc.get(_key)
+                if isinstance(_items, list):
+                    result.setdefault(_key, []).extend(_items)
+        except Exception as exc:  # justified: fail-open, distill channels are additive
+            result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
+
     # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
     # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.
     _rewrite_hook_env_for_primary_profile(target_dir, ide_targets)

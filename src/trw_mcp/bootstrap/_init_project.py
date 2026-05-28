@@ -322,6 +322,18 @@ def init_project(
     # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
     _generate_root_files(target_dir, force, result, on_progress)
 
+    # 7a. Claude Code distill channels (always installed — claude-code is the default)
+    if "claude-code" in ide_targets or not ide_targets:
+        try:
+            from ._claude_code_distill_channels import install_claude_code_distill_channels
+
+            cc_dc = install_claude_code_distill_channels(target_dir, force=force)
+            result["created"].extend(cc_dc.get("created", []))
+            result.setdefault("skipped", []).extend(cc_dc.get("preserved", []))
+            result["errors"].extend(cc_dc.get("errors", []))
+        except Exception as _exc:  # justified: fail-open, distill channels are additive
+            result.setdefault("warnings", []).append(f"claude-code distill channels skipped: {_exc}")
+
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
     if "opencode" in ide_targets:
         _install_opencode_artifacts(target_dir, force=force, result=result)

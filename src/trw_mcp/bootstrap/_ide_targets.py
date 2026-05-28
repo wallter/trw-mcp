@@ -204,6 +204,10 @@ def _update_opencode_artifacts(
     except Exception as exc:  # justified: fail-open, skill update is best-effort
         result.setdefault("warnings", []).append(f".opencode/skills update skipped: {exc}")
 
+    # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
+    from ._ide_targets_distill import _update_opencode_distill_channels
+    _update_opencode_distill_channels(target_dir, result)
+
 
 def _update_codex_artifacts(
     target_dir: Path,
@@ -290,6 +294,10 @@ def _update_codex_artifacts(
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md update skipped: {exc}")
 
+    # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
+    from ._ide_targets_distill import _update_codex_distill_channels
+    _update_codex_distill_channels(target_dir, result)
+
 
 # ---------------------------------------------------------------------------
 # Copilot update helper (PRD-CORE-127)
@@ -351,6 +359,10 @@ def _update_copilot_artifacts(
         _absorb_sub_result(result, skills_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"copilot skills update skipped: {exc}")
+
+    # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
+    from ._ide_targets_distill import _update_copilot_distill_channels
+    _update_copilot_distill_channels(target_dir, result)
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +459,10 @@ def _update_antigravity_artifacts(
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"antigravity agents update skipped: {exc}")
+
+    # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
+    from ._ide_targets_distill import _update_antigravity_distill_channels
+    _update_antigravity_distill_channels(target_dir, result)
 
 
 def _extract_trw_section_content() -> str:
@@ -575,6 +591,10 @@ def _update_cursor_artifacts(
     # ------------------------------------------------------------------
     if "cursor-cli" in ide_targets:
         _update_cursor_cli_artifacts(target_dir, result)
+
+    # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
+    from ._ide_targets_distill import _update_cursor_distill_channels
+    _update_cursor_distill_channels(target_dir, result)
 
 
 def _update_cursor_cli_artifacts(

@@ -68,7 +68,7 @@ def _install_opencode_artifacts(
     force: bool,
     result: dict[str, list[str]],
 ) -> None:
-    """Install OpenCode-specific bootstrap artifacts."""
+    """Install OpenCode-specific bootstrap artifacts (including distill channels)."""
     from ._opencode import generate_agents_md, generate_opencode_config
 
     oc_result = generate_opencode_config(target_dir, force=force)
@@ -102,6 +102,18 @@ def _install_opencode_artifacts(
     _extend_result(result, install_opencode_commands(target_dir, force=force))
     _extend_result(result, install_opencode_agents(target_dir, force=force))
     _extend_result(result, install_opencode_skills(target_dir, force=force))
+
+    # Distill channel bootstrap (FR41-FR43)
+    try:
+        from ._opencode_distill_channels import install_opencode_distill_channels
+
+        dc_result = install_opencode_distill_channels(target_dir)
+        # install_opencode_distill_channels returns a different shape — absorb errors only
+        errors = dc_result.get("errors")
+        if isinstance(errors, list):
+            result["errors"].extend(errors)
+    except Exception as exc:  # justified: fail-open, distill channels are additive
+        result.setdefault("warnings", []).append(f"opencode distill channels skipped: {exc}")
 
 
 def _install_cursor_artifacts(
@@ -178,6 +190,15 @@ def _install_cursor_artifacts(
     # CLI-specific artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a)
     if "cursor-cli" in resolved_targets:
         _install_cursor_cli_artifacts(target_dir, force=force, result=result)
+
+    # Distill channel bootstrap (FR41-FR43)
+    try:
+        from ._cursor_distill_channels import install_cursor_distill_channels
+
+        dc_result = install_cursor_distill_channels(target_dir, force=force)
+        _extend_result(result, dc_result)
+    except Exception as exc:  # justified: fail-open, distill channels are additive
+        result.setdefault("warnings", []).append(f"cursor distill channels skipped: {exc}")
 
 
 def _install_cursor_cli_artifacts(
@@ -260,6 +281,15 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
     except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
         result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
 
+    # Distill channel bootstrap (FR41-FR43)
+    try:
+        from ._codex_distill_channels import install_codex_distill_channels
+
+        dc_result = install_codex_distill_channels(target_dir, force=force)
+        _extend_result(result, dc_result)
+    except Exception as exc:  # justified: fail-open, distill channels are additive
+        result.setdefault("warnings", []).append(f"codex distill channels skipped: {exc}")
+
 
 def _run_copilot_installer(
     result: dict[str, list[str]],
@@ -296,6 +326,15 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
     for label, installer in installers:
         _run_copilot_installer(result, label, installer, target_dir, force=force)
 
+    # Distill channel bootstrap (FR41-FR43)
+    try:
+        from ._copilot_distill_channels import install_copilot_distill_channels
+
+        dc_result = install_copilot_distill_channels(target_dir, force=force)
+        _extend_result(result, dc_result)
+    except Exception as exc:  # justified: fail-open, distill channels are additive
+        result.setdefault("warnings", []).append(f"copilot distill channels skipped: {exc}")
+
 
 def _install_gemini_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
     """Install Gemini CLI-specific bootstrap artifacts."""
@@ -329,3 +368,12 @@ def _install_antigravity_artifacts(target_dir: Path, *, force: bool, result: dic
     )
     for label, installer in installers:
         _run_copilot_installer(result, label, installer, target_dir, force=force)
+
+    # Distill channel bootstrap (FR41-FR43)
+    try:
+        from ._antigravity_distill_channels import install_antigravity_distill_channels
+
+        dc_result = install_antigravity_distill_channels(target_dir, force=force)
+        _extend_result(result, dc_result)
+    except Exception as exc:  # justified: fail-open, distill channels are additive
+        result.setdefault("warnings", []).append(f"antigravity distill channels skipped: {exc}")
