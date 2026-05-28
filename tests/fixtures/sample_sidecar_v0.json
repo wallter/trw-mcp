@@ -1,0 +1,28 @@
+{
+  "schema_version": "risk-report-sidecar/v0",
+  "sha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+  "generated_at": "2026-05-28T00:00:00Z",
+  "payload": {
+    "target_path": "trw-mcp/src/trw_mcp/state/memory_adapter.py",
+    "target_exists_in_map": true,
+    "importers": [
+      "trw-mcp/src/trw_mcp/server/_tools.py",
+      "trw-mcp/src/trw_mcp/tools/ceremony.py"
+    ],
+    "inferred_tests": [
+      "trw-mcp/tests/test_memory_adapter.py"
+    ],
+    "doc_references": [
+      "docs/documentation/architecture-overview.md"
+    ],
+    "co_change_neighbors": [
+      "trw-mcp/src/trw_mcp/state/_schema.py",
+      "trw-mcp/src/trw_mcp/state/_row_mapper.py"
+    ],
+    "hotspot_warnings": [
+      "DO-NOT-REMOVE markers present — load-bearing facade",
+      "High co-change frequency with _schema.py"
+    ],
+    "risk_score": 0.82
+  }
+}
