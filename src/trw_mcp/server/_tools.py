@@ -100,6 +100,7 @@ def _register_tools() -> None:
     )
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
+    from trw_mcp.tools.channel_render import register_channel_render_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.code_index import register_code_index_tools
     from trw_mcp.tools.code_search import register_code_search_tools
@@ -116,7 +117,6 @@ def _register_tools() -> None:
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
-    from trw_mcp.tools.channel_render import register_channel_render_tools
     from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
 
     register_build_tools(mcp)

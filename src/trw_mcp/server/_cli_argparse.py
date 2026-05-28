@@ -409,6 +409,66 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="API key for backend authentication (required with --push)",
     )
 
+    # channel-doctor (PRD-DIST-2400 FR18)
+    cd_parser = subparsers.add_parser(
+        "channel-doctor",
+        help="Channel manifest hygiene: validate, init, scan locks, clean stale",
+    )
+    cd_parser.add_argument(
+        "--project-dir",
+        dest="project_dir",
+        default=".",
+        help="Project root directory (default: current directory)",
+    )
+    cd_sub = cd_parser.add_subparsers(dest="channel_doctor_command")
+
+    cd_sub.add_parser(
+        "init",
+        help="Create .trw/channels/ directory and empty manifest if absent",
+    )
+
+    cd_sub.add_parser(
+        "validate",
+        help="Validate .trw/channels/manifest.yaml schema (exits 1 on error)",
+    )
+
+    cd_scan = cd_sub.add_parser(
+        "scan",
+        help="Scan for orphaned locks and stale state files",
+    )
+    cd_scan.add_argument(
+        "--max-age-hours",
+        type=int,
+        default=24,
+        dest="max_age_hours",
+        help="Age threshold in hours for orphaned locks (default: 24)",
+    )
+    cd_scan.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        dest="dry_run",
+        help="Report without removing (default: True for scan)",
+    )
+
+    cd_clean = cd_sub.add_parser(
+        "clean",
+        help="Remove orphaned locks older than --max-age-hours",
+    )
+    cd_clean.add_argument(
+        "--max-age-hours",
+        type=int,
+        default=24,
+        dest="max_age_hours",
+        help="Age threshold in hours for orphaned locks (default: 24)",
+    )
+    cd_clean.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Preview removals without deleting",
+    )
+
     # version-status
     version_parser = subparsers.add_parser(
         "version-status",

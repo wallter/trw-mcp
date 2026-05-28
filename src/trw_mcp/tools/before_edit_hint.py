@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # c749 (PRD-DIST-2002): LearningSummary extracted to shared
 # `_learnings_collector` module. Re-exported here for backward
 # compatibility with callers that still import from this module.
+from trw_mcp.tools._client_detection import resolve_client_profile
 from trw_mcp.tools._learnings_collector import LearningSummary
 
 _SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
@@ -336,6 +337,21 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
             repo_root=repo_root,
             cache_dir=cache_dir,
         )
+        try:
+            from trw_mcp.channels._distill_telemetry import emit_tool_call
+
+            sidecar_sha = result.distill_sidecar_sha or ""
+            record_ids = (
+                [f"hotspot:{file_path}@{sidecar_sha[:8]}"] if sidecar_sha else []
+            )
+            emit_tool_call(
+                tool_name="trw_before_edit_hint",
+                file_path=file_path,
+                tier=result.tier,
+                record_ids=record_ids,
+            )
+        except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
+            pass
         return result.model_dump()
 
 
@@ -345,4 +361,5 @@ __all__ = [
     "LearningSummary",
     "compute_before_edit_hint",
     "register_before_edit_hint_tools",
+    "resolve_client_profile",
 ]

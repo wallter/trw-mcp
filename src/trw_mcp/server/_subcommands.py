@@ -395,6 +395,13 @@ def _run_gc(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def _run_channel_doctor(args: argparse.Namespace) -> None:
+    """Lazy dispatch to channel-doctor implementation (PRD-DIST-2400 FR18)."""
+    from trw_mcp.cli.channel_doctor import run_channel_doctor
+
+    run_channel_doctor(args)
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -409,6 +416,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "local": _run_local,
     "check-instructions": _run_check_instructions,
     "gc": _run_gc,
+    "channel-doctor": _run_channel_doctor,
 }
 
 

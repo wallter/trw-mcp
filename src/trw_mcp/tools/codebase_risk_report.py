@@ -220,6 +220,20 @@ def register_codebase_risk_report_tools(server: FastMCP) -> None:
             cache_dir=cache_dir,
             top_n=top_n,
         )
+        try:
+            from trw_mcp.channels._distill_telemetry import emit_tool_call
+
+            sidecar_sha = result.distill_sidecar_sha or ""
+            record_ids = (
+                [f"risk-report@{sidecar_sha[:8]}"] if sidecar_sha else []
+            )
+            emit_tool_call(
+                tool_name="trw_codebase_risk_report",
+                tier=result.tier,
+                record_ids=record_ids,
+            )
+        except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
+            pass
         return result.model_dump()
 
 

@@ -275,6 +275,20 @@ def register_entity_risk_map_tools(server: FastMCP) -> None:
             top_n=top_n,
             changed_only=changed_only,
         )
+        try:
+            from trw_mcp.channels._distill_telemetry import emit_tool_call
+
+            sidecar_sha = result.distill_sidecar_sha or ""
+            record_ids = (
+                [f"entity-risk-map@{sidecar_sha[:8]}"] if sidecar_sha else []
+            )
+            emit_tool_call(
+                tool_name="trw_entity_risk_map",
+                tier=result.tier,
+                record_ids=record_ids,
+            )
+        except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
+            pass
         return cast("dict[str, object]", result.model_dump(mode="json"))
 
 
