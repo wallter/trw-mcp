@@ -447,3 +447,71 @@ def test_validate_accepts_all_documented_categories(category: str) -> None:
         contact_email=None,
     )
     assert err == ""
+
+
+# ---------------------------------------------------------------------------
+# PRD-INFRA-132 FR04a — redactor runs before send (NFR01)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_feedback_redacts_pii_before_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The message body MUST be redacted before the network call.
+
+    PRD-INFRA-132 NFR01: license keys, API key prefixes, $HOME paths, and
+    sensitive env vars must never leave the box in clear form. Wires through
+    the full `submit_feedback` -> `submit_feedback_via_http` -> mocked POST
+    path so the redactor cannot be silently bypassed by an intermediate
+    refactor.
+    """
+    from trw_mcp.tools import submit_feedback as sf_mod
+
+    # Force the backend creds so the function reaches the POST path.
+    class _FakeConfig:
+        resolved_backend_url = "https://api.trw.test"
+        resolved_backend_api_key = "test-key"
+
+    monkeypatch.setattr(
+        "trw_mcp.models.config.get_config", lambda: _FakeConfig()
+    )
+
+    captured: dict[str, Any] = {}
+    with patch("httpx.Client") as mock_client_cls:
+        ctx_mgr = MagicMock()
+        mock_client = MagicMock()
+
+        def _capture_post(url: str, **kwargs: Any) -> MagicMock:
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            return _mock_httpx_response(200, {"submission_id": "sub_ok"})
+
+        mock_client.post.side_effect = _capture_post
+        ctx_mgr.__enter__.return_value = mock_client
+        mock_client_cls.return_value = ctx_mgr
+
+        result = sf_mod.submit_feedback(
+            category="bugfix",
+            subject="leaked-secret",
+            message=(
+                "Hit error: license trw_lic_abcdef123 against "
+                "PASSWORD=hunter2 in /home/operator/.trw/config.yaml"
+            ),
+            contact_email=None,
+            metadata=None,
+        )
+
+    assert result.success is True
+    sent_message = captured["json"]["message"]
+    # Three redaction classes must have fired.
+    assert "trw_lic_abcdef123" not in sent_message
+    assert "<REDACTED:license_key>" in sent_message
+    assert "PASSWORD=hunter2" not in sent_message
+    assert "<REDACTED:env>" in sent_message
+    # $HOME substitution depends on the test runner's actual $HOME; only
+    # assert that we did not send the raw home_norm form when it matched.
+    operator_home = "/home/operator"
+    import os as _os
+
+    home_norm = _os.path.expanduser("~").rstrip("/")
+    if home_norm == operator_home:
+        assert operator_home not in sent_message
+        assert "$HOME/.trw/config.yaml" in sent_message

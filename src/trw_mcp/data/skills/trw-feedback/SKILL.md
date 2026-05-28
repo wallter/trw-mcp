@@ -25,16 +25,17 @@ key prefixes, `$HOME` paths, sensitive env vars) runs before the network call.
 
 ## Workflow
 
-1. **Ask for the category**. Valid values:
-   - `bug` — something is broken in TRW
-   - `install_issue` — install or upgrade failed
+1. **Ask for the category**. Valid values (canonical PRD-CORE-182 enum):
+   - `bugfix` — something is broken in TRW
+   - `installation` — install or upgrade failed
    - `feedback` — general feedback, no action required
    - `feature_request` — a new capability the operator wants
    - `question` — a clarification request
+   - `other` — does not fit the above
 
    If the operator provided a category as the first argument, use it directly.
-   Otherwise prompt: "Which category? bug | install_issue | feedback |
-   feature_request | question".
+   Otherwise prompt: "Which category? bugfix | installation | feedback |
+   feature_request | question | other".
 
 2. **Ask for a one-line summary**. Keep it under ~120 characters. If the
    operator already provided a quoted summary as the second argument, use
@@ -50,12 +51,15 @@ key prefixes, `$HOME` paths, sensitive env vars) runs before the network call.
    ```python
    trw_submit_feedback(
        category=<category>,
-       summary=<summary>,
-       detail=<optional longer detail or empty string>,
-       include_recent_learnings=<bool, default True>,
-       include_last_error=<bool, default True>,
+       subject=<one-line summary, max 200 chars>,
+       message=<longer detail, min 10 chars; redacted client-side before send>,
+       contact_email=<optional reply-to>,
+       metadata=<optional dict[str,str]; auto-merged with trw_mcp_version etc.>,
    )
    ```
+
+   Both surfaces share the same canonical tool (PRD-CORE-182); PRD-INFRA-132
+   adds the PII redactor to `message` and surfaces this guided skill.
 
 5. **Return the submission_id** to the operator so they can quote it on a
    follow-up email. If the tool returned a structured error (e.g. backend

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.tools.feedback import _redact_pii
+from trw_mcp.tools.submit_feedback import _redact_pii
 
 
 # ---------------------------------------------------------------------------
@@ -65,12 +65,12 @@ def test_redacts_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_skips_home_substitution_when_home_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Force expanduser to return literal "~" by clearing HOME.
-    # On Linux this still resolves to /home/<user>, so we monkeypatch the
-    # function directly to simulate the "no HOME resolvable" scenario.
-    import trw_mcp.tools.feedback as feedback_mod
-
-    monkeypatch.setattr(feedback_mod.os.path, "expanduser", lambda _: "~")
+    # Force expanduser to return literal "~" so the resolver short-circuits
+    # the path-substitution branch.
+    monkeypatch.setattr(
+        "trw_mcp.tools.submit_feedback.os.path.expanduser",
+        lambda _: "~",
+    )
     raw = "path is /home/operator/.trw"
     redacted = _redact_pii(raw)
     # Path is left untouched when HOME cannot be resolved.

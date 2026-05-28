@@ -17,7 +17,9 @@ The tool:
 
 from __future__ import annotations
 
+import os
 import platform
+import re
 import sys
 from typing import Any
 
@@ -40,6 +42,43 @@ _ALLOWED_CATEGORIES: frozenset[str] = frozenset(
         "other",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# PRD-INFRA-132 FR04a — PII redaction
+# ---------------------------------------------------------------------------
+# Single chokepoint NFR01 mandates for secret hygiene. Pure function (no I/O,
+# idempotent) so it is trivially unit-testable. Patterns compiled at import
+# so redaction stays O(n) over the message body per call.
+_LICENSE_KEY_RE = re.compile(r"trw_lic_\S+")
+_API_KEY_RE = re.compile(
+    r"(?:sk_(?:live|test)_\S+|pk_(?:live|test)_\S+|AKIA[0-9A-Z]{16})"
+)
+_ENV_RE = re.compile(
+    r"\b(?:PASSWORD|SECRET|TOKEN|API[_-]?KEY|AWS_(?:ACCESS|SECRET)_KEY)\s*=\s*\S+",
+    re.IGNORECASE,
+)
+
+
+def _redact_pii(text: str) -> str:
+    """Strip license keys, API keys, env-var values, and $HOME paths.
+
+    PRD-INFRA-132 FR04a — applied to the submission ``message`` before the
+    network call so secrets never leave the box in clear form. ``HOME`` is
+    resolved at call time (not import time) so tests can override it via
+    ``monkeypatch.setenv``.
+    """
+    if not text:
+        return text
+    redacted = _LICENSE_KEY_RE.sub("<REDACTED:license_key>", text)
+    redacted = _API_KEY_RE.sub("<REDACTED:api_key>", redacted)
+    redacted = _ENV_RE.sub("<REDACTED:env>", redacted)
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        home_norm = home.rstrip("/")
+        if home_norm:
+            redacted = redacted.replace(home_norm, "$HOME")
+    return redacted
 
 # Validation caps mirrored from PRD-CORE-182 FR01/FR06. If the server tightens
 # them this file is the single place we have to update on the client side.
@@ -232,7 +271,12 @@ def submit_feedback(
     Reads the backend URL + API key from :class:`TRWConfig`. If neither is
     configured, returns ``success=False`` with a clear error so the operator
     knows to set ``TRW_BACKEND_URL`` / ``TRW_BACKEND_API_KEY``.
+
+    PRD-INFRA-132 FR04a: the ``message`` body is run through ``_redact_pii``
+    BEFORE validation so length / content checks see the redacted form and
+    the network call never carries secrets in clear text.
     """
+    message = _redact_pii(message)
     error = _validate(
         category=category,
         subject=subject,

@@ -116,7 +116,7 @@ def _register_tools() -> None:
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
-    from trw_mcp.tools.feedback import register_feedback_tools
+    from trw_mcp.tools.channel_render import register_channel_render_tools
     from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
 
     register_build_tools(mcp)
@@ -152,10 +152,11 @@ def _register_tools() -> None:
     register_agent_work_evidence_tools(mcp)
     # PRD-CORE-170: read-only skill manifest discovery helper
     register_skill_discovery_tools(mcp)
-    # PRD-CORE-182: thin client for the backend submission portal
+    # PRD-CORE-182 + PRD-INFRA-132 FR04: backend submission portal client
+    # (PII redaction added in-place per PRD-INFRA-132 FR04a)
     register_submit_feedback_tools(mcp)
-    # PRD-INFRA-132 FR04: feedback tool with PII redaction + learning attach
-    register_feedback_tools(mcp)
+    # PRD-DIST-2400 FR17: channel manifest render MCP tool
+    register_channel_render_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

@@ -46,9 +46,16 @@ class TestFullBlockForFullMode:
         assert FEEDBACK_MARKER_START in out
         assert FEEDBACK_MARKER_END in out
 
-    def test_full_block_contains_all_five_categories(self) -> None:
+    def test_full_block_contains_all_six_categories(self) -> None:
         out = render_feedback_reporting(_profile(ceremony_mode="full"))
-        for category in ("bug", "install_issue", "feedback", "feature_request", "question"):
+        for category in (
+            "bugfix",
+            "installation",
+            "feedback",
+            "feature_request",
+            "question",
+            "other",
+        ):
             assert category in out, f"missing category {category!r} in fragment"
 
     def test_full_block_names_mcp_tool_and_skill(self) -> None:
@@ -81,7 +88,7 @@ class TestOneLineForLightMode:
         assert FEEDBACK_MARKER_START not in out
         assert FEEDBACK_MARKER_END not in out
         # No category enumeration in the budget-constrained variant.
-        assert "install_issue" not in out
+        assert "installation" not in out
         assert "feature_request" not in out
 
 
