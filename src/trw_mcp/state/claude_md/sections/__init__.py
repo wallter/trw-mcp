@@ -42,6 +42,15 @@ from trw_mcp.state.claude_md.sections._delegation import (
 from trw_mcp.state.claude_md.sections._delegation import (
     render_rationalization_watchlist as render_rationalization_watchlist,
 )
+from trw_mcp.state.claude_md.sections._feedback import (
+    FEEDBACK_MARKER_END as FEEDBACK_MARKER_END,
+)
+from trw_mcp.state.claude_md.sections._feedback import (
+    FEEDBACK_MARKER_START as FEEDBACK_MARKER_START,
+)
+from trw_mcp.state.claude_md.sections._feedback import (
+    render_feedback_reporting as render_feedback_reporting,
+)
 from trw_mcp.state.claude_md.sections._memory_routing import (
     _analytics_cache as _analytics_cache,
 )
@@ -78,7 +87,10 @@ __all__ = [
     "_format_learning_session_claim",
     "_load_analytics_counts",
     "_load_prompting_guide",
+    "FEEDBACK_MARKER_END",
+    "FEEDBACK_MARKER_START",
     "generate_behavioral_protocol_md",
+    "render_feedback_reporting",
     "render_agents_trw_section",
     "render_behavioral_protocol",
     "render_ceremony_flows",
