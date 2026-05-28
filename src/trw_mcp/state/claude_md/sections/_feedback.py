@@ -41,25 +41,34 @@ _CATEGORIES: tuple[str, ...] = (
 def render_feedback_reporting(profile: ClientProfile) -> str:
     """Render the feedback-reporting fragment for the given client profile.
 
-    Returns an empty string when the profile opts out of the skill
-    (``profile.feedback_skill is None``); the bootstrapper still installs the
-    llms.txt section elsewhere (FR01) so the operator retains a discovery
-    surface.
+    Three variants per PRD-INFRA-132 FR02 / FR03:
 
-    Light-mode profiles (``ceremony_mode == "light"``) get a single-line
-    variant capped at 120 characters (NFR03). All other profiles get the full
-    marker-wrapped block naming the MCP tool, the skill, the 5 categories,
-    and the auth note.
+    - ``feedback_skill is None`` (opt-out profile): a one-line link variant
+      pointing at the canonical llms.txt anchor. Preserves the operator's
+      discovery surface even when the skill is not bundled — required by
+      FR03's "link-only fragment" branch.
+    - ``ceremony_mode == "light"``: a one-line variant ≤120 chars (NFR03)
+      that names the skill invocation.
+    - Otherwise: the full marker-wrapped block naming the MCP tool, the
+      skill, the 6 categories, and the auth note.
     """
     if profile.feedback_skill is None:
-        return ""
+        # FR03 opt-out: emit the link-only variant so the operator still has
+        # a discovery surface; NFR03 cap honored by the link-only form.
+        return f"TRW issues: see {_LLMS_TXT_ANCHOR}.\n"
 
     skill_name = profile.feedback_skill
     skill_invocation = f"/{skill_name}"
 
     if profile.ceremony_mode == "light":
-        # NFR03 hard cap: 120 chars. Tests enforce this.
-        return f"TRW issues: see {_LLMS_TXT_ANCHOR} or call {skill_invocation}.\n"
+        # NFR03 hard cap: 120 chars. When the skill name is long enough to
+        # blow the budget, fall back to the link-only form so the cap holds
+        # for every operator-configurable ``feedback_skill`` value.
+        full_line = (
+            f"TRW issues: see {_LLMS_TXT_ANCHOR} or call {skill_invocation}."
+        )
+        link_only_line = f"TRW issues: see {_LLMS_TXT_ANCHOR}."
+        return f"{full_line if len(full_line) <= 120 else link_only_line}\n"
 
     categories_csv = ", ".join(f"`{c}`" for c in _CATEGORIES)
     return (

@@ -92,10 +92,39 @@ class TestOneLineForLightMode:
         assert "feature_request" not in out
 
 
-class TestOmittedWhenFeedbackSkillNone:
-    """An opt-out profile (feedback_skill=None) receives an empty string."""
+class TestLinkOnlyWhenFeedbackSkillNone:
+    """PRD-INFRA-132 FR03 opt-out branch: a profile with
+    ``feedback_skill=None`` still emits the link-only variant so the
+    operator retains a discovery surface (audit P2-5 fix)."""
 
     @pytest.mark.parametrize("mode", ["full", "light"])
-    def test_returns_empty_string(self, mode: str) -> None:
+    def test_returns_link_only_variant(self, mode: str) -> None:
         out = render_feedback_reporting(_profile(ceremony_mode=mode, feedback_skill=None))
-        assert out == "", f"expected empty fragment for opted-out profile, got {out!r}"
+        assert "trwframework.com" in out
+        assert "reporting-issues-to-trw" in out
+        # No marker block: this is a one-line fragment.
+        assert FEEDBACK_MARKER_START not in out
+        assert FEEDBACK_MARKER_END not in out
+        # No skill invocation: the opt-out branch must not advertise a slash command.
+        assert "/trw-feedback" not in out
+
+    @pytest.mark.parametrize("mode", ["full", "light"])
+    def test_opt_out_honors_nfr03_cap(self, mode: str) -> None:
+        out = render_feedback_reporting(_profile(ceremony_mode=mode, feedback_skill=None))
+        assert len(out.rstrip("\n")) <= 120
+
+
+class TestLightModeCapHoldsForLongCustomSkillName:
+    """NFR03 hard cap MUST hold even for the longest realistically-allowed
+    custom ``feedback_skill`` value (audit P1-2 fix)."""
+
+    def test_light_mode_120_char_cap_with_long_custom_skill(self) -> None:
+        # 50-char custom skill name (well above the default 12).
+        long_skill = "trw-feedback-very-long-custom-handle-for-cap-test"
+        out = render_feedback_reporting(
+            _profile(ceremony_mode="light", feedback_skill=long_skill)
+        )
+        assert len(out.rstrip("\n")) <= 120, (
+            f"NFR03 cap violated for custom skill {long_skill!r}: "
+            f"{len(out.rstrip())} chars in {out!r}"
+        )

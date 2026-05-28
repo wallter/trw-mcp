@@ -105,7 +105,13 @@ def test_home_substitution_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch
 def test_redacts_env_kv(raw: str) -> None:
     redacted = _redact_pii(raw)
     assert "<REDACTED:env>" in redacted
-    assert "=" not in redacted or redacted.count("=") < raw.count("=")
+    # The value portion must be gone — `KEY=value` collapses to a single
+    # placeholder so a regex regression that only drops the value while
+    # keeping `KEY=` is caught (audit P1-3).
+    value = raw.split("=", 1)[1]
+    assert value not in redacted, f"value {value!r} survived redaction in {redacted!r}"
+    # And the key=value token itself does not survive intact.
+    assert raw not in redacted
 
 
 def test_env_redaction_preserves_surrounding_text() -> None:
