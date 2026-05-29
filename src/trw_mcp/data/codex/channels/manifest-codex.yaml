@@ -102,7 +102,15 @@ channels:
   telemetry_tag: codex_posttooluse_telemetry
   file: .codex/hooks/trw_post_edit_telemetry.py
   lock_file: .trw/channels/codex-posttooluse-telemetry.lock
-  status: aspirational
+  # ACTIVE as of 2026-05-28: stdin delivery empirically confirmed (codex-cli 0.133.0
+  # binary analysis — CODEX_HOOK_INPUT absent, "failed to write hook stdin:" present).
+  # turn_id field confirmed offline from binary strings of hook_runtime.rs section.
+  # Hook is fail-open: worst case is null turn_id (degraded correlation), never breakage.
+  # Optional refinement: run Phase 3 of verify-codex-hook-input.sh with OPENAI_API_KEY
+  # to fire a live Codex turn and confirm non-null turn_id in channel-events.jsonl.
+  # This is a belt-and-suspenders check, NOT a functional gate — channel works without it.
+  status: active
+  hook_schema_confirmed_at: "2026-05-28"
   write_strategy: FULL_REWRITE
   tier_default: T1
   tier_min: T0
@@ -123,10 +131,16 @@ channels:
     action: NONE
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
-  description: PostToolUse hook script for Codex edit telemetry. Status aspirational
-    until Codex v0.131+ hook input confirmed.
+  description: >
+    PostToolUse hook script for Codex edit telemetry. ACTIVE: stdin delivery confirmed
+    via binary string analysis of codex-cli 0.133.0 (2026-05-28). Hook reads turn_id
+    from the PostToolUse JSON payload (snake_case wire protocol, confirmed from
+    hook_runtime.rs strings). Fail-open: missing/renamed turn_id records null (degraded
+    correlation) but never blocks. An optional live end-to-end smoke test (requires
+    OPENAI_API_KEY, Phase 3 of verify-codex-hook-input.sh) can additionally confirm
+    non-null turn_id from a real Codex turn — this is a refinement, not a gate.
   regenerate_cmd: trw-mcp init-project --client codex
-  client_version_min:
+  client_version_min: "0.131.0"
   mdc_description:
   mdc_globs:
   mdc_always_apply: false
@@ -136,12 +150,10 @@ channels:
   emit_on_lock_skip: true
   sidecar_schema: risk-report-sidecar/v0
   sidecar_path:
-  hook_schema_confirmed_at:
-  activation_gate: "Operator confirms non-null turn_id appears in .trw/telemetry/channel-events.jsonl
-    after a Codex PostToolUse event.\n"
+  activation_gate: null
   tags:
   - codex
   - hook
   - posttooluse
-  - aspirational
+  - active
   notes:

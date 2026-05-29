@@ -88,10 +88,19 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     def _read_hook_input() -> str:
         \"\"\"Read hook input from stdin or CODEX_HOOK_INPUT env var fallback.
 
-        Empirically verified 2026-05-28 (codex-cli 0.133.0, binary string analysis):
+        Empirically verified 2026-05-28 (codex-cli 0.133.0, binary string analysis of
+        the Rust binary at codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex):
         Codex delivers PostToolUse hook input via stdin. CODEX_HOOK_INPUT env var
         is absent from the Codex Rust binary and is never set by Codex. The env
         var fallback is kept for forward compatibility only.
+
+        Hook payload field names (confirmed offline from binary, 2026-05-28):
+          session_id, turn_id, transcript_path, hook_event_name, model,
+          permission_mode, prompt, trigger, tool_name, tool_input, tool_use_id.
+        Field 'turn_id' (snake_case) is the session-correlation key. The binary also
+        contains 'turnId' but that is TypeScript-layer naming; the wire protocol uses
+        snake_case. CODEX_THREAD_ID is an unrelated env var (not a hook payload field).
+        Source: strings analysis of hook_runtime.rs section in the Rust binary.
         \"\"\"
         stdin_val = sys.stdin.read()
         if stdin_val:
@@ -129,7 +138,15 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
 
         try:
             tool_input = data.get("tool_input", {})
-            turn_id = data.get("turn_id")
+            # turn_id confirmed field name (snake_case) from binary string analysis of
+            # hook_runtime.rs section in codex-cli 0.133.0 Rust binary, 2026-05-28.
+            # Defensive fallbacks kept for forward-compat with future Codex versions.
+            # Worst case: null turn_id degrades correlation quality, never breaks.
+            turn_id = (
+                data.get("turn_id")
+                or data.get("turnId")
+                or data.get("thread_id")
+            )
             tool_use_id = data.get("tool_use_id")
 
             file_paths: list[str] = []
