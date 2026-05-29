@@ -10,6 +10,7 @@ from trw_mcp.state._paths import (
     _pinned_runs,
     _reset_session_id,
     find_active_run,
+    find_run_via_mtime_scan,
     get_pinned_run,
     get_session_id,
     pin_active_run,
@@ -129,12 +130,12 @@ class TestPerSessionPinning:
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
         # Without pin, filesystem returns newer run
-        assert find_active_run() == filesystem_run
+        assert find_run_via_mtime_scan() == filesystem_run
 
         # Pin older run for a specific session
         pin_active_run(pinned_run, session_id="my-session")
         # Default session still gets filesystem result
-        assert find_active_run() == filesystem_run
+        assert find_run_via_mtime_scan() == filesystem_run
         # Specific session gets pinned result
         assert find_active_run(session_id="my-session") == pinned_run.resolve()
 
@@ -166,7 +167,7 @@ class TestStatusAwareDiscovery:
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == active_run
 
     def test_failed_run_skipped(
@@ -193,7 +194,7 @@ class TestStatusAwareDiscovery:
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == active_run
 
     def test_all_completed_returns_none(
@@ -220,7 +221,7 @@ class TestStatusAwareDiscovery:
         )
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result is None
 
     def test_legacy_run_without_status_treated_as_active(
@@ -237,7 +238,7 @@ class TestStatusAwareDiscovery:
         (run_dir / "meta" / "run.yaml").write_text("run_id: legacy\n")
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == run_dir
 
 
@@ -319,10 +320,10 @@ class TestMarkRunComplete:
         run = _make_run(runs_root, "task1", "20260220T100000Z-test", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        assert find_active_run() == run
+        assert find_run_via_mtime_scan() == run
 
         _mark_run_complete(run)
-        assert find_active_run() is None
+        assert find_run_via_mtime_scan() is None
 
 
 class TestOwnershipWarning:
