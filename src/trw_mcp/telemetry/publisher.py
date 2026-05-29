@@ -5,16 +5,16 @@ Fail-open: never raises exceptions — all errors are counted and returned.
 
 Change tracking: maintains a content-hash sidecar so only new/modified
 entries are published on each run, avoiding redundant API calls.
+PRD-DIST-124 (2026-04-30): migrated from urllib to httpx.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import urllib.error
-import urllib.request
 from pathlib import Path
 
+import httpx
 import structlog
 from typing_extensions import TypedDict
 
@@ -231,23 +231,19 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
 
     for attempt in range(max_attempts):
         try:
-            data = json.dumps(payload).encode("utf-8")
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            req = urllib.request.Request(  # noqa: S310 — URL built from platform_url (operator-configured TRW platform endpoint, not user input)
-                url,
-                data=data,
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — see Request comment above
-                return bool(200 <= response.status < 300)
-        except (
-            urllib.error.HTTPError
-        ) as e:  # per-item error handling: retry on 429, continue retry loop on other HTTP errors
-            if e.code == 429 and attempt < max_attempts - 1:
-                retry_after = int(e.headers.get("Retry-After", str(2**attempt)))
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(url, json=dict(payload), headers=headers)
+            if 200 <= response.status_code < 300:
+                return True
+            if response.status_code == 429 and attempt < max_attempts - 1:
+                retry_after_hdr = response.headers.get("Retry-After", str(2**attempt))
+                try:
+                    retry_after = int(retry_after_hdr)
+                except (TypeError, ValueError):
+                    retry_after = 2**attempt
                 logger.debug(
                     "learning_post_rate_limited",
                     url=platform_url,
@@ -256,21 +252,17 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
                 )
                 _time.sleep(min(retry_after, 10))
                 continue
-            body_preview = ""
-            try:
-                body_preview = e.read(500).decode("utf-8", errors="replace")
-            except Exception:  # justified: fail-open, response body preview is best-effort for logging context
-                logger.debug("learning_post_body_preview_failed", exc_info=True)
+            body_preview = response.text[:500]
             logger.warning(
                 "learning_post_failed",
                 url=platform_url,
-                status_code=e.code,
-                reason=e.reason,
+                status_code=response.status_code,
+                reason=response.reason_phrase,
                 response_body=body_preview,
                 learning_id=payload.get("source_learning_id", ""),
             )
             return False
-        except (urllib.error.URLError, OSError) as e:
+        except (httpx.HTTPError, OSError) as e:
             logger.warning("learning_post_failed", url=platform_url, error=str(e))
             return False
     return False

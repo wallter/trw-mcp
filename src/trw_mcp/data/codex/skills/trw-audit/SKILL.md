@@ -1,23 +1,23 @@
 ---
 name: trw-audit
-description: "Adversarial spec-vs-code audit. Verifies implementation against PRD acceptance criteria, runs mandatory NFR checklist, assesses test quality. Independent from the implementer to break confirmation bias. Use: /trw-audit PRD-CORE-055\n"
+context: fork
+agent: general-purpose
+description: >
+  Adversarial spec-vs-code audit. Verifies implementation against PRD acceptance
+  criteria, runs mandatory NFR checklist, assesses test quality. Independent from
+  the implementer to break confirmation bias.
+  Use: /trw-audit PRD-CORE-055
+user-invocable: true
+argument-hint: "[PRD-ID or file path]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Adversarial Spec-vs-Code Audit Skill
 
+Use when: adversarially checking implementation behavior against a PRD before declaring it done.
+
 Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review (use `/trw-review-pr` for that). This audit answers one question: **does the code do what the PRD says it should?**
-
-## Implementation-Readiness Guardrails
-
-Treat **implementation-readiness** as the load-bearing signal, not a license to
-chase a score.
-Before advancing, confirm the PRD makes **control points**, **testability**,
-proof-oriented tests / verification commands, **migration** / rollback
-semantics, and completion evidence explicit.
-Treat **score-gaming** or density-chasing as failure modes; add prose only when
-it improves implementability, traceability, or proof quality.
 
 ## Why This Exists
 
@@ -30,6 +30,17 @@ Sprint 29 proved that "all tests pass" is insufficient:
 ## Path Discovery
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs. Audit reports are stored in `scratch/audits/`.
+
+
+## Preflight Verification Contract
+
+Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`. Include these fields in audit output when applicable:
+
+```yaml
+preflight_verification: present|missing|not_applicable
+self_review_alignment: matches|underreported|missing
+prior_learning_verification: checked|missing|not_applicable
+```
 
 ## Workflow
 
@@ -49,23 +60,13 @@ Call `trw_prd_validate(prd_path)` to check PRD quality:
 
 Verify implementation exists:
 - Use Grep/Glob to find source files referenced in the PRD's Technical Approach
+- Infer source/test roots and test naming from repo config and existing files; do not assume `src/` + `tests/` unless that is the scoped package convention
 - If no implementation files found: abort with "No implementation found for {PRD-ID}. Nothing to audit."
-
-### Step 2b: Preflight Verification (PRD-QUAL-056-FR03/FR05)
-
-- Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`
-- If present, record whether the implementer logged the checklist and what the self-review claimed
-- Cross-check the self-review claims against your audit findings; missing or under-reported self-review results are audit evidence, not a waiver
-- Record the results in the audit report as:
-  - `checklist_logged: true|false`
-  - `self_review_logged: true|false`
-  - `self_review_alignment: matches|underreported|missing`
-  - `notes: []`
 
 ### Step 2a: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
 
 From each FR's acceptance criteria (Given/When/Then), extract key technical terms:
-- Function/class/method names mentioned in the spec
+- Function/class/method/component/command/schema/event/API names mentioned in the spec
 - Field names, status codes, error messages, boundary values
 - Configuration keys and thresholds
 
@@ -76,8 +77,8 @@ Use these keywords to grep the implementation and test code. Report a "keyword m
 ### Step 3: Locate Code and Tests
 
 For each FR in the PRD:
-1. **Find implementation** — Grep for function/class/endpoint names from the FR
-2. **Find tests** — Grep for test functions that reference the FR or its functionality
+1. **Find implementation** — Grep for the public symbols, interfaces, commands, endpoints, schemas, components, events, or files named by the FR
+2. **Find tests** — Grep for framework-appropriate tests that reference the FR, acceptance ID, public interface, or behavior
 3. **Build mapping** — FR → implementation files → test files
 
 If a FR has NO implementation: mark as MISSING (P0) immediately.
@@ -85,10 +86,10 @@ If a FR has NO tests: mark as UNTESTED (P1) immediately.
 
 ### Step 3a: Wiring Check (PRD-QUAL-045-FR03)
 
-For each new function/class defined in the implementation:
-1. Verify it is actually CALLED from at least one other module or test
-2. Use Grep: `grep -rn "function_name" src/ tests/`
-3. Functions defined but never called → P1 "dead code — defined but not wired"
+For each new public symbol, exported component, command, endpoint, schema, event, or adapter defined in the implementation:
+1. Verify it is actually wired through at least one caller, route, registry, export, command table, test, or integration path
+2. Use Grep/Glob across the repo-detected source and test roots (for example `src/`, `packages/`, `apps/`, `cmd/`, `crates/`, `tests/`, or colocated tests)
+3. Public definitions that are never wired → P1 "dead code — defined but not wired"
 4. Exclude private helpers called only within the same file (these are OK)
 
 ### Step 4: Audit Each FR
@@ -174,17 +175,6 @@ nfr_audit:
     finding: "Description if FAIL"
   # ... all 10 items
 
-prior_learning_verification:
-  known_patterns: []
-  verified_patterns: []
-  missed_patterns: []
-
-preflight_verification:
-  checklist_logged: true|false
-  self_review_logged: true|false
-  self_review_alignment: matches|underreported|missing
-  notes: []
-
 summary:
   total_frs: 5
   pass: 2
@@ -250,3 +240,5 @@ When auditing FRs that include `Assertions:` blocks, use them as objective evide
 - ALWAYS read implementation code directly — tests are not a proxy for behavior
 - ALWAYS provide fix recommendations — findings without fixes are complaints, not audits
 - If PRD acceptance criteria are ambiguous, note as category: prd-ambiguity
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->

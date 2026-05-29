@@ -1,0 +1,223 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: cc-01-memory-distill-snapshot
+  client: claude-code
+  surface: memory_file
+  telemetry_tag: cc01_snapshot
+  file: ~/.claude/projects/{project_id}/memory/distill_snapshot.md
+  lock_file: .trw/channels/cc-01-memory-distill-snapshot.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T2
+  tier_min: T0
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits: 20
+  ttl_days: 7
+  quota_total_bytes: 8192
+  quota_warn_bytes: 7168
+  provenance:
+    enabled: true
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: CC-01 Claude Code MEMORY.md distill snapshot — T2 default, 8192-byte quota, 20-commit TTL
+  regenerate_cmd: trw-mcp channel-render cc-01-memory-distill-snapshot
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - claude-code
+  notes:
+- id: cc-02-claude-md-distill-segment
+  client: claude-code
+  surface: instruction_file_segment
+  telemetry_tag: cc02_claude_md_segment
+  file: CLAUDE.md
+  lock_file: .trw/channels/cc-02-claude-md-distill-segment.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  markers:
+    start: '<!-- trw-distill:start -->'
+    end: '<!-- trw-distill:end -->'
+  distill_record_types: []
+  ttl_commits: 10
+  ttl_days: 3
+  quota_total_bytes: 3072
+  quota_warn_bytes: 2560
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: CC-02 CLAUDE.md distill segment — T1 default, 3072-byte quota, ceremony_mode-gated
+  regenerate_cmd: trw-mcp channel-render cc-02-claude-md-distill-segment
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - claude-code
+  notes:
+- id: cc-03-pretooluse-hint
+  client: claude-code
+  surface: hook_stdout_ephemeral
+  telemetry_tag: cc03_pretooluse_hint
+  file: .claude/hooks/pre-tool-distill-hint.sh
+  lock_file:
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T2
+  tier_min: T0
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 9500
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: CC-03 PreToolUse hint hook — opt-in (cc03_hook_enabled), 180s debounce, tool_use_id-keyed
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: cc03_hook_enabled
+  tags:
+  - claude-code
+  - hook
+  - opt-in
+  notes: Operator enables via .trw/config.yaml channels.cc03_hook_enabled=true
+- id: cc-04-posttooluse-correlation
+  client: claude-code
+  surface: posttooluse_event_log
+  telemetry_tag: cc04_correlation
+  file: .trw/telemetry/channel-events.jsonl
+  lock_file:
+  status: active
+  write_strategy: APPEND
+  tier_default: T0
+  tier_min: T0
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: CC-04 PostToolUse correlation — tool_use_id-matched, always-on, fail-open
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema:
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - claude-code
+  - telemetry
+  notes:
+- id: cc-05-distill-explorer
+  client: claude-code
+  surface: subagent_file
+  telemetry_tag: cc05_explorer
+  file: .claude/agents/trw-distill-explorer.md
+  lock_file:
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T3
+  tier_min: T2
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 8192
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: CC-05 trw-distill-explorer subagent — haiku model, read-only, T3 default
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: false
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema:
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - claude-code
+  - subagent
+  notes:

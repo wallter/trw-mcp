@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+import io
+import tarfile
+from unittest.mock import MagicMock
+
+import pytest
+
+from trw_mcp.models.config import _reset_config
+
+
+@pytest.fixture(autouse=True)
+def reset_cfg() -> None:
+    _reset_config()
+    yield
+    _reset_config()
+
+
+def _make_tar_gz_bytes(members: dict[str, bytes] | None = None) -> bytes:
+    """Build a tar.gz archive in memory."""
+    if members is None:
+        members = {"data/hello.txt": b"world"}
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, content in members.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    return buf.getvalue()
+
+
+def _mock_urlopen_for_bytes(data: bytes) -> MagicMock:
+    """Return a context-manager-compatible mock response that reads *data*.
+
+    Retained for tests that have not yet been migrated to httpx.
+    """
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = data
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    return mock_resp
+
+
+def _mock_httpx_response(
+    status_code: int = 200,
+    json_data: dict[str, object] | list[object] | None = None,
+    content: bytes | None = None,
+    text: str = "",
+    reason_phrase: str = "OK",
+    headers: dict[str, str] | None = None,
+) -> MagicMock:
+    """Return a MagicMock shaped like an httpx.Response."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_data if json_data is not None else {}
+    resp.content = content if content is not None else b""
+    resp.text = text
+    resp.reason_phrase = reason_phrase
+    resp.headers = headers or {}
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _mock_httpx_client(response: MagicMock) -> MagicMock:
+    """Return a context-manager-compatible mock httpx.Client whose get/post return *response*."""
+    client = MagicMock()
+    client.get.return_value = response
+    client.post.return_value = response
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    return client

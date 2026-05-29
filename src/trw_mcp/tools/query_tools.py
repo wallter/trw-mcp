@@ -15,6 +15,7 @@ writes, no network. Fail-open on malformed rows per NFR-8.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = structlog.get_logger(__name__)
+
+_REQ_ROW_RE = re.compile(r"^\|\s*(FR\d+|NFR-\d+|AC-\d+|US-\d+)\s*\|", re.IGNORECASE)
+_METRIC_HINT_RE = re.compile(r"\b(metric|slo|threshold|target|latency|coverage|error rate|gate)\b", re.IGNORECASE)
 
 
 class SurfaceChange(TypedDict):
@@ -260,6 +264,58 @@ def surface_diff(
     }
 
 
+def _extract_prd_diff_items(content: str) -> dict[str, dict[str, str]]:
+    items: dict[str, dict[str, str]] = {}
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        match = _REQ_ROW_RE.match(stripped)
+        is_acceptance_gate = "Given" in stripped and "When" in stripped and "Then" in stripped
+        if match:
+            key = match.group(1).upper()
+            if is_acceptance_gate:
+                items[f"acceptance:{key}"] = {"line": stripped, "line_number": str(line_number)}
+                if key.startswith("AC-"):
+                    items[f"requirement:{key}"] = {"line": stripped, "line_number": str(line_number)}
+            else:
+                items[f"requirement:{key}"] = {"line": stripped, "line_number": str(line_number)}
+        elif stripped.startswith("|") and _METRIC_HINT_RE.search(stripped):
+            items[f"metric:{line_number}"] = {"line": stripped, "line_number": str(line_number)}
+        elif is_acceptance_gate:
+            items[f"acceptance:{line_number}"] = {"line": stripped, "line_number": str(line_number)}
+    return items
+
+
+def prd_diff_report(*, before_path: str, after_path: str) -> dict[str, Any]:
+    """Return PRD-specific requirement, metric, and acceptance-gate diff buckets."""
+    before = Path(before_path)
+    after = Path(after_path)
+    before_items = _extract_prd_diff_items(before.read_text(encoding="utf-8"))
+    after_items = _extract_prd_diff_items(after.read_text(encoding="utf-8"))
+    before_keys = set(before_items)
+    after_keys = set(after_items)
+    added = sorted(after_keys - before_keys)
+    removed = sorted(before_keys - after_keys)
+    changed = sorted(key for key in before_keys & after_keys if before_items[key]["line"] != after_items[key]["line"])
+    return {
+        "before_path": str(before),
+        "after_path": str(after),
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "changes": [{"key": key, "change_type": "added", "after": after_items[key]["line"]} for key in added]
+        + [{"key": key, "change_type": "removed", "before": before_items[key]["line"]} for key in removed]
+        + [
+            {
+                "key": key,
+                "change_type": "changed",
+                "before": before_items[key]["line"],
+                "after": after_items[key]["line"],
+            }
+            for key in changed
+        ],
+    }
+
+
 def register_query_tools(server: FastMCP) -> None:
     """Register ``trw_query_events`` and ``trw_surface_diff`` MCP tools.
 
@@ -295,6 +351,25 @@ def register_query_tools(server: FastMCP) -> None:
         return query_events(session_id=session_id, filters=filters)
 
     @server.tool(output_schema=None)
+    def trw_prd_diff(
+        before_path: str,
+        after_path: str,
+    ) -> dict[str, Any]:
+        """Diff two PRD files with requirement, metric, and acceptance-gate focus.
+
+        Use when:
+        - Reviewing changes between two PRD versions or drafts.
+        - Auditing how requirements or acceptance criteria have evolved.
+        """
+        consult_mcp_security(
+            "trw_prd_diff",
+            {"before_path": before_path, "after_path": after_path},
+            "",
+            None,
+        )
+        return prd_diff_report(before_path=before_path, after_path=after_path)
+
+    @server.tool(output_schema=None)
     def trw_surface_diff(
         snapshot_id_a: str,
         snapshot_id_b: str,
@@ -315,6 +390,7 @@ def register_query_tools(server: FastMCP) -> None:
 
 
 __all__ = [
+    "prd_diff_report",
     "query_events",
     "register_query_tools",
     "surface_diff",

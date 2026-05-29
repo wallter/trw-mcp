@@ -24,6 +24,6 @@ Output contract:
 - remaining risks or follow-ups
 
 Constraints:
-- do not assume background teammates or worktree coordination
+- do not assume background helpers or worktree coordination
 - keep changes scoped and explicit
 - ask for approval-sensitive actions through the normal permission flow

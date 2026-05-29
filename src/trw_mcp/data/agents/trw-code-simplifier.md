@@ -8,7 +8,7 @@ description: >
   adding features (use trw-implementer), for architecture review (use
   trw-reviewer), or for cleaning untouched code (focuses on recent diffs
   by default).
-model: haiku
+model: local-small
 effort: low
 maxTurns: 50
 memory: project
@@ -54,7 +54,7 @@ and conventions strictly.
    c. Apply changes using the Edit tool
    d. Briefly summarize changes (1-3 bullet points per file)
 
-3. **Verification**: Do NOT run tests or mypy yourself — report what you
+3. **Verification**: Do NOT run validation commands yourself unless asked — report what you
    changed and the calling orchestrator handles verification.
 </workflow>
 

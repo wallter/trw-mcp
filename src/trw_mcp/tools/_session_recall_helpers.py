@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Session recall helpers for ceremony.py — live session-start recall logic."""
 
 from __future__ import annotations
@@ -10,11 +11,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._defaults import LIGHT_MODE_RECALL_CAP
 from trw_mcp.models.typed_dicts import (
     AutoRecalledItemDict,
-    RunStatusDict,
     SessionRecallExtrasDict,
 )
-from trw_mcp.scoring import rank_by_utility
-from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.propensity_log import log_ranked_selections
 from trw_mcp.state.receipts import log_recall_receipt
@@ -48,6 +46,70 @@ _SYSTEM_TASK_KEYWORDS: tuple[str, ...] = (
     "framework",
     "registry",
 )
+
+_WRITER_PRESSURE_RECALL_CAP = 8
+_SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status")
+
+
+def _is_canary_tamper_error(exc: BaseException) -> bool:
+    """Return True when recall failed closed because memory canaries drifted."""
+    try:
+        from trw_memory.exceptions import CanaryTamperError
+    except Exception:  # justified: optional dependency boundary in tests/install variants
+        return exc.__class__.__name__ == "CanaryTamperError"
+    return isinstance(exc, CanaryTamperError)
+
+
+def _degraded_canary_recall_extra(exc: BaseException) -> SessionRecallExtrasDict:
+    """Build the stable session_start degraded-recall envelope."""
+    return {
+        "recall_degraded": {
+            "reason": "canary_tamper",
+            "detail": "Session-start learning recall was skipped because memory canary tamper was detected.",
+            "exception_type": exc.__class__.__name__,
+        },
+        "total_available": 0,
+    }
+
+
+def _compact_session_start_learning(entry: dict[str, object]) -> dict[str, object]:
+    """Return the minimal learning payload needed for session-start context."""
+
+    return {field: entry[field] for field in _SESSION_START_COMPACT_FIELDS if field in entry}
+
+
+def _session_start_writer_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bool, list[int]]:
+    """Return whether session_start should prefer a small read-only response."""
+
+    if not config.session_start_defer_under_writer_pressure:
+        return False, []
+    try:
+        from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
+
+        return should_defer_memory_side_effects(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    except Exception:  # justified: pressure detection is advisory and fail-open
+        logger.warning("session_start_response_pressure_check_failed", exc_info=True)
+        return False, []
+
+
+def _session_start_optional_work_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bool, list[int], str]:
+    """Return whether optional session-start side effects should leave the hot path."""
+
+    if not config.session_start_defer_under_writer_pressure:
+        return False, [], ""
+    try:
+        from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
+
+        return should_defer_session_start_optional_work(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    except Exception:  # justified: optional-work pressure detection is advisory and fail-open
+        logger.warning("session_start_optional_pressure_check_failed", exc_info=True)
+        return False, [], ""
 
 
 def _phase_to_tags(phase: str) -> list[str]:
@@ -120,15 +182,43 @@ def _dedupe_learning_ids(learning_ids: list[str]) -> list[str]:
 def record_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> list[str]:
     """Record shared session-start side effects for surfaced learnings."""
 
+    from trw_mcp.models.config import get_config
     from trw_mcp.state.memory_adapter import increment_session_counts
     from trw_mcp.state.memory_adapter import update_access_tracking as adapter_update_access
+    from trw_mcp.state.memory_pressure import should_defer_memory_side_effects
 
     unique_ids = _dedupe_learning_ids(learning_ids)
     if not unique_ids:
         return []
-    increment_session_counts(trw_dir, unique_ids)
-    adapter_update_access(trw_dir, unique_ids)
-    _log_session_start_surfaces(trw_dir, unique_ids)
+    config = get_config()
+    defer_tracking = False
+    writer_pids: list[int] = []
+    if config.session_start_defer_under_writer_pressure:
+        defer_tracking, writer_pids = should_defer_memory_side_effects(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
+    if defer_tracking:
+        logger.warning(
+            "session_start_tracking_deferred",
+            reason="writer_pressure",
+            writer_pids=writer_pids,
+            writer_count=len(writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(unique_ids),
+        )
+        logger.warning(
+            "session_start_surface_log_deferred",
+            reason="writer_pressure",
+            writer_pids=writer_pids,
+            writer_count=len(writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(unique_ids),
+        )
+    else:
+        increment_session_counts(trw_dir, unique_ids)
+        adapter_update_access(trw_dir, unique_ids)
+        _log_session_start_surfaces(trw_dir, unique_ids)
     return unique_ids
 
 
@@ -144,107 +234,134 @@ def perform_session_recalls(
         logger.debug("session_recall_gated", reason="session_start_recall_enabled=False")
         return [], [], {}
 
-    from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
-
     is_focused = query.strip() not in ("", "*")
     extra: SessionRecallExtrasDict = {}
     learnings: list[dict[str, object]] = []
 
+    compact_for_pressure, pressure_writer_pids = _session_start_writer_pressure(config, trw_dir)
     effective_max = (
         min(config.recall_max_results, LIGHT_MODE_RECALL_CAP)
-        if config.effective_ceremony_mode == "light"
+        if not compact_for_pressure and config.effective_ceremony_mode == "light"
         else config.recall_max_results
     )
+    if compact_for_pressure:
+        effective_max = min(effective_max, _WRITER_PRESSURE_RECALL_CAP)
 
-    if is_focused:
-        focused = adapter_recall(
-            trw_dir,
-            query=query,
-            min_impact=0.3,
-            max_results=effective_max,
-            compact=True,
-        )
-        baseline = adapter_recall(
-            trw_dir,
-            query="*",
-            min_impact=0.7,
-            max_results=effective_max,
-            compact=True,
-        )
-        extra["query"] = query
-        extra["query_matched"] = len(focused)
-        seen_ids: set[str] = set()
-        for entry in focused + baseline:
-            learning_id = str(entry.get("id", ""))
-            if learning_id and learning_id not in seen_ids:
-                seen_ids.add(learning_id)
-                learnings.append(entry)
-        learnings = learnings[:effective_max]
-    else:
-        baseline = adapter_recall(
-            trw_dir,
-            query="*",
-            min_impact=0.7,
-            max_results=effective_max,
-            compact=True,
-        )
-        # L-fovv fix: union the baseline (high-impact, for cross-session tribal
-        # knowledge) with fresh low-impact learnings (for chain-mode + per-
-        # project session context). trw_learn defaults new entries to
-        # impact=0.5, so without this bypass stateful-chain link 2+ recalls
-        # return 0 even when link 1 wrote useful lessons.
-        bypass_days = int(getattr(config, "session_start_recent_bypass_days", 0))
-        learnings = list(baseline)
-        if bypass_days > 0:
-            import datetime as _dt
-
-            bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
-            cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
-            try:
-                fresh = adapter_recall(
-                    trw_dir,
-                    query="*",
-                    min_impact=bypass_min,
-                    max_results=effective_max * 2,
-                    compact=False,
-                )
-            except Exception:  # justified: fail-open, recent-bypass recall must not block session start
-                logger.warning(
-                    "session_recent_bypass_recall_failed",
-                    op="session_recall",
-                    outcome="fail_open",
-                    exc_info=True,
-                )
-            else:
-                seen_ids = {str(e.get("id", "")) for e in baseline}
-                fresh_additions = [
-                    e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
-                ]
-                # Fresh entries are highest-priority context for the current
-                # session; surface them before the high-impact baseline.
-                learnings = fresh_additions + learnings
-                learnings = learnings[:effective_max]
+    # PRD-FIX-085 FR05: use named recall factories instead of direct
+    # adapter_recall calls so the call site declares its intent.
+    from trw_mcp.state.recall_factories import (
+        recall_baseline_high_impact,
+        recall_focused,
+        recall_recent_bypass,
+    )
 
     try:
-        log_ranked_selections(
-            trw_dir,
-            learnings,
-            context_task_type="session_start",
-            context_session_progress="early",
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
+        if is_focused:
+            focused = recall_focused(trw_dir, query, max_results=effective_max)
+            baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+            extra["query"] = query
+            extra["query_matched"] = len(focused)
+            seen_ids: set[str] = set()
+            for entry in focused + baseline:
+                learning_id = str(entry.get("id", ""))
+                if learning_id and learning_id not in seen_ids:
+                    seen_ids.add(learning_id)
+                    learnings.append(entry)
+            learnings = learnings[:effective_max]
+        else:
+            baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+            # L-fovv fix: union the baseline (high-impact, for cross-session tribal
+            # knowledge) with fresh low-impact learnings (for chain-mode + per-
+            # project session context). trw_learn defaults new entries to
+            # impact=0.5, so without this bypass stateful-chain link 2+ recalls
+            # return 0 even when link 1 wrote useful lessons.
+            bypass_days = int(getattr(config, "session_start_recent_bypass_days", 0))
+            learnings = list(baseline)
+            if bypass_days > 0:
+                import datetime as _dt
+
+                bypass_min = float(getattr(config, "session_start_recent_bypass_min_impact", 0.3))
+                cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=bypass_days)).isoformat()
+                try:
+                    fresh = recall_recent_bypass(
+                        trw_dir,
+                        max_results=effective_max * 2,
+                        min_impact=bypass_min,
+                    )
+                except Exception:  # justified: fail-open, recent-bypass recall must not block session start
+                    logger.warning(
+                        "session_recent_bypass_recall_failed",
+                        op="session_recall",
+                        outcome="fail_open",
+                        exc_info=True,
+                    )
+                else:
+                    seen_ids = {str(e.get("id", "")) for e in baseline}
+                    fresh_additions = [
+                        e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
+                    ]
+                    # Fresh entries are highest-priority context for the current
+                    # session; surface them before the high-impact baseline.
+                    learnings = fresh_additions + learnings
+                    learnings = learnings[:effective_max]
+    except Exception as exc:
+        if not _is_canary_tamper_error(exc):
+            raise
         logger.warning(
-            "session_start_propensity_log_failed",
+            "session_start_recall_degraded",
+            reason="canary_tamper",
             op="session_recall",
-            outcome="fail_open",
+            outcome="degraded",
             exc_info=True,
         )
+        return [], [], _degraded_canary_recall_extra(exc)
 
-    matched_ids = record_session_start_surfaces(
+    optional_work_deferred, optional_writer_pids, optional_reason = _session_start_optional_work_pressure(
+        config,
         trw_dir,
-        [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
     )
-    log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+    if optional_work_deferred:
+        compact_for_pressure = True
+        pressure_writer_pids = optional_writer_pids
+        extra["side_effects_deferred"] = {
+            "reason": optional_reason,
+            "writer_pids": optional_writer_pids,
+            "writer_count": len(optional_writer_pids),
+            "threshold": config.session_start_writer_pressure_threshold,
+        }
+        logger.warning(
+            "session_start_side_effects_deferred",
+            reason=optional_reason,
+            writer_pids=optional_writer_pids,
+            writer_count=len(optional_writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            learning_count=len(learnings),
+        )
+    else:
+        try:
+            log_ranked_selections(
+                trw_dir,
+                learnings,
+                context_task_type="session_start",
+                context_session_progress="early",
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            logger.warning(
+                "session_start_propensity_log_failed",
+                op="session_recall",
+                outcome="fail_open",
+                exc_info=True,
+            )
+
+        matched_ids = record_session_start_surfaces(
+            trw_dir,
+            [str(entry.get("id", "")) for entry in learnings if entry.get("id")],
+        )
+        log_recall_receipt(trw_dir, query if is_focused else "*", matched_ids)
+        post_recall_pressure, post_recall_writer_pids = _session_start_writer_pressure(config, trw_dir)
+        if post_recall_pressure:
+            compact_for_pressure = True
+            pressure_writer_pids = post_recall_writer_pids
 
     extra["total_available"] = len(learnings)
     logger.debug(
@@ -263,95 +380,24 @@ def perform_session_recalls(
             exc_info=True,
         )
 
+    if compact_for_pressure:
+        pre_compact_count = len(learnings)
+        learnings = [_compact_session_start_learning(entry) for entry in learnings[:_WRITER_PRESSURE_RECALL_CAP]]
+        extra["response_compacted"] = True
+        logger.warning(
+            "session_start_response_compacted",
+            reason="writer_pressure",
+            writer_pids=pressure_writer_pids,
+            writer_count=len(pressure_writer_pids),
+            threshold=config.session_start_writer_pressure_threshold,
+            original_count=pre_compact_count,
+            returned_count=len(learnings),
+        )
+
     auto_recalled: list[AutoRecalledItemDict] = []
     return learnings, auto_recalled, extra
 
 
-def _phase_contextual_recall(
-    trw_dir: Path,
-    query: str,
-    config: TRWConfig,
-    run_dir: Path | None,
-    run_status: RunStatusDict | None,
-) -> list[AutoRecalledItemDict]:
-    """Execute phase-contextual auto-recall (PRD-CORE-049)."""
-
-    from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall_ar
-
-    is_focused = query.strip() not in ("", "*")
-    query_tokens: list[str] = []
-    if is_focused:
-        query_tokens.extend(query.strip().split())
-
-    phase_tags: list[str] | None = None
-    phase = ""
-    if run_status is not None:
-        task_name = str(run_status.get("task_name", ""))
-        phase = str(run_status.get("phase", ""))
-        if task_name:
-            query_tokens.append(task_name)
-        if phase:
-            query_tokens.append(phase)
-            phase_tag_list = _phase_to_tags(phase)
-            if phase_tag_list:
-                phase_tags = phase_tag_list
-
-    ar_query = " ".join(query_tokens) if query_tokens else "*"
-    ar_entries = adapter_recall_ar(
-        trw_dir,
-        query=ar_query,
-        tags=phase_tags,
-        min_impact=0.5,
-        max_results=config.auto_recall_max_results * 3,
-        compact=True,
-    )
-    if not ar_entries:
-        return []
-
-    intel_cache = None
-    try:
-        from trw_mcp.sync.cache import IntelligenceCache
-
-        cache = IntelligenceCache(
-            trw_dir,
-            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
-        )
-        if cache.get_bandit_params() is not None:
-            intel_cache = cache
-    except Exception:  # justified: fail-open, auto-recall must work without cache access
-        intel_cache = None
-
-    context = RecallContext(
-        current_phase=phase.upper() if phase else None,
-        intel_cache=intel_cache,
-    )
-    ranked = rank_by_utility(
-        ar_entries,
-        query_tokens,
-        lambda_weight=config.recall_utility_lambda,
-        context=context,
-    )
-    capped = ranked[: config.auto_recall_max_results]
-    try:
-        log_ranked_selections(
-            trw_dir,
-            capped,
-            context_phase=phase.upper() if phase else "",
-            context_task_type="phase_auto_recall",
-            context_session_progress=phase.lower() if phase else "",
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.warning(
-            "phase_auto_recall_propensity_log_failed",
-            op="session_recall",
-            outcome="fail_open",
-            exc_info=True,
-        )
-    return [
-        {
-            "id": str(entry.get("id", "")),
-            "summary": str(entry.get("summary", "")),
-            "impact": float(str(entry.get("impact", 0.0))),
-        }
-        for entry in capped
-    ]
+from trw_mcp.tools._session_recall_phase import (
+    _phase_contextual_recall as _phase_contextual_recall,
+)

@@ -117,7 +117,7 @@ class TestBuildCheckReporterAPI:
                 match=(
                     r"tests_passed is required.*"
                     r"trw_build_check\(tests_passed=True, test_count=47, "
-                    r"coverage_pct=92.3, mypy_clean=True, scope='full'\)"
+                    r"coverage_pct=92.3, static_checks_clean=True, scope='full'\)"
                 ),
             ):
                 asyncio.run(server.call_tool("trw_build_check", {}))
@@ -160,6 +160,9 @@ class TestBuildCheckReporterAPI:
         assert any(e.get("event") == "build_check_complete" for e in events), (
             f"Expected build_check_complete event, got: {events}"
         )
+        build_event = next(e for e in events if e.get("event") == "build_check_complete")
+        assert build_event["tests_passed"] is True
+        assert build_event["static_checks_clean"] is True
 
     def test_build_check_caches_to_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR02: BuildStatus is cached via cache_build_status."""

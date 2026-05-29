@@ -7,6 +7,8 @@ and composite reflection quality scoring.
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import cast
 
@@ -186,12 +188,31 @@ def _select_removal_candidates(
     return removal
 
 
+def _deadline_or_cancel_hit(
+    deadline_at: float | None,
+    cancel_event: threading.Event | None,
+) -> str | None:
+    """Return a non-empty reason string when the budget is spent.
+
+    Used inside the apply loop to break out without raising — the caller
+    records ``status=deadline_exceeded`` or ``cancelled`` and returns its
+    partial removal set.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        return "cancelled"
+    if deadline_at is not None and time.monotonic() >= deadline_at:
+        return "deadline_exceeded"
+    return None
+
+
 def auto_prune_excess_entries(
     trw_dir: Path,
     max_entries: int = 100,
     jaccard_threshold: float = 0.8,
     *,
     dry_run: bool = False,
+    deadline_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, object]:
     """Auto-prune when entries exceed max_entries, with Jaccard dedup.
 
@@ -208,10 +229,23 @@ def auto_prune_excess_entries(
         max_entries: Trigger threshold for auto-pruning.
         jaccard_threshold: Minimum similarity for dedup.
         dry_run: If True, report what would be pruned without acting.
+        deadline_seconds: Optional wall-clock budget. When the deadline
+            expires inside the per-removal apply loop, the function
+            returns the partial removal it has applied so far with
+            ``status="deadline_exceeded"``. The Jaccard + utility scoring
+            phase runs before the deadline check because it must build
+            the full candidate set; the budget governs the SQLite-write
+            phase, which historically held the writer lock the longest.
+        cancel_event: Optional ``threading.Event`` flipped by the
+            deferred-delivery watchdog when this step has run too long.
+            Same partial-return semantics as ``deadline_seconds``.
 
     Returns:
-        Dict with dedup_candidates, utility_candidates, actions_taken.
+        Dict with dedup_candidates, utility_candidates, actions_taken,
+        optional ``status`` (``"deadline_exceeded"`` or ``"cancelled"``)
+        and ``stopped_after`` (count of removals applied before stop).
     """
+    deadline_at: float | None = (time.monotonic() + deadline_seconds) if deadline_seconds is not None else None
     entries_dir = _ac._entries_path(trw_dir)
     if not entries_dir.is_dir():
         return {"dedup_candidates": [], "utility_candidates": [], "actions_taken": 0}
@@ -246,21 +280,30 @@ def auto_prune_excess_entries(
         removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
         actions = 0
+        stop_reason: str | None = None
         if not dry_run:
             for rid, suggested in removal_pairs:
+                stop_reason = _deadline_or_cancel_hit(deadline_at, cancel_event)
+                if stop_reason is not None:
+                    break
                 apply_status_update(trw_dir, rid, suggested)
                 actions += 1
 
             if actions > 0:
                 resync_learning_index(trw_dir)
 
-        return {
+        result: dict[str, object] = {
             "dedup_candidates": [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates],
             "utility_candidates": utility_candidates,
             "actions_taken": actions,
             "active_count": active_count,
             "threshold": max_entries,
         }
+        if stop_reason is not None:
+            result["status"] = stop_reason
+            result["stopped_after"] = actions
+            result["pending_removals"] = len(removal_pairs) - actions
+        return result
 
     # YAML fallback path (original implementation)
     all_entries: list[tuple[Path, dict[str, object]]] = []
@@ -287,21 +330,30 @@ def auto_prune_excess_entries(
     removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
 
     actions = 0
+    stop_reason = None
     if not dry_run:
         for rid, suggested in removal_pairs:
+            stop_reason = _deadline_or_cancel_hit(deadline_at, cancel_event)
+            if stop_reason is not None:
+                break
             apply_status_update(trw_dir, rid, suggested)
             actions += 1
 
         if actions > 0:
             resync_learning_index(trw_dir)
 
-    return {
+    result = {
         "dedup_candidates": [{"older_id": o, "newer_id": n, "similarity": s} for o, n, s in duplicates],
         "utility_candidates": utility_candidates,
         "actions_taken": actions,
         "active_count": active_count,
         "threshold": max_entries,
     }
+    if stop_reason is not None:
+        result["status"] = stop_reason
+        result["stopped_after"] = actions
+        result["pending_removals"] = len(removal_pairs) - actions
+    return result
 
 
 # ---------------------------------------------------------------------------

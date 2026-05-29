@@ -149,12 +149,16 @@ class TestBundledTemplateKeysMatchSyncContext:
         content = bundled.read_text(encoding="utf-8")
         template_keys = set(re.findall(r"\{\{(\w+)\}\}", content))
 
-        # The canonical keys from _sync.py's tpl_context (PRD-CORE-093: compact trigger only)
+        # The canonical keys from the dispatcher's tpl_context
+        # (PRD-CORE-093: compact trigger only; PRD-INFRA-132 FR02 added
+        # feedback_reporting). See
+        # trw_mcp.state.claude_md._profile_dispatcher.dispatch_for_profile.
         sync_keys = {
             "imperative_opener",
             "ceremony_quick_ref",
             "memory_harmonization",
             "shared_learnings",
+            "feedback_reporting",
             "closing_reminder",
         }
 
@@ -198,8 +202,8 @@ class TestFullSyncNoEmptySectionHeaders:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
         ):
@@ -252,8 +256,8 @@ class TestFullSyncNoUnreplacedMarkers:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
         ):
@@ -310,8 +314,8 @@ class TestFullSyncNoUnreplacedMarkers:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.claude_md._static_sections.MemoryConfig", return_value=memory_cfg),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
@@ -358,7 +362,6 @@ class TestProjectLocalTemplateOverrideKeys:
             "{{imperative_opener}}\n"
             "{{delegation_section}}\n"
             # Missing: ceremony_quick_ref
-            "{{agent_teams_section}}\n"
             "{{behavioral_protocol}}\n"
             "{{rationalization_watchlist}}\n"
             "{{ceremony_phases}}\n"
@@ -389,7 +392,6 @@ class TestProjectLocalTemplateOverrideKeys:
             "closing_reminder",
             "behavioral_protocol",
             "delegation_section",
-            "agent_teams_section",
             "rationalization_watchlist",
             "ceremony_phases",
             "ceremony_table",

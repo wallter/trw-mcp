@@ -66,7 +66,10 @@ def persist_build_progress_state(trw_dir: Path, status: BuildStatus, *, scope: s
     try:
         from trw_mcp.state._ceremony_progress_state import mark_build_check
 
-        passed = status.tests_passed and status.mypy_clean
+        static_checks_clean = status.static_checks_clean
+        if static_checks_clean is None:
+            static_checks_clean = status.mypy_clean
+        passed = status.tests_passed and static_checks_clean
         mark_build_check(trw_dir, passed)
         logger.info(
             "build_check_state_persisted",

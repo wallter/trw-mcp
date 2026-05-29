@@ -36,7 +36,7 @@ Generate a comprehensive TRW health report for a project, covering tool usage, c
    - Check if delivery was called after meaningful work
 
 3. **Analyze hook enforcement**:
-   - Count by event type: SessionStart, Stop, SubagentStart, TaskCompleted, PostToolUse
+   - Count by event type: SessionStart, Stop, SubagentStart, CompletionGate, PostToolUse
    - Calculate block rate per type: `blocked / total`
    - Flag types with > 50% block rate as potential over-enforcement
    - Flag Stop hooks with 0% pass rate (likely a bug)
@@ -84,7 +84,7 @@ Generate a comprehensive TRW health report for a project, covering tool usage, c
 | Hook | Fires | Blocked | Pass Rate | Assessment |
 |------|-------|---------|-----------|------------|
 | Stop | {N} | {N} | {N}% | {OK/Over-blocking/Bug} |
-| TaskCompleted | {N} | {N} | {N}% | {OK/Over-blocking} |
+| CompletionGate | {N} | {N} | {N}% | {OK/Over-blocking} |
 | ... | ... | ... | ... | ... |
 
 ### Tool Usage (from telemetry)

@@ -37,6 +37,18 @@ class CheckpointResult(TypedDict):
     message: str
 
 
+class LocalStatusResult(TypedDict):
+    """Result of local run status resolution."""
+
+    run_id: str
+    run_path: str
+    task: str
+    status: str
+    phase: str
+    checkpoints: int
+    events: int
+
+
 # ---------------------------------------------------------------------------
 # FR02a: Run directory creation
 # ---------------------------------------------------------------------------
@@ -80,7 +92,7 @@ def scaffold_run_directory(
     # Write minimal run.yaml
     run_yaml_path = run_root / "meta" / "run.yaml"
     ts_iso = datetime.now(timezone.utc).isoformat()
-    run_data = {
+    run_data: dict[str, object] = {
         "run_id": run_id,
         "task": task_name,
         "status": "active",
@@ -88,10 +100,9 @@ def scaffold_run_directory(
         "created_at": ts_iso,
         "source": "local_cli",
     }
-    run_yaml_path.write_text(
-        json.dumps(run_data, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    from trw_mcp.state.persistence import FileStateWriter
+
+    FileStateWriter().write_yaml(run_yaml_path, run_data)
 
     # Write initial event
     events_path = run_root / "meta" / "events.jsonl"
@@ -181,6 +192,73 @@ def write_checkpoint(
     )
 
 
+def write_local_learning(
+    summary: str,
+    detail: str,
+    *,
+    trw_dir: Path | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, object]:
+    """Write a local learning through the same learn implementation used by MCP."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._learn_impl import execute_learn
+
+    if not summary:
+        raise ValueError("summary is required")
+    if not detail:
+        raise ValueError("detail is required")
+    return dict(
+        execute_learn(
+            summary=summary,
+            detail=detail,
+            trw_dir=trw_dir or (Path.cwd() / ".trw"),
+            config=get_config(),
+            tags=tags,
+            source_type="local_cli",
+        )
+    )
+
+
+def read_local_status(*, run_path: Path | None = None) -> LocalStatusResult:
+    """Read status for the active local run without requiring MCP transport."""
+    resolved = _resolve_run_path(run_path)
+    meta = resolved / "meta"
+    from trw_mcp.state.persistence import FileStateReader
+
+    run_data = FileStateReader().read_yaml(meta / "run.yaml")
+    checkpoints = _count_jsonl(meta / "checkpoints.jsonl")
+    events = _count_jsonl(meta / "events.jsonl")
+    return LocalStatusResult(
+        run_id=str(run_data.get("run_id", resolved.name)),
+        run_path=str(resolved),
+        task=str(run_data.get("task", resolved.parent.name)),
+        status=str(run_data.get("status", "unknown")),
+        phase=str(run_data.get("phase", "unknown")),
+        checkpoints=checkpoints,
+        events=events,
+    )
+
+
+def mark_local_delivered(
+    message: str = "local delivery",
+    *,
+    run_path: Path | None = None,
+) -> LocalStatusResult:
+    """Mark the active local run delivered and append a delivery event."""
+    resolved = _resolve_run_path(run_path)
+    meta = resolved / "meta"
+    run_yaml = meta / "run.yaml"
+    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+    run_data = FileStateReader().read_yaml(run_yaml)
+    run_data["status"] = "delivered"
+    run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
+    FileStateWriter().write_yaml(run_yaml, run_data)
+    write_checkpoint(message, run_path=resolved)
+    _append_event(meta / "events.jsonl", "deliver", {"message": message, "source": "local_cli"})
+    return read_local_status(run_path=resolved)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -213,6 +291,12 @@ def _append_jsonl(path: Path, record: dict[str, object]) -> None:
     """Append a single JSON record to a JSONL file."""
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=str) + "\n")
+
+
+def _count_jsonl(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
 
 
 def _append_event(

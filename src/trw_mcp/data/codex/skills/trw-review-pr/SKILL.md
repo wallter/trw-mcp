@@ -1,11 +1,19 @@
 ---
 name: trw-review-pr
-description: "Structured code review using the FRAMEWORK.md rubric. Scores correctness, tests, security, performance, maintainability, and completeness. Use before merging. Use: /trw-review-pr [branch or PR number]\n"
+description: >
+  Structured code review using the FRAMEWORK.md rubric. Scores
+  correctness, tests, security, performance, maintainability,
+  and completeness. Use before merging.
+  Use: /trw-review-pr [branch or PR number]
+user-invocable: true
+argument-hint: "[branch, PR number, or 'HEAD']"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Structured Code Review Skill
+
+Use when: performing a structured code review over a branch, PR, or recent commit before merging.
 
 Perform a structured code review using the FRAMEWORK.md quality rubric. Scores each dimension, provides an overall verdict, and suggests improvements.
 
@@ -36,7 +44,7 @@ Perform a structured code review using the FRAMEWORK.md quality rubric. Scores e
    - Are new/changed functions covered by tests?
    - Do tests verify behavior, not implementation details?
    - Are edge cases and error paths tested?
-   - Do tests use shared project fixtures (e.g., conftest.py, test helpers)?
+   - Do tests use the project's shared fixture/setup mechanism (e.g., conftest.py, test helpers, setup files, factories, fixtures, harnesses)?
    - **Spec-based test review**: For each FR in the linked PRD:
      - Does at least one test assert the acceptance criterion (Given/When/Then)?
      - Does the test check response bodies, not just status codes or `is not None`?
@@ -59,7 +67,8 @@ Perform a structured code review using the FRAMEWORK.md quality rubric. Scores e
    - Clear variable and function names?
    - Follows existing codebase patterns?
    - No unnecessary abstractions or over-engineering?
-   - Type annotations present and correct?
+   - Type/schema/interface annotations present and correct where the project's language/framework expects them?
+   - Does the change preserve deep-module boundaries instead of adding shallow pass-through layers?
 
    ### Completeness (10%)
    - All acceptance criteria from the PRD addressed?

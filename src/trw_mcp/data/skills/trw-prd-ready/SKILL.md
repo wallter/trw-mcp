@@ -10,19 +10,9 @@ argument-hint: "[feature description or PRD-ID]"
 
 # PRD Ready — Full Lifecycle Skill
 
-Use when: the user gives you a feature idea or existing PRD ID and wants sprint-ready status in one step.
+Use when: turning a feature description or existing PRD into a groomed, reviewed, execution-ready PRD.
 
 Take a requirement from idea to sprint-ready execution plan in a single invocation. This skill orchestrates the entire PRD pipeline so users never need to remember which steps come next.
-
-## Implementation-Readiness Guardrails
-
-Treat **implementation-readiness** as the load-bearing signal, not a license to
-chase a score.
-Before advancing, confirm the PRD makes **control points**, **testability**,
-proof-oriented tests / verification commands, **migration** / rollback
-semantics, and completion evidence explicit.
-Treat **score-gaming** or density-chasing as failure modes; add prose only when
-it improves implementability, traceability, or proof quality.
 
 ## Input Detection
 
@@ -35,17 +25,44 @@ Parse `$ARGUMENTS` to determine the entry point:
 ## Pipeline Phases
 
 ```
- ┌─────────┐     ┌─────────┐     ┌────────┐     ┌───────────┐
- │ CREATE  │ ──▶ │  GROOM  │ ──▶ │ REVIEW │ ──▶ │ EXEC PLAN │
- │ (if new)│     │ (≥0.85) │     │(READY) │     │ (output)  │
- └─────────┘     └────┬────┘     └───┬────┘     └───────────┘
-                      │              │
-                      │   NEEDS WORK │
-                      ◀──────────────┘
-                      (max 2 refinement loops)
+ ┌───────────┐     ┌─────────┐     ┌─────────┐     ┌────────┐     ┌───────────┐
+ │ PREFLIGHT │ ──▶ │ CREATE  │ ──▶ │  GROOM  │ ──▶ │ REVIEW │ ──▶ │ EXEC PLAN │
+ │ (if new)  │     │ (if new)│     │ (≥0.85) │     │(READY) │     │ (output)  │
+ └───────────┘     └─────────┘     └────┬────┘     └───┬────┘     └───────────┘
+                                        │              │
+                                        │   NEEDS WORK │
+                                        ◀──────────────┘
+                                        (max 2 refinement loops)
 ```
 
 Each phase has clear entry/exit criteria. The skill automatically skips phases that are already satisfied.
+
+---
+
+### Phase 0: PREFLIGHT (conditional)
+
+**Entry**: `$ARGUMENTS` is a feature description (not an existing PRD ID or file path) AND the request is vague, high-impact, cross-cutting, missing success criteria, or likely to affect multiple modules.
+**Skip if**: `$ARGUMENTS` is an existing PRD ID/file path, or the feature is small and sufficiently specified.
+
+1. Search docs/code/related PRDs first; answer obvious questions from evidence.
+2. Ask unresolved questions **one at a time**. Each question must include:
+   - why the answer matters,
+   - the recommended/default answer,
+   - the consequence of choosing differently.
+3. Cover, at minimum:
+   - affected modules, interfaces, seams, data contracts, or workflows,
+   - user-visible behavior and success metric,
+   - the vertical tracer-bullet path that proves the behavior end-to-end,
+   - deep-module opportunity (where complexity should be hidden behind a smaller stable interface),
+   - explicit non-goals, rollout expectations, and test strategy.
+4. Summarize the visible decision tree before creation:
+   - resolved decisions,
+   - evidence-backed assumptions,
+   - open questions that should appear in the PRD.
+
+If the user is unavailable and evidence is strong enough, proceed with explicit assumptions. Do not hide uncertainty; low-confidence assumptions belong in Open Questions.
+
+**Exit**: Decision tree is ready to feed into PRD creation, or preflight is explicitly skipped with rationale.
 
 ---
 
@@ -55,8 +72,8 @@ Each phase has clear entry/exit criteria. The skill automatically skips phases t
 **Skip if**: `$ARGUMENTS` is an existing PRD ID or file path.
 
 1. Call `trw_recall` with keywords from the feature description to find related learnings and prior work.
-2. Read `INDEX.md` in the PRD parent directory (read `prds_relative_path` from `.trw/config.yaml`, default: `docs/requirements-aare-f/prds`) to verify no duplicate PRD exists.
-3. Call `trw_prd_create(input_text="$ARGUMENTS")` to generate an AARE-F skeleton.
+2. Read `INDEX.md` in the PRD parent directory (read `prds_relative_path` from `.trw/config.yaml`, default: `docs/requirements-aare-f/prds`) to verify no duplicate PRD exists. If a likely duplicate exists, STOP creation, report the matching PRD(s), and ask whether to reuse/groom the existing PRD instead of silently spawning a new one.
+3. Call `trw_prd_create(input_text="$ARGUMENTS")` to generate an AARE-F skeleton. If Phase 0 ran, include the decision tree and assumptions in the input text or immediately patch the generated PRD so they are visible.
 4. Read the generated PRD file to confirm creation.
 5. Default category is CORE. Use FIX for bugs, INFRA for infrastructure, QUAL for quality.
 
@@ -72,17 +89,19 @@ Each phase has clear entry/exit criteria. The skill automatically skips phases t
 **Entry**: PRD file exists. May be skeleton, draft, or partially groomed.
 **Skip if**: `trw_prd_validate` returns score >= 0.85.
 
-Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) for focused grooming work:
+Delegate to a **trw-prd-groomer** helper for focused grooming work:
 
 1. Resolve PRD path (from Phase 1 output or `$ARGUMENTS`).
 2. Read PRD and call `trw_prd_validate(prd_path)` for baseline score.
 3. If score >= 0.85, skip to Phase 3.
 4. Research phase:
    - Call `trw_recall` with keywords from the PRD Background section
-   - Use Grep/Glob to find relevant codebase patterns, interfaces, and data structures
+   - Use Grep/Glob to find relevant codebase patterns, interfaces, seams, data structures, and test conventions
    - Read related PRDs from traceability section
 5. Draft missing/weak sections following AARE-F 12-section guidance:
    - Problem Statement, Goals & Non-Goals, User Stories, Functional Requirements (EARS patterns + confidence scores), Non-Functional Requirements, Technical Approach, Test Strategy, Rollout Plan, Success Metrics, Dependencies & Risks, Open Questions, Traceability Matrix
+   - Technical Approach MUST identify affected modules/interfaces/seams and any deep-module opportunity.
+   - Test Strategy MUST map requirements to project-appropriate test frameworks and at least one vertical tracer-bullet slice when feasible.
 6. Validation loop (max 3 iterations):
    a. Write updated PRD
    b. Call `trw_prd_validate(prd_path)`
@@ -108,7 +127,7 @@ Delegate to a **trw-prd-groomer** subagent (`subagent_type: "trw-prd-groomer"`) 
 
 **Entry**: PRD score >= 0.85 from Phase 2.
 
-Delegate to a **trw-requirement-reviewer** subagent (`subagent_type: "trw-requirement-reviewer"`) for independent review:
+Delegate to a **trw-requirement-reviewer** helper for independent review:
 
 1. Perform 5-dimension quality assessment:
    - **Structure** — AARE-F section completeness and formatting
@@ -134,7 +153,7 @@ Delegate to a **trw-requirement-reviewer** subagent (`subagent_type: "trw-requir
 
 **Entry**: Review verdict is READY.
 
-**Execution model**: Execute directly (no subagent delegation). The exec plan phase requires codebase exploration and file writing that benefit from the orchestrator's full context.
+**Execution model**: Execute directly (no helper delegation). The exec plan phase requires codebase exploration and file writing that benefit from the orchestrator's full context.
 
 Generate the execution plan:
 
@@ -142,16 +161,18 @@ Generate the execution plan:
 2. Use Grep/Glob to find existing code patterns mentioned in Technical Approach.
 3. For each FR, decompose into micro-tasks:
    - **Affected files** — verified via Grep/Glob (never fabricated)
-   - **Function-level changes** — specific functions to add/modify/wire
-   - **Test cases** — `test_{fr_id}_{happy|edge|error}` with acceptance criterion docstrings
-   - **Verification command** — exact pytest/bash command
+   - **Affected interfaces/seams** — APIs, CLI commands, schemas, events, components, hooks, jobs, or data contracts touched by the FR
+   - **Function-level or component-level changes** — specific functions, classes, components, modules, commands, schemas, or adapters to add/modify/wire
+   - **Test cases** — framework-appropriate names (for example `test_...`, `it(...)`, `#[test]`, table-driven Go tests) with acceptance criterion text
+   - **Verification command** — exact project-appropriate command (`pytest`, `vitest`, `npm test`, `cargo test`, `go test`, `make ...`, bash script, etc.)
    - **Dependencies** — which FRs/tasks must complete first
+   - **Slice shape** — prefer a vertical tracer-bullet task that proves the behavior end-to-end; horizontal/layer-only tasks require rationale plus an integration follow-up
    - Target: each micro-task completable in <35 min (agent half-life)
 4. Build task dependency graph (ASCII DAG).
 5. Generate wave plan (parallelizable groups).
 6. Create file ownership mapping.
 7. Write execution plan to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`.
-8. Generate test skeletons to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.py`.
+8. Generate test skeletons to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}` where `{ext}` matches the project test language, or `.md` if only a framework-neutral skeleton spec is safe.
 9. Generate manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`.
 
 **Execution plan structure:**
@@ -170,13 +191,13 @@ Generate the execution plan:
 ## 1. FR Decomposition
 ### FR01: {title}
 **Micro-tasks:**
-1. {description} — `{file_path}:{function_name}`
+1. {description} — `{file_path}:{symbol_or_interface}`
 
 **Test cases:**
 - `test_fr01_happy` — asserts {what}
 - `test_fr01_edge` — asserts {what}
 
-**Verification:** `pytest tests/test_{module}.py::test_fr01_happy -v`
+**Verification:** `{exact project-specific test/build command}`
 **Dependencies:** None | FR02, FR03
 
 ## 2. Task Dependency Graph
@@ -190,6 +211,8 @@ Generate the execution plan:
 - NEVER fabricate file paths — verify with Grep/Glob
 - ALWAYS include verification commands (not "verify manually")
 - ALWAYS map dependencies
+- Prefer vertical tracer-bullet slices; horizontal tasks need rationale and explicit integration proof
+- Infer language, framework, file extensions, and test runner from the repo rather than assuming Python
 - If a FR exceeds 35 min, decompose further
 
 ---
@@ -213,7 +236,7 @@ After all phases complete, output a consolidated summary:
 **Artifacts:**
 - PRD: `{prd_path}`
 - Execution Plan: `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`
-- Test Skeletons: `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.py`
+- Test Skeletons: `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}`
 
 **Next step**: `/trw-sprint-team` to assign agents, or implement directly.
 ```
@@ -238,3 +261,5 @@ Call `trw_learn(summary="PRD ready pipeline: {PRD-ID} — {score}", tags=["prd-w
 - **Groom convergence at < 0.70**: Stop and report. The feature description likely needs more detail from the user.
 - **Review returns BLOCK**: Stop and report blocking issues. These require human decisions.
 - **Exec plan hits unverifiable files**: Flag in Known Risks section rather than fabricating.
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->

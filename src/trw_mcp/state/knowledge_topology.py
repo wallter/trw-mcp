@@ -54,10 +54,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     """Compute Jaccard similarity between two sets."""
     if not a and not b:
         return 0.0
-    union = len(a | b)
-    if union == 0:
-        return 0.0  # pragma: no cover — guarded above
-    return len(a & b) / union
+    return len(a & b) / len(a | b)
 
 
 def _base_result(

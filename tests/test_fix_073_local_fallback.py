@@ -53,7 +53,9 @@ class TestOrchestrationServiceScaffold:
         )
 
         run_path = Path(result["run_path"])
-        run_yaml = json.loads((run_path / "meta" / "run.yaml").read_text())
+        from trw_mcp.state.persistence import FileStateReader
+
+        run_yaml = FileStateReader().read_yaml(run_path / "meta" / "run.yaml")
 
         assert run_yaml["task"] == "test-task"
         assert run_yaml["status"] == "active"
@@ -246,6 +248,67 @@ class TestLocalCLISubcommand:
 
         assert result.returncode == 0
         assert "Checkpoint created" in result.stdout
+
+    def test_local_status_and_deliver_after_init(self, tmp_path: Path) -> None:
+        """trw-mcp local status/deliver work without MCP transport."""
+        subprocess.run(
+            [sys.executable, "-m", "trw_mcp.server", "local", "init", "--task", "deliver-cli"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            check=True,
+        )
+
+        status = subprocess.run(
+            [sys.executable, "-m", "trw_mcp.server", "local", "status"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert status.returncode == 0
+        assert "Status: active" in status.stdout
+
+        delivered = subprocess.run(
+            [sys.executable, "-m", "trw_mcp.server", "local", "deliver", "--message", "done"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert delivered.returncode == 0
+        assert "Run delivered" in delivered.stdout
+
+        after = subprocess.run(
+            [sys.executable, "-m", "trw_mcp.server", "local", "status"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert "Status: delivered" in after.stdout
+
+    def test_local_learn_persists_without_transport(self, tmp_path: Path) -> None:
+        """trw-mcp local learn writes through the learning implementation."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "trw_mcp.server",
+                "local",
+                "learn",
+                "--summary",
+                "Local fallback test learning",
+                "--detail",
+                "Validated local CLI learn path for transport outages.",
+                "--tag",
+                "test",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "Learning" in result.stdout
+        assert any((tmp_path / ".trw" / "memory").glob("**/*.yaml"))
 
     def test_local_no_subcommand_shows_help(self) -> None:
         """trw-mcp local (no subcommand) shows usage."""

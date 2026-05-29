@@ -2,14 +2,14 @@
 
 PRD-CORE-033: Cross-project knowledge sharing via semantic search.
 Fail-open: returns empty list on any failure — never blocks local operation.
+PRD-DIST-124 (2026-04-30): migrated from urllib to httpx.
 """
 
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 
+import httpx
 import structlog
 from typing_extensions import TypedDict
 
@@ -54,26 +54,20 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[RemoteShared
     for base_url in urls:
         url = f"{base_url.rstrip('/')}/v1/learnings/search"
         try:
-            data = json.dumps(payload).encode("utf-8")
             headers: dict[str, str] = {"Content-Type": "application/json"}
             _api_key = cfg.platform_api_key.get_secret_value()
             if _api_key:
                 headers["Authorization"] = f"Bearer {_api_key}"
-            req = urllib.request.Request(  # noqa: S310 — URL built from cfg.effective_platform_urls (operator-configured TRW platform endpoint, not user input)
-                url,
-                data=data,
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=REMOTE_RECALL_TIMEOUT) as response:  # noqa: S310 — see Request comment above
-                if 200 <= response.status < 300:
-                    body = json.loads(response.read().decode("utf-8"))
-                    # Backend may return a list directly or {"results": [...]}
-                    items: list[RemoteSharedLearningDict] = body if isinstance(body, list) else body.get("results", [])
-                    for r in items:
-                        r["summary"] = f"[shared] {r.get('summary', '')}"
-                    return items
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError):
+            with httpx.Client(timeout=float(REMOTE_RECALL_TIMEOUT)) as client:
+                response = client.post(url, json=payload, headers=headers)
+            if 200 <= response.status_code < 300:
+                body = response.json()
+                # Backend may return a list directly or {"results": [...]}
+                items: list[RemoteSharedLearningDict] = body if isinstance(body, list) else body.get("results", [])
+                for r in items:
+                    r["summary"] = f"[shared] {r.get('summary', '')}"
+                return items
+        except (httpx.HTTPError, OSError, json.JSONDecodeError):
             logger.debug("remote_recall_failed", base_url=base_url)
 
     return []

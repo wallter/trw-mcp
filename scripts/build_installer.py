@@ -33,6 +33,38 @@ TEMPLATES = {
 }
 DEFAULT_FORMAT = "py"
 
+# PRD-INFRA-123 FR01 + PRD-INFRA-126 FR06 — the public installer MUST NOT
+# embed proprietary wheels. The build process fails closed if any of these
+# wheel filenames appears in the embed step.
+_PROPRIETARY_WHEEL_PREFIXES: tuple[str, ...] = (
+    "trw_distill-",
+    "trw_harness-",  # PRD-INFRA-128: cross-monorepo dep of trw-distill
+    "trw_loop-",
+    "trw_swarm-",
+)
+
+
+def _refuse_proprietary_wheel(wheel_path: Path) -> None:
+    """Raise SystemExit if wheel_path is one of the proprietary packages.
+
+    The public installer is BSL-1.1 and ships embedded wheel bytes for the
+    open packages only. Embedding a proprietary wheel would leak the IP
+    boundary defined in PRD-INFRA-123.
+    """
+    for prefix in _PROPRIETARY_WHEEL_PREFIXES:
+        if wheel_path.name.startswith(prefix):
+            print(
+                f"ERROR: refusing to embed proprietary wheel into public installer: "
+                f"{wheel_path.name}",
+                file=sys.stderr,
+            )
+            print(
+                "       Proprietary packages ship via the PRD-INFRA-126 entitlement "
+                "endpoint, NOT embedded in install-trw.py.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
 
 def find_latest_wheel(dist_dir: Path, pattern: str, label: str) -> Path:
     """Find the most recent .whl file matching *pattern* in *dist_dir*."""
@@ -86,6 +118,7 @@ def build_installer(
     elif not wheel_path.exists():
         print(f"ERROR: Wheel not found: {wheel_path}", file=sys.stderr)
         sys.exit(1)
+    _refuse_proprietary_wheel(wheel_path)
 
     version = extract_version(wheel_path)
     print(f"Format:             {fmt}")
@@ -97,6 +130,7 @@ def build_installer(
     elif not memory_wheel_path.exists():
         print(f"ERROR: Memory wheel not found: {memory_wheel_path}", file=sys.stderr)
         sys.exit(1)
+    _refuse_proprietary_wheel(memory_wheel_path)
 
     print(f"Wheel (trw-memory): {memory_wheel_path}")
 

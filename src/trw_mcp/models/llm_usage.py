@@ -17,7 +17,7 @@ class LLMUsageRecord(BaseModel):
     model_config = ConfigDict(strict=True, populate_by_name=True)
 
     ts: str = Field(description="ISO 8601 timestamp of the LLM call")
-    model: str  # full model ID e.g. "claude-haiku-4-5-20251001"
+    model: str  # provider-specific model ID or capability alias
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     latency_ms: float = Field(ge=0.0)

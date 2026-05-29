@@ -89,7 +89,7 @@ exit_criteria:
     type: auto
     verified: false
   - id: build-gate
-    description: Build gate passes -- tests pass + type-check clean
+    description: Build gate passes -- project-native validation is clean
     type: auto
     command: "trw_build_check(scope='full')"
     verified: false
@@ -128,7 +128,7 @@ exit_criteria:
 ## Exit Criteria
 
 - [ ] All assigned PRDs reach done status
-- [ ] Build gate passes: tests pass + type-check clean
+- [ ] Build gate passes: project-native validation is clean
 - [ ] Coverage >= {coverage_threshold}%
 - [ ] Delivery ceremony completed (/trw-deliver)
 ````

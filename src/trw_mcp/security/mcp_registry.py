@@ -5,140 +5,52 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import threading
 from pathlib import Path
-from typing import Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# Pydantic models extracted to ``_mcp_registry_models.py`` (cycle 35).
+# Re-imported here for back-compat with existing import sites.
+from ._mcp_registry_models import (
+    ALL_PHASES,
+    ALL_SCOPES,
+    AllowedTool,
+    MCPAllowlist,
+    MCPSecurityConfigError,
+    MCPSecurityError,
+    MCPSecurityUnavailableError,
+    MCPServer,
+    RegistryDecision,
+    RegistrySignatureBlock,
+)
 
 logger = structlog.get_logger(__name__)
 
-ALL_PHASES: tuple[str, ...] = (
-    "research",
-    "plan",
-    "implement",
-    "validate",
-    "review",
-    "deliver",
-)
-ALL_SCOPES: tuple[str, ...] = ("read", "write", "execute")
+_SignatureCacheKey = tuple[str, str, str, str]
+_SIGNATURE_CACHE: set[_SignatureCacheKey] = set()
+_SIGNATURE_CACHE_LOCK = threading.RLock()
 
-
-class MCPSecurityError(RuntimeError):
-    """Base error for MCP security failures."""
-
-
-class MCPSecurityUnavailableError(MCPSecurityError):
-    """Raised when the cryptographic verification dependency is unavailable."""
-
-
-class MCPSecurityConfigError(MCPSecurityError):
-    """Raised when the registry or overlay configuration is invalid."""
-
-
-class AllowedTool(BaseModel):
-    """Per-tool authorization entry from the PRD allowlist schema."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: str
-    allowed_phases: tuple[str, ...] = Field(default_factory=lambda: ALL_PHASES)
-    allowed_scopes: tuple[str, ...] = Field(default_factory=lambda: ALL_SCOPES)
-
-
-class RegistrySignatureBlock(BaseModel):
-    """Detached signature metadata for a registry file."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    algorithm: Literal["ed25519"] = "ed25519"
-    signed_at: str
-    signer_fingerprint: str
-    signature: str
-
-
-class MCPServer(BaseModel):
-    """Authorized MCP server entry."""
-
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    name: str
-    url_or_command: str
-    public_key_fingerprint: str
-    allowed_tools: tuple[AllowedTool, ...] = Field(default_factory=tuple)
-    source_tier: Literal["canonical", "overlay"] = "canonical"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _upgrade_legacy_capabilities(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        upgraded = dict(value)
-        if "public_key_fingerprint" not in upgraded:
-            upgraded["public_key_fingerprint"] = _descriptor_fingerprint(
-                str(upgraded.get("url_or_command", upgraded.get("name", "")))
-            )
-        if "allowed_tools" in value:
-            return upgraded
-        capabilities = upgraded.get("capabilities")
-        if not isinstance(capabilities, list):
-            return upgraded
-        upgraded["allowed_tools"] = [
-            {
-                "name": str(tool_name),
-                "allowed_phases": list(ALL_PHASES),
-                "allowed_scopes": list(ALL_SCOPES),
-            }
-            for tool_name in capabilities
-        ]
-        return upgraded
-
-    def tool_names(self) -> set[str]:
-        return {tool.name for tool in self.allowed_tools}
-
-    def tool_by_name(self, tool_name: str) -> AllowedTool | None:
-        for tool in self.allowed_tools:
-            if tool.name == tool_name:
-                return tool
-        return None
-
-
-class MCPAllowlist(BaseModel):
-    """Resolved allowlist after canonical + optional overlay merge."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    version: int = 1
-    signing_algorithm: Literal["ed25519"] = "ed25519"
-    servers: tuple[MCPServer, ...] = Field(default_factory=tuple)
-    signature_block: RegistrySignatureBlock | None = None
-    allowlist_hash: str = ""
-
-    def by_name(self, name: str) -> MCPServer | None:
-        for server in self.servers:
-            if server.name == name:
-                return server
-        return None
-
-    def by_fingerprint(self, fingerprint: str) -> MCPServer | None:
-        for server in self.servers:
-            if server.public_key_fingerprint == fingerprint:
-                return server
-        return None
-
-
-class RegistryDecision(BaseModel):
-    """Authorization result for a server identity check."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    allowed: bool
-    reason: str = ""
-    match_type: Literal["canonical", "overlay", "unsigned_admission", "quarantined", "missing"]
-    entry: MCPServer | None = None
-    drift_detected: bool = False
-    quarantine_reason: str = ""
+__all__ = [
+    "ALL_PHASES",
+    "ALL_SCOPES",
+    "AllowedTool",
+    "MCPAllowlist",
+    "MCPRegistry",
+    "MCPSecurityConfigError",
+    "MCPSecurityError",
+    "MCPSecurityUnavailableError",
+    "MCPServer",
+    "RegistryDecision",
+    "RegistrySignatureBlock",
+    "bundled_allowlist_path",
+    "bundled_public_key_path",
+    "canonicalize_registry_payload",
+    "is_allowed",
+    "load_allowlist",
+    "verify_signature",
+]
 
 
 def _load_crypto() -> tuple[type[object], type[object]]:
@@ -153,10 +65,6 @@ def _load_crypto() -> tuple[type[object], type[object]]:
         raise MCPSecurityUnavailableError(
             "cryptography>=42 is required for MCP registry signature verification"
         ) from exc
-
-
-def _descriptor_fingerprint(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def canonicalize_registry_payload(payload: dict[str, object]) -> bytes:
@@ -181,7 +89,22 @@ def _load_public_key(path: Path) -> tuple[object, str]:
     return public_key, "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def _verify_registry_signature(payload: dict[str, object], *, public_key_path: Path) -> None:
+def _signature_cache_key(
+    *,
+    registry_path: Path,
+    content_hash: str,
+    signature_hash: str,
+    public_key_fingerprint: str,
+) -> _SignatureCacheKey:
+    return (
+        public_key_fingerprint,
+        str(registry_path.resolve()),
+        content_hash,
+        signature_hash,
+    )
+
+
+def _verify_registry_signature(payload: dict[str, object], *, public_key_path: Path, registry_path: Path) -> None:
     signature_block_raw = payload.get("signature_block")
     if not isinstance(signature_block_raw, dict):
         raise MCPSecurityConfigError("registry signature_block is required")
@@ -193,10 +116,23 @@ def _verify_registry_signature(payload: dict[str, object], *, public_key_path: P
         signature = base64.b64decode(signature_block.signature.encode("ascii"), validate=True)
     except ValueError as exc:
         raise MCPSecurityConfigError("registry signature is not valid base64") from exc
-    try:
-        public_key.verify(signature, canonicalize_registry_payload(payload))  # type: ignore[attr-defined]
-    except Exception as exc:  # pragma: no cover - exact crypto error type is library-specific
-        raise MCPSecurityConfigError("registry signature verification failed") from exc
+    content_hash = "sha256:" + hashlib.sha256(canonicalize_registry_payload(payload)).hexdigest()
+    signature_hash = "sha256:" + hashlib.sha256(signature).hexdigest()
+    cache_key = _signature_cache_key(
+        registry_path=registry_path,
+        content_hash=content_hash,
+        signature_hash=signature_hash,
+        public_key_fingerprint=computed_fingerprint,
+    )
+    with _SIGNATURE_CACHE_LOCK:
+        if cache_key in _SIGNATURE_CACHE:
+            logger.debug("mcp_registry_signature_cache_hit", path=str(registry_path), content_hash=content_hash)
+            return
+        try:
+            public_key.verify(signature, canonicalize_registry_payload(payload))  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - exact crypto error type is library-specific
+            raise MCPSecurityConfigError("registry signature verification failed") from exc
+        _SIGNATURE_CACHE.add(cache_key)
 
 
 def _parse_allowlist_file(path: Path, *, public_key_path: Path) -> MCPAllowlist:
@@ -206,7 +142,7 @@ def _parse_allowlist_file(path: Path, *, public_key_path: Path) -> MCPAllowlist:
         raise MCPSecurityConfigError(f"unable to read allowlist {path}") from exc
     if not isinstance(raw, dict):
         raise MCPSecurityConfigError(f"allowlist {path} must be a YAML mapping")
-    _verify_registry_signature(raw, public_key_path=public_key_path)
+    _verify_registry_signature(raw, public_key_path=public_key_path, registry_path=path)
     servers = tuple(MCPServer.model_validate(item) for item in raw.get("servers", []))
     return MCPAllowlist(
         version=int(raw.get("version", 1)),

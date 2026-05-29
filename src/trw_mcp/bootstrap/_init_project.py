@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """init_project flow — bootstraps TRW framework in a target directory.
 
 PRD-INFRA-006: ``trw-mcp init-project`` CLI command that copies all
@@ -7,11 +8,8 @@ required framework files into a target git repository.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
 
 import structlog
-
-from trw_mcp.models.typed_dicts import BootstrapFileResult
 
 from ._utils import (
     _DATA_DIR,
@@ -31,293 +29,41 @@ from ._utils import (
 logger = structlog.get_logger(__name__)
 
 
-class _CopilotInstaller(Protocol):
-    """Callable protocol for Copilot artifact installers."""
-
-    def __call__(
-        self,
-        target_dir: Path,
-        *,
-        force: bool = False,
-    ) -> BootstrapFileResult | dict[str, list[str]]: ...
-
-
-def _extend_result(
-    result: dict[str, list[str]],
-    update: BootstrapFileResult | dict[str, list[str]],
-    *,
-    include_updated: bool = False,
-) -> None:
-    """Merge a bootstrap sub-result into the main init payload."""
-    result["created"].extend(update.get("created", []))
-    if include_updated:
-        result["created"].extend(update.get("updated", []))
-    result["skipped"].extend(update.get("preserved", []))
-    result["errors"].extend(update.get("errors", []))
-
-
-def _load_model_family(opencode_path: Path) -> str:
-    """Best-effort model-family detection for OpenCode instructions."""
-    from ._opencode import detect_model_family
-
-    if not opencode_path.exists():
-        return "generic"
-
-    import json
-
-    try:
-        opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return "generic"
-    return detect_model_family(opencode_data)
-
-
-def _install_opencode_artifacts(
-    target_dir: Path,
-    *,
-    force: bool,
-    result: dict[str, list[str]],
-) -> None:
-    """Install OpenCode-specific bootstrap artifacts."""
-    from ._opencode import generate_agents_md, generate_opencode_config
-
-    oc_result = generate_opencode_config(target_dir, force=force)
-    _extend_result(result, oc_result, include_updated=True)
-
-    from ._opencode import (
-        generate_opencode_instructions,
-        install_opencode_agents,
-        install_opencode_commands,
-        install_opencode_skills,
-    )
-
-    try:
-        instructions_result = generate_opencode_instructions(
-            target_dir,
-            _load_model_family(target_dir / "opencode.json"),
-            force=force,
-        )
-        _extend_result(result, instructions_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-        result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
-
-    try:
-        from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
-
-        agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force)
-        _extend_result(result, agents_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
-        result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
-
-    _extend_result(result, install_opencode_commands(target_dir, force=force))
-    _extend_result(result, install_opencode_agents(target_dir, force=force))
-    _extend_result(result, install_opencode_skills(target_dir, force=force))
-
-
-def _install_cursor_artifacts(
-    target_dir: Path,
-    *,
-    force: bool,
-    result: dict[str, list[str]],
-    ide_targets: list[str] | None = None,
-) -> None:
-    """Install Cursor-specific bootstrap artifacts (cursor-ide and/or cursor-cli).
-
-    Shared steps (hooks.json legacy, rules.mdc, mcp.json) run once for either
-    surface.  CLI-specific generators (cli.json, AGENTS.md, 5-event hook subset)
-    are gated on "cursor-cli" in *ide_targets*.
-
-    PRD-CORE-137-FR07: dispatcher wiring.
-    """
-    from ._cursor import generate_cursor_mcp_config, generate_cursor_rules_mdc
-    from ._update_project import _extract_trw_section_content
-
-    resolved_targets = ide_targets or []
-
-    # Shared: .cursor/mcp.json (run once for either surface)
-    _extend_result(result, generate_cursor_mcp_config(target_dir, force=force))
-
-    # IDE-specific artifacts (PRD-CORE-136-FR03, FR04, FR05, FR06, FR08)
-    if "cursor-ide" in resolved_targets:
-        from ._cursor_ide import (
-            generate_cursor_ide_commands,
-            generate_cursor_ide_hooks,
-            generate_cursor_ide_skills,
-            generate_cursor_ide_subagents,
-        )
-
-        # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
-        try:
-            _extend_result(
-                result,
-                generate_cursor_rules_mdc(
-                    target_dir,
-                    _extract_trw_section_content(),
-                    client_id="cursor-ide",
-                    force=force,
-                ),
-                include_updated=True,
-            )
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/rules/trw-ceremony.mdc generation skipped: {exc}")
-
-        # FR03: .cursor/agents/trw-*.md
-        try:
-            _extend_result(result, generate_cursor_ide_subagents(target_dir), include_updated=True)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/agents/ generation skipped: {exc}")
-
-        # FR05: .cursor/commands/trw-*.md
-        try:
-            _extend_result(result, generate_cursor_ide_commands(target_dir), include_updated=True)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/commands/ generation skipped: {exc}")
-
-        # FR04: .cursor/skills/<name>/
-        try:
-            _extend_result(result, generate_cursor_ide_skills(target_dir, force=force), include_updated=True)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/skills/ generation skipped: {exc}")
-
-        # FR08: 8-event hook set + .cursor/hooks/trw-*.sh
-        try:
-            _extend_result(result, generate_cursor_ide_hooks(target_dir, force=force), include_updated=True)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/hooks/ generation skipped: {exc}")
-
-    # CLI-specific artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a)
-    if "cursor-cli" in resolved_targets:
-        _install_cursor_cli_artifacts(target_dir, force=force, result=result)
-
-
-def _install_cursor_cli_artifacts(
-    target_dir: Path,
-    *,
-    force: bool,
-    result: dict[str, list[str]],
-) -> None:
-    """Install cursor-cli-only artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a).
-
-    Called from ``_install_cursor_artifacts`` when cursor-cli is in ide_targets.
-    Fail-open: each generator is wrapped in try/except so one failure doesn't
-    abort the others.
-    """
-    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
-
-    from ._cursor_cli import (
-        generate_cursor_cli_agents_md,
-        generate_cursor_cli_config,
-        generate_cursor_cli_hooks,
-    )
-
-    # FR03: .cursor/cli.json permissions (also emits TTY reminder via FR08a)
-    try:
-        cli_result = generate_cursor_cli_config(target_dir, force=force)
-        _extend_result(result, cli_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, cli.json update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/cli.json generation skipped: {exc}")
-
-    # FR04: AGENTS.md with TRW sentinel block
-    try:
-        trw_section = render_agents_trw_section()
-        agents_result = generate_cursor_cli_agents_md(target_dir, trw_section, force=force)
-        _extend_result(result, agents_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
-        result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) generation skipped: {exc}")
-
-    # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
-    try:
-        hooks_result = generate_cursor_cli_hooks(target_dir, force=force)
-        _extend_result(result, hooks_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, hooks.json update is best-effort
-        result.setdefault("warnings", []).append(f".cursor/hooks.json (cursor-cli) generation skipped: {exc}")
-
-
-def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
-    """Install Codex-specific bootstrap artifacts."""
-    from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-    from ._codex import (
-        codex_hooks_enabled,
-        generate_codex_agents,
-        generate_codex_config,
-        generate_codex_hooks,
-        install_codex_skills,
-    )
-    from ._opencode import generate_agents_md, generate_codex_instructions
-
-    _extend_result(result, generate_codex_config(target_dir, force=force), include_updated=True)
-
-    if codex_hooks_enabled(target_dir):
-        _extend_result(result, generate_codex_hooks(target_dir, force=force), include_updated=True)
-
-    _extend_result(result, generate_codex_agents(target_dir, force=force), include_updated=True)
-    _extend_result(result, install_codex_skills(target_dir, force=force), include_updated=True)
-
-    try:
-        instructions_result = generate_codex_instructions(target_dir, force=force)
-        _extend_result(result, instructions_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
-        result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
-
-    try:
-        agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
-        _extend_result(result, agents_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
-        result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
-
-
-def _run_copilot_installer(
-    result: dict[str, list[str]],
-    label: str,
-    installer: _CopilotInstaller,
-    target_dir: Path,
-    *,
-    force: bool,
-) -> None:
-    """Run a single Copilot installer with best-effort warning capture."""
-    try:
-        _extend_result(result, installer(target_dir, force=force))
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"{label} generation skipped: {exc}")
-
-
-def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
-    """Install Copilot-specific bootstrap artifacts."""
-    from ._copilot import (
-        generate_copilot_agents,
-        generate_copilot_hooks,
-        generate_copilot_instructions,
-        generate_copilot_path_instructions,
-        install_copilot_skills,
-    )
-
-    installers = (
-        ("copilot-instructions.md", generate_copilot_instructions),
-        ("copilot path instructions", generate_copilot_path_instructions),
-        ("copilot hooks", generate_copilot_hooks),
-        ("copilot agents", generate_copilot_agents),
-        ("copilot skills", install_copilot_skills),
-    )
-    for label, installer in installers:
-        _run_copilot_installer(result, label, installer, target_dir, force=force)
-
-
-def _install_gemini_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
-    """Install Gemini CLI-specific bootstrap artifacts."""
-    from ._gemini import (
-        generate_gemini_agents,
-        generate_gemini_instructions,
-        generate_gemini_mcp_config,
-    )
-
-    installers = (
-        ("GEMINI.md", generate_gemini_instructions),
-        ("gemini MCP config", generate_gemini_mcp_config),
-        ("gemini agents", generate_gemini_agents),
-    )
-    for label, installer in installers:
-        _run_copilot_installer(result, label, installer, target_dir, force=force)
+# IDE installers extracted to _init_project_ide (PRD-DIST-243 batch 21).
+# Re-exported for back-compat with _client_integrations.py imports.
+from trw_mcp.bootstrap._init_project_ide import (
+    _CopilotInstaller as _CopilotInstaller,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _extend_result as _extend_result,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_antigravity_artifacts as _install_antigravity_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_codex_artifacts as _install_codex_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_copilot_artifacts as _install_copilot_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_cursor_artifacts as _install_cursor_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_cursor_cli_artifacts as _install_cursor_cli_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_gemini_artifacts as _install_gemini_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _install_opencode_artifacts as _install_opencode_artifacts,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _load_model_family as _load_model_family,
+)
+from trw_mcp.bootstrap._init_project_ide import (
+    _run_copilot_installer as _run_copilot_installer,
+)
 
 
 def _create_directory_structure(
@@ -451,116 +197,18 @@ def _install_hooks(
                 )
 
 
-def _validate_skill(skill_dir: Path) -> tuple[bool, str]:
-    """Validate a skill directory has a valid SKILL.md.
-
-    Returns ``(is_valid, reason)``.  Required fields in YAML frontmatter:
-    ``name`` and ``description``.
-    """
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_md.exists():
-        return False, f"Missing SKILL.md in {skill_dir.name}"
-
-    content = skill_md.read_text(encoding="utf-8")
-
-    # Check for YAML frontmatter (--- delimited)
-    if not content.startswith("---"):
-        return False, f"No YAML frontmatter in {skill_dir.name}/SKILL.md"
-
-    # Parse frontmatter — need at least two --- delimiters
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return False, f"Malformed YAML frontmatter in {skill_dir.name}/SKILL.md"
-
-    try:
-        from ruamel.yaml import YAML
-
-        yaml = YAML(typ="safe")
-        metadata = yaml.load(parts[1])
-        if not isinstance(metadata, dict):
-            return False, f"Frontmatter is not a dict in {skill_dir.name}/SKILL.md"
-        if not metadata.get("name"):
-            return False, f"Missing 'name' in {skill_dir.name}/SKILL.md frontmatter"
-        if not metadata.get("description"):
-            return False, f"Missing 'description' in {skill_dir.name}/SKILL.md frontmatter"
-    except Exception as exc:  # justified: boundary — parse errors from user-authored SKILL.md
-        return False, f"YAML parse error in {skill_dir.name}/SKILL.md: {exc}"
-
-    return True, ""
-
-
-def _install_skills(
-    target_dir: Path,
-    force: bool,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Copy bundled skill directories to ``.claude/skills/``.
-
-    Each skill directory is validated via :func:`_validate_skill` before
-    installation.  Invalid skills are skipped with a warning.
-    """
-    # PRD-CORE-125-FR07: Skills gating -- skip skill installation when
-    # skills are disabled via config/profile.
-    try:
-        from trw_mcp.models.config import get_config
-
-        config = get_config()
-        if not config.effective_skills_enabled:
-            logger.debug("skills_install_gated", reason="skills_enabled=False")
-            return
-    except Exception:  # justified: fail-open, config failure installs skills normally
-        logger.debug("skills_install_gate_unavailable", exc_info=True)
-
-    skills_source = _DATA_DIR / "skills"
-    if skills_source.is_dir():
-        for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir():
-                is_valid, reason = _validate_skill(skill_dir)
-                if not is_valid:
-                    logger.warning(
-                        "skill_validation_failed",
-                        skill=skill_dir.name,
-                        reason=reason,
-                    )
-                    continue
-                dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                _ensure_dir(dest_skill, result, on_progress)
-                for skill_file in sorted(skill_dir.iterdir()):
-                    if skill_file.is_file():
-                        _copy_file(skill_file, dest_skill / skill_file.name, force, result, on_progress)
-
-
-def _install_agents(
-    target_dir: Path,
-    force: bool,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Copy bundled agent markdown files to ``.claude/agents/``."""
-    # PRD-CORE-125-FR08: Agents gating -- skip agent installation when
-    # agents are disabled via config/profile.
-    try:
-        from trw_mcp.models.config import get_config
-
-        config = get_config()
-        if config.agents_enabled is not None and not config.agents_enabled:
-            logger.debug("agents_install_gated", reason="agents_enabled=False")
-            return
-    except Exception:  # justified: fail-open, config failure installs agents normally
-        logger.debug("agents_install_gate_unavailable", exc_info=True)
-
-    agents_source = _DATA_DIR / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                _copy_file(
-                    agent_file,
-                    target_dir / ".claude" / "agents" / agent_file.name,
-                    force,
-                    result,
-                    on_progress,
-                )
+# Skill/agent installers extracted to _init_project_skills (PRD-DIST-243 batch 21b).
+# Re-exported for back-compat — _copilot.py + _codex.py import _validate_skill;
+# bootstrap/__init__.py exports all 3.
+from trw_mcp.bootstrap._init_project_skills import (
+    _install_agents as _install_agents,
+)
+from trw_mcp.bootstrap._init_project_skills import (
+    _install_skills as _install_skills,
+)
+from trw_mcp.bootstrap._init_project_skills import (
+    _validate_skill as _validate_skill,
+)
 
 
 def _generate_root_files(
@@ -674,6 +322,18 @@ def init_project(
     # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
     _generate_root_files(target_dir, force, result, on_progress)
 
+    # 7a. Claude Code distill channels (always installed — claude-code is the default)
+    if "claude-code" in ide_targets or not ide_targets:
+        try:
+            from ._claude_code_distill_channels import install_claude_code_distill_channels
+
+            cc_dc = install_claude_code_distill_channels(target_dir, force=force)
+            result["created"].extend(cc_dc.get("created", []))
+            result.setdefault("skipped", []).extend(cc_dc.get("preserved", []))
+            result["errors"].extend(cc_dc.get("errors", []))
+        except Exception as _exc:  # justified: fail-open, distill channels are additive
+            result.setdefault("warnings", []).append(f"claude-code distill channels skipped: {_exc}")
+
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
     if "opencode" in ide_targets:
         _install_opencode_artifacts(target_dir, force=force, result=result)
@@ -693,6 +353,10 @@ def init_project(
     # 7f. Gemini CLI artifacts
     if "gemini" in ide_targets:
         _install_gemini_artifacts(target_dir, force=force, result=result)
+
+    # 7g. Antigravity CLI artifacts
+    if "antigravity-cli" in ide_targets:
+        _install_antigravity_artifacts(target_dir, force=force, result=result)
 
     # 7g. PRD-CORE-149 FR04: write .trw/runtime/hook-env.sh so hook scripts
     # can honor per-profile hooks_enabled / nudge_enabled without re-reading

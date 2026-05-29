@@ -49,7 +49,8 @@ def llm_assess_learnings(
 ) -> list[dict[str, object]]:
     """Use LLM to assess whether active learnings are still relevant.
 
-    Asks Haiku to classify each learning as ACTIVE, RESOLVED, or OBSOLETE.
+    Asks the configured fast/low-cost model to classify each learning as
+    ACTIVE, RESOLVED, or OBSOLETE.
 
     Args:
         entries: List of (file_path, entry_data) tuples.

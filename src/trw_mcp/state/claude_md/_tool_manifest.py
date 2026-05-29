@@ -33,6 +33,67 @@ class ToolEntry(NamedTuple):
     description: str
 
 
+class PrescriptiveLanguageClassification(NamedTuple):
+    """Classification for instruction-surface wording changes."""
+
+    category: str
+    rewrite_allowed: bool
+    rationale: str
+
+
+_SAFETY_TERMS: Final[frozenset[str]] = frozenset(
+    {
+        "must not",
+        "never",
+        "secret",
+        "credential",
+        "security",
+        "destructive",
+        "approval",
+        "human review",
+    }
+)
+_PROCESS_TERMS: Final[frozenset[str]] = frozenset(
+    {
+        "must",
+        "shall",
+        "required",
+        "checkpoint",
+        "deliver",
+        "build_check",
+        "validate",
+        "test",
+    }
+)
+
+
+def classify_prescriptive_language(text: str) -> PrescriptiveLanguageClassification:
+    """Classify instruction language before tone rewrites.
+
+    Safety-critical language is not rewriteable by a tone-only pass; process-
+    critical language may be clarified but not weakened; advisory language can
+    be softened.
+    """
+    lowered = text.lower()
+    if any(term in lowered for term in _SAFETY_TERMS):
+        return PrescriptiveLanguageClassification(
+            category="safety-critical",
+            rewrite_allowed=False,
+            rationale="preserves enforceable safety or approval boundary language",
+        )
+    if any(term in lowered for term in _PROCESS_TERMS):
+        return PrescriptiveLanguageClassification(
+            category="process-critical",
+            rewrite_allowed=True,
+            rationale="may clarify wording but must preserve the required action",
+        )
+    return PrescriptiveLanguageClassification(
+        category="advisory",
+        rewrite_allowed=True,
+        rationale="tone rewrite may soften non-normative guidance",
+    )
+
+
 TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Core
     "trw_session_start": "Load prior learnings and recover any active run",
@@ -43,7 +104,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_recall": "Retrieve relevant learnings for a specific topic",
     "trw_learn_update": "Update an existing learning entry with new detail or status",
     # Quality
-    "trw_build_check": "Run lint, type-check, and tests to verify your work",
+    "trw_build_check": "Record project-native test/build/static-check results after you run them",
     "trw_review": "Run code review analysis on changed files",
     "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",

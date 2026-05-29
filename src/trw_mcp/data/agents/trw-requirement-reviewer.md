@@ -6,7 +6,7 @@ description: >
   per-dimension scores and a READY/NEEDS WORK/BLOCK verdict. Read-only,
   never modifies files. Not for drafting new FRs (use trw-requirement-writer)
   or end-to-end grooming iteration (use trw-prd-groomer).
-model: sonnet
+model: balanced
 effort: low
 maxTurns: 20
 memory: project

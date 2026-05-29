@@ -1,12 +1,8 @@
-"""OpenCode model-family instruction renderers — part of claude_md static sections.
+"""OpenCode instruction renderer compatibility surface.
 
-PRD-CORE-115 FR04/FR05: Produces materially different instruction content for
-each model family (qwen, gpt, claude, generic) covering context budget, reasoning
-syntax, tool-use patterns, and known limitations.
-
-PRD-CORE-131: Delegates to ``ProtocolRenderer`` for centralized generation.
-
-Public surface: render_opencode_instructions(model_family)
+PRD-CORE-115 introduced per-client instruction generation. v25 keeps the
+``model_family`` argument for compatibility, but rendering delegates to the
+portable ProtocolRenderer path instead of family-specific prompt text.
 """
 
 from __future__ import annotations
@@ -16,19 +12,16 @@ from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 
 
 def render_opencode_instructions(model_family: str) -> str:
-    """Render instructions content for OpenCode .opencode/INSTRUCTIONS.md.
+    """Render portable instructions content for OpenCode.
 
     Args:
-        model_family: One of 'qwen', 'gpt', 'claude', or 'generic'.
+        model_family: Legacy family hint; accepted but not required.
 
     Returns:
-        Markdown string for OpenCode-specific instructions.
+        Portable Markdown instructions for OpenCode.
     """
-    if model_family not in ("qwen", "gpt", "claude"):
-        model_family = "generic"
-
     renderer = ProtocolRenderer(
         client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family=model_family,
+        model_family=model_family or "generic",
     )
     return renderer.render_opencode_instructions()

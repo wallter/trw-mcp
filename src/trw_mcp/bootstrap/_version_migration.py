@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Version migration — predecessor cleanup and stale artifact removal.
 
 Handles:
@@ -8,7 +9,6 @@ Handles:
 
 from __future__ import annotations
 
-import hashlib
 import shutil
 from pathlib import Path
 
@@ -89,95 +89,21 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Manifest helpers
-# ---------------------------------------------------------------------------
-
-
-def _coerce_manifest_list(value: object) -> list[str]:
-    """Coerce a manifest field to ``list[str]``, returning ``[]`` for non-lists."""
-    return [str(item) for item in value] if isinstance(value, list) else []
-
-
-def _read_manifest(target_dir: Path) -> dict[str, object] | None:
-    """Read the managed-artifacts manifest from a target project.
-
-    Returns ``None`` if the manifest does not exist (first update after
-    manifest support was added).
-    """
-    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
-    if not manifest_path.exists():
-        return None
-    try:
-        from trw_mcp.state.persistence import FileStateReader
-
-        reader = FileStateReader()
-        data = reader.read_yaml(manifest_path)
-        if not isinstance(data, dict):
-            return None
-        result: dict[str, object] = {
-            key: _coerce_manifest_list(data.get(key, []))
-            for key in (
-                "skills",
-                "agents",
-                "hooks",
-                "opencode_commands",
-                "opencode_agents",
-                "opencode_skills",
-                "custom_skills",
-                "custom_agents",
-                "custom_hooks",
-                "custom_opencode_commands",
-                "custom_opencode_agents",
-                "custom_opencode_skills",
-            )
-        }
-        raw_version = data.get("version", 1)
-        result["version"] = int(str(raw_version))
-        raw_hashes = data.get("content_hashes")
-        if isinstance(raw_hashes, dict):
-            result["content_hashes"] = {str(k): str(v) for k, v in raw_hashes.items()}
-        else:
-            result["content_hashes"] = {}
-        return result
-    except OSError:
-        return None
-
-
-def _compute_content_hashes(
-    target_dir: Path,
-    bundled: dict[str, list[str]],
-) -> dict[str, str]:
-    """Compute SHA256 hashes of installed artifact files.
-
-    PRD-FIX-068-FR04: Hashes enable drift detection between installed
-    copies and the current bundle.
-    """
-    hashes: dict[str, str] = {}
-
-    def _record_hash(path: Path, key: str) -> None:
-        try:
-            if path.is_file():
-                hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
-
-    for name in bundled["agents"]:
-        _record_hash(target_dir / ".claude" / "agents" / name, name)
-    for name in bundled["hooks"]:
-        _record_hash(target_dir / ".claude" / "hooks" / name, name)
-    for name in bundled["skills"]:
-        _record_hash(target_dir / ".claude" / "skills" / name / "SKILL.md", f"{name}/SKILL.md")
-    for name in bundled.get("opencode_commands", []):
-        _record_hash(target_dir / ".opencode" / "commands" / name, f".opencode/commands/{name}")
-    for name in bundled.get("opencode_agents", []):
-        _record_hash(target_dir / ".opencode" / "agents" / name, f".opencode/agents/{name}")
-    for name in bundled.get("opencode_skills", []):
-        _record_hash(target_dir / ".opencode" / "skills" / name / "SKILL.md", f".opencode/skills/{name}/SKILL.md")
-    _record_hash(target_dir / ".opencode" / "INSTRUCTIONS.md", ".opencode/INSTRUCTIONS.md")
-    _record_hash(target_dir / ".codex" / "INSTRUCTIONS.md", ".codex/INSTRUCTIONS.md")
-    _record_hash(target_dir / "AGENTS.md", "AGENTS.md")
-    return hashes
+# Manifest read/hash helpers extracted to _version_manifest (PRD-DIST-243 batch 14).
+# Re-exported here for backward compatibility with callers that import via
+# this facade (_update_project.py, bootstrap/__init__.py, test modules).
+from trw_mcp.bootstrap._version_manifest import (
+    _MANIFEST_FILE as _MANIFEST_FILE,
+)
+from trw_mcp.bootstrap._version_manifest import (
+    _coerce_manifest_list as _coerce_manifest_list,
+)
+from trw_mcp.bootstrap._version_manifest import (
+    _compute_content_hashes as _compute_content_hashes,
+)
+from trw_mcp.bootstrap._version_manifest import (
+    _read_manifest as _read_manifest,
+)
 
 
 def _write_manifest(
@@ -236,7 +162,7 @@ def _write_manifest(
         result["errors"].append(f"Failed to write manifest: {exc}")
 
 
-_MANIFEST_FILE = "managed-artifacts.yaml"
+# _MANIFEST_FILE moved to _version_manifest (re-exported above)
 
 
 # ---------------------------------------------------------------------------
@@ -295,96 +221,15 @@ def _cleanup_context_transients(
 # ---------------------------------------------------------------------------
 
 
-def _migrate_predecessor_set(
-    parent_dir: Path,
-    name_map: dict[str, str | None],
-    result: dict[str, list[str]],
-    *,
-    is_dir_artifact: bool,
-    log_event: str,
-    dry_run: bool,
-) -> None:
-    """Remove predecessor artifacts when their successor is installed or dropped.
-
-    When *new_name* is ``None`` (PRD-CORE-092), the predecessor is removed
-    unconditionally (deletion-only, no successor required).
-
-    Args:
-        parent_dir: Directory containing both predecessor and successor artifacts.
-        name_map: Mapping of old (predecessor) name to new (successor) name,
-            or ``None`` for deletion-only entries.
-        result: Mutable result dict.
-        is_dir_artifact: ``True`` for directory artifacts (skills), ``False`` for files (agents).
-        log_event: structlog event name on removal failure.
-        dry_run: When ``True``, only report without deleting.
-    """
-    for old_name, new_name in name_map.items():
-        predecessor = parent_dir / old_name
-        # Check predecessor exists
-        if is_dir_artifact:
-            if not predecessor.is_dir():
-                continue
-        else:
-            if not predecessor.is_file():
-                continue
-        # When new_name is not None, require successor to exist before removing
-        if new_name is not None:
-            successor = parent_dir / new_name
-            if is_dir_artifact:
-                if not successor.is_dir():
-                    continue
-            else:
-                if not successor.is_file():
-                    continue
-        if dry_run:
-            result["updated"].append(f"would migrate:{predecessor}")
-            continue
-        try:
-            if is_dir_artifact:
-                shutil.rmtree(predecessor)
-            else:
-                predecessor.unlink()
-            result["updated"].append(f"migrated:{predecessor}")
-        except OSError:
-            logger.debug(log_event, path=str(predecessor), exc_info=True)
-
-
-def _migrate_prefix_predecessors(
-    target_dir: Path,
-    result: dict[str, list[str]],
-    dry_run: bool = False,
-) -> None:
-    """Remove non-prefixed predecessor skills/agents when trw- successor is installed.
-
-    PRD-FIX-032: Projects initialized before the trw- prefix migration
-    (PRD-INFRA-013) still have old non-prefixed skill directories and agent
-    files.  This function removes them only when the trw- prefixed successor
-    is already present, ensuring no data loss.
-
-    This function is intended for ``update_project()`` only.  It is called
-    before ``_remove_stale_artifacts()`` so the manifest written afterwards
-    is already clean of predecessor entries.
-    """
-    skills_dir = target_dir / ".claude" / "skills"
-    agents_dir = target_dir / ".claude" / "agents"
-
-    _migrate_predecessor_set(
-        skills_dir,
-        PREDECESSOR_MAP["skills"],
-        result,
-        is_dir_artifact=True,
-        log_event="predecessor_skill_removal_failed",
-        dry_run=dry_run,
-    )
-    _migrate_predecessor_set(
-        agents_dir,
-        PREDECESSOR_MAP["agents"],
-        result,
-        is_dir_artifact=False,
-        log_event="predecessor_agent_removal_failed",
-        dry_run=dry_run,
-    )
-
+# Predecessor-migration helpers extracted to _version_migration_predecessors
+# (PRD-DIST-243 batch 17). Re-exported here for back-compat with callers
+# (bootstrap/__init__.py + test_bootstrap_branches_migration_cleanup.py).
+from trw_mcp.bootstrap._version_migration_predecessors import (
+    _migrate_predecessor_set as _migrate_predecessor_set,
+)
+from trw_mcp.bootstrap._version_migration_predecessors import (
+    _migrate_prefix_predecessors as _migrate_prefix_predecessors,
+)
 
 # ---------------------------------------------------------------------------
 # Stale artifact removal

@@ -17,5 +17,5 @@ Fallbacks:
 - If team-specific state is unavailable, skip team synthesis instead of failing.
 
 Constraints:
-- Do not assume Claude Code hooks or Codex-only tools.
+- Do not assume client-specific hooks or Codex-only tools.
 - Keep the workflow concise and OpenCode-safe.

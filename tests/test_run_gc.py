@@ -407,3 +407,63 @@ def test_boot_sequence_fail_open_on_sweep_exception(
     assert log.warning.called
     call_args = log.warning.call_args
     assert call_args.args[0] == "boot_gc_failed"
+
+
+def test_sweep_terminal_runs_skip_yaml_parse(tmp_path: Path) -> None:
+    """Terminal runs must not invoke the ruamel YAML parser.
+
+    Regression: previously every run.yaml was parsed in ruamel rt-mode
+    just to check status, which made boot scale O(N * file_size). On
+    workspaces with bloated run.yaml files (multi-MB audit_pattern_promotions
+    arrays) this turned a 200-run scan into a 35-second hang.
+    """
+    runs_root = tmp_path / "runs"
+    for run_id in ("r1", "r2", "r3"):
+        run_dir = runs_root / "task" / run_id
+        _write_run_yaml(run_dir, status="abandoned")
+
+    from trw_mcp.state import _run_gc
+
+    call_count = {"n": 0}
+
+    def _spy_load_yaml(path: Path) -> Any:
+        call_count["n"] += 1
+        return {"status": "abandoned"}
+
+    original = _run_gc._load_run_yaml
+    _run_gc._load_run_yaml = _spy_load_yaml  # type: ignore[assignment]
+    try:
+        from trw_mcp.state._run_gc import sweep_stale_runs
+
+        report = sweep_stale_runs(runs_root, 24, 12, [], dry_run=True)
+    finally:
+        _run_gc._load_run_yaml = original
+
+    assert report.runs_skipped_terminal == 3
+    assert call_count["n"] == 0, "prefilter must short-circuit terminal runs"
+
+
+def test_sweep_active_protected_skips_yaml_parse(tmp_path: Path) -> None:
+    """An active run with `protected: true` must not invoke the YAML parser."""
+    runs_root = tmp_path / "runs"
+    _write_run_yaml(runs_root / "task" / "r1", status="active", protected=True)
+
+    from trw_mcp.state import _run_gc
+
+    call_count = {"n": 0}
+
+    def _spy_load_yaml(path: Path) -> Any:
+        call_count["n"] += 1
+        return {"status": "active", "protected": True}
+
+    original = _run_gc._load_run_yaml
+    _run_gc._load_run_yaml = _spy_load_yaml  # type: ignore[assignment]
+    try:
+        from trw_mcp.state._run_gc import sweep_stale_runs
+
+        report = sweep_stale_runs(runs_root, 24, 12, [], dry_run=True)
+    finally:
+        _run_gc._load_run_yaml = original
+
+    assert report.runs_preserved_protected == 1
+    assert call_count["n"] == 0, "prefilter resolves protected without YAML parse"

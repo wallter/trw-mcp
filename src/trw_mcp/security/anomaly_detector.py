@@ -328,6 +328,11 @@ class AnomalyDetector:
             )
             fired.append("rate_spike")
         if self._check_first_observation(obs):
+            # Record the pair before emitting so subsequent calls skip it.
+            # Without this the anomaly fires on every single tool invocation
+            # for the life of the process, since seed_baseline is only ever
+            # called by tests / Phase-2 calibration paths.
+            self._baseline_pairs.add((obs.server, obs.tool))
             _emit_anomaly(
                 anomaly_type="first_observation_after_deploy",
                 server=obs.server,

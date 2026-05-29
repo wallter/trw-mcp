@@ -132,8 +132,11 @@ class TestMaybeCheckpointWal:
         result_default = maybe_checkpoint_wal(trw_dir)
         assert result_default.get("skipped") is True
 
-        # With a 4 MB threshold, this should trigger
-        with patch("trw_mcp.state.memory_adapter.get_config") as mock_cfg:
+        # With a 4 MB threshold, this should trigger. get_config is consumed
+        # inside _memory_lookups (where maybe_checkpoint_wal lives), so the
+        # patch must target that call site, not the memory_adapter facade that
+        # merely re-exports the function.
+        with patch("trw_mcp.state._memory_lookups.get_config") as mock_cfg:
             cfg = TRWConfig(wal_checkpoint_threshold_mb=4)
             mock_cfg.return_value = cfg
             with patch("sqlite3.connect") as mock_conn:
@@ -206,8 +209,11 @@ class TestWalCheckpointInMaintenance:
 
         mock_wal_result = {"checkpointed": True, "wal_size_before_mb": 12.5, "pages_checkpointed": 100}
 
+        # NOTE: run_auto_maintenance receives trw_dir directly, so no
+        # resolve_trw_dir patch is needed (the symbol moved to
+        # _ceremony_telemetry; patching the old _ceremony_helpers name raised
+        # AttributeError — a stale patch target, not a behavior gap).
         with (
-            patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
                 return_value={
@@ -237,7 +243,6 @@ class TestWalCheckpointInMaintenance:
         from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
         with (
-            patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
                 return_value={
@@ -270,7 +275,6 @@ class TestWalCheckpointInMaintenance:
         mock_wal_result = {"skipped": True, "reason": "under_threshold"}
 
         with (
-            patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
                 return_value={

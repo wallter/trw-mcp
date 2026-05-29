@@ -2,16 +2,20 @@
 
 Checks for available updates on session start and optionally
 installs them. Fail-open: network errors never block session start.
+
+PRD-DIST-124 (2026-04-30): migrated from urllib to httpx so trw-mcp
+uses one HTTP library consistently with sync/pull.py + sync/push.py.
+httpx is a transitive dependency via fastmcp — no new package install.
+See docs/research/uniformity-audit-2026-04-29.md.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
-import urllib.error
-import urllib.request
 from pathlib import Path
 
+import httpx
 import structlog
 
 from trw_mcp.models.config import get_config
@@ -55,32 +59,26 @@ def check_for_update() -> dict[str, object]:
     # First-success: try each backend until one responds
     for base_url in urls:
         try:
-            url = f"{base_url.rstrip('/')}/v1/releases/latest?channel={cfg.update_channel}"
+            url = f"{base_url.rstrip('/')}/v1/releases/latest"
             headers: dict[str, str] = {}
             _key = cfg.platform_api_key.get_secret_value()
             if _key:
                 headers["Authorization"] = f"Bearer {_key}"
-            req = urllib.request.Request(url, method="GET", headers=headers)  # noqa: S310 — URL from cfg.effective_platform_urls (operator config, not user input)
-            with urllib.request.urlopen(req, timeout=3) as response:  # noqa: S310 — see Request comment above
-                if 200 <= response.status < 300:
-                    data: dict[str, object] = json.loads(response.read().decode("utf-8"))
-                    latest = str(data.get("version", current))
-                    available = _compare_versions(current, latest)
-                    advisory: str | None = f"TRW v{latest} available (you have v{current}). " if available else None
-                    return {
-                        "available": available,
-                        "current": current,
-                        "latest": latest,
-                        "channel": cfg.update_channel,
-                        "advisory": advisory,
-                    }
-        except (
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-            OSError,
-            json.JSONDecodeError,
-            KeyError,
-        ):
+            with httpx.Client(timeout=3.0) as client:
+                response = client.get(url, headers=headers, params={"channel": cfg.update_channel})
+            if 200 <= response.status_code < 300:
+                data: dict[str, object] = response.json()
+                latest = str(data.get("version", current))
+                available = _compare_versions(current, latest)
+                advisory: str | None = f"TRW v{latest} available (you have v{current}). " if available else None
+                return {
+                    "available": available,
+                    "current": current,
+                    "latest": latest,
+                    "channel": cfg.update_channel,
+                    "advisory": advisory,
+                }
+        except (httpx.HTTPError, OSError, json.JSONDecodeError, KeyError):
             logger.debug("version_check_failed", base_url=base_url)
 
     return {
@@ -135,15 +133,17 @@ def download_release_artifact(
         tmp_dir = Path(tempfile.mkdtemp(prefix="trw-upgrade-"))
         archive_path = tmp_dir / "release.tar.gz"
 
-        # Download
+        # Download. artifact_url comes from the backend API response (operator-
+        # controlled platform); checksum is verified post-download below.
         cfg = get_config()
         headers: dict[str, str] = {}
         _key = cfg.platform_api_key.get_secret_value()
         if _key:
             headers["Authorization"] = f"Bearer {_key}"
-        req = urllib.request.Request(artifact_url, method="GET", headers=headers)  # noqa: S310 — artifact_url comes from the backend API response (operator-controlled platform); checksum is verified after download
-        with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
-            archive_path.write_bytes(response.read())
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            response = client.get(artifact_url, headers=headers)
+        response.raise_for_status()
+        archive_path.write_bytes(response.content)
 
         # Mandatory checksum verification (PRD-QUAL-042-FR08)
         if not expected_checksum:
@@ -293,17 +293,12 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
             _key = cfg.platform_api_key.get_secret_value()
             if _key:
                 headers["Authorization"] = f"Bearer {_key}"
-            req = urllib.request.Request(url, method="GET", headers=headers)  # noqa: S310 — URL from cfg.effective_platform_urls (operator config, not user input)
-            with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310 — see Request comment above
-                if 200 <= response.status < 300:
-                    result: dict[str, object] = json.loads(response.read().decode("utf-8"))
-                    return result
-        except (
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-            OSError,
-            json.JSONDecodeError,
-        ):
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(url, headers=headers)
+            if 200 <= response.status_code < 300:
+                result: dict[str, object] = response.json()
+                return result
+        except (httpx.HTTPError, OSError, json.JSONDecodeError):
             continue
 
     return None

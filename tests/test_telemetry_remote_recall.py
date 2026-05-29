@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 import json
-import urllib.error
 from unittest.mock import MagicMock, patch
 
+import httpx
+
+from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
 from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
+
+
+def _client_raising(exc: Exception) -> MagicMock:
+    client = MagicMock()
+    client.get.side_effect = exc
+    client.post.side_effect = exc
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    return client
+
 
 # ===========================================================================
 # Offline / config guard
@@ -59,18 +71,12 @@ class TestRemoteRecallSuccess:
                 {"summary": "Avoid global state in modules", "impact": 0.75},
             ]
         }
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=[0.1, 0.2, 0.3]),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("async patterns")
 
@@ -94,18 +100,12 @@ class TestRemoteRecallSuccess:
                 {"summary": "Learning three"},
             ]
         }
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("query")
 
@@ -121,19 +121,13 @@ class TestRemoteRecallSuccess:
             platform_telemetry_enabled=True,
         )
 
-        backend_response = {"results": []}
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        backend_response: dict[str, object] = {"results": []}
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("query")
 
@@ -147,7 +141,7 @@ class TestRemoteRecallSuccess:
 
 class TestRemoteRecallTimeout:
     def test_remote_recall_timeout(self) -> None:
-        """URLError returns empty list (fail-open)."""
+        """RequestError returns empty list (fail-open)."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -158,17 +152,14 @@ class TestRemoteRecallTimeout:
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch(
-                "urllib.request.urlopen",
-                side_effect=urllib.error.URLError("timed out"),
-            ),
+            patch("httpx.Client", return_value=_client_raising(httpx.RequestError("timed out"))),
         ):
             result = fetch_shared_learnings("query")
 
         assert result == []
 
     def test_remote_recall_http_error(self) -> None:
-        """HTTPError returns empty list (fail-open)."""
+        """Non-2xx status returns empty list (fail-open)."""
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig(
@@ -176,19 +167,12 @@ class TestRemoteRecallTimeout:
             platform_telemetry_enabled=True,
         )
 
+        client = _mock_httpx_client(_mock_httpx_response(status_code=503))
+
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch(
-                "urllib.request.urlopen",
-                side_effect=urllib.error.HTTPError(
-                    url="https://api.example.com/v1/learnings/search",
-                    code=503,
-                    msg="Service Unavailable",
-                    hdrs=MagicMock(),  # type: ignore[arg-type]
-                    fp=None,
-                ),
-            ),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("query")
 
@@ -206,10 +190,7 @@ class TestRemoteRecallTimeout:
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch(
-                "urllib.request.urlopen",
-                side_effect=OSError("network unreachable"),
-            ),
+            patch("httpx.Client", return_value=_client_raising(OSError("network unreachable"))),
         ):
             result = fetch_shared_learnings("query")
 
@@ -224,16 +205,14 @@ class TestRemoteRecallTimeout:
             platform_telemetry_enabled=True,
         )
 
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = b"not valid json {"
+        resp = _mock_httpx_response()
+        resp.json.side_effect = json.JSONDecodeError("bad", "", 0)
+        client = _mock_httpx_client(resp)
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", return_value=None),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("query")
 
@@ -256,20 +235,14 @@ class TestRemoteRecallEmptyQuery:
         )
 
         backend_response = {"results": [{"summary": "Some shared learning"}]}
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         embed_mock = MagicMock(return_value=None)
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", embed_mock),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("")
 
@@ -287,21 +260,15 @@ class TestRemoteRecallEmptyQuery:
             platform_telemetry_enabled=True,
         )
 
-        backend_response = {"results": []}
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        backend_response: dict[str, object] = {"results": []}
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         embed_mock = MagicMock(return_value=None)
 
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", embed_mock),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             result = fetch_shared_learnings("   ")
 
@@ -317,14 +284,8 @@ class TestRemoteRecallEmptyQuery:
             platform_telemetry_enabled=True,
         )
 
-        backend_response = {"results": []}
-        response_body = json.dumps(backend_response).encode("utf-8")
-
-        mock_response = MagicMock()
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_response.status = 200
-        mock_response.read.return_value = response_body
+        backend_response: dict[str, object] = {"results": []}
+        client = _mock_httpx_client(_mock_httpx_response(json_data=backend_response))
 
         fake_embedding = [0.1] * 384
         embed_mock = MagicMock(return_value=fake_embedding)
@@ -332,7 +293,7 @@ class TestRemoteRecallEmptyQuery:
         with (
             patch("trw_mcp.telemetry.remote_recall.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.remote_recall.embed", embed_mock),
-            patch("urllib.request.urlopen", return_value=mock_response),
+            patch("httpx.Client", return_value=client),
         ):
             fetch_shared_learnings("testing patterns")
 

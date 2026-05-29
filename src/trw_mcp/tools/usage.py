@@ -14,6 +14,7 @@ from fastmcp import FastMCP
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts._tools import (
     ProgressiveExpandResult,
+    RunCostLedgerEntryDict,
     UsageCallerEntryDict,
     UsageGroupEntryDict,
     UsageModelEntryDict,
@@ -33,11 +34,18 @@ _COST_RATES: dict[str, dict[str, float]] = {
     "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 15.00, "output": 75.00},
-    # PRD-QUAL-072-FR02: Opus 4.7 pricing mirrors 4.6 ($15 input / $75 output
-    # per 1M tokens — Anthropic kept pricing unchanged at 4.7 release).
+    # Anthropic adapter snapshot. Keep provider-specific pricing isolated to
+    # this usage adapter.
     "claude-opus-4-7": {"input": 15.00, "output": 75.00},
 }
 _DEFAULT_RATE: dict[str, float] = {"input": 3.00, "output": 15.00}
+
+
+def _as_int(value: object) -> int:
+    try:
+        return max(0, int(str(value or 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -52,8 +60,52 @@ def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
         Cost estimate in USD, rounded to 6 decimal places.
     """
     rates = _COST_RATES.get(model, _DEFAULT_RATE)
-    cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
+    safe_input_tokens = max(0, input_tokens)
+    safe_output_tokens = max(0, output_tokens)
+    cost = (safe_input_tokens * rates["input"] + safe_output_tokens * rates["output"]) / 1_000_000
     return round(cost, 6)
+
+
+def _single_or_multiple(values: list[str]) -> str:
+    if not values:
+        return "unknown"
+    if len(values) == 1:
+        return values[0]
+    return "multiple"
+
+
+def build_run_cost_ledger(records: list[dict[str, object]]) -> dict[str, RunCostLedgerEntryDict]:
+    """Aggregate run-level token/cost ledger entries from usage records."""
+    ledger: dict[str, RunCostLedgerEntryDict] = {}
+    for record in records:
+        run_id = str(record.get("run_id", "") or "unknown")
+        model = str(record.get("model", "unknown"))
+        provider = str(record.get("provider") or (model.split("-", 1)[0] if model != "unknown" else "unknown"))
+        input_tokens = _as_int(record.get("input_tokens", 0))
+        output_tokens = _as_int(record.get("output_tokens", 0))
+        cost = _compute_cost(model, input_tokens, output_tokens)
+        entry = ledger.setdefault(
+            run_id,
+            {
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "estimated_cost_usd": 0.0,
+                "model": "unknown",
+                "provider": "unknown",
+                "models": [],
+                "providers": [],
+            },
+        )
+        entry["calls"] = entry["calls"] + 1
+        entry["input_tokens"] = entry["input_tokens"] + input_tokens
+        entry["output_tokens"] = entry["output_tokens"] + output_tokens
+        entry["estimated_cost_usd"] = round(entry["estimated_cost_usd"] + cost, 6)
+        entry["models"] = sorted({*entry["models"], model})
+        entry["providers"] = sorted({*entry["providers"], provider})
+        entry["model"] = _single_or_multiple(entry["models"])
+        entry["provider"] = _single_or_multiple(entry["providers"])
+    return ledger
 
 
 def register_usage_tools(server: FastMCP) -> None:
@@ -110,6 +162,7 @@ def register_usage_tools(server: FastMCP) -> None:
                 "total_cost_estimate_usd": 0.0,
                 "by_model": {},
                 "by_caller": {},
+                "cost_ledger": {},
             }
 
         total_calls = 0
@@ -122,8 +175,8 @@ def register_usage_tools(server: FastMCP) -> None:
 
         for record in records:
             model = str(record.get("model", "unknown"))
-            input_tokens = int(str(record.get("input_tokens", 0)))
-            output_tokens = int(str(record.get("output_tokens", 0)))
+            input_tokens = _as_int(record.get("input_tokens", 0))
+            output_tokens = _as_int(record.get("output_tokens", 0))
             caller = str(record.get("caller", "unknown"))
 
             cost = _compute_cost(model, input_tokens, output_tokens)
@@ -186,6 +239,7 @@ def register_usage_tools(server: FastMCP) -> None:
             "total_cost_estimate_usd": total_cost_rounded,
             "by_model": by_model,
             "by_caller": by_caller,
+            "cost_ledger": build_run_cost_ledger(records),
         }
 
         # Group-by breakdown (INFRA-029 FR02)
@@ -209,8 +263,8 @@ def register_usage_tools(server: FastMCP) -> None:
                         "cost_estimate_usd": 0.0,
                     }
                 entry = grouped[bucket]
-                rec_input = int(str(record.get("input_tokens", 0)))
-                rec_output = int(str(record.get("output_tokens", 0)))
+                rec_input = _as_int(record.get("input_tokens", 0))
+                rec_output = _as_int(record.get("output_tokens", 0))
                 rec_model = str(record.get("model", "unknown"))
                 entry["calls"] = entry["calls"] + 1
                 entry["input_tokens"] = entry["input_tokens"] + rec_input

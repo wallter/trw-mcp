@@ -23,7 +23,7 @@ Check the current state of TRW framework compliance including ceremony adherence
 2. **Ceremony checklist** — verify each ceremony step:
    - Was `trw_session_start` called this session? (Check `.trw/context/` for recent session markers)
    - Are there checkpoints in the active run? (Read `checkpoints.jsonl` if run exists)
-   - Is CLAUDE.md auto-section current? (Read CLAUDE.md, check `trw:start`/`trw:end` markers exist and have content)
+   - Is client instruction auto-section current? (Read the active client instruction file, check `trw:start`/`trw:end` markers exist and have content)
 
 3. **Learning layer health**:
    - Call `trw_recall('*', compact=true)` for active learning count
@@ -48,7 +48,7 @@ Check the current state of TRW framework compliance including ceremony adherence
    ### Ceremony Status
    - [x/!] Session start ceremony
    - [x/!] Active checkpoints
-   - [x/!] CLAUDE.md auto-section
+   - [x/!] client instruction auto-section
 
    ### Run Status
    - Phase: {current phase or "no run"}

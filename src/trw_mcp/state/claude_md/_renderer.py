@@ -4,9 +4,10 @@ PRD-CORE-131: Centralizes all ceremony guidance generation into a single
 ``ProtocolRenderer`` class, replacing hardcoded strings scattered across
 ``_static_sections.py``, ``_opencode_sections.py``, and ``_gemini.py``.
 
-The renderer is parameterized by ``ClientProfile``, ``model_family``, and
-``ceremony_mode`` (FULL/MINIMAL/COMPACT) so that each platform and model
-combination gets optimized output from a single source of truth.
+The renderer is parameterized by ``ClientProfile``, an optional legacy
+``model_family`` hint, and ``ceremony_mode`` (FULL/MINIMAL/COMPACT). v25 keeps
+model-family routing as a compatibility shim while emitting portable guidance by
+default.
 """
 
 from __future__ import annotations
@@ -50,8 +51,9 @@ _QUICK_REF_SIGNATURES = {
 class ProtocolRenderer:
     """Centralizes protocol formatting for different AI coding assistants.
 
-    PRD-CORE-131-FR01: Intake ``ClientProfile`` + ``ModelFamily`` and produce
-    standard TRW Markdown sections. All generators delegate here.
+    PRD-CORE-131-FR01: Intake ``ClientProfile`` plus an optional legacy
+    model-family hint and produce standard TRW Markdown sections. All generators
+    delegate here.
 
     PRD-CORE-131-FR04: ``ceremony_mode`` drives verbosity (FULL/MINIMAL/COMPACT).
     """
@@ -245,7 +247,7 @@ class ProtocolRenderer:
             "TRW tools persist your work across sessions:\n"
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
             "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
-            "- **Verify**: Run tests after each change \u2014 fix failures before moving on.\n"
+            "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
             "\n" + SESSION_BOUNDARY_TEXT
         )
 
@@ -276,14 +278,24 @@ class ProtocolRenderer:
 
         return render_gemini_instructions()
 
-    # FR03: OpenCode model-specific instructions
+    # ------------------------------------------------------------------
+    # Antigravity CLI instructions
+    # ------------------------------------------------------------------
+
+    def render_antigravity_instructions(self) -> str:
+        """Generate ANTIGRAVITY.md TRW ceremony section."""
+        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_antigravity_instructions
+
+        return render_antigravity_instructions()
+
+    # FR03: OpenCode portable instructions
     # ------------------------------------------------------------------
 
     def render_opencode_instructions(self) -> str:
         """Render instructions for OpenCode .opencode/INSTRUCTIONS.md.
 
-        PRD-CORE-131-FR03: Model-specific reasoning injections based on
-        ``model_family`` (Qwen /think, Claude extended thinking, GPT CoT).
+        PRD-CORE-131-FR03: v25 accepts legacy ``model_family`` hints while
+        emitting provider-neutral instructions.
         """
         family = self.model_family
         if family == "qwen":
@@ -295,28 +307,19 @@ class ProtocolRenderer:
         return self._render_opencode_generic()
 
     def _render_opencode_qwen(self) -> str:
-        """Render OpenCode instructions optimised for Qwen (local vLLM).
-
-        PRD-CORE-149-FR10: body extracted to renderers/_review_and_opencode.py.
-        """
+        """Compatibility wrapper for legacy family-specific rendering."""
         from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_qwen
 
         return render_opencode_qwen()
 
     def _render_opencode_gpt(self) -> str:
-        """Render OpenCode instructions optimised for GPT models.
-
-        PRD-CORE-149-FR10: body extracted to renderers/_review_and_opencode.py.
-        """
+        """Compatibility wrapper for legacy family-specific rendering."""
         from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_gpt
 
         return render_opencode_gpt()
 
     def _render_opencode_claude(self) -> str:
-        """Render OpenCode instructions optimised for Claude (Anthropic API).
-
-        PRD-CORE-149-FR10: body extracted to renderers/_review_and_opencode.py.
-        """
+        """Compatibility wrapper for legacy family-specific rendering."""
         from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_claude
 
         return render_opencode_claude()

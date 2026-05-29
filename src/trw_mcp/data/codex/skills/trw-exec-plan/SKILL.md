@@ -1,35 +1,36 @@
 ---
 name: trw-exec-plan
-description: "Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs into micro-tasks with file paths, test names, verification commands, and dependency graphs. Called automatically by /trw-prd-ready and /trw-prd-new.\n"
+description: >
+  Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs
+  into micro-tasks with file paths, test names, verification commands, and dependency graphs.
+  Called automatically by /trw-prd-ready and /trw-prd-new.
+user-invocable: false
+argument-hint: "[PRD-ID or file path]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
-
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 <!-- ultrathink -->
 
 # Execution Plan Generation Skill
 
 Generate a structured execution plan that bridges a groomed PRD to concrete implementation micro-tasks. The execution plan decomposes each FR into actionable steps with file paths, test names, verification commands, and dependency graphs — so agents can execute without self-decomposing.
 
-## Implementation-Readiness Guardrails
-
-Treat **implementation-readiness** as the load-bearing signal, not a license to
-chase a score.
-Before advancing, confirm the PRD makes **control points**, **testability**,
-proof-oriented tests / verification commands, **migration** / rollback
-semantics, and completion evidence explicit.
-Treat **score-gaming** or density-chasing as failure modes; add prose only when
-it improves implementability, traceability, or proof quality.
-
 ## Research Basis
 
 - Agent half-life ~35 min (Ord 2025): micro-tasks must fit within reliability window
 - Plan granularity mismatch (Sprint 34 lesson): file-level planning misses secondary read paths; function-level inventory required for cross-cutting changes
 - Execution plans reduce self-decomposition variance by providing pre-computed task graphs
+- Vertical tracer bullets reduce integration risk: prefer end-to-end behavioral slices over broad horizontal layer churn
+- Deep modules reduce cognitive load: plan around stable interfaces and information hiding, not just file edits
 
 ## Path Discovery
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs. Execution plans are stored in a sibling `exec-plans/` directory.
+
+
+## Pre-Implementation Checklist (PRD-QUAL-056-FR03)
+
+Before writing the execution plan, confirm the PRD is valid, source/test seams are identified, and the project-native verification command is known or explicitly uncertain. Record checklist completion in the plan metadata so downstream review can verify planning discipline.
 
 ## Workflow
 
@@ -49,17 +50,20 @@ Call `trw_prd_validate(prd_path)` to check quality:
 ### Step 3: Research Context
 
 - Call `trw_recall` with keywords from the PRD Problem Statement
-- Use Grep/Glob to find existing code patterns in files mentioned by the Technical Approach
+- Use Grep/Glob to find existing code patterns, interfaces, seams, data contracts, and test conventions in files mentioned by the Technical Approach
 - Read related PRDs from the traceability section
+- Infer the project's language, framework, file extensions, and test runner from config and existing examples; do not assume Python unless the PRD is Python-specific
 
 ### Step 4: Decompose FRs into Micro-Tasks
 
 For each FR in the PRD:
 1. **Identify affected files** — source files to create/modify (from Technical Approach + Grep)
-2. **List function-level changes** — specific functions to add, modify, or wire
-3. **Define test cases** — test function names and what they assert
-4. **Write verification command** — the exact test/build command to verify this FR (e.g., pytest, jest, cargo test, or a bash script)
-5. **Map dependencies** — which other FRs or micro-tasks must complete first
+2. **Identify affected interfaces/seams** — APIs, CLI commands, schemas, events, components, hooks, jobs, queues, or data contracts touched by the FR
+3. **List symbol-level changes** — specific functions, classes, components, modules, commands, schemas, or adapters to add, modify, or wire
+4. **Define test cases** — framework-appropriate test names and what they assert
+5. **Write verification command** — the exact project-specific test/build command to verify this FR (e.g., `pytest`, `vitest`, `npm test`, `cargo test`, `go test`, `make ...`, or a bash script)
+6. **Choose slice shape** — prefer a vertical tracer-bullet task that proves behavior end-to-end; horizontal/layer-only tasks require a rationale and an explicit integration follow-up
+7. **Map dependencies** — which other FRs or micro-tasks must complete first
 
 Target: each micro-task should be completable in <35 minutes (agent half-life threshold).
 
@@ -84,30 +88,6 @@ Map each FR to:
 - Test files (who tests them)
 - Integration points (who verifies the wiring)
 
-### Step 7b: Pre-Implementation Checklist (PRD-QUAL-056-FR03)
-
-Include the following mandatory checklist in the execution plan output. Implementers MUST confirm each item before writing code:
-
-1. **PRD read**: Read the full PRD and all referenced documents (dependencies, related PRDs)
-2. **File paths confirmed**: Identified every FR's planned implementation file path (verify with Glob)
-3. **Test paths confirmed**: Identified every FR's planned test file path and test function name
-4. **Learnings recalled**: Called `trw_recall(query='<prd-domain>')` to load domain-relevant gotchas
-5. **Open questions clear**: Confirmed no open questions (OQs) block implementation
-6. **Execution plan reviewed**: Reviewed this execution plan's wave plan and dependency graph
-
-Confirm checklist completion before proceeding to implementation.
-
-### Step 7c: Per-FR Inline Verification Commands (PRD-QUAL-056-FR04)
-
-For each FR that has machine-verifiable assertions in the PRD (grep_present, grep_absent, glob_exists, command_succeeds), include inline verification commands in the execution plan task:
-
-```bash
-# FR{N} Verification (run after implementing this FR):
-grep -q '<pattern>' <file> && echo 'FR{N} PASS' || echo 'FR{N} FAIL'
-```
-
-FRs with dependencies SHOULD be grouped into verification waves. All assertions in a wave MUST pass before proceeding to the next wave. This catches errors incrementally rather than compounding them across all FRs.
-
 ### Step 8: Write Execution Plan
 
 Write to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`:
@@ -127,8 +107,8 @@ Write to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`:
 ### FR01: {FR title}
 
 **Micro-tasks:**
-1. {task description} — `{file_path}:{function_name}`
-2. {task description} — `{file_path}:{function_name}`
+1. {task description} — `{file_path}:{symbol_or_interface}` — slice: vertical tracer bullet | horizontal prerequisite (rationale: {why})
+2. {task description} — `{file_path}:{symbol_or_interface}` — slice: vertical tracer bullet | horizontal prerequisite (rationale: {why})
 
 **Test cases:**
 - `test_{fr_id}_happy` — asserts {what}
@@ -137,8 +117,8 @@ Write to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`:
 
 **Verification:**
 ```bash
-# Use the project's test runner (e.g., pytest, jest, cargo test):
-{test_runner} {test_path}::{test_name} -v
+# Use the project's actual test/build command.
+{exact project-specific verification command}
 ```
 
 **Dependencies:** None | FR02, FR03
@@ -169,15 +149,15 @@ FR02 ──┘          ├── FR05 (integration)
 
 | FR | Source Files | Test Files | Integration Points |
 |----|-------------|------------|-------------------|
-| FR01 | src/module_a.py | tests/test_module_a.py | -- |
-| FR02 | src/module_b.py | tests/test_module_b.py | -- |
-| FR05 | src/module_a.py, src/module_b.py | tests/test_integration.py | module_a → module_b data flow |
+| FR01 | src/{domain}/{module}.{ext} | {test_path}.{test_ext} | -- |
+| FR02 | packages/{pkg}/{component}.{ext} | {test_path}.{test_ext} | -- |
+| FR05 | {module_a}, {module_b} | {integration_test_path} | module_a → module_b data flow |
 
 ## 5. Verification Checklist
 
 | FR | Acceptance Criterion | Test Name | Verification Command | Expected Result |
 |----|---------------------|-----------|---------------------|-----------------|
-| FR01 | {criterion} | test_fr01_happy | pytest ... -v | PASSED |
+| FR01 | {criterion} | {framework-appropriate test name} | {exact command} | PASSED |
 
 ## 6. Known Risks
 
@@ -192,60 +172,55 @@ Generate spec-first test stubs so tests exist BEFORE implementation. All tests S
 
 For each FR in the execution plan:
 
-1. **Create test function stubs** with naming: `test_{fr_id}_{case_type}`
+1. **Create test stubs** using the project's naming convention (for example `test_{fr_id}_{case_type}`, `it("FR01 ...")`, `#[test] fn fr01_...`, or table-driven `TestFR01...`)
    - `_happy` — primary acceptance criterion
    - `_edge` — boundary/edge cases from acceptance criteria
    - `_error` — error paths and negative cases
 
-2. **Include docstring** with the exact acceptance criterion text from the PRD
+2. **Include docstring/comment/block comment** with the exact acceptance criterion text from the PRD
 
-3. **Add placeholder assertion**: `assert False, "TODO: implement — {acceptance criterion summary}"`
+3. **Add a framework-appropriate failing placeholder assertion** (for example `assert False`, `expect(...).toBe(...)` with TODO, `panic!`, `t.Fatalf`, or a pending/skipped marker only if the framework treats pending as expected-fail)
 
 4. **Parametrize** similar cases where multiple inputs share the same assertion pattern
 
 Write test skeleton to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}` where `{ext}` matches the project's test language (e.g., `.py`, `.ts`, `.rs`).
 
-**Example for Python projects (pytest):**
+If the repo has no safe standard skeleton format for the target language/framework, write a framework-neutral `TEST-SKELETON-{PRD-ID}.md` containing the test names, acceptance criteria, fixtures/setup, and exact verification commands instead of fabricating executable code.
 
-```python
-"""
-Test skeletons for {PRD-ID}: {PRD title}
-Generated from PRD acceptance criteria — all tests MUST FAIL before implementation.
-"""
-import pytest
+**Framework-neutral skeleton pattern:**
 
+```text
+TEST SUITE: {PRD-ID}: {PRD title}
+SOURCE: generated from PRD acceptance criteria; executable tests should fail before implementation.
 
-# --- FR01: {FR title} ---
+FR01: {FR title}
+  CASE happy
+    Given {precondition}
+    When {action}
+    Then {expected result}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
-def test_fr01_happy():
-    """Given {precondition}, When {action}, Then {expected result}."""
-    assert False, "TODO: implement — {acceptance criterion summary}"
+  CASE edge
+    Given {edge case}
+    When {action}
+    Then {expected boundary behavior}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
+  CASE error
+    Given {error condition}
+    When {action}
+    Then {error response}
+    Placeholder: failing assertion/pending marker according to the project's test framework
 
-def test_fr01_edge():
-    """Given {edge case}, When {action}, Then {expected boundary behavior}."""
-    assert False, "TODO: implement — {edge case summary}"
+  CASE table_driven
+    Inputs/expected outputs: {case list}
+    Placeholder: framework-appropriate parametrized/table-driven assertion
 
-
-def test_fr01_error():
-    """Given {error condition}, When {action}, Then {error response}."""
-    assert False, "TODO: implement — {error case summary}"
-
-
-@pytest.mark.parametrize("input_val,expected", [
-    # (case_1_input, case_1_expected),
-    # (case_2_input, case_2_expected),
-])
-def test_fr01_parametrized(input_val, expected):
-    """Parametrized cases for FR01 acceptance criteria."""
-    assert False, "TODO: implement parametrized assertion"
-
-
-# --- FR02: {FR title} ---
-# ... repeat for each FR
+FR02: {FR title}
+  ...repeat for each FR...
 ```
 
-Adapt the skeleton to the project's language and test framework (e.g., Jest `it()`/`expect()` for TypeScript, `#[test]` for Rust, `it do` blocks for Ruby).
+Adapt the skeleton to the project's language and test framework (examples include pytest, Vitest/Jest, Rust test functions, Go table tests, Ruby specs, shell bats tests, or another project-native harness).
 
 Write manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`:
 
@@ -253,7 +228,7 @@ Write manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yam
 prd_id: PRD-{CATEGORY}-{SEQ}
 prd_title: "{title}"
 generated: "{ISO 8601 timestamp}"
-skeleton_file: "test-skeletons/TEST-SKELETON-{PRD-ID}.py"
+skeleton_file: "test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}"
 fr_coverage:
   - fr_id: FR01
     test_count: 3
@@ -292,6 +267,8 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "The PRD is clear enough, I don't need to research the codebase" | Execution plans without codebase evidence have wrong file paths and missing dependencies | Agents waste time looking for files that don't exist or missing integration points |
 | "Function-level decomposition is overkill" | File-level planning misses secondary read paths — Sprint 34's #1 lesson | Cross-cutting changes need function-level inventory or review discovers gaps |
 | "I'll estimate the wave timing later" | Without timing estimates, waves exceed the agent half-life threshold | Agents degrade after ~35 min — oversized waves produce lower quality work |
+| "I'll make all data/model/UI layers first and integrate later" | Horizontal slices defer the first proof of behavior | Integration bugs accumulate until the end and force rework |
+| "The interface is obvious; I'll list files only" | File lists miss seams and contract ownership | Agents change internals without preserving the stable module boundary |
 
 ## Assertion Verification in Tasks (PRD-CORE-086)
 
@@ -306,4 +283,9 @@ When generating execution plan tasks for FRs that include assertions, add assert
 - NEVER skip PRD validation — sub-0.85 PRDs produce unreliable execution plans
 - ALWAYS include verification commands with each FR (not "verify manually")
 - ALWAYS map dependencies — missing dependencies cause wave failures
+- ALWAYS infer language/framework/test runner from the project rather than copying Python examples
+- SHOULD prefer vertical tracer-bullet slices; horizontal prerequisite tasks need rationale and explicit integration proof
+- SHOULD identify stable interfaces/seams so implementers know what must remain load-bearing
 - If a FR is too large for one micro-task (>35 min), decompose it further
+
+<!-- compliance: implementation-readiness, control points, testability, migration, score-gaming -->

@@ -4,6 +4,316 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.15] — 2026-05-29
+
+### Security
+
+- **`trw_submit_feedback` PII redaction was leaking secrets** (PRD-INFRA-132 NFR01). Fixed +
+  regression-tested:
+  - The env-var regex anchored on `\b`, which never matches inside identifiers, so prefixed
+    names (`DB_PASSWORD=`, `OPENAI_API_KEY=`, `GITHUB_TOKEN=`, `AWS_SECRET_KEY=`) shipped their
+    values clear-text; quoted values with spaces also leaked their tail. The env pattern now
+    catches any sensitive `KEY=value` assignment regardless of the value's shape.
+  - Only the message body was redacted — the `subject` headline and user-supplied `metadata`
+    (keys and values) were sent unredacted. All user-controlled fields now pass the redaction
+    chokepoint before validation and before the network call.
+  - Added connection-string credential redaction (`scheme://user:password@host`, incl.
+    empty-username and `?password=` query-string forms) and JSON-embedded secret redaction
+    (`"password"`/`"api_key"`/camelCase variants), alongside the existing Stripe (`sk_`/`pk_`)
+    and AWS (`AKIA`) key + `trw_lic_` license + home-dir patterns. A per-vendor token zoo
+    (Slack/Google/GitHub/etc. prefixes) was deliberately **not** added — over-engineering for a
+    feedback redactor: the env pattern already covers the common `OPENAI_API_KEY=…` form.
+  - The never-raises contract hardened to catch the non-`HTTPError` residual (e.g.
+    `httpx.InvalidURL`) and to report only the exception **type**, never `str(exc)`, so a
+    secret interpolated into a malformed URL cannot echo back.
+
+### Fixed
+
+- **claude_md sync late-resolves the project root** (was import-time-bound) so it honours the
+  active root and never writes the auto-generated TRW block into the real repo `CLAUDE.md`.
+- **Pre-compaction recovery surfaces the real last checkpoint message** (PRD-CORE-165 FR-02)
+  from `checkpoints.jsonl` instead of a hardcoded literal (fallback on missing/empty/malformed).
+  The read now uses `errors="replace"` inside the guarded block so a non-UTF-8 `checkpoints.jsonl`
+  degrades to the fallback instead of crashing recovery with `UnicodeDecodeError`.
+- **`pysqlite3-binary` is now a Linux-only dependency** (`platform_system == 'Linux'`). Upstream
+  removed the macOS-arm64 wheels, so `pip install trw-mcp` failed on `macos-latest`, blocking the
+  release smoke matrix. macOS/Windows fall back to stdlib `sqlite3` via the `storage._dbapi` shim.
+
+### Changed
+
+- Strong-typed the recall contract (`LearningEntryDict` SSOT, eliminated `Any` in recall_factories);
+  added a regression guard that every recall factory passes a non-empty query.
+- **Injection recall is centralized** (PRD-FIX-085 FR05): `learning_injection.recall_learnings`
+  now routes the `status="active"` path through the `recall_for_learning_injection` factory
+  instead of assembling ad-hoc parameters, eliminating the previously-orphan factory while
+  preserving the patch-friendly shim seam and the unfiltered collector path.
+
+
+## [0.48.14] — 2026-05-29
+
+### Fixed
+
+- **Full test-suite stabilization** — cleared ~67 pre-existing failures (and ~150 collection
+  errors) the suite had accumulated, bringing `trw-mcp` to a green full run (10,129 passed,
+  0 failed). Categories: restored support-module fixture imports lost in a test refactor;
+  migrated tests to the pin-only `find_active_run`/`detect_current_phase` contract
+  (`find_run_via_mtime_scan` / `pin_active_run`); repointed patch-site drift to the moved
+  consumer bindings; updated stale assertions (12-tool set, `antigravity-cli` profile,
+  `.codex/hooks.json` + distill-channel created files, outcome-window 60→7); and fixed
+  cross-test structlog/Q-learning contamination with file-scoped save/restore fixtures.
+- **claude_md sync no longer pollutes the repo under test.** `conftest._isolate_trw_dir`
+  now patches `trw_mcp.state.claude_md.resolve_project_root` / `resolve_trw_dir` /
+  `_static_sections.resolve_project_root` — without these a test triggering claude_md sync
+  wrote the auto-generated TRW protocol block into the real `trw-mcp/CLAUDE.md`. Also
+  restored `trw-mcp/CLAUDE.md` to a pointer-only file (≤40 LOC, no `trw:` markers).
+- **`recall_for_review_tags` missing `query` arg** — a real runtime defect in the claude_md
+  review/publish flow (every sibling factory passed `query=`; this one omitted it). Now
+  passes `query='*'`.
+- Restored the `execute_claude_md_sync` re-export on `tools.ceremony` (the runtime getattr
+  indirection + tests resolve it there); added a `Use when` clause to the `trw_channel_stats`
+  docstring (FR06); re-annotated a justified broad `except` in `_update_project`; synced the
+  stale vendored `session-start.sh` hook copy.
+
+
+## [0.48.13] — 2026-05-28
+
+### Changed
+
+- **Opus 4.8 effort recalibration for bundled agents.** Claude Opus 4.8
+  lowered the default effort to `high` (from 4.7's `xhigh`) and recalibrated
+  the levels (`high` now thinks somewhat less than 4.7's `high`). Anthropic
+  recommends the frontmatter ceiling (`high`) for coding/agentic and
+  intelligence-sensitive work. Bumped `effort: medium|low → high` on the seven
+  reasoning-heavy agents: `trw-implementer`, `trw-reviewer` (was `low` — too
+  shallow for a 7-dimension OWASP rubric review under 4.8's strict low-end
+  adherence), `trw-tester`, `trw-auditor`, `trw-adversarial-auditor`,
+  `trw-researcher`, and `trw-prd-groomer`. Bounded/cheap agents
+  (`trw-requirement-reviewer`, `trw-requirement-writer`, `trw-code-simplifier`,
+  `trw-traceability-checker`; `trw-lead` already `high`) are unchanged. Effort
+  stays a portable, all-client knob; `model:` stays a capability tier.
+
+### Fixed
+
+- **`trw-distill-explorer` frontmatter hygiene.** Description now opens with
+  "Use when you need:" (was "Use for:") so it satisfies the agent-frontmatter
+  `use when` trigger check (source `_explorer_subagent.py` + dev-repo copy).
+- **Stale agent-count assertions.** `test_agent_frontmatter.py` and
+  `test_agents_sync.py` now exclude the two dev-only channel agents
+  (`trw-distill-explorer`, `trw-distill-sonnet-judge`) from the 12-bundled
+  count, instead of hard-coding `== 12` against a directory that legitimately
+  ships 14.
+- **Agent-parity test contradiction.** `test_agents_sync.py::test_parity_after_marker_expansion`
+  applied marker expansion only, while `test_bundled_agents.py` (PRD-INFRA-104)
+  and `scripts/sync-agents.py` apply marker expansion **+ capability-tier
+  resolution** (`frontier→opus`, `balanced→sonnet`, `local-small→haiku`). The
+  parity test now applies both transforms, and `.claude/agents/` is regenerated
+  tier-resolved to match what shipped users get after `trw-mcp init`.
+
+### Docs
+
+- New Opus 4.8 prompting research + adapter best-practices under
+  `docs/documentation/prompting/` (canonical snapshot, supersedes the 4.7 pair).
+  The `test_opus_47_lint.py` sampling-param guard rationale now notes it applies
+  to Opus 4.7 *and later* (incl. 4.8).
+
+## [0.48.12] — 2026-05-28
+
+### Fixed
+
+- **Copilot hook adapter shell-quoting bug — eliminates `unexpected EOF` spam.**
+  `_build_hook_adapter_command()` previously generated a `/bin/sh -c '...'`
+  command whose outer single-quote wrapper was closed early by inner
+  single-quoted `grep`/`sed` patterns (e.g. `grep -o '"toolName"...'`).
+  When GitHub Copilot ran the command via `bash -c`, it emitted
+  `unexpected EOF while looking for matching '"'` on every hook event.
+
+  Fix: the inline shell logic is extracted into a real bundled script
+  `data/copilot/hooks/trw-copilot-adapter.sh` that `generate_copilot_hooks`
+  installs at `.github/hooks/trw-copilot-adapter.sh`. The generated
+  `command` in `hooks.json` is now a simple `/bin/sh "<adapter>" "<hook>"
+  "<event>"` invocation with no nested quoting — eliminating the entire
+  bug class permanently. The adapter script reads Copilot stdin JSON,
+  extracts `toolName` (jq preferred, grep/sed fallback), pipes the payload
+  to the target TRW hook, and for `preToolUse` translates the hook exit code
+  to a JSON `permissionDecision` object. All error paths fail-open so no
+  hook failure can block a user tool call.
+
+  Regression guard: `TestCopilotHookCommandShellValidity.test_all_events_pass_bash_n`
+  now asserts `bash -n` exits 0 for every event in `_COPILOT_HOOK_MAP`.
+  Behavioral tests in `TestCopilotAdapterScriptBehavior` verify toolName
+  extraction, allow/deny decisions, and fail-open for missing hooks.
+
+## [0.48.10] — 2026-05-27
+
+### Added
+
+- **`trw_submit_feedback` MCP tool** (PRD-CORE-182). Thin client wrapper
+  for the new backend submission portal endpoint
+  (`POST /v1/submissions`). Lets TRW framework users submit memos —
+  bug reports, installation problems, feedback, feature requests,
+  questions — directly from their IDE without leaving the editor.
+
+  Auto-populates client metadata (`trw_mcp_version`, `python_version`,
+  `os_platform`) so the maintainer can triage without guessing the
+  environment. Reads the backend URL + API key from the existing
+  `TRWConfig.resolved_backend_url` / `resolved_backend_api_key`
+  accessors — no new configuration required for users on the standard
+  `install-trw.py` device-auth flow.
+
+  Validation is mirrored client-side (category enum, length bounds,
+  metadata caps, control-character guard) to fail fast before paying
+  for the HTTP round-trip; the server is authoritative.
+
+  The tool never raises — transport errors, validation errors, and
+  non-2xx HTTP responses all surface via the stable
+  `{success, submission_id?, error?, status_code, metadata_attached}`
+  return shape, so calling agents can react gracefully.
+
+## [0.48.9] — 2026-05-20
+
+### Added
+
+- **First-class, full-ceremony support for `antigravity-cli`**:
+  - Registered `"antigravity-cli"` profile in the TRW runtime registry with a 1M token context window, full ceremony support, YAML response format, and instruction-rendering targeting `ANTIGRAVITY.md`.
+  - Added environment discovery and bootstrap integration under `.antigravitycli/` folder.
+  - Implemented custom deep-merge logic for `.antigravitycli/settings.json` under `"mcpServers"` -> `"trw"`.
+  - Added generation of four specialist subagents (`trw-explorer.md`, `trw-implementer.md`, `trw-reviewer.md`, `trw-lead.md`) with YAML frontmatter in `.antigravitycli/agents/`.
+  - Wired into `init_project` and `update_project` bootstrap flows, and implemented focused unit tests covering bootstrap, config merging, and instruction rendering.
+
+### Fixed
+
+- **Fixed observer ceremony pressure-check logging**: Updated logging level from debug to warning for pressure-check failures in `_session_recall_helpers.py` to ensure compliance with strict observability test rules.
+- **Robust transaction mock in telemetry tests**: Prevented `AttributeError` by mocking the transaction context manager inside `FakeBackend` in `test_scoring_io_boundary.py`.
+- **Accommodated Q-learning size increases**: Increased the size guard threshold in `test_scoring_layer_boundary.py` from 500 to 600 lines for `_io_boundary.py`.
+
+## [0.48.8] — 2026-05-17
+
+### Fixed
+
+- **`trw_learn` no longer hangs for minutes behind a wedged deferred-delivery batch.**
+  Diagnosis: the deferred-delivery worker runs ~13 maintenance steps after
+  every `trw_deliver`; one of those (`auto_prune`) was taking 18-35 minutes
+  per pass on a 3,654-entry dataset (O(N²) Jaccard dedup) and holding the
+  SQLite writer lock for the full duration. Every subsequent `trw_learn`
+  blocked on that lock; reads (`trw_recall`, `trw_session_start`) still
+  worked because they don't take the writer lock. Forty-plus
+  `memory.db.corrupt.*` backups had accumulated since 2026-04-13 from the
+  chronic version of this issue. Fix layered in three parts:
+
+  1. **Throttle**: `_step_auto_prune` skips runs falling inside
+     `learning_auto_prune_min_interval_hours` (default 24h). One full pass
+     per day is sufficient; the previous every-deliver cadence was paying
+     the O(N²) cost on near-no-op deltas.
+  2. **Deadline + cancellation**: `auto_prune_excess_entries` now accepts
+     `deadline_seconds` and `cancel_event`. The apply loop polls between
+     SQLite writes and returns its partial removal with
+     `status="deadline_exceeded"` or `status="cancelled"`.
+  3. **Watchdog**: `_run_deferred_steps` enforces per-step and per-batch
+     wall-clock budgets via `threading.Timer`. On overrun it logs
+     `deferred_step_budget_exceeded` / `deferred_batch_budget_exceeded`,
+     flips the cancel event, and subsequent steps short-circuit with
+     `status="cancelled_batch_budget"`. The `watchdog` key on the results
+     record captures the cancellation rationale for audit.
+
+- **Stale `deliver-deferred.lock` is auto-reclaimed on next launch.**
+  `_try_acquire_deferred_lock` now reads the JSON record left by the prior
+  holder. If the recorded PID is gone, or the timestamp is older than
+  `stale_threshold_seconds` (default 10 minutes), it reclaims the lock and
+  logs `deferred_lock_reclaimed_stale` with the original holder for
+  forensics. Live batches inside their budget are never preempted because
+  the threshold is twice the default per-batch budget.
+
+- **Prefer `pysqlite3-binary` over stdlib `sqlite3`.** The trw-memory shim
+  swaps `sys.modules["sqlite3"]` at package import. The dep is listed here
+  as well so installs of the MCP server alone still benefit.
+
+- **`state/memory_store.py` now sets `cached_statements=0`,
+  `synchronous=NORMAL`, and `busy_timeout=30000` on its sqlite-vec
+  connection** for parity with the trw-memory primary backend.
+  `cached_statements=0` defends against CPython issue #118172 (statement
+  cache thread-safety on 3.12+ under `check_same_thread=False`);
+  `synchronous=NORMAL` matches WAL-mode best practice and avoids redundant
+  fsync.
+
+### Added
+
+- **Four new config knobs** in `models/config/_fields_build.py`:
+  `learning_auto_prune_min_interval_hours` (default 24),
+  `learning_auto_prune_max_seconds` (default 30),
+  `deferred_step_max_seconds` (default 60),
+  `deferred_batch_max_seconds` (default 300). All four accept `0` to
+  disable.
+- **`tools/_deferred_state.py`** now exposes `_cancel_event:
+  threading.Event` (cooperative cancellation signal) and
+  `_last_auto_prune_at: float | None` (process-local throttle marker).
+
+### Removed
+
+- **Eight dead test files that referenced Sprint-79-removed build/mutations symbols** (PRD-DIST-880, PRD-DIST-916, PRD-DIST-919, PRD-DIST-920). Sprint 79 (commit `f65c813ae`, 2026-03-30) consolidated build tooling and removed `trw_mcp.tools.build._audit`, `_subprocess`, `_runners`, and `mutations`. The post-split test files continued to import the removed symbols and have produced collection errors since 2026-03-30. They contributed zero passing tests and are deleted without replacement. Removed: `tests/test_analytics_branches_reporting.py`, `tests/test_mutations_api_fuzz.py`, `tests/test_mutations_changed_files_threshold.py`, `tests/test_mutations_dep_audit_integration.py`, `tests/test_mutations_dep_audit_tools.py`, `tests/test_mutations_parse_results.py`, `tests/test_mutations_run_cache_and_edge.py`, `tests/test_mutations_run_check.py`. The shared helper `tests/_mutations_support.py` is preserved — it is still imported by `tests/test_mutations_build_check_integration.py` (collects cleanly; module-skipped at runtime). No production source under `trw-mcp/src/` is affected; the 8837-test passing footprint is preserved; `pytest --collect-only` now exits 0. Cycle-274 deleted the first 2 enumerated by PRD-DIST-880; cycle-275 deleted the remaining 6 surfaced by PRD-DIST-919.
+
+## [0.48.7] — 2026-05-14
+
+### Fixed
+
+- **Installer upgrades preserve existing TRW config instead of corrupting YAML or erasing client surfaces** (PRD-FIX-095). `install-trw.py --upgrade --script --skip-auth` now keeps the prior installation id when `--name` is omitted, treats an empty project-setup target list as "preserve target_platforms", preserves custom platform URLs unless a new API key/telemetry override is supplied, safely replaces commented/list YAML blocks without leaving stale list items behind, and refreshes `.trw/frameworks/VERSION.yaml` during upgrade-only installs.
+
+## [0.48.6] — 2026-05-14
+
+### Fixed
+
+- **`trw_session_start` no longer blocks on full memory corruption recovery** (PRD-FIX-093). Recall now fails open with an empty degraded result and schedules a single background recovery worker when it detects SQLite corruption, preserving automatic cold rebuild/YAML migration without spending the client request timeout budget. Store/write-path recovery semantics remain synchronous and unchanged.
+
+## [0.48.5] — 2026-05-14
+
+### Fixed
+
+- **Backend sync telemetry is now truthful and backs off on persistent failures** (PRD-FIX-092). `sync_cycle_report` counts only zero-failure targets as successful, reports payload-level failures as `partial_error`, includes `unhealthy` target counts, and applies bounded exponential backoff after failed cycles so backend drift does not churn the shared MCP server every base interval.
+- **Sync observability now distinguishes pathological local scans and remote boundary failures** (PRD-FIX-092). Offloaded local sync work over 10s emits warning-level telemetry with `slow` and threshold fields; push/pull boundary warnings include structured endpoint/status/timeout metadata where available.
+
+## [0.48.4] — 2026-05-14
+
+### Fixed
+
+- **`trw_prd_validate` no longer scales with generated workspace size or PRD-catalogue debug noise** (PRD-FIX-091). Grounding checks now use bounded per-reference path probes instead of building a whole-repo file set; the diagnostic file census prunes runtime/vendor/build trees; advisory duplicate-overlap warnings use a bounded, tolerant scan instead of YAML-parsing every historical PRD body. Local validation benchmark for PRD-FIX-091 improved from 11.581s / 481112 cached files to 0.112s and `valid=True`.
+- **Deferred delivery consolidation cannot cold-load sentence-transformers/torch inside the shared MCP server process** (PRD-FIX-091). Delivery maintenance passes `allow_cold_embedder_load=False`, semantic clustering is still used when an embedder is already initialized, and tag-overlap fallback now respects `max_entries`.
+
+## [0.48.3] — 2026-05-14
+
+> Versioned from `main` after the `0.48.2` release tag (`4f3b69a2d`). Itemized here so the changelog tracks the current shared MCP server hardening work. See `git log 4f3b69a2d..HEAD -- trw-mcp/` for the authoritative list.
+
+### Added
+
+- **Per-client capability-tier resolver** (`agents/tier_resolver.py`, PRD-INFRA-104 FR-01/FR-02/FR-08). Translates the framework's tier vocabulary (`frontier|balanced|local-large|local-small`) into the concrete model identifiers each client harness accepts (`_CLIENT_MAPS`). Wired into `bootstrap/_init_project_skills.py::_install_agents` on every Claude Code install (FR-03/FR-07/FR-10/FR-11, commit `d9b7065fe`), into `scripts/sync-agents.py` for the dev repo's `.claude/agents/`, and restores `model:frontier` pins on bundled agents (FR-04/FR-05/FR-06, commit `e907cd828`). Documented in `CLAUDE.md` (commit `90a198008`). New client adapters add one `_CLIENT_MAPS` entry. (Unresolvable `model:frontier` pins on 3 bundled agents were first dropped in `20fb923e7`, then restored via the resolver.)
+- **`store_learning(metadata)` cross-package extension** (PRD-DIST-254, commit `95d2e77b1`) — `trw-mcp`-side support for carrying distill metadata on stored learnings (consumed by `trw-distill`'s bulk-store path).
+- **`_search_entries` accepts `allow_cold_embedding_init` kwarg** (commit `a44b1f72c`) — recall path can opt into initializing a cold embedding provider when needed instead of silently degrading.
+
+### Fixed
+
+- **Shared MCP stdio reconnect handshakes are bounded** (PRD-FIX-089, commit `d0b125605`) — the stdio proxy now caps upstream capability discovery with `mcp_proxy_handshake_timeout_seconds` so clients such as Claude Code do not spend their full reconnect budget waiting before local stdio serving is ready.
+- **Backend sync local scans no longer starve foreground MCP requests** (PRD-FIX-090, commit `2bb4ff689`) — dirty-entry discovery, delivered-run outcome scans, synced marker writes, and mark-synced bookkeeping now run off the FastMCP event loop; validated against the Copilot `MCP error -32001: Request timed out` incident.
+- **Backend sync HTTP push/pull uses async clients on the shared MCP server path** (PRD-FIX-087, commit `a7010dbe5`) — avoids synchronous HTTP calls inside the background sync cycle and reduces request-latency coupling between backend sync and foreground tools.
+- **`trw_prd_validate` hung on bare-filename resolution at repo scale** (commit `8b2dbf165`) — resolving a PRD by bare filename did an unbounded scan; bounded/short-circuited.
+- **`_extract_fr_id` silently zeroed `trw_prd_validate`'s traceability `matrix_score` for the `FR-01` form** (commit `ed11bacbc`) — the regex didn't recognize the zero-padded `FR-01` style, so any PRD using it scored 0 on the traceability matrix; fixed to accept both `FR1` and `FR-01` forms.
+- **`db_integrity` false-positive at the deliver path** (PRD-DIST-432, commit `96bc2ba50`) — `trw_deliver` flagged a healthy memory DB as integrity-failed under a benign condition; corrected the check.
+- **`trw-memory` consumer: canary state keyed per `(quarantine, backend)` pair** (commit `4c52caa47`) — corrects canary-verification state isolation for the trw-memory security stack used by trw-mcp.
+
+### Internal
+
+- **`tools/ceremony.py` and `tools/_ceremony_status.py` decomposed below the 350-LOC review gate** (DIST-243 batches 60–74, commits `8db04a5f2` … `794900821`) — `ceremony.py` 745 → 331 LOC; `_ceremony_status.py` 449 → 337 LOC; `_ceremony_runtime_helpers.py` 389 → 202 LOC; `_prd_scoring.py` 475 → 213 LOC — via `_*.py` helper splits. No behavior change.
+- **PRD-FIX-088 transaction-batch + thread-safety fixes** (commits `a68d5a22d`, `db0de53d2`) — closed 6 P1 + 8 P1.5 audit findings; real-SQLite benchmark for the `_batch_sync_to_sqlite` path (which now uses `trw-memory`'s `SQLiteBackend.transaction()` re-entrant bracket instead of per-row commits).
+
+## [0.48.2] — 2026-05-04
+
+### Changed
+
+- **`memory_store_path` config field — clarifying comments at three locations** (PRD-INFRA-102 FR-03). Added inline comment block above `_MemoryFields.memory_store_path` (`src/trw_mcp/models/config/_fields_memory.py:37`), brief reference comment above the duplicate declaration in `_sub_models.py:56`, and an extended docstring on `state/_paths.py:resolve_memory_store_path()` to document that the field points at the **secondary embedding sidecar** (`vectors.db`, used by `dedup.py` re-indexing via `MemoryStore` with `vec_entries` table prefix), NOT the primary memory store path (which is hardcoded to `<trw_dir>/memory/memory.db` in `_memory_connection.get_backend` and uses the canonical `vec_memories` table). Default value preserved at `.trw/memory/vectors.db` (changing it would break dedup re-indexing). No behavior change; comment-only clarification. Test suite green; mypy --strict clean.
+
+## [0.48.1] — 2026-04-30
+
+### Changed
+
+- **TRW skill prompts are now language-agnostic and PRD-preflight aware** (PRD-QUAL-077..079). Bundled Claude/Cursor/Codex/Copilot/OpenCode skill assets now avoid Python-only defaults, infer project test/type/security tooling, add one-question-at-a-time PRD drill preflight with duplicate-PRD reuse guards, and encode deep-module plus vertical tracer-bullet planning guidance.
+
 ## [0.48.0] — 2026-04-29
 
 ### Removed (BREAKING)
@@ -576,7 +886,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
   - Codex guidance, sync, and bootstrap now follow the declared light-profile contract instead of separate hardcoded assumptions.
   - `.codex/INSTRUCTIONS.md` is wired through `model_instructions_file`, and Codex instruction sync now reports instruction-file results consistently.
   - Codex-facing instructions no longer claim a fixed 200K context window, mandatory framework reading, universal hook coverage, or implicit background delegation.
-  - `_codex.py` now defaults `features.codex_hooks` to `false`, only generates `.codex/hooks.json` when the repo explicitly opts in, and preserves user-edited `.codex/agents/*.toml` plus `.agents/skills/*` helper artifacts unless regeneration is forced.
+  - `_codex.py` now defaults `features.hooks` to `false`, migrates legacy `features.codex_hooks` values on write, only generates `.codex/hooks.json` when the repo explicitly opts in, warns users to review generated hooks through `/hooks`, and preserves user-edited `.codex/agents/*.toml` plus `.agents/skills/*` helper artifacts unless regeneration is forced.
   - Codex docs now explicitly distinguish the profile-layer `skills_enabled = false` flag from installer-managed helper skill directories referenced via `skills.config`.
 
 ### Fixed
@@ -953,6 +1263,8 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 ## [0.34.0] — 2026-03-28
 
 ### Added — Code Quality Sprint (PRD-QUAL-047, PRD-QUAL-048, PRD-CORE-089, PRD-QUAL-049)
+
+> **Note (2026-04-30):** PRD-QUAL-047 referenced here was later renumbered to PRD-QUAL-082 to resolve a catalogue ID collision; the canonical PRD-QUAL-047 is "Mypy Strict Mode Completion — Backend & trw-eval" (Sprint 72). The release contents below are unchanged.
 
 - **`create_app()` factory function** — `server/_app.py` now provides `create_app(instructions=..., middleware=...)` for testing and embedding. Module-level `mcp` singleton preserved for backward compatibility.
 - **`py.typed` PEP 561 marker** — enables downstream type checking for library consumers.

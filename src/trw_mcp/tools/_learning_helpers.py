@@ -372,6 +372,12 @@ def enforce_distribution(
 
         if demotions:
             tier_name = "critical" if impact >= 0.9 else "high"
+            logger.warning(
+                "learn_distribution_demoted",
+                n_demoted=len(demoted_ids),
+                demoted_ids=demoted_ids,
+                tier=tier_name,
+            )
             distribution_warning = (
                 f"Impact tier '{tier_name}' exceeded cap. "
                 f"Forced distribution: demoted {len(demotions)} entr"

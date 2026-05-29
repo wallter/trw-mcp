@@ -22,10 +22,9 @@ from trw_mcp.models.run import (
 from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
+from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._paths import (
-    TRWCallContext,
     pin_active_run,
-    resolve_pin_key,
     resolve_project_root,
     resolve_run_path,
 )
@@ -33,11 +32,7 @@ from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.artifact_scanner import scan_artifacts
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
-from trw_mcp.tools._orchestration_helpers import (
-    _deploy_frameworks,
-    _deploy_templates,
-    _get_bundled_file,
-)
+from trw_mcp.tools._orchestration_helpers import _deploy_frameworks, _deploy_templates, _get_bundled_file
 from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
     _compute_last_activity_ts,
@@ -55,26 +50,38 @@ logger = structlog.get_logger(__name__)
 _events = FileEventLogger(FileStateWriter())
 
 
+def _phase_duration_summary(events: list[dict[str, object]], current_phase: str) -> dict[str, object]:
+    """Summarize phase transition timestamps and active phase duration."""
+    phase_entries: list[tuple[str, datetime]] = []
+    for event in events:
+        if event.get("event") != "phase_enter":
+            continue
+        phase = str(event.get("phase", ""))
+        ts_raw = str(event.get("ts", ""))
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        phase_entries.append((phase, ts.astimezone(timezone.utc)))
+    phase_entries.sort(key=lambda item: item[1])
+    durations: dict[str, float] = {}
+    for index, (phase, started_at) in enumerate(phase_entries):
+        ended_at = phase_entries[index + 1][1] if index + 1 < len(phase_entries) else datetime.now(timezone.utc)
+        durations[phase] = round(max(0.0, (ended_at - started_at).total_seconds()), 3)
+    active_started_at = phase_entries[-1][1].isoformat() if phase_entries else ""
+    return {
+        "active_phase": current_phase,
+        "active_started_at": active_started_at,
+        "phase_seconds": durations or {current_phase: 0.0},
+        "transition_count": len(phase_entries),
+    }
+
+
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
-
-
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    try:
-        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    except Exception:
-        raw_session = None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
 
 def register_orchestration_tools(server: FastMCP) -> None:
@@ -301,8 +308,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, session boundary must not block run init
             logger.debug("init_session_start_event_skipped", exc_info=True)
 
-        # Framework version is captured in run.yaml; full snapshot removed to save ~20 KB per run.
-
         logger.info(
             "run_init_ok",
             run_id=run_id,
@@ -392,6 +397,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "event_count": len(events),
             "reflection": _compute_reflection_metrics(events),
         }
+        result["phase_durations"] = _phase_duration_summary(events, result["phase"])
 
         if wave_data:
             raw_waves = wave_data.get("waves", [])
@@ -404,30 +410,25 @@ def register_orchestration_tools(server: FastMCP) -> None:
             if wave_progress:
                 result["wave_progress"] = wave_progress
 
-        # Wave status from run.yaml checkpoints (PRD-INFRA-036-FR03)
         wave_status = state_data.get("wave_status")
         if isinstance(wave_status, dict) and wave_status:
             result["wave_status"] = wave_status
 
-        # Reversion frequency metrics
         reversion_metrics = _compute_reversion_metrics(events)
         result["reversions"] = reversion_metrics
 
-        # Last activity tracking (RC-002: detect stale/abandoned tracks)
         last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
         if last_ts:
             result["last_activity_ts"] = last_ts
         if hours_since is not None:
             result["hours_since_activity"] = hours_since
 
-        # Stale framework version warning
         version_warning = _check_framework_version_staleness(
             str(state_data.get("framework", "")),
         )
         if version_warning:
             result["version_warning"] = version_warning
 
-        # Stale run count (PRD-FIX-028: hour-level TTL reporting)
         try:
             stale = count_stale_runs()
             result["stale_count"] = stale

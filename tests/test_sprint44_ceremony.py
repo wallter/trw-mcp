@@ -62,7 +62,7 @@ class TestCheckDeliveryGatesIntegrationReview:
         result = check_delivery_gates(tmp_path, reader)
 
         assert "integration_review_block" in result
-        assert "critical finding" in result["integration_review_block"]  # type: ignore[operator]
+        assert "critical finding" in result["integration_review_block"]
 
     def test_integration_review_warn_sets_warning_key(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
@@ -140,7 +140,7 @@ class TestCopyComplianceArtifacts:
         result = copy_compliance_artifacts(run_path, trw_dir, config, reader, writer)
 
         assert "compliance_artifacts_copied" in result
-        assert "review.yaml" in result["compliance_artifacts_copied"]  # type: ignore[operator]
+        assert "review.yaml" in result["compliance_artifacts_copied"]
 
     def test_copies_integration_review_yaml(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter

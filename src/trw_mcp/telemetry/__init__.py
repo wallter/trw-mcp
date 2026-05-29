@@ -24,8 +24,10 @@ from trw_mcp.telemetry.boot_audit import (
 )
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.event_base import (
+    AGENT_TRACE_V1_FIELDS,
     EVENT_PAYLOAD_KEY_REGISTRY,
     EVENT_TYPE_REGISTRY,
+    AgentTraceV1Fields,
     CeremonyEvent,
     ContractEvent,
     DefaultResolutionError,
@@ -79,16 +81,14 @@ from trw_mcp.telemetry.unified_events import (
 )
 
 __all__ = [
+    "AGENT_TRACE_V1_FIELDS",
     "EVENT_PAYLOAD_KEY_REGISTRY",
     "EVENT_TYPE_REGISTRY",
-    # HPO-MEAS-001 run snapshot
     "MANIFEST_FILENAME",
-    # CORE-031 legacy
+    "AgentTraceV1Fields",
     "BatchSender",
     "CeremonyComplianceEvent",
-    # HPO-MEAS-001 unified schema
     "CeremonyEvent",
-    # HPO-MEAS-001 surface identity
     "ComponentFingerprint",
     "ContractEvent",
     "DefaultResolutionError",
@@ -102,7 +102,6 @@ __all__ = [
     "MetaTuneEvent",
     "ObserverEvent",
     "PhaseExposureEvent",
-    # HPO-MEAS-001 NFR-12 boot audit
     "ResolutionFailure",
     "SessionEndEvent",
     "SessionStartEvent",
@@ -116,7 +115,6 @@ __all__ = [
     "ThrashingEvent",
     "ToolCallEvent",
     "ToolInvocationEvent",
-    # HPO-MEAS-001 unified writer + FR-4 timing middleware
     "UnifiedEventWriter",
     "anonymize_installation_id",
     "build_tool_call_event",

@@ -31,7 +31,6 @@ from trw_mcp.state.claude_md._promotion import (
     collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
-    render_agent_teams_protocol,
     render_agents_trw_section,
     render_behavioral_protocol,
     render_ceremony_flows,
@@ -84,7 +83,6 @@ __all__ = [
     "load_claude_md_template",
     "merge_trw_section",
     "render_adherence",
-    "render_agent_teams_protocol",
     "render_agents_trw_section",
     "render_architecture",
     "render_behavioral_protocol",

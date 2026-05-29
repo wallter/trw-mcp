@@ -119,7 +119,7 @@ def test_fuzz_all_transports_fire_three_layers(tmp_path: Path, transport: str, t
     """FR-9: every (transport × input) triple hits all three layers."""
     mw = _mw(tmp_path)
     decision = mw.on_tool_call(
-        transport=transport,  # type: ignore[arg-type]
+        transport=transport,
         server=server,
         tool=tool,
         args={},

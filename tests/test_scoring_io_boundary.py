@@ -133,6 +133,15 @@ def test_sqlite_sync_and_yaml_write_helpers(monkeypatch: pytest.MonkeyPatch, tmp
         def __init__(self) -> None:
             self.updated: list[str] = []
 
+        class DummyTransaction:
+            def __enter__(self) -> None:
+                pass
+            def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+                pass
+
+        def transaction(self) -> DummyTransaction:
+            return self.DummyTransaction()
+
         def update(
             self,
             lid: str,

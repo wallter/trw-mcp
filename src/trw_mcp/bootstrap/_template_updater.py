@@ -23,12 +23,20 @@ import structlog
 
 from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
 from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
+from ._ide_targets import _update_antigravity_artifacts as _update_antigravity_artifacts
 from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
 from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
 from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
 from ._ide_targets import _update_gemini_artifacts as _update_gemini_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
+from ._template_claude_md import (
+    _TRW_END_MARKER,
+    _TRW_HEADER_MARKER,
+    _TRW_START_MARKER,
+    _minimal_claude_md_trw_block,
+    _update_claude_md_trw_section,
+)
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
@@ -56,10 +64,17 @@ _NEVER_OVERWRITE = {
     ".trw/learnings/index.yaml",
 }
 
-# CLAUDE.md markers for the auto-generated section.
-_TRW_START_MARKER = "<!-- trw:start -->"
-_TRW_END_MARKER = "<!-- trw:end -->"
-_TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
+# CLAUDE.md markers + helpers extracted to ``_template_claude_md.py``
+# (PRD-DIST-243 Phase 1 batch 4, cycle 32). Re-imported above.
+
+# Markers re-exported for back-compat with imports / tests.
+__all__ = [
+    "_TRW_END_MARKER",
+    "_TRW_HEADER_MARKER",
+    "_TRW_START_MARKER",
+    "_minimal_claude_md_trw_block",
+    "_update_claude_md_trw_section",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -395,66 +410,6 @@ def _update_mcp_config(
 # ---------------------------------------------------------------------------
 # CLAUDE.md section management
 # ---------------------------------------------------------------------------
-
-
-def _update_claude_md_trw_section(
-    claude_md_path: Path,
-    result: dict[str, list[str]],
-) -> None:
-    """Replace the auto-generated TRW section in CLAUDE.md.
-
-    Preserves all user-written content above and below the markers.
-    """
-    content = claude_md_path.read_text(encoding="utf-8")
-    new_block = _minimal_claude_md_trw_block()
-
-    start_idx = content.find(_TRW_START_MARKER)
-    end_idx = content.find(_TRW_END_MARKER)
-
-    if start_idx != -1 and end_idx != -1:
-        # Replace the existing auto-generated section
-        end_idx += len(_TRW_END_MARKER)
-        # Also capture the header marker line if present
-        header_idx = content.rfind(_TRW_HEADER_MARKER, 0, start_idx)
-        replace_start = header_idx if header_idx != -1 else start_idx
-        updated = content[:replace_start] + new_block + content[end_idx:]
-        try:
-            claude_md_path.write_text(updated, encoding="utf-8")
-            result["updated"].append(str(claude_md_path))
-        except OSError as exc:
-            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
-    elif _TRW_START_MARKER not in content:
-        # No TRW section -- append it
-        if not content.endswith("\n"):
-            content += "\n"
-        content += "\n" + new_block
-        try:
-            claude_md_path.write_text(content, encoding="utf-8")
-            result["updated"].append(str(claude_md_path))
-        except OSError as exc:
-            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
-    else:
-        result["errors"].append("CLAUDE.md has malformed TRW markers — found start but not end")
-
-
-def _minimal_claude_md_trw_block() -> str:
-    """Return just the auto-generated TRW section for CLAUDE.md updates."""
-    import sys
-
-    # Look up _minimal_claude_md via the package module so that
-    # patch("trw_mcp.bootstrap._minimal_claude_md", ...) in tests
-    # correctly intercepts the call.
-    bootstrap_pkg = sys.modules["trw_mcp.bootstrap"]
-    full: str = bootstrap_pkg._minimal_claude_md()
-    start_idx = full.find(_TRW_HEADER_MARKER)
-    end_idx = full.find(_TRW_END_MARKER)
-    if start_idx != -1 and end_idx != -1:
-        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
-    # Fallback: return entire trw:start..trw:end
-    start_idx = full.find(_TRW_START_MARKER)
-    if start_idx != -1 and end_idx != -1:
-        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
-    return ""
 
 
 # ---------------------------------------------------------------------------

@@ -311,6 +311,7 @@ def process_outcome(
     event_label: str,
     *,
     lookup_fn: EntryLookupFn | None = None,
+    tool_call_id: str | None = None,
 ) -> list[str]:
     """Update Q-values for learnings correlated with a recent outcome.
 
@@ -371,12 +372,18 @@ def process_outcome(
     _batch_sync_to_sqlite(pending_updates, trw_dir)
 
     if updated_ids:
-        _su.logger.info(
-            "outcome_correlation_applied",
-            reward=reward,
-            event_label=event_label,
-            updated_count=len(updated_ids),
-        )
+        # PRD-FIX-088 FR01: stamp ``tool_call_id`` so async correlation
+        # events can be threaded back to the originating ``trw_build_check``
+        # call (or other dispatcher).  ``None`` is omitted via kwargs
+        # filtering so callers that don't supply one don't pollute logs.
+        log_kwargs: dict[str, object] = {
+            "reward": reward,
+            "event_label": event_label,
+            "updated_count": len(updated_ids),
+        }
+        if tool_call_id is not None:
+            log_kwargs["tool_call_id"] = tool_call_id
+        _su.logger.info("outcome_correlation_applied", **log_kwargs)
 
     return updated_ids
 
@@ -384,6 +391,8 @@ def process_outcome(
 def process_outcome_for_event(
     event_type: str,
     event_data: dict[str, object] | None = None,
+    *,
+    tool_call_id: str | None = None,
 ) -> list[str]:
     """Public entry point for orchestration tools to trigger outcome correlation.
 
@@ -405,7 +414,7 @@ def process_outcome_for_event(
 
     try:
         trw_dir = _su.resolve_trw_dir()
-        return process_outcome(trw_dir, reward, label)
+        return process_outcome(trw_dir, reward, label, tool_call_id=tool_call_id)
     except (StateError, OSError) as exc:
         _su.logger.debug("outcome_correlation_skipped", reason=str(exc))
         return []

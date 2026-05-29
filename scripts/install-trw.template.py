@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import importlib.metadata as importlib_metadata
 import os
 import random
@@ -28,9 +29,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
+from typing import Any, TextIO, cast
 
 # ── Configuration (substituted by build_installer.py) ────────────────
 TRW_VERSION = "{{VERSION}}"
@@ -61,10 +64,10 @@ _TIPS = [
     "Use trw_recall('topic') to search prior session learnings",
     "Every trw_learn() call compounds across all future sessions",
     "Call trw_session_start() at the beginning of every session",
-    "Use Agent Teams for multi-file implementations \u2014 focused context wins",
+    "Use explicit file ownership for multi-file work \u2014 portable coordination wins",
     "Run /trw-project-health to check your installation's vitals",
     "Use trw_checkpoint() before large operations to save progress",
-    "Run trw_deliver() at session end to persist your discoveries",
+    "Run trw_build_check() before trw_deliver(); label acceptable failures explicitly",
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",
@@ -279,14 +282,14 @@ class _Spinner:
 # ── Input helpers ────────────────────────────────────────────────────
 
 
-def _open_tty():  # noqa: ANN202 — returns TextIO | None
+def _open_tty() -> TextIO | None:
     """Open a TTY for reading, or None if unavailable.
 
     Uses /dev/tty on Unix and CON on Windows.
     """
     for tty_path in ("/dev/tty", "CON"):
         try:
-            return open(tty_path)  # noqa: SIM115
+            return open(tty_path, encoding="utf-8")
         except OSError:
             continue
     return None
@@ -426,15 +429,16 @@ def _parse_ide_argument(raw: str | None) -> list[str] | None:
     return normalized
 
 
-def _read_single_key(tty):  # noqa: ANN202 — platform-specific key reader
+def _read_single_key(tty: TextIO) -> str | None:
     """Read a single keypress from *tty* for checkbox navigation."""
     if os.name == "nt":
         try:
             import msvcrt
 
-            ch = msvcrt.getwch()
+            getwch = getattr(msvcrt, "getwch")
+            ch = str(getwch())
             if ch in ("\x00", "\xe0"):
-                arrow = msvcrt.getwch()
+                arrow = str(getwch())
                 if arrow == "H":
                     return "UP"
                 if arrow == "P":
@@ -579,18 +583,33 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
         if "sqlite_vec_enabled" in flat:
             prior["sqlite_vec"] = flat["sqlite_vec_enabled"].lower() == "true"
         target_platforms: list[str] = []
+        platform_urls: list[str] = []
         in_target_platforms = False
+        in_platform_urls = False
         for line in raw_text.splitlines():
             stripped = line.strip()
+            if stripped.startswith("platform_urls:"):
+                in_platform_urls = True
+                in_target_platforms = False
+                continue
             if stripped.startswith("target_platforms:"):
                 in_target_platforms = True
+                in_platform_urls = False
                 continue
+            if in_platform_urls:
+                if stripped.startswith("- "):
+                    platform_urls.append(stripped[2:].strip().strip('"').strip("'"))
+                    continue
+                if stripped and not stripped.startswith("#"):
+                    in_platform_urls = False
             if in_target_platforms:
                 if stripped.startswith("- "):
                     target_platforms.append(stripped[2:].strip().strip('"').strip("'"))
                     continue
                 if stripped and not stripped.startswith("#"):
                     in_target_platforms = False
+        if platform_urls:
+            prior["platform_urls"] = [url for url in platform_urls if url]
         if target_platforms:
             # Non-strict: legacy aliases are applied, unknown entries dropped.
             # A stale / renamed identifier in a user's prior config must never
@@ -980,6 +999,7 @@ def update_config(
     embeddings_enabled: bool | None = None,
     sqlite_vec_enabled: bool | None = None,
     target_platforms: list[str] | None = None,
+    rewrite_platform_urls: bool = True,
 ) -> bool:
     """Update .trw/config.yaml with installation settings.
 
@@ -991,6 +1011,7 @@ def update_config(
 
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     platform_url = "https://api.trwframework.com"
+    effective_target_platforms = target_platforms or None
 
     updated: set[str] = set()
     out: list[str] = []
@@ -1000,14 +1021,15 @@ def update_config(
     for line in lines:
         normalized_line = line if line.endswith("\n") else line + "\n"
         s = normalized_line.lstrip()
+        stripped = s.strip()
 
         if replacing_target_platforms:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_target_platforms = False
 
         if replacing_platform_urls:
-            if s.startswith("- "):
+            if not stripped or stripped.startswith(("#", "- ")):
                 continue
             replacing_platform_urls = False
 
@@ -1032,15 +1054,15 @@ def update_config(
             out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
             updated.add("sqlite_vec_enabled")
             continue
-        if s.startswith("target_platforms:") and target_platforms is not None:
+        if s.startswith("target_platforms:") and effective_target_platforms is not None:
             out.append("target_platforms:\n")
-            out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+            out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
             updated.add("target_platforms")
             replacing_target_platforms = True
             continue
         if s.startswith("platform_urls:"):
             updated.add("platform_urls")
-            if api_key or telemetry_enabled:
+            if rewrite_platform_urls and (api_key or telemetry_enabled):
                 out.append("platform_urls:\n")
                 out.append(f'  - "{platform_url}"\n')
                 updated.add("platform_urls_written")
@@ -1069,16 +1091,16 @@ def update_config(
         out.append(f'platform_api_key: "{api_key}"\n')
     if telemetry_enabled and "platform_telemetry_enabled" not in updated:
         out.append("platform_telemetry_enabled: true\n")
-    if (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
+    if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
     if embeddings_enabled and "embeddings_enabled" not in updated:
         out.append("embeddings_enabled: true\n")
     if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
         out.append("sqlite_vec_enabled: true\n")
-    if target_platforms and "target_platforms" not in updated:
+    if effective_target_platforms and "target_platforms" not in updated:
         out.append("target_platforms:\n")
-        out.extend(f'  - "{ide}"\n' for ide in target_platforms)
+        out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
 
     config_path.write_text("".join(out), encoding="utf-8")
     return True
@@ -1093,8 +1115,8 @@ def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
     Uses only stdlib — no external dependencies.
     """
     import json
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     health_url = f"{url.rstrip('/')}/v1/health"
     try:
@@ -1270,6 +1292,40 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
         )
     except OSError:
         pass  # Best-effort
+
+    _write_version_yaml_metadata(target_dir)
+
+
+def _write_version_yaml_metadata(target_dir: Path) -> None:
+    """Best-effort VERSION.yaml refresh for upgrade-only installer runs.
+
+    `init-project` / `update-project` already write this file through the
+    installed package. The standalone installer must also refresh it when
+    `--upgrade` skips project setup, otherwise `.trw/installed-version.json`
+    and `.trw/frameworks/VERSION.yaml` drift apart.
+    """
+    version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
+    existing: dict[str, str] = {}
+    try:
+        if version_path.is_file():
+            existing = _parse_simple_yaml(version_path.read_text(encoding="utf-8"))
+        version_path.parent.mkdir(parents=True, exist_ok=True)
+        framework_version = existing.get("framework_version", "v25_TRW")
+        aaref_version = existing.get("aaref_version", "v2.0.0")
+        version_path.write_text(
+            "\n".join(
+                [
+                    f"framework_version: {framework_version}",
+                    f"aaref_version: {aaref_version}",
+                    f"trw_mcp_version: {TRW_VERSION}",
+                    f"deployed_at: '{_iso_now()}'",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # Best-effort; the sentinel remains the runtime restart signal.
 
 
 def _iso_now() -> str:
@@ -1799,8 +1855,8 @@ def phase_install_packages(
                 sys.exit(1)
         except subprocess.TimeoutExpired:
             ui.step_fail(
-                f"trw-mcp binary hung during MCP preflight probe "
-                f"(timed out waiting for tools/list response)"
+                "trw-mcp binary hung during MCP preflight probe "
+                "(timed out waiting for tools/list response)"
             )
             sys.exit(1)
         except (OSError, ValueError) as exc:
@@ -1919,6 +1975,396 @@ def phase_install_extras(
             ui.step_warn("sqlite-vec failed \u2014 TRW works without it")
 
     return features
+
+
+# \u2500\u2500 Proprietary package install (PRD-INFRA-126; PRD-INFRA-128 adds trw-harness) \u2500\u2500
+PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
+    "trw-distill",
+    "trw-harness",
+    "trw-loop",
+    "trw-swarm",
+)
+
+
+def _fetch_proprietary_license(
+    backend_url: str,
+    platform_api_key: str,
+    timeout: int = 10,
+) -> str:
+    """Auto-derive a proprietary license from the configured platform API key.
+
+    PRD-INFRA-129 FR02. Calls GET /v1/me/proprietary-license with the
+    platform_api_key in the Authorization header and returns the
+    plaintext license_key. The returned value lives only in the caller's
+    memory; do not persist it to disk (NFR01).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"{backend_url.rstrip('/')}/me/proprietary-license",
+        headers={
+            "Authorization": f"Bearer {platform_api_key}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    delays = (1.0, 2.0, 4.0)
+    last_err: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                payload = json.loads(resp.read().decode())
+            license_key = payload.get("license_key")
+            if not isinstance(license_key, str) or not license_key:
+                raise RuntimeError("malformed auto-license response")
+            return license_key
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                reason = f"http {exc.code}"
+                try:
+                    detail = json.loads(exc.read().decode())
+                    reason = str(
+                        detail.get("error") or detail.get("reason") or reason
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
+                raise RuntimeError(
+                    f"auto-license denied ({exc.code}): {reason}"
+                ) from None
+            last_err = exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_err = exc
+        if attempt < len(delays) - 1:
+            time.sleep(delay)
+    raise RuntimeError(
+        f"auto-license network failure after retries: {type(last_err).__name__}"
+    )
+
+
+def _resolve_proprietary_license(
+    *,
+    with_proprietary: bool,
+    explicit_license_key: str,
+    backend_url: str,
+    prior_config: dict[str, object],
+    ui: "UI",
+) -> tuple[str, bool]:
+    """Resolve the effective license key + with_proprietary flag.
+
+    PRD-INFRA-130 FR03: factored out of main() so behaviour is testable
+    without invoking the argparse + Path resolution machinery.
+
+    Behavior:
+    - ``with_proprietary=False`` or explicit license already supplied:
+      pass through unchanged.
+    - Auto-derive (with_proprietary + empty license + configured
+      ``platform_api_key``): fetch from the backend; on RuntimeError
+      (network/auth/scope), warn via ``ui`` and downgrade
+      ``with_proprietary=False`` so the public install can still proceed
+      (PRD-126 FR05 + PRD-129 NFR02).
+    - Auto-derive requested but no configured ``platform_api_key``:
+      raise ``ValueError`` so the caller can surface a usage error.
+    """
+    auto_derive = with_proprietary and not explicit_license_key
+    if not auto_derive:
+        return explicit_license_key, with_proprietary
+
+    raw = prior_config.get("api_key", "") if prior_config else ""
+    platform_api_key = raw.strip() if isinstance(raw, str) else ""
+    if not platform_api_key:
+        raise ValueError(
+            "--with-proprietary requires --license-key=<key>, "
+            "TRW_LICENSE_KEY env var, or a configured platform_api_key "
+            "in .trw/config.yaml (run install-trw.py without "
+            "--with-proprietary first to authenticate)"
+        )
+    try:
+        return _fetch_proprietary_license(backend_url, platform_api_key), True
+    except RuntimeError as exc:
+        ui.step_warn(
+            f"Auto-license fetch failed: {exc}. "
+            "Continuing with public install only."
+        )
+        return "", False
+
+
+def _post_proprietary_entitlement(
+    backend_url: str,
+    license_key: str,
+    package: str,
+    version: str,
+    timeout: int = 10,
+) -> dict[str, str]:
+    """Call POST /proprietary/entitlement with up-to-3 retries on transient errors.
+
+    Returns the decoded JSON response on success. Raises RuntimeError on
+    permanent failure (4xx, malformed response, exhausted retries). License
+    key never appears in raised messages (NFR04).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps(
+        {"license_key": license_key, "package": package, "version": version}
+    ).encode()
+    req = urllib.request.Request(
+        f"{backend_url.rstrip('/')}/proprietary/entitlement",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    delays = (1.0, 2.0, 4.0)
+    last_err: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 \u2014 trusted backend
+                payload_bytes = resp.read()
+            payload = json.loads(payload_bytes.decode())
+            if not all(k in payload for k in ("url", "sha256", "version")):
+                raise RuntimeError(
+                    f"malformed entitlement response: keys={sorted(payload)}"
+                )
+            return payload
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                # Permanent denial \u2014 surface reason without retry
+                reason = f"http {exc.code}"
+                try:
+                    detail_bytes = exc.read()
+                    detail = json.loads(detail_bytes.decode())
+                    reason = str(
+                        detail.get("error") or detail.get("reason") or reason
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
+                raise RuntimeError(
+                    f"entitlement denied ({exc.code}): {reason}"
+                ) from None
+            last_err = exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_err = exc
+        if attempt < len(delays) - 1:
+            time.sleep(delay)
+    raise RuntimeError(
+        f"entitlement network failure after retries: {type(last_err).__name__}"
+    )
+
+
+def _download_proprietary_wheel(
+    url: str, expected_sha256: str, dest_dir: Path
+) -> Path:
+    """Stream-download URL to dest_dir, verify SHA-256, return wheel path."""
+    import urllib.parse
+    import urllib.request
+
+    parsed_path = urllib.parse.urlparse(url).path
+    filename = Path(parsed_path).name or "proprietary.whl"
+    if not filename.endswith(".whl"):
+        filename = filename + ".whl"
+    dest = dest_dir / filename
+    h = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 \u2014 presigned URL
+            with dest.open("wb") as f:
+                for chunk in iter(lambda: resp.read(65536), b""):
+                    h.update(chunk)
+                    f.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    actual = h.hexdigest()
+    if actual != expected_sha256:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(
+            "proprietary_wheel_integrity_failure: "
+            f"sha256 mismatch (expected {expected_sha256[:16]}..., got {actual[:16]}...)"
+        )
+    return dest
+
+
+def _install_proprietary_wheel(
+    python: str, wheel_path: Path, package: str, target_dir: str
+) -> bool:
+    """Install one proprietary wheel using the L-82faa67c rmtree pattern.
+
+    Removes any pre-existing copy of the package from target_dir before
+    reinstalling to prevent the silent PyPI downgrade documented in
+    L-82faa67c. Uses --find-links so transitive dependencies still resolve
+    from PyPI (L-6f488d41 fix).
+    """
+    pkg_module = package.replace("-", "_")
+    if target_dir:
+        target_root = Path(target_dir)
+        for stale in target_root.glob(f"{pkg_module}*"):
+            if stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
+            elif stale.is_file():
+                stale.unlink(missing_ok=True)
+    cmd: list[str] = [
+        python,
+        "-m",
+        "pip",
+        "install",
+        "--find-links",
+        str(wheel_path.parent),
+        str(wheel_path),
+    ]
+    if target_dir:
+        cmd.extend(["--target", target_dir, "--no-warn-script-location"])
+    return _run_quiet(cmd, timeout=180)
+
+
+def phase_install_proprietary(
+    ui: UI,
+    step: int,
+    total: int,
+    python: str,
+    license_key: str,
+    pins: dict[str, str],
+    backend_url: str,
+    target_dir: str = "",
+    auto_confirm: bool = False,
+) -> list[str]:
+    """Install proprietary packages. Returns list of `<pkg> <version>` strings
+    for packages that installed successfully.
+
+    Per PRD-INFRA-126 FR05, failure of any per-package step does NOT roll
+    back the public install \u2014 the function logs the failure, counts it,
+    and continues. The phase prompt runs even if .trw/ already exists
+    (mitigates L-43de9ce3 where the bash bootstrap pre-creates .trw/).
+    """
+    ui.step_header(step, total, "Installing proprietary packages")
+    # FR02 \u2014 confirmation prompt. License key never echoed.
+    if not auto_confirm:
+        ui.info("Proprietary install will fetch from:")
+        ui.info(f"  {backend_url}/proprietary/entitlement")
+        for pkg in PROPRIETARY_PACKAGES_TUPLE:
+            requested = pins.get(pkg, "latest")
+            ui.info(f"  - {pkg} ({requested})")
+        if not prompt_yes_no("Continue with proprietary install?", default="y"):
+            ui.step_warn("Proprietary install skipped by user")
+            return []
+    installed: list[str] = []
+    # PRD-INFRA-130 FR04: track per-package metadata for the structured event
+    # written to ``.trw/install-events.jsonl`` on completion. Failures are
+    # collected so observability captures partial-failure installs faithfully.
+    installed_meta: list[dict[str, str]] = []
+    failed_packages: list[str] = []
+    tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
+    # Two-pass: download every wheel first so cross-package deps (e.g.
+    # trw-distill depending on trw-harness) resolve via pip --find-links
+    # regardless of which order the packages appear in the tuple.
+    downloaded: list[tuple[str, Path, str, str]] = []  # (package, wheel_path, resolved_version, sha256)
+    try:
+        # Pass 1 \u2014 fetch all
+        for package in PROPRIETARY_PACKAGES_TUPLE:
+            version = pins.get(package, "latest")
+            try:
+                ui.start_spinner(f"Requesting entitlement for {package}...")
+                payload = _post_proprietary_entitlement(
+                    backend_url, license_key, package, version
+                )
+                resolved_version = payload["version"]
+                wheel_sha256 = payload["sha256"]
+                ui.stop_spinner(
+                    True,
+                    f"Entitlement issued: {package} {resolved_version}",
+                )
+                ui.start_spinner(f"Downloading {package} {resolved_version}...")
+                wheel = _download_proprietary_wheel(
+                    payload["url"], wheel_sha256, tmpdir
+                )
+                ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
+                downloaded.append((package, wheel, resolved_version, wheel_sha256))
+            except RuntimeError as exc:
+                # FR05 \u2014 log and continue; do NOT roll back the public install.
+                ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+                failed_packages.append(package)
+
+        # Pass 2 \u2014 install every fetched wheel. find-links now has every
+        # package available so cross-dependent installs resolve correctly.
+        for package, wheel, resolved_version, wheel_sha256 in downloaded:
+            try:
+                ui.start_spinner(f"Installing {package} into venv...")
+                if _install_proprietary_wheel(python, wheel, package, target_dir):
+                    ui.stop_spinner(True, f"Installed {package} {resolved_version}")
+                    installed.append(f"{package} {resolved_version}")
+                    installed_meta.append(
+                        {
+                            "name": package,
+                            "version": resolved_version,
+                            "sha256": wheel_sha256,
+                        }
+                    )
+                else:
+                    ui.stop_spinner(False, "", f"pip install failed for {package}")
+                    failed_packages.append(package)
+            except RuntimeError as exc:
+                ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
+                failed_packages.append(package)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    # PRD-INFRA-130 FR04: emit one structured event per phase invocation.
+    # ``target_dir`` here is the pip target directory string; when empty we
+    # fall back to the current working directory (matching how the public
+    # install phases resolve their write root).
+    events_root = Path(target_dir) if target_dir else Path.cwd()
+    _emit_install_completed_event(events_root, installed_meta, failed_packages)
+    return installed
+
+
+def _emit_install_completed_event(
+    target_dir: Path,
+    installed: list[dict[str, str]],
+    failed: list[str],
+) -> None:
+    """Emit a single JSONL line describing the proprietary install outcome.
+
+    PRD-INFRA-130 FR04 + NFR02: the record contains package metadata and
+    timestamps only \u2014 plaintext license keys are NEVER written. The file is
+    append-only so historical runs are preserved (PRD-INFRA-130 NFR04).
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    events_path = target_dir / ".trw" / "install-events.jsonl"
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "event": "proprietary_install_completed",
+        "target_dir": str(target_dir.resolve()),
+        "packages": installed,
+        "failed_packages": failed,
+    }
+    with events_path.open("a", encoding="utf-8") as fp:
+        fp.write(_json.dumps(record, sort_keys=True) + "\n")
+
+
+def write_proprietary_marker(
+    target_dir: Path, installed: list[str]
+) -> Path | None:
+    """Persist a record of which proprietary versions are installed.
+
+    Used by subsequent installs to skip already-current packages
+    (PRD-INFRA-126 NFR05 idempotency). Returns the marker path on success
+    or None when no installations succeeded.
+    """
+    if not installed:
+        return None
+    import json
+
+    mapping: dict[str, str] = {}
+    for entry in installed:
+        parts = entry.split()
+        if len(parts) == 2:
+            mapping[parts[0]] = parts[1]
+    marker = target_dir / ".trw" / "proprietary-installed.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
+    return marker
 
 
 def phase_project_setup(
@@ -2084,7 +2530,11 @@ def phase_configure(
                 ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
     else:
         # Script mode: use flags
-        project_name = sanitize_project_name(opt_name) if opt_name else default_name
+        project_name = (
+            sanitize_project_name(opt_name)
+            if opt_name
+            else str(prior_config.get("project_name") or default_name)
+        )
         # PRD-FIX-067-FR02: Check prior_config before opt_api_key
         if prior_config.get("api_key"):
             api_key = str(prior_config["api_key"])
@@ -2101,6 +2551,8 @@ def phase_configure(
         if opt_telemetry is False:
             telemetry_enabled = False
         ui.step_ok(f"Project: {project_name}")
+
+    preserve_prior_platform_urls = bool(prior_config.get("platform_urls")) and not opt_api_key and opt_telemetry is None
 
     # Write to config (including feature flags for future reinstall detection)
     config_path = target_dir / ".trw" / "config.yaml"
@@ -2119,7 +2571,8 @@ def phase_configure(
             install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None
         ),
         sqlite_vec_enabled=install_vec or None,
-        target_platforms=target_platforms,
+        target_platforms=target_platforms or None,
+        rewrite_platform_urls=not preserve_prior_platform_urls,
     ):
         ui.step_ok("Configuration saved to .trw/config.yaml")
     else:
@@ -2185,7 +2638,7 @@ def _prompt_api_key(ui: UI) -> str:
     return ""
 
 
-def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
+def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any] | None:
     """Perform RFC 8628 device authorization -- stdlib only.
 
     Inline implementation that avoids importing trw_mcp.cli.auth (which may
@@ -2266,7 +2719,7 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict | None:
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
-                return _json.loads(resp.read().decode("utf-8"))
+                return cast("dict[str, Any]", _json.loads(resp.read().decode("utf-8")))
         except urllib.error.HTTPError as exc:
             err_code = ""
             try:
@@ -2385,12 +2838,69 @@ def main() -> None:
         default=None,
         help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,gemini (prompted in interactive mode)",
     )
+    # ── Proprietary package install (PRD-INFRA-126) ──────────────────
+    parser.add_argument(
+        "--with-proprietary",
+        action="store_true",
+        help=(
+            "Install trw-distill, trw-harness, trw-loop, trw-swarm. "
+            "Auto-derives a license from the platform_api_key in "
+            ".trw/config.yaml; falls back to --license-key for explicit overrides."
+        ),
+    )
+    parser.add_argument(
+        "--license-key",
+        default="",
+        help=(
+            "Explicit proprietary license key (or set TRW_LICENSE_KEY). "
+            "Overrides the auto-derive path. Use for customers without a "
+            "platform dashboard account."
+        ),
+    )
+    parser.add_argument(
+        "--proprietary-version",
+        action="append",
+        default=[],
+        metavar="PKG==VER",
+        help="Pin a proprietary package version, repeatable (e.g. trw-loop==0.1.0)",
+    )
+    parser.add_argument(
+        "--backend-url",
+        default="",
+        help="Override the entitlement endpoint URL (testing only; defaults to api.trwframework.com)",
+    )
 
     args = parser.parse_args()
     try:
         ide_targets = _parse_ide_argument(args.ide)
     except ValueError as exc:
         parser.error(str(exc))
+
+    # ── Proprietary install env-var fallback + pin validation ────────
+    with_proprietary = bool(args.with_proprietary) or os.environ.get(
+        "TRW_WITH_PROPRIETARY", ""
+    ).lower() in {"1", "true", "yes"}
+    license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
+    # PRD-INFRA-129 FR02 — auto-derive license from the configured
+    # platform_api_key when --with-proprietary is given without an
+    # explicit license. The actual fetch (extracted into
+    # ``_resolve_proprietary_license`` for testability — PRD-INFRA-130
+    # FR03) is deferred until after target_dir + prior_config are
+    # resolved (config.yaml lives there).
+    proprietary_pins: dict[str, str] = {}
+    for pin in args.proprietary_version:
+        if "==" not in pin:
+            parser.error(f"Malformed --proprietary-version (need PKG==VER): {pin}")
+        pkg_name, pkg_ver = pin.split("==", 1)
+        if pkg_name not in PROPRIETARY_PACKAGES_TUPLE:
+            parser.error(
+                f"Unknown --proprietary-version package: {pkg_name} "
+                f"(allowed: {', '.join(PROPRIETARY_PACKAGES_TUPLE)})"
+            )
+        proprietary_pins[pkg_name] = pkg_ver
+    backend_url = args.backend_url or os.environ.get(
+        "TRW_BACKEND_URL", "https://api.trwframework.com/v1"
+    )
 
     # Mode detection
     interactive = (not args.script) and sys.stdin.isatty()
@@ -2421,6 +2931,24 @@ def main() -> None:
 
     if is_reinstall and interactive:
         ui.info("Existing TRW installation detected \u2014 reusing prior settings")
+
+    # PRD-INFRA-129 FR02 / PRD-INFRA-130 FR03 — auto-derive
+    # proprietary license from the existing platform_api_key. Logic
+    # lives in the testable helper ``_resolve_proprietary_license``
+    # so behavior can be exercised without driving main(). A transient
+    # network blip during the fetch must NOT block the public install
+    # (PRD-126 FR05 + PRD-129 NFR02): the helper warns and downgrades
+    # with_proprietary.
+    try:
+        license_key, with_proprietary = _resolve_proprietary_license(
+            with_proprietary=with_proprietary,
+            explicit_license_key=license_key,
+            backend_url=backend_url,
+            prior_config=prior_config,
+            ui=ui,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if interactive:
         draw_divider("Preflight")
@@ -2460,6 +2988,8 @@ def main() -> None:
     total = 3  # extract + install + project-setup
     if has_extras:
         total += 1
+    if with_proprietary:
+        total += 1
     if has_config:
         total += 1
 
@@ -2489,6 +3019,24 @@ def main() -> None:
                 install_vec,
                 pip_target=args.pip_target,
             )
+
+        # Step 4 (conditional): Install proprietary packages (PRD-INFRA-126)
+        proprietary_installed: list[str] = []
+        if with_proprietary:
+            step += 1
+            proprietary_installed = phase_install_proprietary(
+                ui,
+                step,
+                total,
+                python,
+                license_key,
+                proprietary_pins,
+                backend_url,
+                target_dir=args.pip_target,
+                auto_confirm=not interactive,
+            )
+            write_proprietary_marker(target_dir, proprietary_installed)
+            features.extend(proprietary_installed)
 
         # Step N: Project setup
         step += 1

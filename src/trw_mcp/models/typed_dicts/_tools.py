@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from typing_extensions import NotRequired, TypedDict
 
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
@@ -37,6 +39,19 @@ class UsageGroupEntryDict(TypedDict):
     cost_estimate_usd: float
 
 
+class RunCostLedgerEntryDict(TypedDict):
+    """Per-run Agent Trace cost ledger entry."""
+
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    model: str
+    provider: str
+    models: list[str]
+    providers: list[str]
+
+
 class UsageReportResult(TypedDict, total=False):
     """Return shape of ``trw_usage_report`` MCP tool.
 
@@ -59,6 +74,7 @@ class UsageReportResult(TypedDict, total=False):
     total_cost_estimate_usd: float
     by_model: dict[str, UsageModelEntryDict]
     by_caller: dict[str, UsageCallerEntryDict]
+    cost_ledger: dict[str, RunCostLedgerEntryDict]
     # populated when group_by != "none"
     group_by: str
     grouped_by: dict[str, UsageGroupEntryDict]
@@ -117,6 +133,10 @@ class RunStatusDict(TypedDict, total=False):
     task_name: str
     owner_session_id: str | None
     wave_status: dict[str, object] | None
+    # PRD-CORE-165 FR-01: caller-supplied recovery context surfaced from the
+    # pre-compact state so the post-compaction session resumes exactly.
+    directive: str
+    context_anchor: str
 
 
 class SessionStartResultDict(TypedDict, total=False):
@@ -128,12 +148,16 @@ class SessionStartResultDict(TypedDict, total=False):
     query: str
     query_matched: int
     total_available: int
+    response_compacted: bool
+    side_effects_deferred: dict[str, object]
+    recall_degraded: dict[str, object]
     run: RunStatusDict
     embeddings_advisory: str
     errors: list[str]
     success: bool
     framework_reminder: str
     ceremony_status: str
+    nudge_deferred: dict[str, object]
     # Auto-recall (phase-contextual, PRD-CORE-049)
     auto_recalled: list[AutoRecalledItemDict]
     auto_recall_count: int
@@ -145,11 +169,18 @@ class SessionStartResultDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
+    stale_runs_deferred: dict[str, object]
+    auto_upgrade_check_deferred: dict[str, object]
     embeddings_backfill: dict[str, int]
+    embeddings_backfill_deferred: dict[str, object]
+    wal_checkpoint_deferred: dict[str, object]
+    auto_recall_deferred: dict[str, object]
+    ceremony_status_deferred: dict[str, object]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
     hint: str
+    candidate_runs: list[dict[str, object]]
     # PRD-HPO-MEAS-001 FR-2: Resolved surface snapshot id for the session.
     # Empty string during Phase 1 when artifact_registry stamping is
     # unavailable or fails open. Every HPOTelemetryEvent emitted during the
@@ -159,6 +190,72 @@ class SessionStartResultDict(TypedDict, total=False):
     # Absent on success; populated with ``{key, expected, actual, remediation}``
     # entries when any Phase-1 default cannot be resolved.
     boot_audit_failures: list[dict[str, str]]
+    # PRD-FIX-084: Per-step latency telemetry (milliseconds). Keys: recall,
+    # run_resolve, surface_stamp, log_event, telemetry, counter,
+    # sanitize_maintain, phase_recall, total. Absent keys mean the step
+    # did not start (e.g. exited via partial-failure earlier). Future
+    # regressions of the "step accidentally O(corpus)" class are visible
+    # from a single log line via the ``session_start_ok`` event payload.
+    step_durations_ms: dict[str, float]
+
+
+class QLearningDeferredDict(TypedDict):
+    """Stable shape of ``BuildCheckResultDict.q_learning_deferred`` (PRD-FIX-088 FR01).
+
+    Always-present fields. Returned by ``_dispatch_q_learning_async`` and
+    surfaced to MCP callers so log readers can correlate the eventual
+    async ``q_learning_complete`` / ``outcome_correlation_applied``
+    events back to the originating ``trw_build_check`` call.
+    """
+
+    reason: Literal["deferred_always"]
+    scheduled_at: str
+    thread_state: Literal["launched", "queued", "queue_full"]
+    tool_call_id: str
+
+
+class QLearningHealthDict(TypedDict):
+    """Return shape of ``get_q_learning_health()`` (PRD-FIX-088 FR01)."""
+
+    queue_size: int
+    error_count: int
+    last_error: str | None
+    worker_alive: bool
+
+
+class BuildCheckResultDict(TypedDict, total=False):
+    """Return shape of ``trw_build_check`` MCP tool.
+
+    PRD-FIX-088 FR03: ``step_durations_ms`` mirrors the
+    ``SessionStartResultDict`` precedent set by PRD-FIX-084. Keys
+    populated on the success path: persist, run_resolve, log_event,
+    q_learning_dispatch, finalize, total.
+
+    PRD-FIX-088 FR01: ``q_learning_deferred`` is ALWAYS present when
+    Q-learning was scheduled (which is now every successful call,
+    not only under writer pressure).
+    """
+
+    tests_passed: bool
+    static_checks_clean: bool
+    mypy_clean: bool
+    timed_out: bool
+    coverage_pct: float
+    test_count: int
+    failure_count: int
+    failures: list[str]
+    scope: str
+    duration_secs: float
+    cache_path: str
+    status: str
+    reason: str
+    coverage_threshold_failed: bool
+    coverage_threshold: float
+    coverage_threshold_message: str
+    q_learning_deferred: QLearningDeferredDict
+    q_learning_error: str
+    q_learning_error_count: int
+    step_durations_ms: dict[str, float]
 
 
 class RunReportResultDict(TypedDict, total=False):
@@ -259,6 +356,8 @@ class DeliverResultDict(TypedDict, total=False):
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    build_gate_block: str
+    build_gate_override: str
     checkpoint_blocker_warning: str
     complexity_drift_warning: str
     warning: str
@@ -267,6 +366,7 @@ class DeliverResultDict(TypedDict, total=False):
     compliance_dir: str
     reflect: dict[str, object]
     checkpoint: dict[str, object]
+    candidate_runs: list[dict[str, object]]
     claude_md_sync: dict[str, object]
     critical_elapsed_seconds: float
     deferred: str
@@ -346,3 +446,7 @@ class PreCompactResultDict(TypedDict, total=False):
     failing_tests: list[str]
     reason: str
     error: str
+    # PRD-CORE-165 FR-01: caller-supplied directive + context-anchor persisted
+    # into the pre-compact state (echoed back on the success path when set).
+    directive: str
+    context_anchor: str

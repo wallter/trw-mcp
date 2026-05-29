@@ -98,4 +98,4 @@ def test_meta_tune_config_is_frozen() -> None:
     documented in PRD §13.2 R5)."""
     cfg = MetaTuneConfig()
     with pytest.raises(Exception):  # pydantic ValidationError subclass
-        cfg.enabled = True  # type: ignore[misc]
+        cfg.enabled = True

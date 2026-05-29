@@ -1,75 +1,63 @@
-# Qwen-Coder-Next Prompting Guide
+# TRW Portable Prompting Guide
 
-This guide provides best practices for interacting with Qwen-Coder-Next models
-(vllm/qwen3-coder-next, Qwen3-R, Qwen3-Q).
+This guide is intentionally model-agnostic. TRW core prompts should work across
+frontier hosted models, local/open-weight coding models, and future coding
+harnesses without relying on provider-specific syntax.
 
-## Key Strengths
+## Core Assumptions
 
-- Strong coding capabilities with good context retention
-- Efficient for code generation and analysis tasks
-- Good at understanding project structure and intent
+- Context windows, tool-call formats, and helper-agent support vary by harness.
+- Stronger models still need evidence, project-native validation, nudges, and persistence.
+- Provider-specific tricks belong in adapter notes, not the core workflow.
+- Small, path-based prompts outperform large context dumps for most coding work.
 
 ## Recommended Patterns
 
 ### When to Delegate
-- **Complex multi-file changes** → Use subagents or Agent Teams
-- **Codebase research** → Use explore-type subagent with specific queries
-- **Test-heavy tasks** → Delegate to focused tester subagent
 
-### When Self-Implement
-- **Trivial edits** (≤3 lines, 1 file) → Self-implement directly
-- **Simple bug fixes** → Self-implement with clear scope
-- **Immediate feedback loop needed** → Self-implement, run tests quickly
+- Use focused helpers only when the active client supports them reliably.
+- Split by explicit file ownership and verification boundaries.
+- If helper support is absent, execute the same shards sequentially.
+- Keep the orchestrator responsible for final integration and validation.
 
-### Context Management
+### When to Self-Implement
 
-**Do:**
-- Use `trw_session_start()` at start of each session
-- Call `trw_checkpoint()` after completing major phases
-- Call `trw_learn()` when discovering gotchas or patterns
+- Trivial edits (≤3 lines, 1 file)
+- Tightly coupled fixes where handoff would add risk
+- Debug loops where the next command depends on the previous result
 
-**Don't:**
-- Skip ceremony tools - they compound across sessions
-- Implement complex tasks without delegation - context is too limited
-- Forget to run `trw_deliver()` at session end
+### Prompt Shape
 
-### Qwen-Optimized Instructions
+Use concise sections:
 
-When delegating, provide:
-1. Clear task description with expected outcome
-2. Specific file paths and line numbers where changes are needed
-3. Test expectations (test names, expected behavior)
-4. Context about existing patterns to match
-
-Example:
+```text
+Context: repo/path and governing requirement
+Task: exact change or question
+Constraints: files to avoid, compatibility, security, style
+Output: changed paths, validation run, risks
 ```
-Edit `src/auth.py` to add MFA support:
 
-- Add `verify_mfa(user_id, code)` function
-- Use `src/auth/mfa.py` as reference implementation
-- Add tests: `test_mfa_verification()` and `test_mfa_timeout()`
-- Run `pytest tests/test_auth.py -v` after changes
-```
+Prefer file paths and commands over pasted file bodies. Ask for schema-shaped
+outputs when results must be merged or resumed.
 
 ## Session Protocol
 
-1. **Start**: Call `trw_session_start()` - loads all prior learnings
-2. **Assess**: Determine if delegation or self-implementation is better
-3. **Delegate**: Use focused subagents for bounded tasks
-4. **Verify**: Run tests after each change - fix before moving on
-5. **Learn**: Call `trw_learn(summary, detail)` for reusable insights
-6. **Finish**: Call `trw_deliver()` - persists work for future sessions
+1. **Start**: call `trw_session_start()` to load prior learnings and active state.
+2. **Scope**: identify requirements, files, language/toolchain, and validation commands from repo config.
+3. **Implement**: keep diffs small; checkpoint at milestones.
+4. **Verify**: run targeted project-native checks; broaden when risk warrants.
+5. **Learn**: call `trw_learn(summary, detail)` for reusable discoveries.
+6. **Finish**: call `trw_deliver()` only after validation is recorded with `trw_build_check()` or you explicitly label an acceptable failure; persist work for future sessions.
 
-## Key Gotchas
+## Portability Gotchas
 
-- **Context compaction**: Always checkpoint before major changes
-- **Test coverage**: Qwen responds better to test-first instructions
-- **File navigation**: Be explicit about file paths, don't assume
-- **Model limitations**: Qwen-30b has ~128K context - watch token budget
+- Do not assume a fixed token budget; inspect or stay conservative.
+- Do not assume hooks block execution; treat them as advisory unless proven.
+- Do not assume helper agents exist; TRW tools and manual fallbacks are canonical.
+- Do not assume eval results transfer across model class, client, or benchmark family.
+- Preserve uncertainty when evidence is mixed.
 
-## Migration Notes
 
-If migrating from another model family:
-- Update instructions in `.opencode/INSTRUCTIONS.md` to reflect Qwen patterns
-- Review and update any Qwen-specific learnings in the knowledge base
-- Test delegation workflows with Qwen-specific patterns
+## Nudge Policy
+
+Nudges are short, evidence-grounded reminders. Treat them as guidance for the next concrete action, not as proof that work is complete. Respect profile density, budget, and cooldown; if nudges become noisy, tune them rather than adding more prompt text.

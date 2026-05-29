@@ -15,7 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from trw_mcp.models.run import Phase
 
-ModelTier = Literal["cloud-opus", "cloud-sonnet", "local-30b", "local-8b"]
+ModelTier = Literal[
+    "frontier",
+    "balanced",
+    "local-large",
+    "local-small",
+    "cloud-opus",
+    "cloud-sonnet",
+    "local-30b",
+    "local-8b",
+]
 
 _VALID_PHASES: frozenset[str] = frozenset(p.value for p in Phase)
 
@@ -110,6 +119,7 @@ class WriteTargets(BaseModel):
     cursor_rules: bool = False
     copilot_instructions: bool = False
     gemini_md: bool = False
+    antigravitycli_md: bool = False
     instruction_path: str = ""
 
 
@@ -163,8 +173,8 @@ class ClientProfile(BaseModel):
     # Scoring calibration (eval dimensions -- NOT PRD validation dimensions, F13)
     scoring_weights: ScoringDimensionWeights = Field(default_factory=ScoringDimensionWeights)
 
-    # Model tier
-    default_model_tier: ModelTier = "cloud-sonnet"
+    # Capability tier. Legacy cloud/local names remain accepted as compatibility aliases.
+    default_model_tier: ModelTier = "balanced"
 
     # Response format (PRD-CORE-096)
     response_format: Literal["yaml", "json"] = "yaml"
@@ -174,7 +184,6 @@ class ClientProfile(BaseModel):
     agents_md_enabled: bool = False
     review_md_enabled: bool = True
     include_framework_ref: bool = True
-    include_agent_teams: bool = True
     include_delegation: bool = True
 
     # -- Surface control flags (PRD-CORE-125) --
@@ -187,6 +196,14 @@ class ClientProfile(BaseModel):
     learning_recall_enabled: bool = True
     mcp_instructions_enabled: bool = True
     skills_enabled: bool = True
+
+    # -- Feedback channel discovery (PRD-INFRA-132 FR03) --
+    # Skill name to install for the feedback channel; ``None`` opts the profile
+    # out of skill install (e.g. CI-only profiles), in which case the
+    # bootstrapper writes only the llms.txt link with no skill invocation.
+    # Light-mode gating (FR02) lives in the bootstrap layer, not here -- this
+    # field only carries the per-profile name/opt-out metadata.
+    feedback_skill: str | None = "trw-feedback"
 
     # -- Tool namespace rendering (PRD-FIX-078) --
     # Prepended to bare ``trw_*`` tool names in rendered instructional text.

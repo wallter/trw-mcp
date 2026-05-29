@@ -9,6 +9,8 @@ re-exported here for backward-compatible test imports.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -38,7 +40,7 @@ from trw_mcp.models.typed_dicts import (
     ValidateResultDict,
 )
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateWriter, model_to_dict
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE as _FRONTMATTER_RE,
 )
@@ -98,6 +100,35 @@ _PRIORITY_CONFIDENCE: dict[str, float] = {
     "P2": 0.6,
     "P3": 0.5,
 }
+_PRD_VALIDATOR_VERSION = "prd-quality-v2:2026-05-21"
+
+
+def _prd_validation_config_hash(config: object) -> str:
+    payload = {
+        "ambiguity_rate_max": getattr(config, "ambiguity_rate_max", None),
+        "completeness_min": getattr(config, "completeness_min", None),
+        "traceability_coverage_min": getattr(config, "traceability_coverage_min", None),
+        "extra_prd_categories": getattr(config, "extra_prd_categories", None),
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _prd_validation_cache_metadata(content: str, config: object) -> dict[str, str]:
+    return {
+        "content_hash": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "config_hash": _prd_validation_config_hash(config),
+        "validator_version": _PRD_VALIDATOR_VERSION,
+    }
+
+
+def _prd_validation_cache_key(content: str, config: object) -> str:
+    payload = _prd_validation_cache_metadata(content, config)
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _prd_validation_cache_path(project_root: Path) -> Path:
+    return project_root / ".trw" / "cache" / "prd-validation.yaml"
 
 
 def register_requirements_tools(server: FastMCP) -> None:
@@ -351,8 +382,24 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         content = path.read_text(encoding="utf-8")
 
-        # Single V2 validation call --- subsumes all V1 checks (PRD-FIX-011)
         config = get_config()
+        cache_path = _prd_validation_cache_path(project_root)
+        cache_metadata = _prd_validation_cache_metadata(content, config)
+        cache_key = _prd_validation_cache_key(content, config)
+        reader = FileStateReader()
+        if cache_path.exists():
+            cached = reader.read_yaml(cache_path).get(cache_key)
+            if isinstance(cached, dict):
+                cached_result = cast("ValidateResultDict", dict(cached))
+                cached_result["path"] = str(path)
+                cached_result["cache"] = {
+                    "hit": True,
+                    "key": cache_key,
+                    **cache_metadata,
+                }
+                return cached_result
+
+        # Single V2 validation call --- subsumes all V1 checks (PRD-FIX-011)
         v2_result = validate_prd_quality_v2(content, config, project_root=str(project_root))
 
         sections = _extract_sections(content)
@@ -462,7 +509,38 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             "risk_scaled": v2_result.risk_scaled,
             "status_drift_warnings": v2_result.status_drift_warnings,
             "integrity_warnings": v2_result.integrity_warnings,
+            "cache": {
+                "hit": False,
+                "key": cache_key,
+                **cache_metadata,
+            },
         }
+
+        # Substrate-First gate (PRD-DIST-218 FR-2). Heuristic check:
+        # flag PRDs that propose module-level hardcoded vocabulary
+        # collections without an acknowledged justification.
+        try:
+            from trw_mcp.tools._substrate_first_check import substrate_first_check
+
+            substrate_result = substrate_first_check(content)
+            validate_result["substrate_first"] = substrate_result.to_payload()
+            if substrate_result.verdict == "fail":
+                logger.warning(
+                    "substrate_first_gate_fail",
+                    prd_id=_prd_id_str,
+                    flagged_count=len(substrate_result.flagged_collections),
+                )
+        except Exception:  # justified: gate must not break prd_validate
+            logger.debug("substrate_first_check_skipped", exc_info=True)
+
+        try:
+            writer = FileStateWriter()
+            writer.ensure_dir(cache_path.parent)
+            existing_cache = reader.read_yaml(cache_path) if cache_path.exists() else {}
+            existing_cache[cache_key] = json.loads(json.dumps(validate_result, default=str))
+            writer.write_yaml(cache_path, existing_cache)
+        except OSError:
+            logger.debug("prd_validation_cache_write_failed", path=str(cache_path), exc_info=True)
 
         # Inject ceremony progress summary.
         try:

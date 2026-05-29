@@ -5,8 +5,21 @@ PRD-CORE-149-FR01: extracted from ``_static_sections.py`` facade.
 
 from __future__ import annotations
 
-# PRD-CORE-149-FR01: resolve patchable dependencies via the facade.
+# PRD-CORE-149-FR01: resolve patchable dependencies (``get_config``,
+# ``FileStateReader``) via the facade so legacy ``monkeypatch.setattr(
+# _static_sections, name, ...)`` patches keep working.
+#
+# Exception: the project root is NOT routed through ``_facade``. It is
+# late-resolved via ``_paths.resolve_project_root()`` at call time (see the
+# import note below) so tests that patch ``trw_mcp.state._paths.resolve_project_root``
+# redirect the write/read target — the facade alias is only for config /
+# FileStateReader / time / yaml.
 import trw_mcp.state.claude_md._static_sections as _facade
+
+# Resolve the project root via LATE lookup through ``_paths`` (read at call
+# time, not bound at import) so the renderer honours runtime monkeypatching of
+# ``trw_mcp.state._paths.resolve_project_root`` and never targets the real repo.
+from trw_mcp.state import _paths
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.claude_md.sections._memory_routing import _format_learning_session_claim
 
@@ -59,7 +72,7 @@ def render_behavioral_protocol() -> str:
     config = _facade.get_config()
     reader = _facade.FileStateReader()
 
-    proto_path = _facade.resolve_project_root() / config.trw_dir / config.context_dir / "behavioral_protocol.yaml"
+    proto_path = _paths.resolve_project_root() / config.trw_dir / config.context_dir / "behavioral_protocol.yaml"
     if not proto_path.exists():
         return ""
     try:

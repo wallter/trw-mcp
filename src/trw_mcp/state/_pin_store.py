@@ -69,6 +69,7 @@ __all__ = [
     "load_pin_store",
     "pin_store_lock_path",
     "pin_store_path",
+    "prune_pin_store_orphans",
     "save_pin_store",
 ]
 
@@ -285,6 +286,62 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     _pin_store_cache_ts = time.monotonic()
     _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns
     return dict(survivors)
+
+
+def prune_pin_store_orphans() -> int:
+    """Persist eviction of stale-path / orphan-pid entries to disk.
+
+    ``load_pin_store`` evicts orphans in-memory only, so an orphan keeps
+    showing up in every load (with a fresh ``pin_orphan_evicted`` warning)
+    until something writes the store. This helper performs an explicit
+    load → diff → save cycle so the orphan disappears from the file.
+
+    Returns the number of entries removed. Returns ``0`` (and writes
+    nothing) when the disk state already matches the post-eviction view.
+
+    Fail-open: filesystem errors are logged at WARNING and the function
+    returns ``0`` instead of raising. Callers (boot sweep, periodic
+    maintenance) must never crash because pin pruning failed.
+    """
+    pins_path = pin_store_path()
+    if not pins_path.exists():
+        return 0
+    with _pin_store_threading_lock:
+        try:
+            with pins_path.open("r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            _runtime_logger().warning(
+                "pin_store_prune_read_failed",
+                path=str(pins_path),
+                error=type(exc).__name__,
+                detail=str(exc),
+            )
+            return 0
+        if not isinstance(raw, dict):
+            return 0
+        typed = cast("dict[str, dict[str, Any]]", raw)
+        survivors = _apply_eviction_passes(typed)
+        removed = len(typed) - len(survivors)
+        if removed <= 0:
+            return 0
+        try:
+            _save_pin_store_locked(survivors)
+        except OSError as exc:
+            _runtime_logger().warning(
+                "pin_store_prune_save_failed",
+                path=str(pins_path),
+                error=type(exc).__name__,
+                detail=str(exc),
+            )
+            return 0
+        _runtime_logger().info(
+            "pin_store_orphans_pruned",
+            path=str(pins_path),
+            removed=removed,
+            survivors=len(survivors),
+        )
+        return removed
 
 
 # --- Save path ---------------------------------------------------------------

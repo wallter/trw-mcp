@@ -20,13 +20,18 @@ def test_adaptive_ceremony_minimal_suppression(trw_dir):
     write_ceremony_state(trw_dir, state)
 
     # Mock run.yaml to show MINIMAL complexity
-    (trw_dir / "runs").mkdir()
-    (trw_dir / "runs" / "test-run").mkdir(parents=True)
-    (trw_dir / "runs" / "test-run" / "meta").mkdir()
-    with open(trw_dir / "runs" / "test-run" / "meta" / "run.yaml", "w") as f:
+    run_dir = trw_dir / "runs" / "test-run"
+    (run_dir / "meta").mkdir(parents=True)
+    with open(run_dir / "meta" / "run.yaml", "w") as f:
         f.write("complexity_class: MINIMAL\n")
 
-    with patch("trw_mcp.state._paths.resolve_run_path", return_value=trw_dir / "runs" / "test-run"):
+    # PRD-FIX-085: TRWConfig.active_run_complexity is now PIN-ONLY — it reads
+    # the run via get_pinned_run(), not the old resolve_run_path() seam (which
+    # this test used to mock). Mocking the obsolete seam left the complexity
+    # resolution dependent on whatever live pin existed in the dev repo's
+    # .trw/runtime/pins.json, making suppression non-deterministic. Patch the
+    # real seam so the MINIMAL run is resolved deterministically.
+    with patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir):
         response = {"status": "ok"}
         result = append_ceremony_status(response, trw_dir=trw_dir)
 

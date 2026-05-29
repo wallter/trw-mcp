@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Atomic YAML/JSONL read/write with advisory file locks.
 
 All state persistence goes through this module. Writes are atomic
@@ -16,18 +17,13 @@ __all__ = [
 ]
 
 import contextlib
-import contextvars
 import json
 import os
 import tempfile
-from collections.abc import Generator
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol, cast
 
 import structlog
-from pydantic import BaseModel
-from ruamel.yaml import YAML
 
 from trw_mcp._locking import _lock_ex, _lock_sh, _lock_un
 from trw_mcp.exceptions import StateError
@@ -36,183 +32,62 @@ from trw_mcp.exceptions import StateError
 
 logger = structlog.get_logger(__name__)
 
-# PRD-FIX-053-FR06: Contextvars flag to suppress FileEventLogger.log_event()
-# during internal persistence operations. Set True inside write_yaml/append_jsonl
-# so that any log_event calls triggered by those paths don't write to
-# session-events.jsonl. Implemented via contextvars so it is thread-safe and
-# call-stack scoped (resets automatically on context exit).
-_suppress_internal_events: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_suppress_internal_events",
-    default=False,
+# Suppress-internal-events ContextVar + INTERNAL_EVENT_TYPES extracted to
+# _persistence_helpers (PRD-DIST-243 batch 15). Re-exported here for callers.
+from trw_mcp.state._persistence_helpers import (
+    INTERNAL_EVENT_TYPES as INTERNAL_EVENT_TYPES,
 )
 
-# Internal event types that are suppressed when _suppress_internal_events is set.
-# User-facing tool events (tool_invocation, session_start, checkpoint, etc.) are
-# NOT in this list and will never be suppressed.
-INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
-    {
-        "jsonl_appended",
-        "yaml_written",
-        "vector_upserted",
-        "index_synced",
-        "dedup_run",
-        "tier_updated",
-    }
+# YAML factories + json/model utilities extracted to _persistence_helpers
+# (PRD-DIST-243 batch 12). Re-exported for backward compatibility.
+from trw_mcp.state._persistence_helpers import (
+    _new_yaml as _new_yaml,
 )
 
+# _resolve_hpo_event_context extracted to _persistence_helpers (PRD-DIST-243 batch 15b).
+from trw_mcp.state._persistence_helpers import (
+    _resolve_hpo_event_context as _resolve_hpo_event_context,
+)
+from trw_mcp.state._persistence_helpers import (
+    _roundtrip_yaml as _roundtrip_yaml,
+)
+from trw_mcp.state._persistence_helpers import (
+    _safe_yaml as _safe_yaml,
+)
+from trw_mcp.state._persistence_helpers import (
+    _suppress_internal_events as _suppress_internal_events,
+)
 
-def _resolve_hpo_event_context(
-    events_path: Path,
-    data: dict[str, object],
-) -> tuple[str, str | None, str]:
-    """Resolve ``(session_id, run_id, surface_snapshot_id)`` for unified HPO rows.
+# json_serializer extracted to _persistence_helpers (PRD-DIST-243 batch 12).
+from trw_mcp.state._persistence_helpers import (
+    json_serializer as json_serializer,
+)
 
-    Legacy emitters often omit these H1 fields. When the legacy write target
-    is ``<run>/meta/events.jsonl``, recover them from ``run.yaml`` and/or
-    ``run_surface_snapshot.yaml`` so the parallel-emitted unified row still
-    satisfies FR-2 / FR-12.
-    """
-    session_id = str(data.get("session_id", "")) if data.get("session_id") is not None else ""
-    run_id = str(data.get("run_id")) if data.get("run_id") is not None else None
-    surface_snapshot_id = (
-        str(data.get("surface_snapshot_id", "")) if data.get("surface_snapshot_id") is not None else ""
-    )
-
-    if events_path.parent.name != "meta":
-        return session_id, run_id, surface_snapshot_id
-
-    meta_dir = events_path.parent
-    run_dir = meta_dir.parent
-    if run_id is None:
-        run_id = run_dir.name
-
-    run_yaml = meta_dir / "run.yaml"
-    if run_yaml.exists():
-        try:
-            run_data = FileStateReader().read_yaml(run_yaml)
-        except StateError:
-            run_data = {}
-        if not session_id and run_data.get("owner_session_id") is not None:
-            session_id = str(run_data.get("owner_session_id", ""))
-        if not surface_snapshot_id and run_data.get("surface_snapshot_id") is not None:
-            surface_snapshot_id = str(run_data.get("surface_snapshot_id", ""))
-
-    if not surface_snapshot_id:
-        snapshot_path = meta_dir / "run_surface_snapshot.yaml"
-        if snapshot_path.exists():
-            try:
-                snapshot_data = FileStateReader().read_yaml(snapshot_path)
-            except StateError:
-                snapshot_data = {}
-            if snapshot_data.get("snapshot_id") is not None:
-                surface_snapshot_id = str(snapshot_data.get("snapshot_id", ""))
-
-    return session_id, run_id, surface_snapshot_id
-
-
-def _safe_yaml() -> YAML:
-    """Safe YAML loader for reading untrusted content.
-
-    Uses ruamel.yaml's safe loader (typ="safe") which rejects !!python/object
-    and other constructor tags that would enable RCE. Use for all read paths
-    where the YAML source may be user-editable (e.g. config.yaml, run.yaml).
-
-    ruamel.yaml's YAML class maintains internal state that is NOT thread-safe.
-    Creating a fresh instance per operation prevents concurrent read corruption
-    (PRD-CORE-014 FR03).
-    """
-    return YAML(typ="safe")
-
-
-def _roundtrip_yaml() -> YAML:
-    """Round-trip YAML for write operations that preserve formatting.
-
-    Uses the default round-trip loader/dumper so that comments and key ordering
-    are preserved when serializing framework-generated data. Only use this for
-    write paths — never for parsing user-supplied YAML content.
-
-    ruamel.yaml's YAML class maintains internal emitter state that is
-    NOT thread-safe.  Creating a fresh instance per operation prevents
-    concurrent write corruption (PRD-CORE-014 FR03).
-    """
-    yml = YAML()
-    yml.default_flow_style = False
-    yml.preserve_quotes = True
-    return yml
-
-
-def _new_yaml() -> YAML:
-    """Deprecated alias kept for any call sites not yet migrated.
-
-    New code should use _safe_yaml() for reads and _roundtrip_yaml() for writes.
-    """
-    return _roundtrip_yaml()
-
-
-class StateReader(Protocol):
-    """Read framework state from persistent storage."""
-
-    def read_yaml(self, path: Path) -> dict[str, object]:
-        """Read and parse a YAML file, returning its top-level mapping."""
-        ...
-
-    def read_jsonl(self, path: Path) -> list[dict[str, object]]:
-        """Read a JSONL file, returning a list of parsed records."""
-        ...
-
-    def exists(self, path: Path) -> bool:
-        """Check whether a file exists at the given path."""
-        ...
-
-
-class StateWriter(Protocol):
-    """Write framework state to persistent storage."""
-
-    def write_yaml(self, path: Path, data: dict[str, object]) -> None:
-        """Atomically write *data* as YAML to *path*."""
-        ...
-
-    def append_jsonl(self, path: Path, record: dict[str, object]) -> None:
-        """Append a single JSON record as a new line in *path*."""
-        ...
-
-    def write_text(self, path: Path, content: str) -> None:
-        """Atomically write *content* as UTF-8 text to *path*."""
-        ...
-
-    def ensure_dir(self, path: Path) -> None:
-        """Create *path* and any missing parents if they do not exist."""
-        ...
-
-
-class EventLogger(Protocol):
-    """Append structured events to event stream."""
-
-    def log_event(self, events_path: Path, event_type: str, data: dict[str, object]) -> None:
-        """Append a timestamped event record to the JSONL stream at *events_path*."""
-        ...
-
-
-def json_serializer(obj: object) -> str:
-    """JSON serializer for objects not serializable by default json code.
-
-    Args:
-        obj: Object to serialize.
-
-    Returns:
-        JSON-compatible string representation.
-
-    Raises:
-        TypeError: If object type is not supported.
-    """
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
-    raise TypeError(msg)
+# Protocol interfaces extracted to _persistence_protocols (PRD-DIST-243 batch 16).
+# Re-exported here for backward compatibility with callers that type-annotate
+# against StateReader / StateWriter / EventLogger via this facade.
+from trw_mcp.state._persistence_protocols import (
+    EventLogger as EventLogger,
+)
+from trw_mcp.state._persistence_protocols import (
+    StateReader as StateReader,
+)
+from trw_mcp.state._persistence_protocols import (
+    StateWriter as StateWriter,
+)
 
 
 class FileStateReader:
     """File-based implementation of StateReader."""
+
+    def __init__(self, base_dir: Path | None = None) -> None:
+        self._base_dir = base_dir.resolve() if base_dir is not None else None
+
+    def _check_contained(self, path: Path) -> Path:
+        resolved = path.resolve()
+        if self._base_dir is not None and not resolved.is_relative_to(self._base_dir):
+            raise StateError(f"state read path escapes base directory: {resolved}", path=str(resolved))
+        return resolved
 
     def read_yaml(self, path: Path) -> dict[str, object]:
         """Read and parse a YAML file.
@@ -226,10 +101,11 @@ class FileStateReader:
         Raises:
             StateError: If file cannot be read or parsed.
         """
-        if not path.exists():
-            raise StateError(f"YAML file not found: {path}", path=str(path))
+        checked_path = self._check_contained(path)
+        if not checked_path.exists():
+            raise StateError(f"YAML file not found: {checked_path}", path=str(checked_path))
         try:
-            with path.open("r", encoding="utf-8") as fh:
+            with checked_path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
                     data = _safe_yaml().load(fh)
@@ -238,14 +114,14 @@ class FileStateReader:
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read YAML: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
         if data is None:
             return {}
         if not isinstance(data, dict):
             raise StateError(
                 f"YAML root must be a mapping, got {type(data).__name__}",
-                path=str(path),
+                path=str(checked_path),
             )
         result: dict[str, object] = dict(data)
         return result
@@ -262,11 +138,12 @@ class FileStateReader:
         Raises:
             StateError: If file cannot be read or parsed.
         """
-        if not path.exists():
+        checked_path = self._check_contained(path)
+        if not checked_path.exists():
             return []
         try:
             records: list[dict[str, object]] = []
-            with path.open("r", encoding="utf-8") as fh:
+            with checked_path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
                     for line_num, line in enumerate(fh, start=1):
@@ -279,7 +156,7 @@ class FileStateReader:
                         else:
                             logger.warning(
                                 "jsonl_non_dict_line",
-                                path=str(path),
+                                path=str(checked_path),
                                 line=line_num,
                             )
                 finally:
@@ -288,14 +165,14 @@ class FileStateReader:
         except json.JSONDecodeError as exc:
             raise StateError(
                 f"Failed to parse JSONL: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
         except StateError:
             raise
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read JSONL: {exc}",
-                path=str(path),
+                path=str(checked_path),
             ) from exc
 
     def exists(self, path: Path) -> bool:
@@ -307,7 +184,7 @@ class FileStateReader:
         Returns:
             True if path exists.
         """
-        return path.exists()
+        return self._check_contained(path).exists()
 
 
 class FileStateWriter:
@@ -443,52 +320,15 @@ class FileStateWriter:
             ) from exc
 
 
-@contextlib.contextmanager
-def suppress_internal_events() -> Generator[None, None, None]:
-    """Context manager that suppresses internal event types in FileEventLogger.
-
-    PRD-FIX-053-FR06: Set inside internal persistence operations so that any
-    FileEventLogger.log_event() calls triggered by those paths skip writing
-    INTERNAL_EVENT_TYPES to session-events.jsonl.
-
-    Uses contextvars so the flag is thread-safe and call-stack scoped —
-    it resets automatically when the with-block exits.
-
-    Example::
-
-        with suppress_internal_events():
-            writer.write_yaml(path, data)  # no yaml_written event emitted
-    """
-    token = _suppress_internal_events.set(True)
-    try:
-        yield
-    finally:
-        _suppress_internal_events.reset(token)
-
-
-@contextlib.contextmanager
-def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
-    """Advisory exclusive lock for read-modify-write cycles.
-
-    Acquires an exclusive lock on ``{path}.lock`` before yielding,
-    releases after the block completes (or on exception).  This prevents
-    concurrent R-M-W races on the same file (e.g., learnings/index.yaml).
-
-    Args:
-        path: The file being protected.  A sibling ``.lock`` file is used.
-
-    Yields:
-        The original *path* (unchanged) for convenience.
-    """
-    lock_path = path.parent / f"{path.name}.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_fh = lock_path.open("w", encoding="utf-8")
-    try:
-        _lock_ex(lock_fh.fileno())
-        yield path
-    finally:
-        _lock_un(lock_fh.fileno())
-        lock_fh.close()
+# suppress_internal_events + lock_for_rmw extracted to _persistence_helpers
+# (PRD-DIST-243 batch 15). Re-exported here for callers (analytics/entries.py
+# imports lock_for_rmw via this facade; tests import both).
+from trw_mcp.state._persistence_helpers import (
+    lock_for_rmw as lock_for_rmw,
+)
+from trw_mcp.state._persistence_helpers import (
+    suppress_internal_events as suppress_internal_events,
+)
 
 
 class FileEventLogger:
@@ -587,15 +427,7 @@ class FileEventLogger:
         emit_unified(event, run_dir=run_dir, fallback_dir=fallback_dir)
 
 
-def model_to_dict(model: BaseModel) -> dict[str, object]:
-    """Convert a Pydantic model to a plain dict suitable for YAML serialization.
-
-    Converts enums to their values and dates to ISO strings.
-
-    Args:
-        model: Pydantic model instance.
-
-    Returns:
-        Plain dictionary with JSON-compatible values.
-    """
-    return cast("dict[str, object]", json.loads(model.model_dump_json()))
+# model_to_dict extracted to _persistence_helpers (PRD-DIST-243 batch 12).
+from trw_mcp.state._persistence_helpers import (
+    model_to_dict as model_to_dict,
+)

@@ -7,6 +7,36 @@ from typing import Literal
 from typing_extensions import TypedDict
 
 
+class WalCheckpointResultDict(TypedDict, total=False):
+    """Return shape of ``maybe_checkpoint_wal()`` (PRD-QUAL-050-FR05, PRD-FIX-081).
+
+    Exactly one of three outcomes is populated, distinguished by which key is
+    present:
+
+    * **Skipped** — ``skipped=True`` plus ``reason`` (``"no_wal_file"`` or
+      ``"under_threshold"``). No checkpoint ran.
+    * **Checkpointed** — ``checkpointed=True`` plus the size/mode telemetry
+      (``mode``/``wal_size_before_mb``/``wal_size_after_mb``/
+      ``pages_checkpointed``/``busy``/``truncate_busy``). ``mode`` is the
+      lowercase mode that actually ran (``"truncate"``/``"passive"``;
+      ``"error"`` is mapped from the backend's error sentinel). FR03 requires
+      these telemetry fields on the success path.
+    * **Errored** — ``error=True`` plus ``reason="checkpoint_failed"`` (fail-open:
+      the WAL checkpoint must never block session start).
+    """
+
+    skipped: bool
+    reason: str
+    checkpointed: bool
+    mode: str
+    wal_size_before_mb: float
+    wal_size_after_mb: float
+    pages_checkpointed: int
+    busy: int
+    truncate_busy: bool
+    error: bool
+
+
 class AutoMaintenanceDict(TypedDict, total=False):
     """Return shape of ``run_auto_maintenance()``.
 
@@ -17,9 +47,13 @@ class AutoMaintenanceDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
+    stale_runs_deferred: dict[str, object]
     embeddings_advisory: str
     embeddings_backfill: dict[str, int]
-    wal_checkpoint: dict[str, object]  # PRD-QUAL-050-FR05
+    embeddings_backfill_deferred: dict[str, object]
+    wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
+    wal_checkpoint_deferred: dict[str, object]
+    auto_upgrade_check_deferred: dict[str, object]
 
 
 class DeliveryGatesDict(TypedDict, total=False):
@@ -35,6 +69,8 @@ class DeliveryGatesDict(TypedDict, total=False):
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    build_gate_block: str
+    build_gate_override: str
     checkpoint_blocker_warning: str
     warning: str
     complexity_drift_warning: str
@@ -232,6 +268,9 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     query: str
     query_matched: int
     total_available: int
+    response_compacted: bool
+    side_effects_deferred: dict[str, object]
+    recall_degraded: dict[str, object]
 
 
 class FinalizeRunResult(TypedDict, total=False):

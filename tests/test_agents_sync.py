@@ -7,7 +7,8 @@ names, matching what ``trw_mcp.prompts.messaging._expand_tool_placeholders``
 would produce with ``profile=None``).
 
 This test asserts every ``.claude/agents/*.md`` equals the marker-expansion
-of its bundled counterpart, byte for byte (SHA-256).
+*and* capability-tier resolution of its bundled counterpart, byte for byte
+(SHA-256) — the same two transforms ``scripts/sync-agents.py`` applies.
 
 Regenerate drift via ``scripts/sync-agents.py``.
 """
@@ -15,6 +16,7 @@ Regenerate drift via ``scripts/sync-agents.py``.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 from pathlib import Path
 
@@ -25,6 +27,15 @@ BUNDLED_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
 
 _TOOL_MARKER_RE = re.compile(r"\{tool:(trw_\w+)\}")
+_DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md", "trw-distill-explorer.md"}
+
+_MANIFEST_SPEC = importlib.util.spec_from_file_location(
+    "bundle_hash_manifest",
+    REPO_ROOT / "scripts" / "bundle_hash_manifest.py",
+)
+assert _MANIFEST_SPEC is not None and _MANIFEST_SPEC.loader is not None
+_MANIFEST_MODULE = importlib.util.module_from_spec(_MANIFEST_SPEC)
+_MANIFEST_SPEC.loader.exec_module(_MANIFEST_MODULE)
 
 
 def _expand_markers(text: str) -> str:
@@ -45,24 +56,68 @@ _AGENT_PARAMS = [pytest.param(name, id=name) for name in _agent_names()]
 
 @pytest.mark.parametrize("agent_name", _AGENT_PARAMS)
 def test_parity_after_marker_expansion(agent_name: str) -> None:
-    """``.claude/agents/X`` equals marker-expansion of the bundled copy."""
+    """``.claude/agents/X`` equals marker-expansion + tier resolution of the bundled copy."""
+    from trw_mcp.agents.tier_resolver import rewrite_model_line
+
     src = BUNDLED_DIR / agent_name
     dst = CLAUDE_DIR / agent_name
     assert src.is_file(), f"bundled source missing: {src}"
     assert dst.is_file(), f".claude/agents copy missing: {dst} (run scripts/sync-agents.py)"
 
-    expected = _expand_markers(src.read_text(encoding="utf-8")).encode("utf-8")
+    # .claude/agents/ mirrors what shipped Claude Code users get after
+    # ``trw-mcp init``: markers expanded AND capability tiers resolved to
+    # Claude shortnames (frontier->opus, balanced->sonnet, local-small->haiku).
+    # See PRD-INFRA-104 FR-04 and test_bundled_agents::
+    # test_audit_agent_prompt_pairs_match_root_sources (same two transforms).
+    expanded = _expand_markers(src.read_text(encoding="utf-8"))
+    expected = rewrite_model_line(expanded, client="claude-code").encode("utf-8")
     actual = dst.read_bytes()
     assert _sha256(actual) == _sha256(expected), (
         f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
-        "expansion. Run scripts/sync-agents.py to regenerate."
+        "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
     )
 
 
 def test_counts_match() -> None:
     """The two dirs have the same set of agent filenames."""
     bundled = {p.name for p in BUNDLED_DIR.glob("*.md")}
-    claude = {p.name for p in CLAUDE_DIR.glob("*.md")}
+    claude = {p.name for p in CLAUDE_DIR.glob("*.md")} - _DEV_ONLY_AGENTS
     assert bundled == claude, (
         f"filename set drift:\n  bundled-only: {sorted(bundled - claude)}\n  claude-only:  {sorted(claude - bundled)}"
     )
+
+
+def test_bundle_hash_manifest_matches_current_bundled_files() -> None:
+    """Committed bundle hash manifest matches bundled agent, hook, and skill files."""
+    assert _MANIFEST_MODULE.check_manifest() == []
+
+
+def test_bundle_hash_manifest_detects_drift(tmp_path: Path) -> None:
+    """Manifest checker reports changed bundled content by relative path."""
+    bundled = tmp_path / "data"
+    (bundled / "agents").mkdir(parents=True)
+    (bundled / "hooks").mkdir()
+    (bundled / "skills").mkdir()
+    agent = bundled / "agents" / "trw-test.md"
+    agent.write_text("old", encoding="utf-8")
+    manifest = tmp_path / "bundle-hashes.json"
+    _MANIFEST_MODULE.write_manifest(manifest, bundled)
+    agent.write_text("new", encoding="utf-8")
+
+    assert _MANIFEST_MODULE.check_manifest(manifest, bundled) == ["agents/trw-test.md"]
+
+
+def test_bundle_hash_manifest_ignores_python_runtime_cache(tmp_path: Path) -> None:
+    """Generated runtime cache files under bundled mirrors are never manifest inputs."""
+    bundled = tmp_path / "data"
+    (bundled / "agents").mkdir(parents=True)
+    (bundled / "hooks" / "__pycache__").mkdir(parents=True)
+    (bundled / "skills").mkdir()
+    (bundled / "agents" / "trw-test.md").write_text("agent", encoding="utf-8")
+    (bundled / "hooks" / "__pycache__" / "hook.cpython-312.pyc").write_bytes(b"cache")
+
+    manifest = _MANIFEST_MODULE.build_manifest(bundled)
+    entries = manifest["entries"]
+
+    assert isinstance(entries, dict)
+    assert set(entries) == {"agents/trw-test.md"}

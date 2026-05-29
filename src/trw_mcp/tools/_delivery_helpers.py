@@ -18,6 +18,7 @@ Internal helpers (also re-exported for test access):
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import structlog
@@ -28,11 +29,7 @@ from trw_mcp.models.typed_dicts import (
     DeliveryGatesDict,
     FinalizeRunResult,
 )
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-)
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
@@ -69,22 +66,12 @@ def _count_file_modified(events: list[dict[str, object]]) -> int:
 
 
 def _events_since_last_session_start(events: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Return only events after the last ``session_start`` event.
-
-    When a new session starts, it logs a ``session_start`` event to the run's
-    events.jsonl. Events before that boundary belong to a previous session and
-    should not count against the current session's delivery gates.
-
-    If no ``session_start`` event is found, returns all events (backward compat).
-    """
+    """Return events after the last ``session_start``; returns all on no boundary."""
     last_session_idx = -1
     for i, ev in enumerate(events):
         if str(ev.get("event", "")) == "session_start":
             last_session_idx = i
-
-    if last_session_idx < 0:
-        return events
-    return events[last_session_idx:]
+    return events if last_session_idx < 0 else events[last_session_idx:]
 
 
 def _count_file_modified_current_session(events: list[dict[str, object]]) -> int:
@@ -341,19 +328,37 @@ def _check_build_and_work_events(
             return None, None
 
         # Build gate (RC-003 + RC-006)
+        def _truthy(value: object) -> bool:
+            return value is True or (isinstance(value, str) and value.lower() == "true")
+
+        def _build_event_payload(ev: dict[str, object]) -> dict[str, object]:
+            """Return the build-check payload for nested or flat event records.
+
+            ``FileEventLogger.log_event()`` writes tool payload keys at the top
+            level of the JSONL record (``{"event": "...", "tests_passed": true}``).
+            Some tests and older emitters write a nested ``data`` dict. Delivery
+            gates must accept both shapes or a valid ``trw_build_check`` call is
+            invisible at delivery time.
+            """
+            data = ev.get("data")
+            return data if isinstance(data, dict) else ev
+
         def _build_passed(ev: dict[str, object]) -> bool:
             if str(ev.get("event", "")) != "build_check_complete":
                 return False
-            data = ev.get("data")
-            if isinstance(data, dict):
-                val = data.get("tests_passed")
-                return val is True or (isinstance(val, str) and val.lower() == "true")
-            return False
+            data = _build_event_payload(ev)
+            if not _truthy(data.get("tests_passed")):
+                return False
+            if "static_checks_clean" in data:
+                return _truthy(data.get("static_checks_clean"))
+            if "mypy_clean" in data:
+                return _truthy(data.get("mypy_clean"))
+            return True
 
         if not any(_build_passed(e) for e in events):
             build_warning = (
                 "No successful build check found before delivery. "
-                "Run trw_build_check() to verify tests pass and type-check is clean."
+                "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check()."
             )
 
         # Premature delivery guard
@@ -383,6 +388,42 @@ def _check_build_and_work_events(
         logger.warning("maintenance_build_gate_failed", exc_info=True)
 
     return build_warning, premature_warning
+
+
+def _check_no_active_run_build_gate(trw_dir: Path | None, reader: FileStateReader) -> str | None:
+    """Require build-check evidence for deliver when no run pin exists.
+
+    Eval containers commonly run without ``trw_init``/``trw_adopt_run``. In
+    that state there is no run ``events.jsonl`` for the normal delivery gate,
+    but the local ceremony state still records session_start/build_check
+    progress. Without this fallback, ``trw_deliver`` can silently mark
+    ``deliver_called=True`` after a failed task.
+    """
+    if trw_dir is None:
+        return None
+
+    state_path = trw_dir / "context" / "ceremony-state.json"
+    try:
+        if not reader.exists(state_path):
+            return None
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict) or not state.get("session_started"):
+            return None
+
+        build_result = state.get("build_check_result")
+        build_passed = build_result is True or (
+            isinstance(build_result, str) and build_result.lower() in {"pass", "passed", "success", "true"}
+        )
+        if build_passed:
+            return None
+        return (
+            "No successful build check found before delivery in this unpinned session. "
+            "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check(), "
+            "or call trw_init()/trw_adopt_run() so run-scoped evidence can be checked."
+        )
+    except Exception:  # justified: fail-open, build gate check must not block delivery on read errors
+        logger.warning("no_active_run_build_gate_failed", exc_info=True)
+        return None
 
 
 def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
@@ -428,6 +469,7 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
 def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
+    trw_dir: Path | None = None,
 ) -> DeliveryGatesDict:
     """Check review/build gates and premature delivery guard.
 
@@ -442,6 +484,9 @@ def check_delivery_gates(
     result: DeliveryGatesDict = {}
 
     if run_path is None:
+        build_warning = _check_no_active_run_build_gate(trw_dir, reader)
+        if build_warning:
+            result["build_gate_warning"] = build_warning
         return result
 
     # Read shared data once — avoids reading events.jsonl 3x and run.yaml 2x
@@ -497,20 +542,8 @@ def check_delivery_gates(
     return result
 
 
-def finalize_run(
-    run_path: Path | None,
-    trw_dir: Path,
-    config: TRWConfig,
-    reader: FileStateReader,
-    writer: FileStateWriter,
-    events: FileEventLogger,
-) -> FinalizeRunResult:
-    """Post-delivery finalization — placeholder for future run status updates.
-
-    Currently a no-op pass-through. Checkpoint and reflect are handled inline
-    in ceremony.py to preserve patch-point compatibility with existing tests.
-    Future expansion: close run.yaml status, archive run, etc.
-    """
+def finalize_run(*_args: object, **_kwargs: object) -> FinalizeRunResult:
+    """Post-delivery finalization — currently a no-op placeholder."""
     return {}
 
 
@@ -525,14 +558,10 @@ def copy_compliance_artifacts(
     result: ComplianceArtifactsDict = {}
     if run_path is None:
         return result
-
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    run_id = run_path.name
-
-    compliance_dir = trw_dir / config.compliance_dir / "reviews" / str(now.year) / f"{now.month:02d}" / run_id
-
+    compliance_dir = trw_dir / config.compliance_dir / "reviews" / str(now.year) / f"{now.month:02d}" / run_path.name
     artifacts = ["review.yaml", "review-all.yaml", "integration-review.yaml"]
     copied = []
     for artifact_name in artifacts:

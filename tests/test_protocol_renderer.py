@@ -45,36 +45,25 @@ def test_render_ceremony_quick_ref_generated_from_ceremony_tools() -> None:
         assert ct.example in table, f"{tool_name} example missing from quick ref"
 
 
-def test_model_specific_reasoning_injection_qwen() -> None:
-    """FR03: Verify Qwen-specific /think tags are injected for opencode."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family="qwen",
-    )
-    instructions = renderer.render_opencode_instructions()
-    assert "/think" in instructions
-    assert "Qwen-Coder-Next" in instructions
+def test_legacy_model_family_hints_emit_portable_opencode_instructions() -> None:
+    """FR03: legacy model-family hints are accepted but do not change core protocol."""
+    outputs = []
+    for family in ("qwen", "claude", "gpt", "generic"):
+        renderer = ProtocolRenderer(
+            client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
+            model_family=family,
+        )
+        instructions = renderer.render_opencode_instructions()
+        outputs.append(instructions)
+        assert "# TRW Instructions" in instructions
+        assert "project-native" in instructions
+        assert "Nudge Policy" in instructions
+        assert "/think" not in instructions
+        assert "Qwen-Coder-Next" not in instructions
+        assert "chain-of-thought" not in instructions
+        assert "extended thinking" not in instructions.lower()
 
-
-def test_model_specific_reasoning_injection_claude() -> None:
-    """FR03: Verify Claude-specific extended thinking in opencode instructions."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family="claude",
-    )
-    instructions = renderer.render_opencode_instructions()
-    assert "extended thinking" in instructions
-    assert "<thinking>" not in instructions or "extended thinking" in instructions
-
-
-def test_model_specific_reasoning_injection_gpt() -> None:
-    """FR03: Verify GPT-specific chain-of-thought in opencode instructions."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family="gpt",
-    )
-    instructions = renderer.render_opencode_instructions()
-    assert "chain-of-thought" in instructions
+    assert len(set(outputs)) == 1
 
 
 def test_ceremony_mode_switching_full_vs_minimal() -> None:
@@ -88,7 +77,7 @@ def test_ceremony_mode_switching_full_vs_minimal() -> None:
 
     assert "Execution Phases" in full_output
     assert "Execution Phases" not in minimal_output
-    assert "Run tests after each change" in minimal_output
+    assert "project-native checks" in minimal_output
 
 
 def test_ceremony_mode_compact() -> None:
@@ -188,14 +177,15 @@ def test_render_behavioral_protocol_full() -> None:
 
 
 def test_opencode_generic_fallback() -> None:
-    """Verify unknown model family falls back to generic instructions."""
+    """Verify unknown model family falls back to portable instructions."""
     renderer = ProtocolRenderer(
         client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
         model_family="unknown-model",
     )
     instructions = renderer.render_opencode_instructions()
     assert "TRW Instructions" in instructions
-    assert "32K context window" in instructions
+    assert "Model and Context Policy" in instructions
+    assert "project-native" in instructions
 
 
 def test_gemini_instructions_contains_markers() -> None:
@@ -240,8 +230,9 @@ def test_opencode_sections_delegate_to_renderer() -> None:
     from trw_mcp.state.claude_md._opencode_sections import render_opencode_instructions
 
     output = render_opencode_instructions("qwen")
-    assert "/think" in output
-    assert "Qwen" in output
+    assert "# TRW Instructions" in output
+    assert "Nudge Policy" in output
+    assert "Qwen" not in output
 
 
 # ---------------------------------------------------------------------------
@@ -267,42 +258,35 @@ def test_phase_descriptions_has_all_phases() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FR03: Model-specific reasoning — parametrized
+# FR03: Portable model-family compatibility
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "family,expected_text",
-    [
-        ("qwen", "/think"),
-        ("gpt", "chain-of-thought"),
-        ("claude", "extended thinking"),
-        ("generic", "32K context window"),
-        ("unknown-llm", "32K context window"),  # Falls back to generic
-    ],
-)
-def test_opencode_model_specific_content(family: str, expected_text: str) -> None:
-    """FR03: Each model family produces materially different instructions."""
+@pytest.mark.parametrize("family", ["qwen", "gpt", "claude", "generic", "unknown-llm"])
+def test_opencode_model_family_content_is_portable(family: str) -> None:
+    """FR03: Every model-family hint produces the same portable v25 protocol."""
     renderer = ProtocolRenderer(
         client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
         model_family=family,
     )
     output = renderer.render_opencode_instructions()
-    assert expected_text in output
+    assert "# TRW Instructions" in output
+    assert "Model and Context Policy" in output
+    assert "project-native" in output
+    assert "Nudge Policy" in output
+    assert "/think" not in output
+    assert "chain-of-thought" not in output
+    assert "extended thinking" not in output.lower()
 
 
-def test_opencode_families_differ() -> None:
-    """FR03: Different families produce different output (not just a rename)."""
+def test_opencode_families_match() -> None:
+    """FR03: Different legacy family hints no longer fork core protocol text."""
     profile = ClientProfile(client_id="opencode", display_name="opencode")
     outputs = {
         family: ProtocolRenderer(client_profile=profile, model_family=family).render_opencode_instructions()
         for family in ("qwen", "gpt", "claude", "generic")
     }
-    # Each pair should be different
-    families = list(outputs.keys())
-    for i, a in enumerate(families):
-        for b in families[i + 1 :]:
-            assert outputs[a] != outputs[b], f"{a} and {b} produced identical output"
+    assert len(set(outputs.values())) == 1
 
 
 # ---------------------------------------------------------------------------

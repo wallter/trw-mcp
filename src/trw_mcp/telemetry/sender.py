@@ -157,27 +157,22 @@ class BatchSender:
     def _http_post(self, url: str, payload: list[dict[str, object]]) -> bool:
         """POST payload to URL. Returns True on 2xx response.
 
-        Uses urllib.request to avoid adding httpx as a hard dependency.
+        PRD-DIST-124 (2026-04-30): migrated from urllib to httpx for
+        consistency with sync/. httpx is a transitive dependency via
+        fastmcp, so no new package install required. URL is the
+        platform_url from TRW config (operator-configured, not user input).
         """
-        import json
-        import urllib.error
-        import urllib.request
+        import httpx
 
-        data = json.dumps({"events": payload}).encode("utf-8")
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._platform_api_key:
             headers["Authorization"] = f"Bearer {self._platform_api_key}"
-        req = urllib.request.Request(  # noqa: S310 — URL is the platform_url from TRW config (operator-configured, not user input)
-            url,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 — see Request comment above
-                return bool(200 <= response.status < 300)
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, json={"events": payload}, headers=headers)
+            return bool(200 <= response.status_code < 300)
+        except (httpx.HTTPError, OSError):
             return False
 
     def _rewrite_queue(self, remaining: list[dict[str, object]]) -> None:

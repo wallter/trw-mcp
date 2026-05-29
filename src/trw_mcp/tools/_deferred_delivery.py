@@ -35,6 +35,7 @@ import structlog
 
 import trw_mcp.tools._deferred_state as _ds
 from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
+from trw_mcp.models.config import get_config
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.
@@ -152,27 +153,132 @@ def _persist_deferred_results(
         logger.warning("deferred_results_persist_failed", exc_info=True)
 
 
-def _try_acquire_deferred_lock(trw_dir: Path) -> io.TextIOWrapper | None:
+def _peek_deferred_lock_holder(lock_path: Path) -> dict[str, object] | None:
+    """Read the JSON pid+timestamp record written by the prior lock holder.
+
+    The lock file is rewritten on every successful acquisition; the most
+    recent record describes who currently believes it owns the lock. We
+    use this to decide whether an apparently-held lock is in fact stale
+    (process exited without releasing, or wedged past the batch budget).
+    Returns ``None`` if the file is empty or unparseable.
+    """
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        # The file may contain multiple records appended over time; the
+        # last line is the most recent acquisition.
+        last_line = raw.splitlines()[-1]
+        parsed = json.loads(last_line)
+    except (json.JSONDecodeError, IndexError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _is_lock_record_stale(record: dict[str, object], max_age_seconds: float) -> bool:
+    """Decide whether a deferred-lock record is too old to still be live.
+
+    Two independent signals: (1) the recorded PID no longer exists on
+    this machine (cleanest evidence of crash), (2) the timestamp is older
+    than the per-batch budget plus a safety margin (the writer is wedged
+    beyond what we tolerate). Either signal returns True.
+    """
+    import os as _os
+
+    pid_field = record.get("pid")
+    if isinstance(pid_field, int):
+        try:
+            _os.kill(pid_field, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            # Different uid owns the PID — the slot is taken, treat as live.
+            pass
+
+    ts_field = record.get("ts")
+    if isinstance(ts_field, str):
+        try:
+            record_ts = datetime.fromisoformat(ts_field.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        age = (datetime.now(timezone.utc) - record_ts).total_seconds()
+        if age > max_age_seconds:
+            return True
+    return False
+
+
+def _try_acquire_deferred_lock(
+    trw_dir: Path,
+    *,
+    stale_threshold_seconds: float = 600.0,
+) -> io.TextIOWrapper | None:
     """Try to acquire the deferred-deliver file lock (non-blocking).
 
-    Returns the lock file handle on success, or None if another
-    deferred batch is already running.  Caller MUST call
+    Returns the lock file handle on success, or ``None`` when another
+    deferred batch holds it AND that batch looks live. Caller MUST call
     ``_release_deferred_lock(fd)`` when done.
+
+    Stale-lock recovery: if the apparent holder's PID is gone, or the
+    record's timestamp is older than ``stale_threshold_seconds``, we
+    forcibly take the lock (open with mode 'w' truncates the prior
+    contents, and acquiring ``LOCK_EX | LOCK_NB`` succeeds because the
+    OS-level flock was released when the prior process died). Default
+    is 600s, twice the default per-batch budget, so a live batch is
+    never preempted under normal operation.
+
+    Tests can drive stale recovery by writing a synthetic record with a
+    very old timestamp and asserting acquisition succeeds.
     """
     lock_path = trw_dir / "deliver-deferred.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = lock_path.open("w", encoding="utf-8")
+    fd = lock_path.open("a+", encoding="utf-8")
     try:
         _lock_ex_nb(fd.fileno())
         # Write PID + timestamp as valid JSON so operators can inspect
         import os as _os
 
+        fd.seek(0)
+        fd.truncate()
         fd.write(json.dumps({"pid": _os.getpid(), "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
         fd.flush()
         return fd
     except Exception:  # justified: cleanup, lock acquisition failure releases fd and returns None
         fd.close()
-        return None
+
+    # The OS-level flock is held by another process. Inspect the record
+    # to see whether that holder is still live; if not, reclaim the lock.
+    record = _peek_deferred_lock_holder(lock_path)
+    if record is not None and _is_lock_record_stale(record, stale_threshold_seconds):
+        logger.warning(
+            "deferred_lock_reclaimed_stale",
+            holder=record,
+            stale_threshold_seconds=stale_threshold_seconds,
+        )
+        try:
+            fd2 = lock_path.open("a+", encoding="utf-8")
+            _lock_ex_nb(fd2.fileno())
+            import os as _os
+
+            fd2.seek(0)
+            fd2.truncate()
+            fd2.write(
+                json.dumps(
+                    {
+                        "pid": _os.getpid(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "reclaimed_from": record,
+                    }
+                )
+                + "\n"
+            )
+            fd2.flush()
+            return fd2
+        except Exception:  # justified: cleanup, stale-reclaim failure must not raise into the deliver path
+            logger.debug("deferred_lock_reclaim_failed", exc_info=True)
+    return None
 
 
 def _release_deferred_lock(fd: object) -> None:
@@ -197,6 +303,13 @@ def _log_deferred_result(
     """Append deferred step results to an audit log."""
     log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # PRD-FIX-085 FR04: rotate at 10 MB to match surface_tracking parity.
+    # Pre-fix this file grew unbounded -- observed 25 MB on the dev repo.
+    from trw_mcp.state._helpers import rotate_jsonl
+
+    rotate_jsonl(log_path, max_bytes=10 * 1024 * 1024)
+
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "results": {k: v for k, v in results.items() if k != "timestamp"},
@@ -213,6 +326,27 @@ def _log_deferred_result(
         logger.debug("deferred_log_write_failed", exc_info=True)
 
 
+def _resolve_step_budgets() -> tuple[float, float]:
+    """Read per-step and per-batch budgets from config, with safe defaults.
+
+    Reading happens inside ``_run_deferred_steps`` so the config can be
+    monkeypatched between tests. Defaults match the values in
+    ``_fields_build.py``.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        cfg = get_config()
+        step_s = float(getattr(cfg, "deferred_step_max_seconds", 60))
+        batch_s = float(getattr(cfg, "deferred_batch_max_seconds", 300))
+    except Exception:  # justified: fail-open, config load failure must not block the deferred batch
+        step_s, batch_s = 60.0, 300.0
+    # A non-positive budget disables the watchdog (escape hatch for ops
+    # who need an unbounded batch). Mirror Python's ``threading.Timer``
+    # behavior on 0.0 to mean "fire immediately"; we treat 0 as disabled.
+    return max(step_s, 0.0), max(batch_s, 0.0)
+
+
 def _run_deferred_steps(
     trw_dir: Path,
     resolved_run: Path | None,
@@ -225,24 +359,92 @@ def _run_deferred_steps(
     Acquires a non-blocking file lock to prevent concurrent deferred batches.
     Each step is fail-open -- failures are logged but don't block other steps.
 
+    Watchdog: per-step and per-batch wall-clock budgets are enforced by a
+    ``threading.Timer`` that flips ``_ds._cancel_event`` on overrun.
+    Cooperative steps (``auto_prune`` polls it between dedup batches) stop
+    voluntarily and return partial results. Non-cooperative steps still
+    log an ``overrun`` warning so operators can see which step ran long.
+    Once the cancel event is set, the orchestrator skips remaining steps
+    with ``status=cancelled_batch_budget`` so the batch can finalise the
+    lock release in bounded time.
+
     Test patches should target this module directly:
     ``patch("trw_mcp.tools._deferred_delivery._step_foo")``.
     """
-    lock_fd = _try_acquire_deferred_lock(trw_dir)
+    lock_fd = _try_acquire_deferred_lock(
+        trw_dir,
+        stale_threshold_seconds=float(get_config().deferred_lock_stale_seconds),
+    )
     if lock_fd is None:
         logger.info("deferred_deliver_skipped", reason="another_batch_running")
         return {"status": "skipped", "reason": "another_batch_running"}
 
+    # Reset cancellation state for this batch. Previous batches may have
+    # set the event when they hit a budget; new batches start clean.
+    _ds._cancel_event.clear()
+
     results: dict[str, object] = {"timestamp": datetime.now(timezone.utc).isoformat()}
     errors: list[str] = []
     t0 = time.monotonic()
+    step_budget_s, batch_budget_s = _resolve_step_budgets()
+    batch_deadline_at = (t0 + batch_budget_s) if batch_budget_s > 0 else None
+
+    # Per-batch watchdog: flips the cancel event when the whole batch
+    # exceeds its budget. Daemon timer so process exit doesn't wait for it.
+    batch_watchdog: threading.Timer | None = None
+
+    def _batch_overrun() -> None:
+        elapsed = time.monotonic() - t0
+        logger.warning(
+            "deferred_batch_budget_exceeded",
+            budget_seconds=batch_budget_s,
+            elapsed_seconds=round(elapsed, 2),
+        )
+        _ds._cancel_event.set()
+
+    if batch_budget_s > 0:
+        batch_watchdog = threading.Timer(batch_budget_s, _batch_overrun)
+        batch_watchdog.daemon = True
+        batch_watchdog.start()
 
     def _timed_step(name: str, fn: object) -> None:
-        """Run a deferred step with per-step timing and structured logging."""
-        _t = time.monotonic()
+        """Run a deferred step with per-step timing and per-step watchdog.
+
+        Skips the step early when the cancel event is already set (because
+        an earlier step blew the batch budget). Spawns a per-step
+        ``threading.Timer`` that logs an overrun and flips the cancel
+        event if the step exceeds ``step_budget_s``.
+        """
+        if _ds._cancel_event.is_set():
+            results[name] = {"status": "cancelled_batch_budget"}
+            logger.warning("deferred_step_cancelled", step=name, reason="batch_budget_exceeded")
+            return
+
+        step_t0 = time.monotonic()
+
+        def _step_overrun() -> None:
+            elapsed = time.monotonic() - step_t0
+            logger.warning(
+                "deferred_step_budget_exceeded",
+                step=name,
+                budget_seconds=step_budget_s,
+                elapsed_seconds=round(elapsed, 2),
+            )
+            _ds._cancel_event.set()
+
+        step_watchdog: threading.Timer | None = None
+        if step_budget_s > 0:
+            step_watchdog = threading.Timer(step_budget_s, _step_overrun)
+            step_watchdog.daemon = True
+            step_watchdog.start()
+
         _pre_errors = len(errors)
-        _run_step(name, fn, results, errors)  # type: ignore[arg-type]  # justified: fn is Callable at runtime; object annotation avoids Callable import in closure scope
-        _duration_ms = round((time.monotonic() - _t) * 1000, 1)
+        try:
+            _run_step(name, fn, results, errors)  # type: ignore[arg-type]  # justified: fn is Callable at runtime; object annotation avoids Callable import in closure scope
+        finally:
+            if step_watchdog is not None:
+                step_watchdog.cancel()
+        _duration_ms = round((time.monotonic() - step_t0) * 1000, 1)
         _step_result = results.get(name)
         if len(errors) > _pre_errors:
             _last_err = errors[-1]
@@ -282,6 +484,16 @@ def _run_deferred_steps(
             rework_metrics = _step_collect_rework_metrics(resolved_run, FileStateReader())
             metrics_result.update(rework_metrics)
             _persist_session_metrics(metrics_result, resolved_run)
+        # Surface the watchdog outcome alongside the step results so the
+        # audit log records WHY a batch returned early.
+        if _ds._cancel_event.is_set():
+            results["watchdog"] = {
+                "status": "cancelled",
+                "batch_budget_seconds": batch_budget_s,
+                "step_budget_seconds": step_budget_s,
+                "elapsed_seconds": round(time.monotonic() - t0, 2),
+                "batch_deadline_at_monotonic": batch_deadline_at,
+            }
 
         steps_ok = sum(
             1
@@ -308,6 +520,11 @@ def _run_deferred_steps(
         errors.append(f"deferred_fatal: {exc}")
         logger.warning("deferred_deliver_fatal", error=str(exc), exc_info=True)
     finally:
+        # Cancel the per-batch watchdog before we drop the file lock so it
+        # can't fire after the batch already exited and spuriously flip
+        # the cancel event for the next batch's first step.
+        if batch_watchdog is not None:
+            batch_watchdog.cancel()
         _persist_deferred_results(results, resolved_run)
         _log_deferred_result(trw_dir, results, errors)
         _release_deferred_lock(lock_fd)
@@ -330,7 +547,20 @@ def _launch_deferred(
     Thread handle and lock live in ``_deferred_state`` (extracted to
     break the ceremony <-> _deferred_delivery circular import).
     Test patches should target ``trw_mcp.tools._deferred_state``.
+
+    PRD-FIX-088 FR01 "Shutdown + recovery contract": before launching the
+    deferred-delivery thread, join any running Q-learning bg worker so
+    the last correlation pass is durable on disk before the deliver
+    batch starts. Daemon threads on process exit aren't guaranteed to
+    finish their current SQLite write, and ``trw_deliver`` is the
+    last-pass contract.
     """
+    # Lazy import: avoid pulling the build-tools package into the
+    # _deferred_delivery import graph at module-load time.
+    from trw_mcp.tools._q_learning_state import join_q_learning_worker
+
+    join_q_learning_worker(timeout=30.0)
+
     with _ds._deferred_lock:
         if _ds._deferred_thread is not None and _ds._deferred_thread.is_alive():
             logger.info("deferred_launch_skipped", reason="thread_still_alive")

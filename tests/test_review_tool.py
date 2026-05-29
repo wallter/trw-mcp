@@ -119,7 +119,7 @@ class TestReviewFindingModel:
             description="Low coverage",
         )
         with pytest.raises(ValidationError):
-            f.category = "other"  # type: ignore[misc]
+            f.category = "other"
 
 
 # --- trw_review tool ---

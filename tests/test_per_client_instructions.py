@@ -1,6 +1,6 @@
 """Tests for per-client instruction generation — PRD-CORE-115.
 
-Tests for model-family-specific instruction generation, per-client instruction files
+Tests for portable instruction generation, per-client instruction files
 (.opencode/INSTRUCTIONS.md, .codex/INSTRUCTIONS.md), and AGENTS.md migration.
 """
 
@@ -96,70 +96,36 @@ class TestRenderCodexInstructions:
 class TestRenderOpencodeInstructions:
     """Tests for render_opencode_instructions(model_family)."""
 
-    @pytest.mark.parametrize(
-        ("model_family", "expected_title"),
-        [
-            ("qwen", "# Qwen-Coder-Next TRW Instructions"),
-            ("gpt", "# GPT TRW Instructions"),
-            ("claude", "# Claude TRW Instructions"),
-            ("generic", "# TRW Instructions"),
-        ],
-    )
-    def test_model_family_specific_title(self, model_family: str, expected_title: str) -> None:
-        """Each model family has its own title."""
+    @pytest.mark.parametrize("model_family", ["qwen", "gpt", "claude", "generic", "unknown-model"])
+    def test_model_family_hints_render_portable_title(self, model_family: str) -> None:
+        """Legacy family hints are accepted but v25 emits one portable title."""
         result = render_opencode_instructions(model_family)
 
-        assert expected_title in result, f"Missing title '{expected_title}' for {model_family}"
+        assert "# TRW Instructions" in result
+        assert "Model and Context Policy" in result
+        assert "Qwen-Coder-Next" not in result
+        assert "# GPT TRW Instructions" not in result
+        assert "# Claude TRW Instructions" not in result
 
     def test_all_model_families_share_common_workflow(self) -> None:
-        """All model families share the same 5-step workflow."""
-        for model_family in ["qwen", "gpt", "claude", "generic"]:
-            result = render_opencode_instructions(model_family)
+        """All model families share the same portable workflow."""
+        rendered = {family: render_opencode_instructions(family) for family in ["qwen", "gpt", "claude", "generic"]}
 
+        assert len(set(rendered.values())) == 1
+        for model_family, result in rendered.items():
             assert "trw_session_start" in result, f"Missing trw_session_start for {model_family}"
             assert "trw_deliver" in result, f"Missing trw_deliver for {model_family}"
+            assert "trw_checkpoint" in result, f"Missing trw_checkpoint for {model_family}"
+            assert "project-native" in result, f"Missing project-native validation guidance for {model_family}"
+            assert "Nudge Policy" in result, f"Missing nudge policy for {model_family}"
 
-    @pytest.mark.parametrize(
-        ("model_family", "expected_checkpoint_support"),
-        [
-            ("qwen", True),
-            ("gpt", True),
-            ("claude", True),
-            ("generic", True),
-        ],
-    )
-    def test_checkpoint_reference_toggles_per_family(
-        self, model_family: str, expected_checkpoint_support: bool
-    ) -> None:
-        """trw_checkpoint reference is present inqwen/gpt/claude but not generic."""
-        result = render_opencode_instructions(model_family)
-
-        has_checkpoint = "trw_checkpoint" in result
-        assert has_checkpoint == expected_checkpoint_support, (
-            f"Expected checkpoint {'present' if expected_checkpoint_support else 'absent'} "
-            f"for {model_family}, but was {'present' if has_checkpoint else 'absent'}"
-        )
-
-    def test_qwen_specific_notes_contains_qwen_content(self) -> None:
-        """Qwen-specific instructions contain Qwen-relevant guidance."""
+    def test_provider_specific_notes_are_not_core_workflow(self) -> None:
+        """v25 portable instructions do not embed model-family prompt recipes."""
         result = render_opencode_instructions("qwen")
 
-        assert "Qwen" in result
-        assert "vLLM" in result or "vllm" in result
-
-    def test_gpt_specific_notes_contains_gpt_content(self) -> None:
-        """GPT-specific instructions contain GPT-relevant guidance."""
-        result = render_opencode_instructions("gpt")
-
-        assert "GPT" in result
-        assert "chain" in result.lower() or "reasoning" in result.lower()
-
-    def test_claude_specific_notes_contains_claude_content(self) -> None:
-        """Claude-specific instructions contain Claude-relevant guidance."""
-        result = render_opencode_instructions("claude")
-
-        assert "Claude" in result
-        assert "extended thinking" in result.lower() or "XML" in result
+        assert "vLLM" not in result
+        assert "chain-of-thought" not in result
+        assert "extended thinking" not in result.lower()
 
 
 # ── Generate Instructions Tests ───────────────────────────────────────────
@@ -459,4 +425,4 @@ class TestWriteTargetsInstructionPath:
 
         targets = WriteTargets()
         with pytest.raises(Exception):
-            targets.instruction_path = "new-value"  # type: ignore[misc]
+            targets.instruction_path = "new-value"

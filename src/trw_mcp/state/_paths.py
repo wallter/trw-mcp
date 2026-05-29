@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Shared path resolution -- single source of truth for project root, .trw dir, and run paths.
 
 All modules that need to resolve TRW_PROJECT_ROOT, the .trw directory,
@@ -10,6 +11,7 @@ import os
 import threading
 import uuid
 from collections.abc import Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,14 +19,23 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.state._pin_store import (
-    get_pin_entry,
-    remove_pin_entry,
-    upsert_pin_entry,
-)
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
+
+
+# PRD-FIX-085 FR02: HOT_PATH ContextVar marks the request-scope window
+# during which the legacy mtime scan is forbidden. Set on entry to
+# trw_session_start and middleware handlers; reset on exit.
+HOT_PATH: ContextVar[bool] = ContextVar("trw_hot_path", default=False)
+
+
+class HotPathLegacyScanError(RuntimeError):
+    """Raised when find_run_via_mtime_scan() is called from the hot path.
+
+    Only raised when ``TRW_HOT_PATH_STRICT=1`` is set in the environment;
+    in default (non-strict) mode, the violation is logged at WARN.
+    """
 
 
 def _runtime_logger() -> Any:
@@ -43,28 +54,6 @@ def _get_config() -> Any:
 # trw_mcp.state._paths.get_config directly. Runtime code should still call
 # _get_config() so config import remains lazy at module import time.
 get_config = _get_config
-
-
-# Explicit public surface — keeps static analyzers (Pyright) from inferring
-# imported symbols as ``object`` via the module-level ``__getattr__`` shim
-# below.  Must list every name callers ``from trw_mcp.state._paths import …``.
-__all__ = [
-    "TRWCallContext",
-    "detect_current_phase",
-    "find_active_run",
-    "get_pinned_run",
-    "get_session_id",
-    "iter_run_dirs",
-    "pin_active_run",
-    "resolve_installation_id",
-    "resolve_memory_store_path",
-    "resolve_pin_key",
-    "resolve_project_root",
-    "resolve_run_path",
-    "resolve_trw_dir",
-    "touch_heartbeat",
-    "unpin_active_run",
-]
 
 
 def __getattr__(name: str) -> Any:
@@ -355,88 +344,36 @@ def _resolve_session_id(
     return get_session_id()
 
 
-def pin_active_run(
-    run_dir: Path,
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> None:
-    """Pin a run directory as the active run for a session.
-
-    After pinning, find_active_run() returns this directory instead of
-    scanning the filesystem. This prevents telemetry hijack when multiple
-    instances share the same project root.
-
-    Writes through to ``.trw/runtime/pins.json`` via :func:`upsert_pin_entry`
-    so the pin survives MCP server restart (PRD-CORE-141 FR04).
-
-    Args:
-        run_dir: Absolute path to the run directory to pin.
-        context: TRWCallContext resolved from the FastMCP Context (preferred,
-            PRD-CORE-141 FR01).  When provided, its ``session_id`` wins.
-        session_id: Legacy kwarg — retained for backward compat with direct
-            Python callers.  Ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    record = upsert_pin_entry(sid, run_dir)
-    logger.debug(
-        "pin_saved",
-        pin_key=sid,
-        run_path=record["run_path"],
-        pid=record["pid"],
-    )
-
-
-def unpin_active_run(
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> None:
-    """Remove the run pin for a session, reverting to filesystem scan.
-
-    Persists the removal to ``.trw/runtime/pins.json`` (PRD-CORE-141 FR04).
-
-    Args:
-        context: TRWCallContext resolved from FastMCP Context (preferred).
-        session_id: Legacy kwarg; ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    removed = remove_pin_entry(sid)
-    if removed:
-        logger.debug("pin_cleared", pin_key=sid)
-
-
-def get_pinned_run(
-    *,
-    context: TRWCallContext | None = None,
-    session_id: str | None = None,
-) -> Path | None:
-    """Return the currently pinned run directory for a session, or None.
-
-    Reads through the 1-second-TTL pin-store cache (PRD-CORE-141 FR04).
-
-    Args:
-        context: TRWCallContext resolved from FastMCP Context (preferred).
-        session_id: Legacy kwarg; ignored when ``context`` is provided.
-    """
-    sid = _resolve_session_id(context, session_id)
-    entry = get_pin_entry(sid)
-    if entry is None:
-        return None
-    run_path = entry.get("run_path")
-    if isinstance(run_path, str) and run_path:
-        return Path(run_path)
-    return None
+# Pin management helpers extracted to _paths_pin_mgmt (PRD-DIST-243 batch 26).
+# Re-exported for back-compat with all callers (build/_registration, middleware,
+# tools/report, tools/review, telemetry).
+from trw_mcp.state._paths_pin_mgmt import (
+    get_pinned_run as get_pinned_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
+    pin_active_run as pin_active_run,
+)
+from trw_mcp.state._paths_pin_mgmt import (
+    unpin_active_run as unpin_active_run,
+)
 
 
 def resolve_memory_store_path() -> Path:
-    """Resolve the sqlite-vec memory store database path.
+    """Resolve the SECONDARY sqlite-vec embedding-sidecar database path.
+
+    PRD-INFRA-102 FR-03 clarification (2026-05-04): this returns the path
+    to the embedding-sidecar database used by ``dedup.py`` re-indexing via
+    ``MemoryStore`` (default ``<trw_dir>/memory/vectors.db``). It is NOT
+    the primary memory store path — that is hardcoded to
+    ``<trw_dir>/memory/memory.db`` in ``_memory_connection.get_backend``
+    and contains the canonical ``vec_memories`` table. The
+    ``MemoryStore`` schema uses ``vec_entries`` table prefix instead.
 
     Strips the ``.trw/`` prefix from the configured ``memory_store_path``
     and joins with the resolved .trw directory.
 
     Returns:
-        Absolute path to the sqlite-vec database file.
+        Absolute path to the secondary sqlite-vec database file.
     """
     config = get_config()
     memory_store_path = str(config.memory_store_path)
@@ -521,48 +458,95 @@ def find_active_run(
     context: TRWCallContext | None = None,
     session_id: str | None = None,
 ) -> Path | None:
-    """Find the active run directory for a session.
+    """Find the active run directory for a session — pin-only.
 
-    Resolution order:
-    1. Per-session pinned run (set by ``pin_active_run`` during ``trw_init``)
-    2. Filesystem scan fallback — ONLY when ``context is None`` (legacy /
-       stdio-per-instance callers).  PRD-CORE-141 FR05 forbids the scan
-       fallback for ctx-aware callers to eliminate cross-session run
-       hijack.  The scan selects ``{runs_root}/{task}/{run_id}/meta/run.yaml``
-       with the highest lexicographic name, skipping runs with status
-       ``"complete"`` / ``"failed"`` / ``"abandoned"`` / ``"delivered"``
-       (PRD-FIX-042 FR02).
+    PRD-FIX-085 FR01: This function is now PIN-ONLY by default. The
+    legacy mtime-scan fallback that previously kicked in when
+    ``context is None`` has been moved to :func:`find_run_via_mtime_scan`.
+    Five regressions in one week shared the same root cause -- a hot-path
+    caller forgot ``context=`` and silently routed to the slow scan path.
+    Removing the implicit fallback eliminates the regression class.
 
-    The pinned run prevents telemetry hijack when multiple Claude Code
-    instances share the same filesystem — each instance's MCP process
-    pins its own run at init time.
+    Resolution: returns the pinned run for the caller's session, or
+    ``None`` when no pin exists. Never scans disk.
 
     Args:
         context: TRWCallContext resolved from FastMCP Context (preferred,
-            PRD-CORE-141 FR01).  When provided and no pin exists, returns
-            ``None`` immediately — scan fallback is SUPPRESSED.
+            PRD-CORE-141 FR01).
         session_id: Legacy kwarg; passed through to the pin lookup only.
-            Callers passing just ``session_id=`` (and no ``context=``)
-            retain the legacy scan fallback (PRD-CORE-141 FR15).
 
     Returns:
-        Path to run directory, or None if no active run found.
+        Path to pinned run directory, or ``None`` when no pin exists.
+
+    See Also:
+        :func:`get_pinned_run` -- equivalent for callers that don't need
+        the legacy session_id kwarg.
+        :func:`find_run_via_mtime_scan` -- explicit legacy mtime-scan,
+        for one-shot CLI tools with no session context. Emits a WARN
+        (or raises in TRW_HOT_PATH_STRICT=1 mode) when called from the
+        hot path.
     """
     pinned = get_pinned_run(context=context, session_id=session_id)
     if pinned is not None:
         return pinned
 
-    # FR05: Ctx-aware callers do NOT fall through to the legacy mtime scan.
-    # The fresh-session-hijack bug (PRD-CORE-141 §Background) requires this
-    # to be an early exit — a ctx with no pin means "no run for this
-    # session", not "grab whatever's latest on disk".
     if context is not None:
         logger.info(
             "run_resolution_no_pin_scan_suppressed",
             pin_key=context.session_id,
             reason="ctx_aware_no_pin",
         )
-        return None
+    return None
+
+
+def find_run_via_mtime_scan() -> Path | None:
+    """Scan the filesystem for the most recent active run via mtime.
+
+    PRD-FIX-085 FR01: explicit legacy entry point for one-shot CLI tools
+    that have no session context (and therefore no pin). Hot-path
+    callers MUST NOT use this -- it PyYAML-parses every ``run.yaml``
+    under ``.trw/runs/`` (~25 s on ~200 runs).
+
+    PRD-FIX-085 FR02: when called while the :data:`HOT_PATH` ContextVar
+    is True (set by ``trw_session_start`` and middleware), this function
+    emits a ``hot_path_legacy_scan_attempted`` WARN with the calling
+    stack. When ``TRW_HOT_PATH_STRICT=1`` is set, it raises
+    ``HotPathLegacyScanError`` instead -- catches the regression class
+    AT THE API BOUNDARY in dev/test.
+
+    Returns:
+        Path to the latest active run directory by lexicographic name,
+        or ``None`` if no active run exists.
+    """
+    if HOT_PATH.get():
+        # PRD-FIX-085 FR02: caller is on the session_start / middleware
+        # hot path. The legacy scan is forbidden here; surface the offender.
+        try:
+            import inspect
+
+            frame = inspect.stack()[1]
+            caller_module = frame.frame.f_globals.get("__name__", "<unknown>")
+            caller_function = frame.function
+            caller_lineno = frame.lineno
+        except Exception:  # justified: fail-open, diagnostic only
+            caller_module = "<unknown>"
+            caller_function = "<unknown>"
+            caller_lineno = 0
+
+        logger.warning(
+            "hot_path_legacy_scan_attempted",
+            caller_module=caller_module,
+            caller_function=caller_function,
+            caller_lineno=caller_lineno,
+        )
+
+        if os.environ.get("TRW_HOT_PATH_STRICT") == "1":
+            raise HotPathLegacyScanError(
+                f"find_run_via_mtime_scan() called from hot path "
+                f"({caller_module}:{caller_function}:{caller_lineno}); "
+                f"use get_pinned_run() instead. "
+                f"Set TRW_HOT_PATH_STRICT=0 to demote to a WARN."
+            )
 
     try:
         config = get_config()
@@ -598,6 +582,12 @@ def resolve_run_path(
     context: TRWCallContext | None = None,
 ) -> Path:
     """Resolve a run directory from an explicit path or auto-detection.
+
+    HOT-PATH RULE (PRD-FIX-083): Callers reachable from ``trw_session_start``
+    or any ceremony middleware MUST pass ``context=`` or use
+    :func:`get_pinned_run` directly. The legacy mtime-scan fallback (step 3
+    below) PyYAML-parses every ``run.yaml`` under ``.trw/runs/`` (~25 s on
+    ~200 runs).
 
     Unified implementation (PRD-FIX-007) replacing the duplicated private
     ``_resolve_run_path`` helpers in orchestration.py and findings.py.
@@ -669,10 +659,42 @@ def resolve_run_path(
     # to log again here.
     if context is not None:
         raise StateError(
-            "No active run for this session (pin not found, scan fallback suppressed).",
+            "No active run for this session (pin not found, scan fallback suppressed). "
+            "Call trw_init() to create a run or trw_adopt_run(run_path=...) to resume one.",
+            suggestion="Call trw_init() or trw_adopt_run(run_path=...) before checkpoint/deliver.",
             project_root=str(project_root),
             pin_key=context.session_id,
         )
+
+    # PRD-FIX-085 FR02: HOT_PATH guard. If we reach this fallback during
+    # the session_start / middleware hot-path, that's a regression --
+    # callers in that scope must pass context=. The find_run_via_mtime_scan
+    # helper is the explicit-opt-in legacy path; mark this mtime fallback
+    # the same way for consistency.
+    if HOT_PATH.get():
+        try:
+            import inspect
+
+            frame = inspect.stack()[1]
+            caller_module = frame.frame.f_globals.get("__name__", "<unknown>")
+            caller_function = frame.function
+            caller_lineno = frame.lineno
+        except Exception:  # justified: fail-open, diagnostic only
+            caller_module = "<unknown>"
+            caller_function = "<unknown>"
+            caller_lineno = 0
+        logger.warning(
+            "hot_path_legacy_scan_attempted",
+            caller_module=caller_module,
+            caller_function=caller_function,
+            caller_lineno=caller_lineno,
+            via="resolve_run_path_mtime_fallback",
+        )
+        if os.environ.get("TRW_HOT_PATH_STRICT") == "1":
+            raise HotPathLegacyScanError(
+                f"resolve_run_path() reached the mtime-fallback from hot path "
+                f"({caller_module}:{caller_function}:{caller_lineno}); pass context= or use get_pinned_run()."
+            )
 
     # Fallback: latest mtime for clients that never pinned a run.
     latest_run = _find_latest_run_dir(runs_dir)
@@ -714,15 +736,20 @@ def resolve_installation_id() -> str:
 def detect_current_phase() -> str | None:
     """Detect the current phase from the active run.
 
-    Delegates to :func:`find_active_run` for run-directory resolution, then
-    reads the phase from ``run.yaml``.  Only returns a phase when the run's
-    ``status`` is ``"active"``.
+    PRD-FIX-083 / PRD-FIX-084 follow-on: pin-only. Was using
+    :func:`find_active_run` with no context, which fell through to the
+    legacy mtime scan and PyYAML-parsed every ``run.yaml`` (~25 s on
+    ~200 runs). This function fires from the recall-context build path
+    inside ``step_ceremony_status`` on the session_start hot path -- it
+    was the actual cause of the ~27 s ``finalize`` outliers surfaced
+    by PRD-FIX-084 telemetry.
 
     Returns:
-        Current phase string (e.g. ``"implement"``), or ``None`` if no active run.
+        Current phase string (e.g. ``"implement"``), or ``None`` if no
+        pinned run for this session.
     """
     try:
-        active_run = find_active_run()
+        active_run = get_pinned_run()
         if active_run is None:
             return None
 
@@ -754,9 +781,13 @@ def touch_heartbeat() -> None:
     PRD-QUAL-050-FR01.
     """
     try:
+        # Pin-only: no scan fallback. touch_heartbeat fires on EVERY tool
+        # call via the ceremony middleware; the legacy find_active_run()
+        # fallback PyYAML-parses every .trw/runs/*/meta/run.yaml on miss
+        # (~3-5s per call with ~200 runs). With no pin there is no
+        # session-owned run to heartbeat anyway -- updating some other
+        # session's run was the wrong semantics.
         run_dir = get_pinned_run()
-        if run_dir is None:
-            run_dir = find_active_run()
         if run_dir is None:
             return
 

@@ -66,10 +66,16 @@ def test_session_start_writes_run_surface_snapshot_when_run_pinned(
     import trw_mcp.tools.ceremony as ceremony_mod
 
     monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
-    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    # PRD-DIST-243: trw_session_start's step_session_start now lives in
+    # _ceremony_session_start_steps and imports pin_active_run / _get_run_status
+    # from their source modules at call time. Patch at the binding site so the
+    # monkeypatch propagates (ceremony no longer binds pin_active_run).
     monkeypatch.setattr(
-        ceremony_mod,
-        "_get_run_status",
+        "trw_mcp.state._paths.pin_active_run",
+        lambda run_dir, *, context=None, session_id=None: None,
+    )
+    monkeypatch.setattr(
+        "trw_mcp.tools._ceremony_runtime_helpers._get_run_status",
         lambda rd: {
             "active_run": rd.name,
             "status": "active",
@@ -106,10 +112,16 @@ def test_session_start_updates_run_yaml_with_surface_snapshot_pointer(
     import trw_mcp.tools.ceremony as ceremony_mod
 
     monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
-    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    # PRD-DIST-243: trw_session_start's step_session_start now lives in
+    # _ceremony_session_start_steps and imports pin_active_run / _get_run_status
+    # from their source modules at call time. Patch at the binding site so the
+    # monkeypatch propagates (ceremony no longer binds pin_active_run).
     monkeypatch.setattr(
-        ceremony_mod,
-        "_get_run_status",
+        "trw_mcp.state._paths.pin_active_run",
+        lambda run_dir, *, context=None, session_id=None: None,
+    )
+    monkeypatch.setattr(
+        "trw_mcp.tools._ceremony_runtime_helpers._get_run_status",
         lambda rd: {
             "active_run": rd.name,
             "status": "active",
@@ -141,10 +153,16 @@ def test_subsequent_checkpoint_event_inherits_surface_snapshot_id_from_run_conte
     import trw_mcp.tools.ceremony as ceremony_mod
 
     monkeypatch.setattr(ceremony_mod, "_find_active_run_compat", lambda ctx: run_root)
-    monkeypatch.setattr(ceremony_mod, "pin_active_run", lambda run_dir, context=None: None)
+    # PRD-DIST-243: trw_session_start's step_session_start now lives in
+    # _ceremony_session_start_steps and imports pin_active_run / _get_run_status
+    # from their source modules at call time. Patch at the binding site so the
+    # monkeypatch propagates (ceremony no longer binds pin_active_run).
     monkeypatch.setattr(
-        ceremony_mod,
-        "_get_run_status",
+        "trw_mcp.state._paths.pin_active_run",
+        lambda run_dir, *, context=None, session_id=None: None,
+    )
+    monkeypatch.setattr(
+        "trw_mcp.tools._ceremony_runtime_helpers._get_run_status",
         lambda rd: {
             "active_run": rd.name,
             "status": "active",

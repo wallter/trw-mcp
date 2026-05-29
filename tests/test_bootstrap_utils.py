@@ -37,9 +37,9 @@ def test_supported_ides_does_not_contain_bare_cursor() -> None:
 
 
 @pytest.mark.unit
-def test_supported_ides_has_eight_entries() -> None:
-    """SUPPORTED_IDES has exactly 8 entries after the cursor split."""
-    assert len(SUPPORTED_IDES) == 8
+def test_supported_ides_has_nine_entries() -> None:
+    """SUPPORTED_IDES has exactly 9 entries after the cursor split and antigravity-cli."""
+    assert len(SUPPORTED_IDES) == 9
 
 
 # ---------------------------------------------------------------------------

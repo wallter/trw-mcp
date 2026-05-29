@@ -112,11 +112,13 @@ def build_recall_context(
     # Thread PRD knowledge IDs from artifact scanning (CORE-106/CORE-116)
     prd_knowledge_ids: set[str] = set()
     try:
-        from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state._paths import find_active_run, get_pinned_run
 
-        # PRD-CORE-141 FR03: thread ctx through so ctx-aware recall doesn't
-        # scan-hijack another session's on-disk active run.
-        active_run = find_active_run(context=call_ctx) if call_ctx is not None else find_active_run()
+        # PRD-CORE-141 FR03 + PRD-FIX-083: thread ctx through so ctx-aware recall
+        # doesn't scan-hijack another session's on-disk active run, and use
+        # get_pinned_run() in the no-ctx case to avoid the legacy mtime scan
+        # that PyYAML-parses every run.yaml (~25s on ~200 runs).
+        active_run = find_active_run(context=call_ctx) if call_ctx is not None else get_pinned_run()
         if active_run:
             kr_path = Path(active_run) / "meta" / "knowledge_requirements.yaml"
             if kr_path.exists():

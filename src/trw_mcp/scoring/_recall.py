@@ -100,18 +100,6 @@ class RecallContext:
         _logger.warning("recall_context_deprecated_field", field="active_domains", use_instead="inferred_domains")
         return self.inferred_domains
 
-    @property
-    def team_id(self) -> str:
-        """Deprecated: use ``team`` instead."""
-        _logger.warning("recall_context_deprecated_field", field="team_id", use_instead="team")
-        return self.team
-
-    @property
-    def active_prd_ids(self) -> set[str]:
-        """Deprecated: use ``prd_knowledge_ids`` instead."""
-        _logger.warning("recall_context_deprecated_field", field="active_prd_ids", use_instead="prd_knowledge_ids")
-        return self.prd_knowledge_ids
-
 
 # ---------------------------------------------------------------------------
 # Domain inference (PRD-CORE-102)
@@ -549,12 +537,3 @@ def utility_based_prune_candidates(
             seen_ids.add(entry_id)
 
     return candidates
-
-
-__all__ = [
-    "RecallContext",
-    "_outcome_boost_factor",
-    "infer_domains",
-    "rank_by_utility",
-    "utility_based_prune_candidates",
-]

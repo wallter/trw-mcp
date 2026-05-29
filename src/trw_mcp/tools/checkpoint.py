@@ -78,7 +78,9 @@ def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
         if _checkpoint_state.counter % interval != 0:
             return None
 
-        run_dir = find_active_run()
+        # PRD-FIX-085 FR01: pin-only is correct here -- auto-checkpoint
+        # requires a pinned run; without one, the function is a no-op.
+        run_dir = find_active_run()  # noqa: PRD-FIX-085 — pin-only no-arg is intentional
         if run_dir is None:
             return None
 
@@ -159,6 +161,35 @@ def _read_last_events(events_path: Path) -> list[str]:
     return last_5_events
 
 
+def _read_last_checkpoint_message(run_dir: Path) -> str:
+    """Last checkpoint message from checkpoints.jsonl (PRD-CORE-165 FR-02).
+
+    Pre-compaction recovery must surface the REAL last checkpoint message — that
+    is what the next session reads to resume — not a generic hardcoded literal.
+    Falls back to the generic string only when no checkpoint has been written yet.
+    """
+    import json
+
+    fallback = "pre-compaction safety checkpoint"
+    checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
+    if not checkpoints_path.exists():
+        return fallback
+    try:
+        # errors="replace" guards the read itself: a checkpoints.jsonl with
+        # non-UTF-8 bytes would otherwise raise UnicodeDecodeError before the
+        # try/except and crash pre-compact recovery instead of falling back.
+        raw = checkpoints_path.read_text(encoding="utf-8", errors="replace")
+        lines = [ln for ln in raw.strip().split("\n") if ln]
+        if not lines:
+            return fallback
+        rec = json.loads(lines[-1])
+        message = str(rec.get("message", "")).strip()
+        return message or fallback
+    except Exception:  # per-item error handling: malformed/undecodable JSONL -> safe fallback
+        logger.debug("checkpoint_jsonl_parse_failed", exc_info=True)
+        return fallback
+
+
 def _read_failing_tests(project_root: Path) -> list[str]:
     """Extract failing tests from build-status.yaml."""
     reader = FileStateReader()
@@ -197,8 +228,17 @@ def _write_compact_state(
     file_ownership_path: str,
     failing_tests: list[str],
     ceremony_state: dict[str, object],
+    directive: str = "",
+    context_anchor: str = "",
 ) -> None:
-    """Write pre_compact_state.json with enhanced checkpoint metadata."""
+    """Write pre_compact_state.json with enhanced checkpoint metadata.
+
+    PRD-CORE-165 FR-01: ``directive`` + ``context_anchor`` are caller-supplied
+    (they live in the harness conversation, not trw state, so they cannot be
+    auto-derived). They are persisted only when non-empty so the next session's
+    recovery readback can surface them; the run-derived in-flight position
+    (``last_checkpoint`` + ``last_5_events``) is already persisted unconditionally.
+    """
     import json
 
     state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
@@ -207,13 +247,13 @@ def _write_compact_state(
     _evt_text = events_path.read_text().strip() if events_path.exists() else ""
     pending_ceremony = _compute_pending_ceremony(ceremony_state)
 
-    state_data = {
+    state_data: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "trigger": "mcp_tool",
         "run_path": str(run_dir),
         "phase": phase,
         "events_logged": len(_evt_text.split("\n")) if _evt_text else 0,
-        "last_checkpoint": "pre-compaction safety checkpoint",
+        "last_checkpoint": _read_last_checkpoint_message(run_dir),
         "prd_scope": prd_scope,
         "file_ownership_path": file_ownership_path,
         "last_5_events": _read_last_events(events_path),
@@ -221,6 +261,10 @@ def _write_compact_state(
         "ceremony_state": ceremony_state,
         "pending_ceremony": pending_ceremony,
     }
+    if directive:
+        state_data["directive"] = directive
+    if context_anchor:
+        state_data["context_anchor"] = context_anchor
     state_file.write_text(json.dumps(state_data, indent=2))
 
 
@@ -256,7 +300,7 @@ def _write_compact_instructions(
         phase=phase,
         run_id=str(run_dir.name),
         prd_scope=", ".join(prd_scope) if prd_scope else "none",
-        last_checkpoint="pre-compaction safety checkpoint",
+        last_checkpoint=_read_last_checkpoint_message(run_dir),
         file_ownership_path=file_ownership_path or "not set",
         failing_tests=", ".join(failing_tests) if failing_tests else "none",
         ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
@@ -283,18 +327,31 @@ def register_checkpoint_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     @log_tool_call
-    def trw_pre_compact_checkpoint(ctx: Context | None = None) -> PreCompactResultDict:
+    def trw_pre_compact_checkpoint(
+        directive: str = "",
+        context_anchor: str = "",
+        ctx: Context | None = None,
+    ) -> PreCompactResultDict:
         """Capture a safety checkpoint before the context window compacts.
 
         Use when:
         - Invoked by the PreCompact hook on imminent context compaction.
         - You suspect compaction is near and want a clean resume point on disk.
 
+        PRD-CORE-165 FR-01: pass ``directive`` (the active operator directive /
+        task you are mid-flight on) and ``context_anchor`` (where you are in it —
+        e.g. the in-flight experiment or handoff pointer). These live in the
+        conversation, not in trw state, so they cannot be auto-derived; when
+        supplied they are persisted into the pre-compact state and surfaced on the
+        next ``trw_session_start`` so the post-compaction session resumes exactly
+        instead of re-orienting by hand. Both are optional and backward-compatible.
+
         Best-effort: sub-step failures populate ``status`` but do not raise.
 
         Output: PreCompactResultDict with fields
         {status: "written"|"skipped"|"error", reason?: str,
-         checkpoint_path?: str, instructions_path?: str, compact_state_path?: str}.
+         checkpoint_path?: str, instructions_path?: str, compact_state_path?: str,
+         directive?: str, context_anchor?: str}.
         """
         cfg = get_config()
         if not cfg.auto_checkpoint_pre_compact:
@@ -331,6 +388,8 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 file_ownership_path,
                 failing_tests,
                 ceremony_state,
+                directive=directive,
+                context_anchor=context_anchor,
             )
             instructions_path = _write_compact_instructions(
                 cfg,
@@ -350,6 +409,10 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 "prd_scope": prd_scope,
                 "failing_tests": failing_tests,
             }
+            if directive:
+                result["directive"] = directive
+            if context_anchor:
+                result["context_anchor"] = context_anchor
             return result
         except Exception as exc:  # justified: boundary, compact instructions generation may fail on I/O
             return {"status": "failed", "error": str(exc)}

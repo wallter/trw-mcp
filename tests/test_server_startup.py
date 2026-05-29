@@ -269,6 +269,64 @@ class TestArgParser:
             args = _build_arg_parser().parse_args(["--transport", transport])
             assert args.transport == transport
 
+    def test_shared_http_proxy_mode_skips_boot_sequence(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
+
+        args = _build_arg_parser().parse_args(["--debug"])
+        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
+
+        assert _should_run_boot_sequence(args, config) is False
+
+    def test_direct_transport_runs_boot_sequence(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
+
+        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
+        for transport in ("stdio", "sse", "streamable-http"):
+            args = _build_arg_parser().parse_args(["--transport", transport])
+            assert _should_run_boot_sequence(args, config) is True
+
+    def test_default_standalone_stdio_runs_boot_sequence(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
+
+        args = _build_arg_parser().parse_args([])
+        config = TRWConfig.model_validate({"mcp_transport": "stdio"})
+
+        assert _should_run_boot_sequence(args, config) is True
+
+    def test_main_uses_loaded_config_for_shared_proxy_boot_skip(self) -> None:
+        """The .mcp.json stdio entry must honor project config and avoid boot GC.
+
+        Claude Code starts ``trw-mcp --debug`` as a foreground stdio process.
+        In shared HTTP projects, that process is only a proxy; if ``main()``
+        falls back to a raw ``TRWConfig()`` default, it misclassifies the
+        process as standalone stdio and blocks reconnect on boot maintenance.
+        """
+
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._cli import main
+
+        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
+
+        with (
+            patch("sys.argv", ["trw-mcp", "--debug"]),
+            patch("trw_mcp.server._cli.get_config", return_value=config) as mock_get_config,
+            patch("trw_mcp.server._cli.reload_config") as mock_reload_config,
+            patch("trw_mcp.server._cli.configure_logging"),
+            patch("trw_mcp.server._cli._check_mcp_json_portability"),
+            patch("trw_mcp.server._cli._boot_sequence") as mock_boot_sequence,
+            patch("trw_mcp.server._transport.resolve_and_run_transport") as mock_run_transport,
+        ):
+            main()
+
+        mock_get_config.assert_called_once_with()
+        mock_reload_config.assert_called_once_with(config)
+        mock_boot_sequence.assert_not_called()
+        mock_run_transport.assert_called_once()
+        assert mock_run_transport.call_args.args[1] is config
+
     def test_subcommands(self) -> None:
         from trw_mcp.server._cli import _build_arg_parser
 
@@ -332,7 +390,9 @@ class TestCliSubcommandOutput:
         assert exc.value.code == 0
         captured = capsys.readouterr()
         assert "TRW update complete" in captured.out
-        assert "Codex: managed config, hooks, agents, skills, and AGENTS.md synced" in captured.out
+        assert (
+            "Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced" in captured.out
+        )
         assert "Use -v for per-file changes or --log-json for structured output." in captured.out
         assert "update_progress" not in captured.out
 

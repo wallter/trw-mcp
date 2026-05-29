@@ -18,6 +18,14 @@ if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
 
+def _http_status_from_exception(exc: BaseException) -> int | None:
+    """Extract an HTTP status code from httpx-style exceptions when present."""
+
+    response = getattr(exc, "response", None)
+    raw_status = getattr(response, "status_code", None)
+    return int(raw_status) if isinstance(raw_status, int) else None
+
+
 class PullResult(BaseModel):
     """Result of a pull operation."""
 
@@ -68,7 +76,7 @@ class SyncPuller:
         self._trw_dir = trw_dir
         self._warn_if_insecure_url()
 
-    def pull_intel_state(
+    async def pull_intel_state(
         self,
         etag: str | None = None,
         since_seq: int = 0,
@@ -76,7 +84,13 @@ class SyncPuller:
         trw_version: str = "",
         client_id: str | None = None,
     ) -> PullResult | None:
-        """GET /v1/intel/state. Returns a typed 304 result or None on real failure."""
+        """GET /v1/intel/state. Returns a typed 304 result or None on real failure.
+
+        PRD-FIX-087 FR01: async + httpx.AsyncClient so backend slowness
+        yields the asyncio event loop instead of blocking it. The previous
+        sync httpx.Client froze the loop for the entire timeout window
+        (5s default), starving in-flight MCP tool calls in the same process.
+        """
         import httpx
 
         started_at = perf_counter()
@@ -106,8 +120,8 @@ class SyncPuller:
             if trw_version:
                 params["trw_version"] = trw_version
 
-            with httpx.Client(timeout=self._timeout) as client:
-                resp = client.get(
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
                     f"{self._backend_url}/v1/intel/state",
                     headers=headers,
                     params=params,
@@ -154,8 +168,11 @@ class SyncPuller:
             logger.warning(
                 "sync_pull_error",
                 event_type="sync_pull_error",
+                endpoint="/v1/intel/state",
+                timeout_seconds=self._timeout,
                 error_type=type(exc).__name__,
                 error_message=str(exc)[:200],
+                status_code=_http_status_from_exception(exc),
                 duration_ms=int((perf_counter() - started_at) * 1000),
                 since_seq=since_seq,
                 client_id=effective_client_id,
@@ -164,7 +181,7 @@ class SyncPuller:
             )
             return None
 
-    def pull_team_learnings(
+    async def pull_team_learnings(
         self,
         since_seq: int,
         *,
@@ -173,8 +190,11 @@ class SyncPuller:
         trw_version: str = "",
         client_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return only the team learning section of a pull response."""
-        result = self.pull_intel_state(
+        """Return only the team learning section of a pull response.
+
+        PRD-FIX-087 FR01: async — awaits pull_intel_state.
+        """
+        result = await self.pull_intel_state(
             etag=etag,
             since_seq=since_seq,
             model_family=model_family,

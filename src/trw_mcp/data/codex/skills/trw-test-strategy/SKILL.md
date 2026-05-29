@@ -1,11 +1,21 @@
 ---
 name: trw-test-strategy
-description: "Audit test coverage and strategy. Identifies untested modules, coverage gaps, and suggests test improvements. Use before or during IMPLEMENT phase. Use: /trw-test-strategy [module or 'all']\n"
+context: fork
+agent: Explore
+description: >
+  Audit test coverage and strategy. Identifies untested modules,
+  coverage gaps, and suggests test improvements. Use before or
+  during IMPLEMENT phase.
+  Use: /trw-test-strategy [module or 'all']
+user-invocable: true
+argument-hint: "[module or 'all']"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Test Strategy Audit Skill
+
+Use when: auditing test/coverage strategy for a module or project before or during implementation.
 
 Audit test coverage and strategy for the project codebase. Identifies untested modules, coverage gaps, and suggests targeted test improvements.
 
@@ -13,25 +23,27 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
 
 1. **Determine scope**: Parse `$ARGUMENTS`:
    - If a specific module path (e.g., `tools/learning.py`), focus on that module
-   - If `all` or empty, discover the project's source directory (look for `src/`, `lib/`, or top-level Python packages)
+   - If `all` or empty, discover source roots from the repo layout and config: `src/`, `lib/`, `packages/`, `apps/`, `cmd/`, `crates/`, service directories, or top-level language packages/modules
 
-2. **Run coverage**: Call `trw_build_check(scope="pytest")` to get current test results and coverage.
+2. **Run coverage/test signal**: Use the project's configured test command when known (`make test`, `pytest`, `vitest`, `npm test`, `cargo test`, `go test`, etc.). Then call `trw_build_check(scope="{actual command}")` with the observed result. If no safe command is evident, report the likely commands and continue with static analysis rather than inventing one.
 
 3. **Analyze test structure**:
-   - Glob for test files: `tests/test_*.py` or `test_*.py` (discover the project's test directory)
+   - Glob for test files using project conventions: `tests/**`, `*.test.*`, `*.spec.*`, `*_test.go`, `*_test.rs`, `test_*.py`, integration/e2e folders, or configured test globs
    - For each source module in scope, check if a corresponding test file exists
-   - Grep test files for function/class names from the source module
+   - Grep test files for functions, classes, components, commands, schemas, API routes, events, or acceptance IDs from the source module/PRD
 
 4. **Coverage gap analysis**:
    - Parse coverage report for uncovered lines per module
-   - Identify functions/methods with 0% coverage
-   - Identify branches with no coverage (if/else paths)
+   - Identify symbols, handlers, components, or commands with no direct or behavioral coverage
+   - Identify branches with no coverage (conditionals, error paths, boundary cases, retries, fallbacks)
+   - Identify whether any vertical tracer-bullet/e2e slice proves the main behavior through its real integration path
 
 5. **Convention check**:
    - Verify test files use shared fixtures or setup helpers (not ad-hoc setup)
-   - Check for tier markers (e.g., `@pytest.mark.unit` / `@pytest.mark.integration` for Python, or equivalent tags in other frameworks) — the project's tier convention is in its test runner config
-   - Verify async tests follow the framework's async test pattern (e.g., `async def` + asyncio_mode=auto for Python, `async it()` for Jest)
+   - Check for tier markers/tags (unit/integration/e2e/slow/network) according to the project's test runner config
+   - Verify async/concurrency tests follow the framework's async test pattern (for example pytest-asyncio, Vitest/Jest async tests, Go context/timeouts, Rust async runtimes)
    - Check that PRD traceability comments exist in test files
+   - Check deep-module boundaries: tests should assert public/stable interfaces first and avoid overfitting private internals unless characterization is required
 
 6. **Report**:
    ```
@@ -50,11 +62,15 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
    - {module}:{function} — no test coverage
    - {module}:{class.method} — no test coverage
 
-   ### Convention Issues
-   - {file}: missing pytest markers
-   - {file}: not using conftest fixtures
+	   ### Convention Issues
+	   - {file}: missing project tier marker/tag
+	   - {file}: duplicates setup instead of using shared fixtures/helpers
 
-   ### Recommendations
+	   ### Slice and Boundary Coverage
+	   - Vertical slice: {present/missing} — {path through system}
+	   - Deep-module boundary tests: {public interface covered / only private internals covered}
+
+	   ### Recommendations
    1. {highest priority test to add}
    2. {next priority}
    3. {next priority}
@@ -64,5 +80,6 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
 
 - This skill is read-only — it identifies gaps but does not write tests
 - Use the recommendations to guide test writing during IMPLEMENT phase
-- Coverage threshold is 80% (enforced in the project's test configuration, e.g., pyproject.toml, jest.config.js, etc.)
+- Use the coverage threshold enforced by the project's config. If no threshold is present, report 80% as the TRW default recommendation, not as a claimed project fact.
 - Focus on testing edge cases and error paths, not just happy paths
+- Prefer recommendations that prove a thin vertical slice before asking for broad horizontal layer coverage

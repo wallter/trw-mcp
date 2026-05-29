@@ -331,10 +331,17 @@ class TestRunLifecycle:
         """4.6: Full lifecycle ending with deliver marks run complete."""
         server = _full_server()
         init_fn = extract_tool_fn(server, "trw_init")
+        build_check_fn = extract_tool_fn(server, "trw_build_check")
         deliver_fn = extract_tool_fn(server, "trw_deliver")
 
         init_result = init_fn(task_name="completion-test", objective="Test completion")
         run_path = Path(init_result["run_path"])
+
+        # Truthfulness gate (CONSTITUTION §1 / iter-11 Track D): trw_deliver is
+        # blocked without a passing build check. A *full* lifecycle includes
+        # VALIDATE, so record a passing build check before delivering — the
+        # honest way past the gate (vs. allow_unverified).
+        build_check_fn(tests_passed=True, test_count=1, static_checks_clean=True, scope="full")
 
         result = deliver_fn()
         assert result.get("success") is True or result.get("errors") == []

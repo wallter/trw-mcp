@@ -1,11 +1,18 @@
 ---
 name: trw-ceremony-guide
-description: "Load the full TRW ceremony reference: tool lifecycle table, execution phases, and example flows. Use when you need to know which tool to call and when. Invoke: /trw-ceremony-guide\n"
+description: >
+  Load the full TRW ceremony reference: tool lifecycle table, execution
+  phases, and example flows. Use when you need to know which tool to call
+  and when. Invoke: /trw-ceremony-guide
+user-invocable: true
+argument-hint: ""
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # TRW Ceremony Guide
+
+Use when: you need a compact reference for which TRW ceremony tool to call and when.
 
 Complete reference for TRW lifecycle tools, execution phases, and workflow patterns.
 
@@ -34,9 +41,9 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | Any | `trw_checkpoint` | After milestones -- preserves progress across compactions | Atomic state snapshot | `trw_checkpoint(message='...')` |
 | PLAN | `trw_prd_create` | When defining requirements | Generate AARE-F PRD | `trw_prd_create(input_text='...')` |
 | PLAN | `trw_prd_validate` | Before implementation | PRD quality gate | `trw_prd_validate(prd_path='...')` |
-| VALIDATE | `trw_build_check` | After implementation -- runs pytest + mypy, verifies integration | Run pytest + mypy | `trw_build_check(scope='full')` |
+| VALIDATE | `trw_build_check` | After implementation -- records project-appropriate test/type/lint verification | Run the repo's verification command, then record results | `trw_build_check(scope='full')` |
 | REVIEW | `review diff` | After VALIDATE -- check quality (DRY/KISS/SOLID), fix gaps, record learnings | Review diff, fix incomplete integrations | `Read diff, fix gaps, trw_learn(summary='...')` |
-| DELIVER | `trw_deliver` | At delivery -- persists learnings and syncs AGENTS.md updates | Persist learnings + sync instructions | `trw_deliver()` |
+| DELIVER | `trw_deliver` | At delivery -- promotes learnings to AGENTS.md | Promote learnings to AGENTS.md | `trw_deliver()` |
 | DELIVER | `trw_deliver` | At task completion -- persists everything in one call | reflect+sync+checkpoint+index | `trw_deliver()` |
 
 ## Example Flows
@@ -75,8 +82,8 @@ If you catch yourself thinking any of these, stop and follow the process:
 |---------|---------------|-------------|
 | "This is too simple for ceremony" | Simple tasks compound into gaps when 10 agents skip in parallel | You skip checkpoint, context compacts, you re-implement from scratch |
 | "I'll checkpoint/deliver after I finish this part" | Context compaction erases uncheckpointed work permanently | Past agents who skipped trw_deliver lost all session learnings |
-| "I already know the codebase" | Prior learnings contain gotchas for exactly this area | Agents who skip recall consistently re-discover known gotchas, spending avoidable time on solved problems |
-| "I can implement directly, delegation is overhead" | Focused subagents get deeper context per task than the parent session can hold | Your focused context is valuable -- subagent results return with tighter scope and less distraction |
+| "I already know the codebase" | Prior learnings contain gotchas for exactly this area | Sprint 26 had 6 P0/P1 defects from agents who skipped recall |
+| "I can implement directly, delegation is overhead" | Subagent implementation has 3x fewer P0 defects | Your focused context is valuable -- subagents get deeper context per task |
 | "The build check can wait until the end" | Late build failures cascade into multi-file rework | 2x rework when caught at DELIVER vs catching at VALIDATE |
 
 ### Rigid Tools (never skip, unconditional)

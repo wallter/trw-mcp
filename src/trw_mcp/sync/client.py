@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
@@ -18,10 +18,40 @@ from urllib.parse import urlparse
 
 import structlog
 
+from trw_mcp.sync._client_push import (
+    _push_to_target as _push_to_target_impl,
+)
+from trw_mcp.sync._client_push import (
+    fanout_push as _fanout_push_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    apply_sync_hints as _apply_sync_hints_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    coerce_positive_number as _coerce_positive_number_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    consume_next_cycle_force as _consume_next_cycle_force_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    get_dirty_entries as _get_dirty_entries_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    mark_synced as _mark_synced_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    parse_sync_hint_timestamp as _parse_sync_hint_timestamp_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    reset_poll_schedule as _reset_poll_schedule_impl,
+)
+from trw_mcp.sync._client_runtime import (
+    restore_poll_schedule as _restore_poll_schedule_impl,
+)
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
-from trw_mcp.sync.outcomes import load_pending_outcomes, write_synced_marker
+from trw_mcp.sync.outcomes import PendingOutcome, load_pending_outcomes, write_synced_marker
 from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -32,9 +62,72 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_MIN_HINT_DELAY_SECONDS = 60
-_MAX_HINT_DELAY_SECONDS = 7200
-_MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
+_SLOW_LOCAL_WORK_LOG_MS = 1_000.0
+_PATHOLOGICAL_LOCAL_WORK_MS = 10_000.0
+_SYNC_FAILURE_BACKOFF_CAP_SECONDS = 3_600.0
+
+
+def _target_report_status(report: dict[str, object]) -> str:
+    """Return the normalized health status for one sync target report."""
+
+    raw_status = report.get("status")
+    if raw_status in {"success", "partial_error", "error"}:
+        return str(raw_status)
+    if report.get("error") is not None:
+        return "error"
+    raw_failed = report.get("failed", 0)
+    failed = int(raw_failed) if isinstance(raw_failed, (int, float)) else 0
+    return "partial_error" if failed > 0 else "success"
+
+
+def _failure_backoff_delay_seconds(base_interval_seconds: float, consecutive_failures: int) -> float:
+    """Compute bounded exponential backoff for background sync failure churn."""
+
+    base_interval = max(1.0, float(base_interval_seconds))
+    failure_count = max(1, int(consecutive_failures))
+    multiplier = 2 ** min(failure_count, 4)
+    cap = max(base_interval, _SYNC_FAILURE_BACKOFF_CAP_SECONDS)
+    return float(min(base_interval * multiplier, cap))
+
+
+async def _offload_sync_work(label: str, func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run blocking sync-local work off the FastMCP event loop.
+
+    Backend sync is a background task in the shared MCP server process. Local
+    SQLite/file/YAML scans can take seconds in this monorepo; running them on
+    the event loop starves foreground MCP requests. Keep network I/O async, but
+    move synchronous local preparation/bookkeeping to a worker thread.
+    """
+
+    started = perf_counter()
+    try:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    finally:
+        elapsed_ms = (perf_counter() - started) * 1000
+        if elapsed_ms >= _SLOW_LOCAL_WORK_LOG_MS:
+            slow = elapsed_ms >= _PATHOLOGICAL_LOCAL_WORK_MS
+            log = logger.warning if slow else logger.info
+            log(
+                "sync_local_work_offloaded",
+                label=label,
+                duration_ms=round(elapsed_ms, 2),
+                slow=slow,
+                slow_threshold_ms=int(_PATHOLOGICAL_LOCAL_WORK_MS),
+            )
+
+
+def _write_synced_markers(pending_outcomes: list[PendingOutcome], target_label: str) -> None:
+    """Write synced markers for successfully pushed outcome payloads."""
+
+    for item in pending_outcomes:
+        if item.run_dir is None or not item.sync_hash:
+            continue
+        write_synced_marker(
+            item.run_dir,
+            run_id=item.run_id,
+            sync_hash=item.sync_hash,
+            target_label=target_label,
+        )
 
 
 @dataclass(frozen=True)
@@ -110,8 +203,8 @@ class BackendSyncClient:
         # Primary puller uses the first target (intel pull is single-source for now).
         primary_url = self._targets[0].url if self._targets else ""
         primary_key = self._targets[0].api_key if self._targets else ""
-        self._pusher = (
-            self._pushers.get(self._targets[0].label)
+        self._pusher: SyncPusher = (
+            self._pushers[self._targets[0].label]
             if self._targets
             else SyncPusher(
                 backend_url=primary_url,
@@ -182,18 +275,20 @@ class BackendSyncClient:
             if not acquired:
                 return
 
-            dirty = self._get_dirty_entries()
+            dirty = await _offload_sync_work("get_dirty_entries", self._get_dirty_entries)
             if dirty:
                 logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
             else:
                 logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
 
-            pending_outcomes = load_pending_outcomes(
+            pending_outcomes = await _offload_sync_work(
+                "load_pending_outcomes",
+                load_pending_outcomes,
                 self._trw_dir,
                 since_line=self._coordinator.get_last_outcome_line(),
             )
 
-            report, push_result, any_target_succeeded = self._fanout_push(
+            report, push_result, any_target_succeeded = await self._fanout_push(
                 dirty=dirty,
                 outcomes=[item.payload for item in pending_outcomes],
             )
@@ -201,8 +296,10 @@ class BackendSyncClient:
                 "sync_cycle_report",
                 client_id=self._client_id,
                 targets=len(self._targets),
-                successful=sum(1 for r in report.values() if r["error"] is None),
-                failed=sum(1 for r in report.values() if r["error"] is not None),
+                successful=sum(1 for r in report.values() if _target_report_status(r) == "success"),
+                partial_error=sum(1 for r in report.values() if _target_report_status(r) == "partial_error"),
+                failed=sum(1 for r in report.values() if _target_report_status(r) == "error"),
+                unhealthy=sum(1 for r in report.values() if _target_report_status(r) != "success"),
                 report=report,
             )
 
@@ -210,7 +307,11 @@ class BackendSyncClient:
             push_seq = 0
             if dirty and any_target_succeeded and push_result.failed == 0:
                 push_seq = max((entry.sync_seq for entry in dirty), default=0)
-                self._mark_synced(dirty[: push_result.pushed + push_result.skipped])
+                await _offload_sync_work(
+                    "mark_synced",
+                    self._mark_synced,
+                    dirty[: push_result.pushed + push_result.skipped],
+                )
             if push_failed:
                 # Preserve legacy single-target failure message format when possible.
                 if dirty and len(self._targets) == 1:
@@ -227,21 +328,20 @@ class BackendSyncClient:
                 self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
                 # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
                 # next pusher pass skips already-synced runs.
-                successful_labels = ",".join(lbl for lbl, rep in report.items() if rep.get("error") is None)
-                for item in pending_outcomes:
-                    if item.run_dir is None or not item.sync_hash:
-                        continue
-                    write_synced_marker(
-                        item.run_dir,
-                        run_id=item.run_id,
-                        sync_hash=item.sync_hash,
-                        target_label=successful_labels or "unknown",
-                    )
+                successful_labels = ",".join(
+                    lbl for lbl, rep in report.items() if _target_report_status(rep) == "success"
+                )
+                await _offload_sync_work(
+                    "write_synced_markers",
+                    _write_synced_markers,
+                    pending_outcomes,
+                    successful_labels or "unknown",
+                )
 
             pulled = 0
             merged = 0
             pull_seq = self._coordinator.get_last_pull_seq()
-            pull_result = self._puller.pull_intel_state(
+            pull_result = await self._puller.pull_intel_state(
                 etag=self._cache.etag if self._config.intel_cache_enabled else None,
                 since_seq=pull_seq,
                 model_family=getattr(self._config, "model_family", ""),
@@ -251,12 +351,14 @@ class BackendSyncClient:
             if pull_result is None:
                 self._reset_poll_schedule()
                 self._coordinator.record_sync_failure("pull failed")
+                self._apply_failure_backoff(reason="pull failed")
                 return
 
             if pull_result.not_modified:
                 self._restore_poll_schedule()
                 if push_failed:
                     self._coordinator.record_pull_success(pull_seq=pull_seq)
+                    self._apply_failure_backoff(reason="push failed")
                 else:
                     self._coordinator.record_sync_success(
                         pushed=push_result.pushed,
@@ -297,6 +399,7 @@ class BackendSyncClient:
             )
             if push_failed:
                 self._coordinator.record_pull_success(pull_seq=next_pull_seq)
+                self._apply_failure_backoff(reason="push failed")
             else:
                 self._coordinator.record_sync_success(
                     pushed=push_result.pushed,
@@ -306,228 +409,112 @@ class BackendSyncClient:
                     pull_completed=True,
                 )
 
-    def _fanout_push(
+    async def _fanout_push(
         self,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
-        """Push dirty entries + outcomes to every target with per-target isolation.
+        """PRD-FIX-087 FR03: async — awaits the package-level fanout_push helper."""
+        return await _fanout_push_impl(
+            client_id=self._client_id,
+            targets=self._targets,
+            primary_pusher=self._pusher,
+            pusher_map=self._pushers,
+            batch_size=self._config.sync_push_batch_size,
+            timeout=self._config.sync_push_timeout_seconds,
+            dirty=dirty,
+            outcomes=outcomes,
+        )
 
-        Returns (report, aggregate_push_result, any_target_succeeded). Aggregate
-        result reflects the first successful target (sufficient for push_seq).
-        """
-        report: dict[str, dict[str, object]] = {}
-        aggregate: PushResult = PushResult()
-        any_success = False
-        for target in self._targets:
-            try:
-                result = self._push_to_target(target, dirty, outcomes)
-            except Exception as exc:  # justified: boundary, per-target failure is isolated
-                logger.warning(
-                    "sync_target_failed",
-                    client_id=self._client_id,
-                    label=target.label,
-                    target=target.label,
-                    error_type=type(exc).__name__,
-                    error=str(exc)[:200],
-                    exc_info=True,
-                )
-                report[target.label] = {
-                    "pushed": 0,
-                    "skipped": 0,
-                    "failed": 1,
-                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
-                }
-                continue
-            report[target.label] = {
-                "pushed": result.pushed,
-                "skipped": result.skipped,
-                "failed": result.failed,
-                "error": None,
-            }
-            if result.failed == 0:
-                any_success = True
-                if aggregate.pushed == 0 and aggregate.skipped == 0:
-                    aggregate = result
-        return report, aggregate, any_success
-
-    def _push_to_target(
+    async def _push_to_target(
         self,
         target: SyncTarget,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
     ) -> PushResult:
-        """Push learnings + outcomes to a single target. Raises on transport failure."""
-        started = perf_counter()
-        # Primary target uses the canonical self._pusher (tests patch this).
-        if self._targets and target.label == self._targets[0].label:
-            pusher = self._pusher
-        else:
-            pusher = self._pushers.get(target.label)
-        if pusher is None:
-            pusher = SyncPusher(
-                backend_url=target.url,
-                api_key=target.api_key,
-                batch_size=self._config.sync_push_batch_size,
-                timeout=self._config.sync_push_timeout_seconds,
-                client_id=self._client_id,
-            )
-            self._pushers[target.label] = pusher
-
-        total = PushResult()
-        if dirty:
-            logger.info(
-                "sync_target_push_start",
-                label=target.label,
-                kind="learnings",
-                client_id=self._client_id,
-            )
-            learning_result = pusher.push_learnings(dirty)
-            total = PushResult(
-                pushed=total.pushed + learning_result.pushed,
-                failed=total.failed + learning_result.failed,
-                skipped=total.skipped + learning_result.skipped,
-            )
-            logger.info(
-                "sync_target_push_complete",
-                label=target.label,
-                kind="learnings",
-                pushed=learning_result.pushed,
-                skipped=learning_result.skipped,
-                failed=learning_result.failed,
-                duration_ms=int((perf_counter() - started) * 1000),
-                client_id=self._client_id,
-            )
-        if outcomes:
-            logger.info(
-                "sync_target_push_start",
-                label=target.label,
-                kind="outcomes",
-                client_id=self._client_id,
-            )
-            outcome_result = pusher.push_outcomes(outcomes)
-            total = PushResult(
-                pushed=total.pushed + outcome_result.pushed,
-                failed=total.failed + outcome_result.failed,
-                skipped=total.skipped + outcome_result.skipped,
-            )
-            logger.info(
-                "sync_target_push_complete",
-                label=target.label,
-                kind="outcomes",
-                pushed=outcome_result.pushed,
-                skipped=outcome_result.skipped,
-                failed=outcome_result.failed,
-                duration_ms=int((perf_counter() - started) * 1000),
-                client_id=self._client_id,
-            )
-        return total
+        """PRD-FIX-087 FR03: async — awaits the package-level _push_to_target helper."""
+        return await _push_to_target_impl(
+            client_id=self._client_id,
+            target=target,
+            primary_target_label=self._targets[0].label if self._targets else None,
+            primary_pusher=self._pusher,
+            pusher_map=self._pushers,
+            batch_size=self._config.sync_push_batch_size,
+            timeout=self._config.sync_push_timeout_seconds,
+            dirty=dirty,
+            outcomes=outcomes,
+        )
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:
-        """Update the next poll schedule from backend hints."""
-        polling_cap_seconds = self._coerce_positive_number(
-            (sync_hints or {}).get("polling_cap_seconds"),
-        )
-        interval_seconds = self._coerce_positive_number((sync_hints or {}).get("interval_seconds"))
-        delay = interval_seconds
-        if delay is None:
-            delay = float(self._config.sync_interval_seconds)
-        recommended_at = (sync_hints or {}).get("next_poll_recommended_at")
-        parsed_recommended_at = self._parse_sync_hint_timestamp(recommended_at)
-        if interval_seconds is None and parsed_recommended_at is not None:
-            delay = max(0.0, (parsed_recommended_at - datetime.now(tz=timezone.utc)).total_seconds())
-
-        if polling_cap_seconds is not None and delay > 0:
-            delay = max(delay, polling_cap_seconds)
-        if delay > 0:
-            delay = min(max(delay, _MIN_HINT_DELAY_SECONDS), _MAX_HINT_DELAY_SECONDS)
-
-        if (
-            sync_hints
-            and sync_hints.get("significant_updates_available")
-            and self._consecutive_immediate_repolls < _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS
-        ):
-            self._last_applied_schedule_seconds = delay
-            self._next_sleep_seconds = 0.0
-            self._scheduled_interval_seconds = 0.0
-            self._next_cycle_force = True
-            self._consecutive_immediate_repolls += 1
-            logger.info(
-                "sync_hint_applied",
-                client_id=self._client_id,
-                mode="immediate_repoll",
-                polling_cap_seconds=polling_cap_seconds,
-            )
-            return
-
-        self._last_applied_schedule_seconds = delay
-        self._next_sleep_seconds = delay
-        self._scheduled_interval_seconds = delay
-        self._next_cycle_force = False
-        self._consecutive_immediate_repolls = 0
-        logger.info(
-            "sync_hint_applied",
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _apply_sync_hints_impl(
             client_id=self._client_id,
-            mode="scheduled",
-            next_delay_seconds=delay,
-            polling_cap_seconds=polling_cap_seconds,
+            config_sync_interval_seconds=float(self._config.sync_interval_seconds),
+            sync_hints=sync_hints,
+            last_applied_schedule_seconds=self._last_applied_schedule_seconds,
+            consecutive_immediate_repolls=self._consecutive_immediate_repolls,
         )
 
     def _reset_poll_schedule(self) -> None:
-        self._next_sleep_seconds = float(self._config.sync_interval_seconds)
-        self._scheduled_interval_seconds = float(self._config.sync_interval_seconds)
-        self._last_applied_schedule_seconds = float(self._config.sync_interval_seconds)
-        self._next_cycle_force = False
-        self._consecutive_immediate_repolls = 0
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _reset_poll_schedule_impl(float(self._config.sync_interval_seconds))
 
     def _restore_poll_schedule(self) -> None:
-        self._next_sleep_seconds = self._last_applied_schedule_seconds
-        self._scheduled_interval_seconds = self._last_applied_schedule_seconds
+        (
+            self._next_sleep_seconds,
+            self._scheduled_interval_seconds,
+            self._last_applied_schedule_seconds,
+            self._next_cycle_force,
+            self._consecutive_immediate_repolls,
+        ) = _restore_poll_schedule_impl(self._last_applied_schedule_seconds)
+
+    def _apply_failure_backoff(self, *, reason: str) -> None:
+        """Slow future background sync cycles after repeated remote failures."""
+
+        raw_failures = self._coordinator.get_consecutive_failures()
+        consecutive_failures = int(raw_failures) if isinstance(raw_failures, (int, float)) else 1
+        delay_seconds = _failure_backoff_delay_seconds(
+            float(self._config.sync_interval_seconds),
+            consecutive_failures,
+        )
+        self._next_sleep_seconds = delay_seconds
+        self._scheduled_interval_seconds = delay_seconds
+        self._last_applied_schedule_seconds = delay_seconds
         self._next_cycle_force = False
         self._consecutive_immediate_repolls = 0
+        logger.warning(
+            "sync_failure_backoff_applied",
+            client_id=self._client_id,
+            reason=reason,
+            consecutive_failures=consecutive_failures,
+            next_delay_seconds=delay_seconds,
+        )
 
     def _consume_next_cycle_force(self) -> bool:
-        force = self._next_cycle_force
-        self._next_cycle_force = False
+        force, self._next_cycle_force = _consume_next_cycle_force_impl(self._next_cycle_force)
         return force
 
     @staticmethod
     def _parse_sync_hint_timestamp(raw: object) -> datetime | None:
-        if not isinstance(raw, str) or not raw.strip():
-            return None
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-        except ValueError:
-            return None
+        return _parse_sync_hint_timestamp_impl(raw)
 
     @staticmethod
     def _coerce_positive_number(raw: object) -> float | None:
-        if not isinstance(raw, (int, float)):
-            return None
-        value = float(raw)
-        return value if value > 0 else None
+        return _coerce_positive_number_impl(raw)
 
     def _get_dirty_entries(self) -> list[MemoryEntry]:
-        """Get dirty entries from local storage via DeltaTracker."""
-        try:
-            from trw_memory.sync.delta import DeltaTracker
-
-            from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-            backend = _get_backend()
-            return DeltaTracker.get_dirty_entries(backend, since_seq=0)
-        except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
-            logger.debug("sync_get_dirty_failed", client_id=self._client_id, exc_info=True)
-            return []
+        return _get_dirty_entries_impl(client_id=self._client_id)
 
     def _mark_synced(self, entries: list[MemoryEntry]) -> None:
         """Mark entries as synced in local storage."""
-        try:
-            from trw_memory.sync.delta import DeltaTracker
-
-            from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-            backend = _get_backend()
-            DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend)
-        except Exception:  # justified: fail-open, sync bookkeeping must not break successful pushes
-            logger.debug("sync_mark_synced_failed", client_id=self._client_id, exc_info=True)
+        _mark_synced_impl(client_id=self._client_id, entries=entries)

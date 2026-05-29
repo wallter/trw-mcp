@@ -53,6 +53,10 @@ class MemoryConfig(BaseModel):
     learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
     recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
+    # PRD-INFRA-102 FR-03: secondary embedding-sidecar path, NOT primary
+    # store. Primary store is `<trw_dir>/memory/memory.db` (hardcoded in
+    # `_memory_connection.get_backend`). See `_fields_memory.py:37` for
+    # the canonical declaration with full clarification.
     memory_store_path: str = ".trw/memory/vectors.db"
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95
@@ -90,7 +94,6 @@ class OrchestrationConfig(BaseModel):
     auto_recall_max_results: int = 3
     auto_recall_max_tokens: int = 100
     auto_recall_min_score: float = 0.7
-    agent_teams_enabled: bool = True
 
 
 class ScoringConfig(BaseModel):
@@ -133,6 +136,10 @@ class ToolsConfig(BaseModel):
     tool_exposure_list: list[str] = Field(default_factory=list)
     tool_descriptions_variant: str = "default"
     mcp_server_instructions_enabled: bool | None = None
+    code_index_enabled: bool = False
+    code_index_max_file_bytes: int = 1_000_000
+    code_index_exclude_dirs: list[str] = Field(default_factory=list)
+    code_index_include_extensions: list[str] = Field(default_factory=list)
 
 
 class CeremonyFeedbackConfig(BaseModel):

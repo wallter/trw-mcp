@@ -218,8 +218,21 @@ _UNIT_FILES: frozenset[str] = frozenset(
 _SLOW_FILES: frozenset[str] = frozenset(
     {
         "test_consolidation.py",
-        "test_bootstrap.py",
         "test_bootstrap_branches.py",
+        "test_bootstrap_claude_md_sync_split.py",
+        "test_bootstrap_codex_split.py",
+        "test_bootstrap_cursor_split.py",
+        "test_bootstrap_ide_detection.py",
+        "test_bootstrap_init_content.py",
+        "test_bootstrap_merge_metadata.py",
+        "test_bootstrap_multi_ide_detection.py",
+        "test_bootstrap_multi_ide_init.py",
+        "test_bootstrap_multi_ide_preservation.py",
+        "test_bootstrap_opencode_split.py",
+        "test_bootstrap_update_cleanup.py",
+        "test_bootstrap_update_core.py",
+        "test_bootstrap_update_migration.py",
+        "test_bootstrap_version_utils.py",
         # PRD-CORE-146-NFR01: 1000-iteration latency benchmark (~1-3s)
         "test_nudge_performance.py",
     }
@@ -241,7 +254,7 @@ def pytest_collection_modifyitems(
         filename = Path(item.fspath).name
 
         # Assign slow marker (additive — a test can be both integration and slow)
-        if filename in _SLOW_FILES:
+        if filename in _SLOW_FILES or filename.startswith(("test_consolidation", "test_bootstrap_branches")):
             item.add_marker(pytest.mark.slow)
 
         if filename in _UNIT_FILES:
@@ -268,7 +281,7 @@ def _reset_run_pin() -> Iterator[None]:
     tests. Without invalidating it, a prior test's empty-dict read caches into
     the next test's malformed-file scenario and the warning never fires.
     """
-    from trw_mcp.state._paths import _pinned_runs  # type: ignore[attr-defined]
+    from trw_mcp.state._paths import _pinned_runs
     from trw_mcp.state._pin_store import invalidate_pin_store_cache
 
     _pinned_runs.clear()
@@ -276,6 +289,49 @@ def _reset_run_pin() -> Iterator[None]:
     yield
     _pinned_runs.clear()
     invalidate_pin_store_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_auto_close_throttle_fixture() -> Iterator[None]:
+    """Reset the per-process auto_close_stale_runs throttle between tests.
+
+    Production code throttles auto_close_stale_runs to once per hour to keep
+    session_start fast; tests need a fresh throttle window per case so they
+    can call the function multiple times without artificially being skipped.
+    """
+    from trw_mcp.state.analytics._stale_runs import _reset_auto_close_throttle
+
+    _reset_auto_close_throttle()
+    yield
+    _reset_auto_close_throttle()
+
+
+@pytest.fixture(autouse=True)
+def _reset_deferred_delivery_state() -> Iterator[None]:
+    """Reset deferred-delivery throttle + cancel event between tests.
+
+    The 2026-05-17 watchdog changes added two pieces of process-local
+    state in ``trw_mcp.tools._deferred_state``:
+
+    - ``_last_auto_prune_at`` — process-local throttle marker so the
+      auto_prune step doesn't pay its O(N^2) Jaccard cost more than
+      once per ``learning_auto_prune_min_interval_hours``.
+    - ``_cancel_event`` — cooperative cancellation signal flipped by
+      the per-step / per-batch watchdog on budget overrun.
+
+    Without this reset, the first test that calls a deliver path sets
+    the throttle, and every subsequent test sees ``status="throttled"``
+    instead of exercising the actual step. Similarly, a watchdog test
+    that leaves the cancel event set causes downstream tests to start
+    with every step short-circuited.
+    """
+    from trw_mcp.tools import _deferred_state as _ds
+
+    _ds._last_auto_prune_at = None
+    _ds._cancel_event.clear()
+    yield
+    _ds._last_auto_prune_at = None
+    _ds._cancel_event.clear()
 
 
 def _join_and_reset_deferred() -> None:
@@ -298,6 +354,38 @@ def _join_and_reset_deferred() -> None:
         pass
 
 
+def _join_and_reset_q_learning() -> None:
+    """PRD-FIX-088 FR01: reset the Q-learning bg worker between tests.
+
+    Joins any running ``_q_thread``, drains the coalescing queue, and
+    clears the ``_q_thread`` reference so the next test starts fresh.
+    Prevents use-after-close segfaults on the SQLite backend the same
+    way ``_join_and_reset_deferred`` does for the deliver-deferred thread.
+    """
+    try:
+        import queue as _queue
+
+        import trw_mcp.tools._q_learning_state as _qls
+
+        with _qls._q_lock:
+            t = _qls._q_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=15)
+        with _qls._q_lock:
+            _qls._q_thread = None
+            # Drain any leftover events.
+            try:
+                while True:
+                    _qls._q_queue.get_nowait()
+            except _queue.Empty:
+                pass
+        # PRD-FIX-088 P1.5 Fix 9: zero the worker-health dataclass so the
+        # next test starts with a clean error_count / last_error.
+        _qls.reset_health()
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
     """Reset memory adapter singleton for test isolation.
@@ -308,9 +396,11 @@ def _reset_memory_backend() -> Iterator[None]:
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
+    _join_and_reset_q_learning()
     reset_backend()
     yield
     _join_and_reset_deferred()
+    _join_and_reset_q_learning()
     reset_backend()
 
 
@@ -432,6 +522,15 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     except AttributeError:
         pass  # Not yet imported
 
+    # The claude_md sync path (profile dispatcher + section renderers) resolves
+    # its write target via LATE lookup through ``_paths.resolve_project_root`` /
+    # ``_paths.resolve_trw_dir`` (read at call time, not bound at import). The
+    # source-module patches above therefore already redirect every claude_md
+    # write to the tmp project root — no claude_md-specific binding patch is
+    # needed. (Historically those bindings were captured at import and a sync
+    # silently regrew the auto-gen block in the REAL repo CLAUDE.md; the
+    # production late-resolve refactor closed that gap.)
+
     yield
 
 
@@ -514,3 +613,41 @@ def sample_run_dir(tmp_path: Path, writer: FileStateWriter) -> Path:
     )
 
     return run_dir
+
+
+# PRD-FIX-088 P1.5 Fix 7: shared invoke helper for ``trw_build_check`` tests.
+# Replaces 14-line duplicated ``_invoke_build_check`` helpers across
+# ``test_q_learning_defer_always.py``, ``test_build_check_step_telemetry.py``,
+# ``test_build_check_latency.py``, and ``test_build_check_persistence.py``.
+@pytest.fixture
+def build_check_invoke(tmp_project: Path) -> Any:
+    """Return a callable that invokes ``trw_build_check`` against ``tmp_project``.
+
+    Usage::
+
+        def test_x(build_check_invoke):
+            result = build_check_invoke(tests_passed=True, scope="quick")
+
+    Defaults: ``tests_passed=True``, ``test_count=1``, ``scope="full"``.
+    Any kwarg supplied overrides the default.
+    """
+
+    def _invoke(**kwargs: Any) -> dict[str, Any]:
+        import trw_mcp.tools.build._registration as reg_mod
+
+        server = make_test_server("build")
+        fn = extract_tool_fn(server, "trw_build_check")
+        original_resolve = reg_mod.resolve_trw_dir
+        reg_mod.resolve_trw_dir = lambda: tmp_project / ".trw"
+        try:
+            defaults: dict[str, Any] = {
+                "tests_passed": True,
+                "test_count": 1,
+                "scope": "full",
+            }
+            defaults.update(kwargs)
+            return fn(**defaults)  # type: ignore[no-any-return]
+        finally:
+            reg_mod.resolve_trw_dir = original_resolve
+
+    return _invoke

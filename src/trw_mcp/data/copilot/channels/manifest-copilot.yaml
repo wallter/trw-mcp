@@ -1,0 +1,196 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: copilot-instructions-distill
+  client: copilot
+  surface: copilot_instructions_segment
+  telemetry_tag: copilot_instructions_distill
+  file: .github/copilot-instructions.md
+  lock_file: .trw/channels/copilot-instructions-distill.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: "<!-- trw-distill:begin -->"
+    end: "<!-- trw-distill:end -->"
+  distill_record_types:
+  - convention
+  - hotspot
+  ttl_commits: 10
+  ttl_days: 7
+  quota_total_bytes: 1000
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: TIER_DOWN
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: C1 copilot-instructions.md distill segment. Hard 250-token cap. T0
+    beacon is permanent. stale_action TIER_DOWN only.
+  regenerate_cmd: trw-distill self-improve risk-report --repo . --persist-sidecar
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - copilot
+  - instruction-file
+  - hotspots
+  notes:
+- id: copilot-path-instructions-distill
+  client: copilot
+  surface: instruction_file_segment
+  telemetry_tag: copilot_path_instructions_distill
+  file: .github/instructions/trw-distill-hotspots.instructions.md
+  lock_file: .trw/channels/copilot-path-instructions-distill.lock
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types:
+  - edge_case
+  - hotspot_warning
+  ttl_commits: 20
+  ttl_days: 14
+  quota_total_bytes: 2048
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: FULL_PRUNE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: C2 path-scoped instructions for Copilot. VS Code + cloud agent only.
+    applyTo uses directory minimatch globs. Full-prune on stale.
+  regenerate_cmd: trw-distill self-improve risk-report --repo . --persist-sidecar
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - copilot
+  - path-scoped
+  - hotspots
+  notes:
+- id: copilot-vscode-mcp-config
+  client: copilot
+  surface: vscode_mcp_json
+  telemetry_tag: copilot_vscode_mcp_config
+  file: .vscode/mcp.json
+  lock_file: .trw/channels/copilot-vscode-mcp-config.lock
+  status: active
+  write_strategy: JSON_KEY_MERGE
+  tier_default: T2
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 512
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: KEY_NAMESPACE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: KEY_NAMESPACE
+  description: C3 .vscode/mcp.json setup for Copilot. Root key is 'servers'. json_key_merge
+    write strategy. sort_keys=True for byte-stable output.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - copilot
+  - vscode
+  - mcp-config
+  notes:
+- id: copilot-mcp-tool-return
+  client: copilot
+  surface: ephemeral_stdout
+  telemetry_tag: copilot_mcp_tool_return
+  file:
+  lock_file:
+  status: active
+  write_strategy: EPHEMERAL_STDOUT
+  tier_default: T2
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 8192
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: C4 pull surface via VS Code Copilot Chat MCP. No new tool code. Available
+    after C3 (.vscode/mcp.json) is configured.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: C3_vscode_mcp_configured
+  tags:
+  - copilot
+  - mcp-tool-return
+  - on-demand
+  notes:

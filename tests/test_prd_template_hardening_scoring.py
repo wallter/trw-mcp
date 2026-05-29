@@ -1,0 +1,148 @@
+"""Tests for PRD template hardening scoring behavior."""
+
+from __future__ import annotations
+
+from tests._test_prd_template_hardening_support import _REQUIRED_SECTIONS, _make_prd
+from trw_mcp.state.validation import score_structural_completeness, score_traceability_v2, validate_prd_quality_v2
+
+
+def test_structural_completeness_rewards_required_subsections() -> None:
+    frontmatter = {
+        "id": "PRD-TEST-900",
+        "title": "Hardened PRD",
+        "version": "1.0",
+        "status": "draft",
+        "priority": "P1",
+        "category": "CORE",
+        "confidence": {
+            "implementation_feasibility": 0.85,
+            "requirement_clarity": 0.80,
+            "estimate_confidence": 0.75,
+        },
+    }
+
+    minimal = _make_prd(prd_id="PRD-TEST-900", title="Hardened PRD", category="CORE")
+    hardened = (
+        minimal
+        + """
+### Primary Control Points
+| Surface | Current Behavior | Required Change | Code Path | Proof |
+|---------|------------------|-----------------|-----------|-------|
+| Config / Discovery | old | new | `src/config.py` | integration test |
+
+### Behavior Switch Matrix
+| Requirement | Old Behavior | New Behavior | Trigger | Code Path | Proof Test |
+|-------------|--------------|--------------|---------|-----------|------------|
+| FR01 | old | new | init-project | `src/feature.py` | `tests/test_feature.py::test_fr01` |
+
+### Unit Tests
+- [ ] `tests/test_feature.py::test_unit_case`
+
+### Integration Tests
+- [ ] `tests/test_feature.py::test_integration_case`
+
+### Acceptance Tests
+- [ ] `tests/test_feature.py::test_fr01`
+
+### Regression Tests
+- [ ] `tests/test_feature.py::test_regression_case`
+
+### Negative / Fallback Tests
+- [ ] `tests/test_feature.py::test_missing_config_fallback`
+
+### Completion Evidence (Definition of Done)
+- [ ] Generated artifacts exist
+- [ ] Runtime/config consumers reference the new behavior
+- [ ] Sync/update flows keep the new behavior current
+- [ ] Legacy state migrates or is explicitly declared out of scope
+- [ ] Acceptance proof exists for each user story / FR
+- [ ] Regression and fallback coverage exist
+
+### Migration / Backward Compatibility
+- old and new configs are handled
+"""
+    )
+
+    without_subsections = score_structural_completeness(frontmatter, _REQUIRED_SECTIONS, content=minimal)
+    with_subsections = score_structural_completeness(frontmatter, _REQUIRED_SECTIONS, content=hardened)
+
+    assert with_subsections.score > without_subsections.score
+
+
+def test_traceability_rewards_behavior_switch_proof_rows() -> None:
+    frontmatter = {
+        "traceability": {
+            "implements": ["PRD-CORE-001"],
+            "depends_on": ["PRD-CORE-002"],
+            "enables": ["PRD-CORE-003"],
+        },
+        "category": "CORE",
+    }
+
+    basic = _make_prd(prd_id="PRD-TEST-900", title="Hardened PRD", category="CORE")
+    hardened = (
+        basic
+        + """
+### Behavior Switch Matrix
+| Requirement | Old Behavior | New Behavior | Trigger | Code Path | Proof Test |
+|-------------|--------------|--------------|---------|-----------|------------|
+| FR01 | old | new | init-project | `src/feature.py` | `tests/test_feature.py::test_fr01` |
+"""
+    )
+
+    assert score_traceability_v2(frontmatter, hardened).score > score_traceability_v2(frontmatter, basic).score
+
+
+def test_full_validation_penalizes_missing_hardened_dod_surfaces() -> None:
+    weak = _make_prd(prd_id="PRD-TEST-900", title="Hardened PRD", category="CORE")
+    strong = (
+        weak
+        + """
+### Primary Control Points
+| Surface | Current Behavior | Required Change | Code Path | Proof |
+|---------|------------------|-----------------|-----------|-------|
+| Generation | old | new | `src/bootstrap.py` | init test |
+| Config / Discovery | old | new | `src/config.py` | config test |
+| Sync / Update | old | new | `src/sync.py` | update test |
+| Migration | old | new | `src/migrate.py` | migration test |
+
+### Behavior Switch Matrix
+| Requirement | Old Behavior | New Behavior | Trigger | Code Path | Proof Test |
+|-------------|--------------|--------------|---------|-----------|------------|
+| FR01 | old | new | init-project | `src/feature.py` | `tests/test_feature.py::test_fr01` |
+
+### Unit Tests
+- [ ] `tests/test_feature.py::test_unit_case`
+
+### Integration Tests
+- [ ] `tests/test_feature.py::test_integration_case`
+
+### Acceptance Tests
+- [ ] `tests/test_feature.py::test_fr01`
+
+### Migration Tests
+- [ ] `tests/test_feature.py::test_migration_case`
+
+### Regression Tests
+- [ ] `tests/test_feature.py::test_regression_case`
+
+### Negative / Fallback Tests
+- [ ] `tests/test_feature.py::test_missing_config_fallback`
+
+### Completion Evidence (Definition of Done)
+- [ ] Generated artifacts exist at the intended paths
+- [ ] Runtime/config consumers reference the new behavior
+- [ ] Sync/update flows keep the new behavior current
+- [ ] Legacy state migrates or is explicitly declared out of scope
+- [ ] Acceptance proof exists for each user story / FR
+- [ ] Regression and fallback coverage exist for the changed control points
+
+### Migration / Backward Compatibility
+- repeated runs are idempotent
+"""
+    )
+
+    weak_result = validate_prd_quality_v2(weak)
+    strong_result = validate_prd_quality_v2(strong)
+
+    assert strong_result.total_score > weak_result.total_score

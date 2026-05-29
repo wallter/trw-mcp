@@ -16,6 +16,7 @@ _CLIENT_ORDER: tuple[str, ...] = (
     "codex",
     "copilot",
     "gemini",
+    "antigravity-cli",
     "aider",
 )
 
@@ -37,7 +38,6 @@ class ClientProfileDocRow:
     hooks_enabled: bool
     skills_enabled: bool
     framework_ref_enabled: bool
-    agent_teams_enabled: bool
     delegation_enabled: bool
     instruction_path: str
     nudge_messenger: str
@@ -80,6 +80,8 @@ def _write_target_label(profile: ClientProfile) -> str:
         return "GEMINI.md"
     if targets.claude_md:
         return "CLAUDE.md"
+    if targets.antigravitycli_md:
+        return "ANTIGRAVITY.md"
     return "AGENTS.md"
 
 
@@ -108,7 +110,6 @@ def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
                 hooks_enabled=profile.hooks_enabled,
                 skills_enabled=profile.skills_enabled,
                 framework_ref_enabled=profile.include_framework_ref,
-                agent_teams_enabled=profile.include_agent_teams,
                 delegation_enabled=profile.include_delegation,
                 instruction_path=profile.write_targets.instruction_path,
                 nudge_messenger="standard",

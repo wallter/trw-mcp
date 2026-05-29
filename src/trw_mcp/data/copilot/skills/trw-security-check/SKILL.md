@@ -3,9 +3,9 @@ name: trw-security-check
 context: fork
 agent: Explore
 description: >
-  OWASP-focused security audit of the trw-mcp codebase. Checks for
-  command injection, YAML deserialization, path traversal, secrets,
-  and input validation. Read-only.
+  OWASP-focused, language-aware security audit of the TRW codebase. Checks
+  command injection, unsafe deserialization, path traversal, secrets,
+  dependency risk, and input validation. Read-only.
   Use: /trw-security-check [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
@@ -13,7 +13,9 @@ argument-hint: "[module or 'all']"
 
 # Security Audit Skill
 
-Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is read-only — it identifies vulnerabilities but does not modify code.
+Use when: running a read-only OWASP-style security review for a TRW package or module.
+
+Perform an OWASP-focused security audit of the selected TRW package or module. This skill is read-only — it identifies vulnerabilities but does not modify code. Infer language and framework from the target path before choosing checks.
 
 ## Workflow
 
@@ -22,39 +24,39 @@ Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is r
    - If `all` or empty, audit the full codebase (discover source directories via Glob)
 
 2. **Command Injection (OWASP A03)**: Search for unsafe subprocess usage:
-   - Grep for `subprocess.run`, `subprocess.Popen`, `os.system`, `os.popen`
-   - Check if `shell=True` is used (dangerous with user input)
-   - Verify arguments are passed as lists, not interpolated strings
-   - Check `tools/build.py` specifically (runs pytest/mypy via subprocess)
+   - Grep for process execution APIs in the target language (`subprocess`, `os.system`, Node `child_process`, Go `os/exec`, Rust `Command`, shell eval/backticks, etc.)
+   - Check if shell invocation is used with user input (for example `shell=True`, `exec`, `sh -c`)
+   - Verify arguments are passed as structured arrays/lists where supported, not interpolated strings
+   - Check build/test wrappers specifically because they often run user-adjacent commands
 
 3. **Deserialization Safety (OWASP A08)**: Check YAML handling:
-   - Grep for `yaml.load` without `Loader=SafeLoader` or `yaml.safe_load`
-   - Verify ruamel.yaml usage patterns are safe (ruamel defaults to safe)
-   - Check for pickle, marshal, or eval() usage
-   - Check JSON parsing for `object_hook` injection vectors
+   - Grep for unsafe YAML/XML/JSON/object deserialization APIs in the target language
+   - Verify YAML loaders use safe modes (e.g., `yaml.safe_load`, `SafeLoader`, safe ruamel usage)
+   - Check for `pickle`, `marshal`, `eval()`, dynamic import/require, template execution, or equivalent unsafe eval paths
+   - Check JSON parsing hooks/revivers/object hooks for injection vectors
 
 4. **Path Traversal (OWASP A01)**: Check file operations:
    - Grep for `open()`, `Path()`, file read/write operations
    - Check if user-provided paths are validated against a base directory
-   - Verify `state/_paths.py` resolve functions prevent directory escape
+   - Verify the target package's path-resolution helpers prevent directory escape (for trw-mcp this includes `state/_paths.py`)
    - Look for `..` traversal in path construction
 
 5. **Secrets Exposure (OWASP A02)**: Check for hardcoded credentials:
    - Grep for patterns: `password`, `secret`, `api_key`, `token`, `credential`
    - Check `.env` files are gitignored
    - Verify no API keys in source code or test fixtures
-   - Check structlog calls don't log sensitive data
+   - Check structured logging/telemetry calls don't log sensitive data
 
 6. **Input Validation (OWASP A03)**: Check system boundaries:
-   - MCP tool parameter validation (Pydantic models handle this)
+   - MCP/API/CLI parameter validation (Pydantic, Zod, JSON Schema, typed DTOs, Clap/Click validators, etc.)
    - Check for unvalidated string interpolation in file paths
    - Verify PRD file path resolution validates input
    - Check that `trw_prd_create` input_text is sanitized
 
 7. **Dependency Security (OWASP A06)**: Check dependencies:
-   - Read `pyproject.toml` for dependency versions
+   - Read dependency manifests for the target package (`pyproject.toml`, `package.json`, lockfiles, `Cargo.toml`, `go.mod`, etc.)
    - Flag any dependencies without version pins
-   - Note if `pip-audit` or `safety` checks are configured
+   - Note if a language-appropriate dependency audit is configured (`pip-audit`, `safety`, `npm audit`, `pnpm audit`, `cargo audit`, `govulncheck`, etc.)
 
 8. **Report**: Structured security report:
    ```
@@ -94,5 +96,5 @@ Perform an OWASP-focused security audit of the trw-mcp codebase. This skill is r
 
 - This skill is read-only — it audits but does not fix issues
 - Focus on source code, not documentation or configs
-- Pydantic v2 models provide built-in input validation for MCP tool parameters
-- The codebase runs locally (no network-facing service), so network-based attacks are lower priority
+- Treat framework validators and schemas as helpful but still verify boundary coverage and coercion behavior
+- Adjust network/auth priority to the target package: local CLI tools, MCP servers, web apps, and public services have different threat models

@@ -1,20 +1,18 @@
-"""Agent frontmatter ``max_tokens`` headroom audit (PRD-QUAL-072 FR07).
+"""Agent frontmatter ``max_tokens`` headroom audit.
 
-Opus 4.7's tokenizer runs ~1.00×–1.35× 4.6 (~35% overhead worst case), so
-any agent that declares ``max_tokens: N`` in frontmatter must give itself
-at least 20% headroom vs the original 4.6 value — rounded up to the
-nearest 500.
+Capability-tier agent definitions should avoid brittle token caps. If an
+adapter-specific agent declares ``max_tokens: N`` in frontmatter, it must keep
+explicit headroom and round to the nearest 500 so future model/tokenizer changes
+do not silently truncate output.
 
 Policy (FR07):
 
-* If an agent frontmatter declares ``max_tokens``, it MUST be a multiple
-  of 500 AND represent the post-bump value (old * 1.2 rounded up to 500).
-* If an agent frontmatter does NOT declare ``max_tokens``, the Claude
-  Code / SDK default applies — no edit needed. This is the state the
-  5 target agents ship in today.
+* If an agent frontmatter declares ``max_tokens``, it MUST be a positive multiple
+  of 500 with adapter-specific rationale.
+* If an agent frontmatter does NOT declare ``max_tokens``, the active adapter
+  default applies — no edit needed. This is the state the target agents ship in today.
 
-The five target agents are the highest-traffic flagship agents named in
-PRD-QUAL-072 FR07: ``trw-lead``, ``trw-implementer``, ``trw-prd-groomer``,
+The five target agents are the highest-traffic flagship agents: ``trw-lead``, ``trw-implementer``, ``trw-prd-groomer``,
 ``trw-reviewer``, ``trw-auditor``. Both the user-exposed copies under
 ``.claude/agents/`` AND the bundled mirror under
 ``trw-mcp/src/trw_mcp/data/agents/`` are checked.
@@ -28,6 +26,8 @@ from typing import Any
 
 import pytest
 import yaml
+
+from trw_mcp.agents.tier_resolver import resolve_launch_throttle_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,12 +79,12 @@ def test_target_agent_file_exists(mirror: Path, agent: str) -> None:
 @pytest.mark.parametrize("mirror", MIRROR_DIRS, ids=lambda p: p.name)
 @pytest.mark.parametrize("agent", TARGET_AGENTS)
 def test_max_tokens_honors_20pct_headroom_or_is_absent(mirror: Path, agent: str) -> None:
-    """FR07: if ``max_tokens`` is set, it must be >= ceil(old * 1.2 / 500) * 500.
+    """If ``max_tokens`` is set, it must be positive and rounded to a 500-token boundary.
 
     The 5 flagship agents ship today without a ``max_tokens`` frontmatter
     entry (SDK default applies), which is the FR07-compliant state. Should
     any agent later pin the value, this test enforces that the pinned value
-    carries the 20% tokenizer-overhead headroom, rounded up to 500.
+    carries explicit headroom, rounded up to 500.
     """
     path = mirror / f"{agent}.md"
     fm = _parse_frontmatter(path)
@@ -131,7 +131,7 @@ def test_enforcement_branch_accepts_compliant_pinned_value(tmp_path: Path) -> No
     """FR07 enforcement: a pinned ``max_tokens`` meeting bumped_floor is accepted."""
     path = _write_agent(
         tmp_path,
-        "---\nname: synthetic\nmodel: opus\nmax_tokens: 10000\n---\nbody\n",
+        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 10000\n---\nbody\n",
     )
     fm = _parse_frontmatter(path)
     assert fm is not None
@@ -147,7 +147,7 @@ def test_enforcement_branch_rejects_non_multiple_of_500(tmp_path: Path) -> None:
     """FR07 enforcement: pinned values that aren't rounded to 500 are flagged."""
     path = _write_agent(
         tmp_path,
-        "---\nname: synthetic\nmodel: opus\nmax_tokens: 9600\n---\nbody\n",
+        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 9600\n---\nbody\n",
     )
     fm = _parse_frontmatter(path)
     assert fm is not None
@@ -162,7 +162,7 @@ def test_enforcement_branch_rejects_zero_or_negative(tmp_path: Path) -> None:
     """FR07 enforcement: a non-positive pinned ``max_tokens`` is a violation."""
     path = _write_agent(
         tmp_path,
-        "---\nname: synthetic\nmodel: opus\nmax_tokens: 0\n---\nbody\n",
+        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 0\n---\nbody\n",
     )
     fm = _parse_frontmatter(path)
     assert fm is not None
@@ -170,3 +170,20 @@ def test_enforcement_branch_rejects_zero_or_negative(tmp_path: Path) -> None:
     # The production test asserts `value > 0`; this fixture proves the
     # branch would fail as intended if an agent ever shipped `0`.
     assert not (fm["max_tokens"] > 0)
+
+
+def test_dense_helper_launch_policy_is_client_agnostic() -> None:
+    """PRD-QUAL-087 FR03: helper launch policy is portable, not client-specific."""
+    policy = resolve_launch_throttle_policy(9)
+
+    assert policy.stagger_seconds > 0
+    assert policy.max_concurrent_launches == 4
+    assert policy.backoff_multiplier > 1.0
+    assert policy.max_backoff_seconds >= policy.stagger_seconds
+    assert "large dense launch" in policy.rationale
+
+
+def test_launch_policy_rejects_non_positive_helper_count() -> None:
+    """PRD-QUAL-087 FR03: malformed launch requests fail closed."""
+    with pytest.raises(ValueError, match="helper_count must be positive"):
+        resolve_launch_throttle_policy(0)

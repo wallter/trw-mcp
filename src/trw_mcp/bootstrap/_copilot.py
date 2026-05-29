@@ -15,10 +15,17 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
 
+from ._copilot_models import (
+    CopilotHookCommand,
+    CopilotHookConfig,
+    CopilotHookGroup,
+    CopilotHooksPayload,
+    PathScopedTemplate,
+)
 from ._file_ops import (
     _new_result,
     _record_write,
@@ -35,6 +42,8 @@ logger = structlog.get_logger(__name__)
 _GITHUB_DIR = ".github"
 _COPILOT_INSTRUCTIONS_PATH = ".github/copilot-instructions.md"
 _COPILOT_HOOKS_PATH = ".github/hooks/hooks.json"
+_COPILOT_ADAPTER_SCRIPT_NAME = "trw-copilot-adapter.sh"
+_COPILOT_ADAPTER_INSTALL_PATH = f".github/hooks/{_COPILOT_ADAPTER_SCRIPT_NAME}"
 _COPILOT_AGENTS_DIR = ".github/agents"
 _COPILOT_SKILLS_DIR = ".github/skills"
 _COPILOT_INSTRUCTIONS_DIR = ".github/instructions"
@@ -53,39 +62,14 @@ _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 # ---------------------------------------------------------------------------
 
 
-class PathScopedTemplate(TypedDict):
-    """Template for a path-scoped Copilot instruction file."""
-
-    applyTo: str
-    content: str
-
-
-class CopilotHookCommand(TypedDict):
-    """A single command entry inside a Copilot hook group."""
-
-    type: str
-    command: str
-
-
-class CopilotHookGroup(TypedDict):
-    """A hook group entry in Copilot hooks.json."""
-
-    description: str
-    hooks: list[CopilotHookCommand]
-
-
-class CopilotHooksPayload(TypedDict):
-    """Top-level hooks.json structure for Copilot."""
-
-    version: int
-    hooks: dict[str, list[CopilotHookGroup]]
-
-
-class CopilotHookConfig(TypedDict):
-    """Mapping entry for a TRW hook → Copilot event."""
-
-    script: str
-    description: str
+# TypedDicts re-exported from _copilot_models.py (cycle 36).
+__all__ = [
+    "CopilotHookCommand",
+    "CopilotHookConfig",
+    "CopilotHookGroup",
+    "CopilotHooksPayload",
+    "PathScopedTemplate",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +110,7 @@ This project uses the TRW (The Real Work) framework for structured AI-assisted d
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On discoveries | Saves findings for future sessions |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action | Persists session work |
+| `trw_deliver()` | Last action after validation | Persists session work only after build-check evidence or an explicit acceptable-failure note |
 
 ## Available MCP Tools
 
@@ -270,43 +254,37 @@ _COPILOT_HOOK_MAP: dict[str, CopilotHookConfig] = {
 }
 
 
-def _build_hook_adapter_command(event_name: str, hook_path: str) -> str:
+def _bundled_adapter_script_path() -> Path:
+    """Return the path to the bundled Copilot adapter shell script."""
+    return _copilot_data_dir() / "hooks" / _COPILOT_ADAPTER_SCRIPT_NAME
+
+
+def _build_hook_adapter_command(event_name: str, hook_path: str, adapter_path: str | None = None) -> str:
     """Build a shell command that adapts Copilot stdin JSON to TRW hook scripts.
 
-    Uses double-quoted ``sh -c`` wrapper to avoid single-quote nesting issues.
-    The adapter:
-    1. Reads JSON from stdin and saves to ``$_input``
-    2. Extracts ``toolName`` field using grep/sed
-    3. Pipes stdin to the shared TRW hook script
-    4. For ``preToolUse``: translates exit code → JSON permission decision on stdout
+    The command invokes the bundled ``trw-copilot-adapter.sh`` script, which:
+    1. Reads JSON from stdin
+    2. Extracts ``toolName`` (jq preferred, grep/sed fallback)
+    3. Exports ``$TOOL_NAME`` and pipes the raw JSON to the target TRW hook
+    4. For ``preToolUse``: translates the hook exit code into a JSON
+       ``permissionDecision`` object on stdout
+
+    Because the logic lives in a real shell script there is NO inline shell
+    quoting inside a JSON string — eliminating the entire class of
+    single-quote-nesting bugs that caused the previous ``unexpected EOF``
+    error when Copilot ran the command via ``bash -c``.
+
+    ``adapter_path`` is the installed location of ``trw-copilot-adapter.sh``
+    inside the target project (defaults to ``$git_root/.github/hooks/…``).
+    It is a plain path string — no quoting needed in the generated command.
     """
-    # Use double-quote wrapper with escaped inner quotes to avoid
-    # the single-quote nesting bug (all grep/sed patterns work correctly)
-    json_extract = (
-        "_input=$(cat); "
-        'export TOOL_NAME=$(printf "%s" "$_input" | '
-        'grep -o \'"toolName"[[:space:]]*:[[:space:]]*"[^"]*"\' 2>/dev/null | '
-        "head -1 | "
-        'sed \'s/.*"toolName"[[:space:]]*:[[:space:]]*"//;s/"$//\' || true)'
-    )
+    if adapter_path is None:
+        git_root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        adapter_path = f"{git_root}/.github/hooks/{_COPILOT_ADAPTER_SCRIPT_NAME}"
 
-    if event_name == "preToolUse":
-        # preToolUse must return JSON stdout for permission decisions
-        return (
-            f"/bin/sh -c '"
-            f"{json_extract}; "
-            f'printf "%s" "$_input" | /bin/sh "{hook_path}" 2>/dev/null; '
-            f"_rc=$?; "
-            f'if [ "$_rc" -eq 2 ]; then '
-            f'printf \'{{"permissionDecision":"deny"}}\'; '
-            f"else "
-            f'printf \'{{"permissionDecision":"allow"}}\'; '
-            f"fi"
-            f"'"
-        )
-
-    # Non-permission hooks: pipe stdin to hook, fail-open
-    return f'/bin/sh -c \'{json_extract}; printf "%s" "$_input" | /bin/sh "{hook_path}" 2>/dev/null || true\''
+    # The generated command is a simple two-argument invocation of the adapter
+    # script.  No nested quoting, no inline shell logic — shell-safe by design.
+    return f'/bin/sh "{adapter_path}" "{hook_path}" "{event_name}"'
 
 
 def _copilot_hooks_payload() -> CopilotHooksPayload:
@@ -381,13 +359,33 @@ def generate_copilot_hooks(
     *,
     force: bool = False,
 ) -> dict[str, list[str]]:
-    """Generate ``.github/hooks/hooks.json``."""
+    """Generate ``.github/hooks/hooks.json`` and install the adapter script.
+
+    Also copies the bundled ``trw-copilot-adapter.sh`` into
+    ``.github/hooks/`` so the generated hook commands can invoke it.
+    The adapter script contains all shell logic — the hooks.json ``command``
+    strings are simple ``/bin/sh "<adapter>" "<hook>" "<event>"`` invocations
+    with no nested quoting.
+    """
     result = _new_result()
     hooks_dir = target_dir / _GITHUB_DIR / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Install the bundled adapter script ---
+    adapter_src = _bundled_adapter_script_path()
+    adapter_dest = target_dir / _COPILOT_ADAPTER_INSTALL_PATH
+    if adapter_src.is_file():
+        try:
+            shutil.copy2(adapter_src, adapter_dest)
+            # Make it executable
+            adapter_dest.chmod(adapter_dest.stat().st_mode | 0o111)
+            _record_write(result, _COPILOT_ADAPTER_INSTALL_PATH, existed=adapter_dest.exists())
+        except OSError as exc:
+            result["errors"].append(f"Failed to install adapter script: {exc}")
+
+    # --- Write hooks.json ---
     hooks_path = target_dir / _COPILOT_HOOKS_PATH
     existed = hooks_path.exists()
-
     try:
         if existed and not force:
             raw_existing = json.loads(hooks_path.read_text(encoding="utf-8"))

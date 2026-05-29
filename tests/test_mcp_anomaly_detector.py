@@ -107,6 +107,31 @@ def test_first_observation_after_deploy_fires(tmp_path: Path) -> None:
     assert "first_observation_after_deploy" in fired
 
 
+def test_first_observation_after_deploy_fires_only_once_per_pair(tmp_path: Path) -> None:
+    """The pair must be added to baseline after detection so it stops firing.
+
+    Regression: without this, the anomaly detector wrote a shadow event on
+    every single tool call (including high-frequency hot paths like
+    trw_session_start), generating disk I/O and log noise on every request.
+    """
+    cfg = _cfg(tmp_path)
+    det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+
+    obs = AnomalyObservation(
+        ts=datetime.now(tz=timezone.utc),
+        server="trw",
+        tool="trw_session_start",
+        session_id="s",
+    )
+    first = det.observe(obs)
+    second = det.observe(obs)
+    third = det.observe(obs)
+
+    assert "first_observation_after_deploy" in first
+    assert "first_observation_after_deploy" not in second
+    assert "first_observation_after_deploy" not in third
+
+
 def test_namespace_mismatch_detected(tmp_path: Path) -> None:
     """CVE-2025-53773: prefix that doesn't belong to server fires mismatch."""
     cfg = _cfg(tmp_path)

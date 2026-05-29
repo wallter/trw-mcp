@@ -17,6 +17,11 @@ correctly intercepts calls from this module.
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +32,125 @@ from trw_mcp.state.analytics import report as _report
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
+
+# Per-process throttle for auto_close_stale_runs. Sweeping every active
+# run.yaml on every session_start cost ~3-5s on a project with ~200 runs;
+# stale-run cleanup is idempotent and not time-critical, so once per hour
+# is plenty.
+_AUTO_CLOSE_MIN_INTERVAL_SECONDS = 3600.0
+_auto_close_state_lock = threading.Lock()
+_auto_close_last_ts: float = 0.0
+_auto_close_persisted_loaded: bool = False
+
+# PRD-FIX-082: persist throttle to disk so per-process restarts (esp.
+# user-project stdio installs) inherit the hour-window throttle. Without
+# persistence, every fresh MCP process pays the scan cost on its first call.
+_AUTO_CLOSE_THROTTLE_FILE_VERSION = 1
+
+
+def _auto_close_state_path(trw_dir: Path) -> Path:
+    """Return the path to the persisted throttle state file."""
+
+    return trw_dir / "runtime" / "auto_close_last_ts.json"
+
+
+def _load_persisted_throttle(trw_dir: Path) -> float:
+    """Load the persisted throttle timestamp as monotonic-equivalent seconds.
+
+    Returns 0.0 when the file is missing, malformed, or older than the
+    throttle window (the latter is a fail-safe so a stale file doesn't
+    permanently block sweeps).
+    """
+
+    path = _auto_close_state_path(trw_dir)
+    try:
+        if not path.exists():
+            return 0.0
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        version = data.get("version")
+        last_iso = data.get("last_ts")
+        if version != _AUTO_CLOSE_THROTTLE_FILE_VERSION or not isinstance(last_iso, str):
+            logger.debug(
+                "auto_close_throttle_state_unreadable",
+                reason="version_or_field_mismatch",
+                path=str(path),
+            )
+            return 0.0
+        last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        wall_age = (datetime.now(timezone.utc) - last_dt).total_seconds()
+        if wall_age >= _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
+            # Persisted timestamp is older than the throttle window. Treat as
+            # "no prior call" so the next call runs the sweep.
+            return 0.0
+        # Translate wall-clock age into a synthetic monotonic anchor: pretend
+        # the prior call happened (now_monotonic - wall_age) seconds ago.
+        return time.monotonic() - wall_age
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        logger.debug(
+            "auto_close_throttle_state_unreadable",
+            path=str(path),
+            exc_info=True,
+        )
+        return 0.0
+
+
+def _save_persisted_throttle(trw_dir: Path) -> None:
+    """Write the current UTC timestamp atomically (temp + rename)."""
+
+    path = _auto_close_state_path(trw_dir)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "last_ts": datetime.now(timezone.utc).isoformat(),
+            "version": _AUTO_CLOSE_THROTTLE_FILE_VERSION,
+        }
+        # Atomic temp + rename so a crash mid-write cannot leave a partial file.
+        fd, tmp_path = tempfile.mkstemp(prefix=".auto_close_", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+                json.dump(payload, fp)
+            os.replace(tmp_path, path)
+        except Exception:
+            # Best-effort cleanup if rename failed.
+            try:
+                Path(tmp_path).unlink()
+            except OSError:
+                pass
+            raise
+    except OSError:
+        logger.debug(
+            "auto_close_throttle_state_write_failed",
+            path=str(path),
+            exc_info=True,
+        )
+
+
+def _reset_auto_close_throttle(trw_dir: Path | None = None) -> None:
+    """Test hook: reset both in-memory and persisted throttle. Never call from production.
+
+    Args:
+        trw_dir: When provided, also delete the persisted state file so the
+            next call behaves as if no prior sweep occurred. When omitted,
+            only the in-memory state is reset (suitable for unit tests that
+            never touched the persisted file).
+    """
+
+    global _auto_close_last_ts, _auto_close_persisted_loaded
+    with _auto_close_state_lock:
+        _auto_close_last_ts = 0.0
+        _auto_close_persisted_loaded = False
+    if trw_dir is not None:
+        try:
+            _auto_close_state_path(trw_dir).unlink(missing_ok=True)
+        except OSError:
+            logger.debug(
+                "auto_close_throttle_state_reset_failed",
+                path=str(_auto_close_state_path(trw_dir)),
+                exc_info=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +284,8 @@ def _is_run_stale(
 def auto_close_stale_runs(
     age_days: int | None = None,
     ttl_hours: int | None = None,
+    *,
+    force: bool = False,
 ) -> dict[str, object]:
     """Auto-close active runs older than a configurable threshold.
 
@@ -168,16 +294,60 @@ def auto_close_stale_runs(
     Checkpoint timestamps extend the TTL: the most recent checkpoint
     resets the staleness clock.
 
-    Called automatically during trw_session_start when enabled.
+    Called automatically during trw_session_start when enabled. Throttled
+    per-process to once per hour because sweeping every active run.yaml
+    cost ~3-5s on a project with ~200 runs; the sweep is idempotent and
+    not time-critical, so the previous "every session_start" cadence
+    burned latency for no benefit. Pass ``force=True`` to bypass the
+    throttle (tests, manual repair).
 
     Args:
         age_days: Days of inactivity before closing. Defaults to config value.
         ttl_hours: Hour-level TTL override. Takes precedence when set.
+        force: Skip the per-process throttle (default ``False``).
 
     Returns:
-        Dict with runs_closed list, count, and any errors.
+        Dict with runs_closed list, count, and any errors. When throttled,
+        returns ``{"runs_closed": [], "count": 0, "errors": [],
+        "throttled": True, "next_eligible_in_seconds": <float>}``.
     """
+    global _auto_close_last_ts, _auto_close_persisted_loaded
     cfg = _report.get_config()
+    project_root = _report.resolve_project_root()
+    trw_dir = project_root / str(cfg.trw_dir)
+
+    if not force:
+        with _auto_close_state_lock:
+            # PRD-FIX-082: on first call after process boot, seed the in-memory
+            # throttle from the persisted file so user-project stdio installs
+            # don't pay the scan tax on every fresh process.
+            if not _auto_close_persisted_loaded:
+                persisted = _load_persisted_throttle(trw_dir)
+                if persisted > 0.0:
+                    _auto_close_last_ts = persisted
+                _auto_close_persisted_loaded = True
+
+            now_mono = time.monotonic()
+            elapsed = now_mono - _auto_close_last_ts
+            if _auto_close_last_ts > 0.0 and elapsed < _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
+                logger.debug(
+                    "auto_close_stale_runs_throttled",
+                    elapsed_seconds=elapsed,
+                    interval_seconds=_AUTO_CLOSE_MIN_INTERVAL_SECONDS,
+                )
+                return {
+                    "runs_closed": [],
+                    "count": 0,
+                    "errors": [],
+                    "throttled": True,
+                    "next_eligible_in_seconds": _AUTO_CLOSE_MIN_INTERVAL_SECONDS - elapsed,
+                }
+            _auto_close_last_ts = now_mono
+
+    # Persist the just-recorded timestamp so future processes inherit the
+    # window (PRD-FIX-082). Best-effort: failures are logged but never raise.
+    _save_persisted_throttle(trw_dir)
+
     reader = FileStateReader()
     writer = FileStateWriter()
 
@@ -188,7 +358,6 @@ def auto_close_stale_runs(
     else:
         threshold_hours = cfg.run_stale_ttl_hours
 
-    project_root = _report.resolve_project_root()
     runs_root = project_root / cfg.runs_root
 
     closed: list[str] = []
@@ -198,6 +367,9 @@ def auto_close_stale_runs(
     if not runs_root.exists():
         return {"runs_closed": closed, "count": 0, "errors": errors}
 
+    # Lazy import to avoid a cycle with state/_run_gc importing _paths.
+    from trw_mcp.state._run_gc import _prefilter_status
+
     for task_dir in sorted(runs_root.iterdir()):
         if not task_dir.is_dir():
             continue
@@ -205,6 +377,16 @@ def auto_close_stale_runs(
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
                 continue
+
+            # Fast path: regex-prefilter status from the file header so
+            # terminal runs short-circuit without invoking the YAML parser.
+            # A few legacy run.yaml files have grown to multi-MB; full safe
+            # parsing on those takes seconds, and they are typically already
+            # terminal so the parse is wasted work.
+            prefilter_status = _prefilter_status(run_yaml)
+            if prefilter_status is not None and prefilter_status != "active":
+                continue
+
             try:
                 data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", ""))
@@ -260,12 +442,18 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
     if not runs_root.exists():
         return 0
 
+    # Lazy import — see auto_close_stale_runs for rationale.
+    from trw_mcp.state._run_gc import _prefilter_status
+
     for task_dir in sorted(runs_root.iterdir()):
         if not task_dir.is_dir():
             continue
         for run_dir in sorted(task_dir.iterdir()):
             run_yaml = run_dir / "meta" / "run.yaml"
             if not run_yaml.exists():
+                continue
+            prefilter_status = _prefilter_status(run_yaml)
+            if prefilter_status is not None and prefilter_status != "active":
                 continue
             try:
                 data = reader.read_yaml(run_yaml)

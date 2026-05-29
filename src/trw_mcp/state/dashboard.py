@@ -351,6 +351,7 @@ def _filter_events_to_window(
             "task_name",
             "phase",
             "tests_passed",
+            "static_checks_clean",
             "mypy_clean",
         ):
             if field in source:

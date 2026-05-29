@@ -11,12 +11,11 @@ import json
 import re
 import shutil
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import structlog
 
+from trw_mcp.channels.opencode._shared_lock import ChannelLockSkip, agents_md_lock
 from trw_mcp.models.typed_dicts._opencode import (
     OpencodeConfig,
     OpencodeServerEntry,
@@ -24,6 +23,15 @@ from trw_mcp.models.typed_dicts._opencode import (
 )
 
 from ._file_ops import _new_result
+from ._opencode_instructions import (
+    detect_model_family as detect_model_family,
+)
+from ._opencode_instructions import (
+    generate_codex_instructions as generate_codex_instructions,
+)
+from ._opencode_instructions import (
+    generate_opencode_instructions as generate_opencode_instructions,
+)
 from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
@@ -375,6 +383,10 @@ def generate_agents_md(
     Uses same <!-- trw:start --> / <!-- trw:end --> markers as CLAUDE.md.
     If file exists, replaces only the section between markers.
     If not, creates new file with the section.
+
+    Acquires the shared ``.trw/channels/agents-md.lock`` (OC-B1 / PRD-DIST-2403 FR05)
+    so that this ceremony writer and the distill segment writer cannot race.
+    Fail-open: if the lock cannot be acquired, returns a skipped indication.
     """
     result: dict[str, list[str]] = {
         "created": [],
@@ -382,46 +394,62 @@ def generate_agents_md(
         "preserved": [],
         "errors": [],
     }
-    agents_md_path = target_dir / "AGENTS.md"
 
-    new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
+    # Acquire shared AGENTS.md lock (OC-B1 / PRD-DIST-2403 FR05)
+    try:
+        lock = agents_md_lock(target_dir)
+        lock.__enter__()
+    except ChannelLockSkip:
+        logger.debug("generate_agents_md_lock_skip", outcome="skipped_lock")
+        result["errors"].append("AGENTS.md write skipped: could not acquire agents-md lock")
+        return result
 
-    if agents_md_path.exists() and not force:
-        content = agents_md_path.read_text(encoding="utf-8")
-        start_idx = content.find(_TRW_START_MARKER)
-        end_idx = content.find(_TRW_END_MARKER)
+    try:
+        agents_md_path = target_dir / "AGENTS.md"
 
-        if start_idx != -1 and end_idx != -1:
-            # Replace existing TRW section, preserve surrounding content
-            end_pos = end_idx + len(_TRW_END_MARKER)
-            # Capture optional header line before trw:start
-            header_idx = content.rfind(_TRW_HEADER, 0, start_idx)
-            replace_start = header_idx if header_idx != -1 else start_idx
-            updated = content[:replace_start] + new_block + content[end_pos:]
-            try:
-                agents_md_path.write_text(updated, encoding="utf-8")
-                result["updated"].append(str(agents_md_path.name))
-            except OSError as exc:
-                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
-        elif start_idx == -1 and end_idx == -1:
-            # No TRW section yet — append it
-            if not content.endswith("\n"):
-                content += "\n"
-            content += "\n" + new_block
-            try:
-                agents_md_path.write_text(content, encoding="utf-8")
-                result["updated"].append(str(agents_md_path.name))
-            except OSError as exc:
-                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+        new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
+
+        if agents_md_path.exists() and not force:
+            content = agents_md_path.read_text(encoding="utf-8")
+            start_idx = content.find(_TRW_START_MARKER)
+            end_idx = content.find(_TRW_END_MARKER)
+
+            if start_idx != -1 and end_idx != -1:
+                # Replace existing TRW section, preserve surrounding content
+                end_pos = end_idx + len(_TRW_END_MARKER)
+                # Capture optional header line before trw:start
+                header_idx = content.rfind(_TRW_HEADER, 0, start_idx)
+                replace_start = header_idx if header_idx != -1 else start_idx
+                updated = content[:replace_start] + new_block + content[end_pos:]
+                try:
+                    agents_md_path.write_text(updated, encoding="utf-8")
+                    result["updated"].append(str(agents_md_path.name))
+                except OSError as exc:
+                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+            elif start_idx == -1 and end_idx == -1:
+                # No TRW section yet — append it
+                if not content.endswith("\n"):
+                    content += "\n"
+                content += "\n" + new_block
+                try:
+                    agents_md_path.write_text(content, encoding="utf-8")
+                    result["updated"].append(str(agents_md_path.name))
+                except OSError as exc:
+                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+            else:
+                result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
         else:
-            result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
-    else:
-        # Create new file
+            # Create new file
+            try:
+                agents_md_path.write_text(new_block, encoding="utf-8")
+                result["created"].append(str(agents_md_path.name))
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {agents_md_path}: {exc}")
+    finally:
         try:
-            agents_md_path.write_text(new_block, encoding="utf-8")
-            result["created"].append(str(agents_md_path.name))
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {agents_md_path}: {exc}")
+            lock.__exit__(None, None, None)
+        except Exception:
+            pass
 
     logger.debug(
         "generate_agents_md",
@@ -434,152 +462,3 @@ def generate_agents_md(
 # ---------------------------------------------------------------------------
 # Model family detection
 # ---------------------------------------------------------------------------
-
-
-def detect_model_family(opencode_json: Mapping[str, Any]) -> str:
-    """Detect model family from opencode.json configuration.
-
-    Reads the 'model' field from opencode.json and returns a model family
-    identifier that can be used to select appropriate instruction content.
-
-    Args:
-        opencode_json: Parsed opencode.json configuration dict.
-
-    Returns:
-        Model family string: 'qwen', 'gpt', 'claude', or 'generic'.
-    """
-    model = opencode_json.get("model", "")
-    if not model:
-        return "generic"
-
-    model_lower = model.lower()
-
-    if "qwen" in model_lower:
-        return "qwen"
-    if "gpt" in model_lower or re.match(r"^o[13](?:$|[-_])", model_lower):
-        return "gpt"
-    if "claude" in model_lower:
-        return "claude"
-    return "generic"
-
-
-# ---------------------------------------------------------------------------
-# Per-client instruction generation
-# ---------------------------------------------------------------------------
-
-
-def generate_opencode_instructions(
-    target_dir: Path,
-    model_family: str,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Generate or update .opencode/INSTRUCTIONS.md with model-specific content.
-
-    Creates aper-client instruction file with content optimized for the detected
-    model family (qwen, gpt, claude, or generic).
-
-    Args:
-        target_dir: Target directory for the INSTRUCTIONS.md file.
-        model_family: One of 'qwen', 'gpt', 'claude', or 'generic'.
-        force: If True, overwrite existing file.
-
-    Returns:
-        Dict with 'created', 'updated', 'preserved', 'errors' lists.
-    """
-    from trw_mcp.state.claude_md._static_sections import render_opencode_instructions
-
-    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-
-    instructions_path = target_dir / ".opencode" / "INSTRUCTIONS.md"
-    rel_path = str(instructions_path.relative_to(target_dir))
-
-    try:
-        instructions_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        result["errors"].append(f"Failed to create directory {instructions_path.parent}: {exc}")
-        return result
-
-    content = render_opencode_instructions(model_family)
-    existed = instructions_path.exists()
-
-    if not force and _is_user_modified(instructions_path, rel_path, manifest_hashes):
-        result["preserved"].append(rel_path)
-        return result
-
-    if existed and not force:
-        existing = instructions_path.read_text(encoding="utf-8")
-        if existing.strip() == content.strip():
-            result["preserved"].append(rel_path)
-            return result
-
-    try:
-        instructions_path.write_text(content, encoding="utf-8")
-        result["updated" if existed else "created"].append(rel_path)
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {instructions_path}: {exc}")
-
-    logger.debug(
-        "generate_opencode_instructions",
-        created=result["created"],
-        updated=result["updated"],
-    )
-    return result
-
-
-def generate_codex_instructions(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Generate or update .codex/INSTRUCTIONS.md with Codex-specific content.
-
-    Creates a per-client instruction file with Codex-optimized workflow.
-
-    Args:
-        target_dir: Target directory for the INSTRUCTIONS.md file.
-        force: If True, overwrite existing file.
-
-    Returns:
-        Dict with 'created', 'updated', 'preserved', 'errors' lists.
-    """
-    from trw_mcp.state.claude_md._static_sections import render_codex_instructions
-
-    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-
-    instructions_path = target_dir / ".codex" / "INSTRUCTIONS.md"
-    rel_path = str(instructions_path.relative_to(target_dir))
-
-    try:
-        instructions_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        result["errors"].append(f"Failed to create directory {instructions_path.parent}: {exc}")
-        return result
-
-    content = render_codex_instructions()
-    existed = instructions_path.exists()
-
-    if not force and _is_user_modified(instructions_path, rel_path, manifest_hashes):
-        result["preserved"].append(rel_path)
-        return result
-
-    if existed and not force:
-        existing = instructions_path.read_text(encoding="utf-8")
-        if existing.strip() == content.strip():
-            result["preserved"].append(rel_path)
-            return result
-
-    try:
-        instructions_path.write_text(content, encoding="utf-8")
-        result["updated" if existed else "created"].append(rel_path)
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {instructions_path}: {exc}")
-
-    logger.debug(
-        "generate_codex_instructions",
-        created=result["created"],
-        updated=result["updated"],
-    )
-    return result

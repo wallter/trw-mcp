@@ -1,13 +1,37 @@
-"""Tests for SyncPusher — PRD-INFRA-051-FR09."""
+"""Tests for SyncPusher — PRD-INFRA-051-FR09.
+
+PRD-FIX-087: push_learnings/push_outcomes are now async + httpx.AsyncClient.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import re
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+def _build_async_httpx_mock(response_or_responses: object) -> MagicMock:
+    """Mock httpx.AsyncClient class with awaitable post() returning response(s).
+
+    Accepts either a single response object or a list (used as side_effect).
+    """
+    mock_cls = MagicMock()
+    mock_client = MagicMock()
+    if isinstance(response_or_responses, list):
+        mock_client.post = AsyncMock(side_effect=response_or_responses)
+        mock_client.get = AsyncMock(side_effect=response_or_responses)
+    else:
+        mock_client.post = AsyncMock(return_value=response_or_responses)
+        mock_client.get = AsyncMock(return_value=response_or_responses)
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+    return mock_cls
 
 
 def _make_mock_entry(
     entry_id: str = "L-001",
-    sync_hash: str = "abc123",
+    sync_hash: str = "a" * 64,
     sync_seq: int = 1,
     summary: str = "test",
 ) -> MagicMock:
@@ -33,18 +57,18 @@ def _make_mock_entry(
     return entry
 
 
-def test_push_empty_returns_zero() -> None:
+async def test_push_empty_returns_zero() -> None:
     """Push with no entries returns zero counts."""
     from trw_mcp.sync.push import SyncPusher
 
     pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
-    result = pusher.push_learnings([])
+    result = await pusher.push_learnings([])
     assert result.pushed == 0
     assert result.failed == 0
     assert result.skipped == 0
 
 
-def test_push_unreachable_returns_failed() -> None:
+async def test_push_unreachable_returns_failed() -> None:
     """Push to unreachable URL returns failed count, never raises."""
     from trw_mcp.sync.push import SyncPusher
 
@@ -55,17 +79,17 @@ def test_push_unreachable_returns_failed() -> None:
         client_id="sync-test",
     )
     entries = [_make_mock_entry(f"L-{i}") for i in range(3)]
-    result = pusher.push_learnings(entries)
+    result = await pusher.push_learnings(entries)
     assert result.failed == 3
     assert result.pushed == 0
 
 
-def test_push_outcomes_empty_returns_zero() -> None:
+async def test_push_outcomes_empty_returns_zero() -> None:
     """Push outcomes with no entries returns zero counts."""
     from trw_mcp.sync.push import SyncPusher
 
     pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
-    result = pusher.push_outcomes([])
+    result = await pusher.push_outcomes([])
     assert result.pushed == 0
 
 
@@ -73,17 +97,84 @@ def test_serialize_entry_format() -> None:
     """Serialized entry has required fields for backend API."""
     from trw_mcp.sync.push import SyncPusher
 
+    valid_hash = "b" * 64
     pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
-    entry = _make_mock_entry("L-test", sync_hash="hash123", summary="test discovery")
+    entry = _make_mock_entry("L-test", sync_hash=valid_hash, summary="test discovery")
     serialized = pusher._serialize_entry(entry)
 
     assert serialized["source_learning_id"] == "L-test"
-    assert serialized["sync_hash"] == "hash123"
+    # A valid 64-hex stored hash is passed through unchanged.
+    assert serialized["sync_hash"] == valid_hash
     assert "summary" in serialized
     assert "tags" in serialized
     assert serialized["vector_clock"] == {"sync-test": 1}
     assert serialized["metadata"]["source"] == "unit-test"
     assert serialized["metadata"]["installation_id"] != "install-123"
+
+
+# Backend `LearningSync.sync_hash` (backend/routers/sync.py:28) is validated
+# against this pattern under extra="forbid"; an entry that fails it 422-rejects
+# the whole batch. These tests guard the 2026-05-20 MCP-server snare fix.
+_BACKEND_SYNC_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+_MISSING = object()
+
+
+def _serialize_with_hash(raw: object) -> dict[str, object]:
+    """Serialize an entry whose to_dict() carries the given sync_hash value."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    entry = _make_mock_entry("L-coerce", summary="discovery body")
+    payload = entry.to_dict.return_value
+    if raw is _MISSING:
+        payload.pop("sync_hash", None)
+    else:
+        payload["sync_hash"] = raw
+    return pusher._serialize_entry(entry)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [_MISSING, "", "hash123", "ABC" + "d" * 61, "g" * 64, "f" * 63, 12345, None],
+    ids=["missing", "empty", "too-short-legacy", "uppercase", "non-hex", "wrong-length", "int", "none"],
+)
+def test_serialize_entry_synthesizes_valid_hash_for_invalid_input(raw: object) -> None:
+    """Missing/empty/invalid sync_hash is replaced by a backend-valid 64-hex hash."""
+    serialized = _serialize_with_hash(raw)
+    sync_hash = serialized["sync_hash"]
+    assert isinstance(sync_hash, str)
+    assert _BACKEND_SYNC_HASH_PATTERN.fullmatch(sync_hash) is not None
+
+
+def test_serialize_entry_synthesized_hash_is_stable_for_unchanged_content() -> None:
+    """Re-serializing identical content yields the same synthesized hash (idempotency)."""
+    first = _serialize_with_hash("")["sync_hash"]
+    second = _serialize_with_hash(_MISSING)["sync_hash"]
+    assert first == second
+
+
+def test_serialize_entry_synthesized_hash_changes_with_content() -> None:
+    """Different content yields a different synthesized hash (backend UPDATE detection)."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    a = _make_mock_entry("L-x", summary="alpha body")
+    a.to_dict.return_value.pop("sync_hash", None)
+    b = _make_mock_entry("L-x", summary="beta body")
+    b.to_dict.return_value.pop("sync_hash", None)
+    assert pusher._serialize_entry(a)["sync_hash"] != pusher._serialize_entry(b)["sync_hash"]
+
+
+def test_is_valid_sync_hash_helper() -> None:
+    """The validity predicate matches the backend pattern exactly."""
+    from trw_mcp.sync.push import _is_valid_sync_hash
+
+    assert _is_valid_sync_hash("a" * 64) is True
+    assert _is_valid_sync_hash("a" * 63) is False
+    assert _is_valid_sync_hash("A" * 64) is False  # uppercase rejected by backend
+    assert _is_valid_sync_hash("") is False
+    assert _is_valid_sync_hash(None) is False
+    assert _is_valid_sync_hash(123) is False
 
 
 def test_serialize_entry_anonymizes_summary_and_detail() -> None:
@@ -115,7 +206,7 @@ def test_push_result_model() -> None:
     assert result.skipped == 2
 
 
-def test_push_outcomes_unreachable_returns_failed() -> None:
+async def test_push_outcomes_unreachable_returns_failed() -> None:
     """Push outcomes to unreachable URL returns failed count."""
     from trw_mcp.sync.push import SyncPusher
 
@@ -125,25 +216,26 @@ def test_push_outcomes_unreachable_returns_failed() -> None:
         timeout=1.0,
         client_id="sync-test",
     )
-    result = pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
+    result = await pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
     assert result.failed > 0
 
 
-def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None:
+async def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None:
     """Learning push boundary failures log warning + traceback and stay fail-open."""
     from trw_mcp.sync.push import SyncPusher
 
     pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-test")
     entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
 
+    mock_client_cls = _build_async_httpx_mock(MagicMock())
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
+    mock_client.post = AsyncMock(side_effect=RuntimeError("boom"))
+
     with (
-        patch("httpx.Client") as mock_client_cls,
+        patch("httpx.AsyncClient", mock_client_cls),
         patch("trw_mcp.sync.push.logger.warning") as mock_warning,
     ):
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        mock_client.post.side_effect = RuntimeError("boom")
-
-        result = pusher.push_learnings(entries)
+        result = await pusher.push_learnings(entries)
 
     assert result.failed == 2
     args, kwargs = mock_warning.call_args
@@ -154,21 +246,22 @@ def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None:
     assert kwargs["exc_info"] is True
 
 
-def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
+async def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
     """Outcome push boundary failures log warning + traceback and stay fail-open."""
     from trw_mcp.sync.push import SyncPusher
 
     pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-test")
     outcomes = [{"session_id": "s1", "learning_ids": ["L-1"]}]
 
+    mock_client_cls = _build_async_httpx_mock(MagicMock())
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
+    mock_client.post = AsyncMock(side_effect=RuntimeError("boom"))
+
     with (
-        patch("httpx.Client") as mock_client_cls,
+        patch("httpx.AsyncClient", mock_client_cls),
         patch("trw_mcp.sync.push.logger.warning") as mock_warning,
     ):
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        mock_client.post.side_effect = RuntimeError("boom")
-
-        result = pusher.push_outcomes(outcomes)
+        result = await pusher.push_outcomes(outcomes)
 
     assert result.failed == 1
     args, kwargs = mock_warning.call_args
@@ -179,7 +272,7 @@ def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> None:
     assert kwargs["exc_info"] is True
 
 
-def test_push_outcomes_batches_requests() -> None:
+async def test_push_outcomes_batches_requests() -> None:
     """Outcome pushes respect configured batch size."""
     from trw_mcp.sync.push import SyncPusher
 
@@ -195,18 +288,18 @@ def test_push_outcomes_batches_requests() -> None:
         {"session_id": "s3", "learning_ids": ["L-3"]},
     ]
 
-    with patch("httpx.Client") as mock_client_cls:
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response1 = MagicMock()
-        response1.json.return_value = {"inserted": 2}
-        response1.raise_for_status.return_value = None
-        response2 = MagicMock()
-        response2.json.return_value = {"inserted": 1}
-        response2.raise_for_status.return_value = None
-        mock_client.post.side_effect = [response1, response2]
+    response1 = MagicMock()
+    response1.json.return_value = {"inserted": 2}
+    response1.raise_for_status.return_value = None
+    response2 = MagicMock()
+    response2.json.return_value = {"inserted": 1}
+    response2.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock([response1, response2])
 
-        result = pusher.push_outcomes(outcomes)
+    with patch("httpx.AsyncClient", mock_client_cls):
+        result = await pusher.push_outcomes(outcomes)
 
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
     assert result.pushed == 3
     assert result.failed == 0
     assert mock_client.post.call_count == 2
@@ -216,7 +309,7 @@ def test_push_outcomes_batches_requests() -> None:
     assert len(second_payload["outcomes"]) == 1
 
 
-def test_push_uses_stable_configured_client_id() -> None:
+async def test_push_uses_stable_configured_client_id() -> None:
     """Push payload uses the shared stable sync client id."""
     from trw_mcp.sync.push import SyncPusher
 
@@ -227,58 +320,56 @@ def test_push_uses_stable_configured_client_id() -> None:
         client_id="sync-claude-code-inst-123",
     )
 
-    with patch("httpx.Client") as mock_client_cls:
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response = MagicMock()
-        response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
-        response.raise_for_status.return_value = None
-        mock_client.post.return_value = response
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
 
-        pusher.push_learnings([entry])
+    with patch("httpx.AsyncClient", mock_client_cls):
+        await pusher.push_learnings([entry])
 
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
     _, kwargs = mock_client.post.call_args
     assert kwargs["json"]["client_id"] == "sync-claude-code-inst-123"
 
 
-def test_push_treats_backend_reported_errors_as_batch_failure() -> None:
+async def test_push_treats_backend_reported_errors_as_batch_failure() -> None:
     """Server-reported ingest errors keep the whole batch dirty for retry."""
     from trw_mcp.sync.push import SyncPusher
 
     entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
     pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
-    with patch("httpx.Client") as mock_client_cls:
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response = MagicMock()
-        response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "errors": 1}
-        response.raise_for_status.return_value = None
-        mock_client.post.return_value = response
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "errors": 1}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
 
-        result = pusher.push_learnings(entries)
+    with patch("httpx.AsyncClient", mock_client_cls):
+        result = await pusher.push_learnings(entries)
 
     assert result.pushed == 0
     assert result.skipped == 0
     assert result.failed == 2
 
 
-def test_push_logs_structured_start_and_complete_events() -> None:
+async def test_push_logs_structured_start_and_complete_events() -> None:
     """Successful pushes emit client-aware start/complete telemetry."""
     from trw_mcp.sync.push import SyncPusher
 
     entry = _make_mock_entry("L-1")
     pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
 
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
+
     with (
-        patch("httpx.Client") as mock_client_cls,
+        patch("httpx.AsyncClient", mock_client_cls),
         patch("trw_mcp.sync.push.logger.info") as mock_info,
     ):
-        mock_client = mock_client_cls.return_value.__enter__.return_value
-        response = MagicMock()
-        response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
-        response.raise_for_status.return_value = None
-        mock_client.post.return_value = response
-
-        result = pusher.push_learnings([entry])
+        result = await pusher.push_learnings([entry])
 
     assert result.pushed == 1
     assert mock_info.call_args_list[0].args == ("sync_push_start",)

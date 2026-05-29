@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
-import json
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -14,7 +12,18 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from trw_mcp.meta_tune.audit import AuditAppendError, AuditIntegrityError, append_audit_entry
-from trw_mcp.meta_tune.boot_checks import _resolve_repo_root
+from trw_mcp.meta_tune.dispatch_helpers import (
+    build_diff,
+    derive_outcome_trace,
+    materialize_sandbox_command,
+    parse_sandbox_stdout,
+    persist_snapshot,
+    resolve_repo,
+    resolve_repo_path,
+)
+from trw_mcp.meta_tune.dispatch_helpers import (
+    sandbox_escape_signals as collect_sandbox_escape_signals,
+)
 from trw_mcp.meta_tune.errors import MetaTuneSafetyUnavailableError
 from trw_mcp.meta_tune.eval_gaming_detector import detect_eval_gaming
 from trw_mcp.meta_tune.promotion_gate import PromotionGate, PromotionProposal
@@ -45,113 +54,6 @@ class DispatchResult(BaseModel):
 
 def _default_state_dir() -> Path:
     return Path(".trw/meta_tune/state")
-
-
-def _resolve_repo(target_path: Path) -> Path:
-    try:
-        return _resolve_repo_root(cwd=target_path.parent)
-    except Exception:
-        return target_path.parent.resolve()
-
-
-def _resolve_repo_path(path_str: str, *, repo_root: Path) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    return (repo_root / path).resolve()
-
-
-def _build_diff(target_path: Path, before: str, after: str) -> str:
-    return "".join(
-        difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=f"a/{target_path.as_posix()}",
-            tofile=f"b/{target_path.as_posix()}",
-        )
-    )
-
-
-def _materialize_sandbox_command(
-    sandbox_command: list[str],
-    *,
-    candidate_path: Path,
-    live_target_path: Path,
-    corpus_path: Path,
-    repo_root: Path,
-) -> list[str]:
-    replacements = {
-        "{candidate_path}": str(candidate_path),
-        "{target_path}": str(live_target_path),
-        "{corpus_path}": str(corpus_path),
-        "{repo_root}": str(repo_root),
-    }
-    rendered: list[str] = []
-    for token in sandbox_command:
-        current = token
-        for placeholder, value in replacements.items():
-            current = current.replace(placeholder, value)
-        rendered.append(current)
-    return rendered
-
-
-def _parse_sandbox_stdout(stdout: str) -> dict[str, Any]:
-    stripped = stdout.strip()
-    if not stripped:
-        raise ValueError("sandbox stdout missing JSON payload")
-
-    candidates = [line.strip() for line in stripped.splitlines() if line.strip()]
-    for candidate in reversed(candidates):
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    raise ValueError("sandbox stdout did not contain a JSON object payload")
-
-
-def _derive_outcome_trace(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    trace = payload.get("outcome_trace")
-    if isinstance(trace, list):
-        return [row for row in trace if isinstance(row, dict)]
-    scores = payload.get("scores")
-    if isinstance(scores, dict):
-        return [
-            {"task": str(task_id), "score": float(score)}
-            for task_id, score in scores.items()
-            if isinstance(score, (int, float))
-        ]
-    return []
-
-
-def _sandbox_escape_signals(sandbox_result: SandboxResult) -> tuple[str, ...]:
-    signals: list[str] = []
-    if sandbox_result.writes_outside_tmp:
-        signals.append("writes_outside_tmp")
-    if sandbox_result.network_attempted:
-        signals.append("network_attempted")
-    return tuple(signals)
-
-
-def _persist_snapshot(
-    *,
-    edit_id: str,
-    state_dir: Path,
-    target_path: Path,
-    original_path: Path,
-    promotion_session_id: str,
-) -> None:
-    snapshot = {
-        "proposal_id": edit_id,
-        "target_path": str(target_path),
-        "backup_path": str(original_path),
-        "promotion_ts": datetime.now(timezone.utc).isoformat(),
-        "promotion_session_id": promotion_session_id,
-        "rollback_attempts": 0,
-    }
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{edit_id}.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
 
 def promote_candidate(
@@ -198,14 +100,14 @@ def promote_candidate(
         )
 
     resolved_target = target_path.resolve()
-    repo_root = _resolve_repo(resolved_target)
+    repo_root = resolve_repo(resolved_target)
     resolved_state_dir = (state_dir or _default_state_dir()).resolve()
-    resolved_audit_log = _resolve_repo_path(cfg.meta_tune.audit_log_path, repo_root=repo_root)
-    resolved_corpus_path = _resolve_repo_path(cfg.meta_tune.corpus_path, repo_root=repo_root)
+    resolved_audit_log = resolve_repo_path(cfg.meta_tune.audit_log_path, repo_root=repo_root)
+    resolved_corpus_path = resolve_repo_path(cfg.meta_tune.corpus_path, repo_root=repo_root)
     resolved_edit_id = edit_id or str(uuid.uuid4())
     resolved_session_id = promotion_session_id or str(uuid.uuid4())
     original_content = resolved_target.read_text(encoding="utf-8") if resolved_target.exists() else ""
-    diff = _build_diff(resolved_target, original_content, candidate_content)
+    diff = build_diff(resolved_target, original_content, candidate_content)
 
     candidate = CandidateEdit(
         edit_id=resolved_edit_id,
@@ -274,7 +176,7 @@ def promote_candidate(
     staging_dir.mkdir(parents=True, exist_ok=True)
     staged_candidate_path = staging_dir / resolved_target.name
     staged_candidate_path.write_text(candidate_content, encoding="utf-8")
-    rendered_command = _materialize_sandbox_command(
+    rendered_command = materialize_sandbox_command(
         sandbox_command,
         candidate_path=staged_candidate_path,
         live_target_path=resolved_target,
@@ -319,7 +221,7 @@ def promote_candidate(
             activation_gate_blocked_reason=str(exc),
         ) from exc
 
-    sandbox_escape_signals = _sandbox_escape_signals(sandbox_result)
+    sandbox_escape_signals = collect_sandbox_escape_signals(sandbox_result)
     if sandbox_escape_signals:
         logger.warning(
             "meta_tune_sandbox_policy_violation",
@@ -398,8 +300,8 @@ def promote_candidate(
             audit_log_path=str(resolved_audit_log),
         )
 
-    sandbox_report = _parse_sandbox_stdout(sandbox_result.stdout)
-    outcome_trace = _derive_outcome_trace(sandbox_report)
+    sandbox_report = parse_sandbox_stdout(sandbox_result.stdout)
+    outcome_trace = derive_outcome_trace(sandbox_report)
     metric_delta = declared_metric_delta
     report_delta = sandbox_report.get("declared_metric_delta")
     if metric_delta is None and isinstance(report_delta, (int, float)):
@@ -439,7 +341,7 @@ def promote_candidate(
             backup_path.write_text("", encoding="utf-8")
         resolved_target.parent.mkdir(parents=True, exist_ok=True)
         resolved_target.write_text(candidate_content, encoding="utf-8")
-        _persist_snapshot(
+        persist_snapshot(
             edit_id=resolved_edit_id,
             state_dir=resolved_state_dir,
             target_path=resolved_target,

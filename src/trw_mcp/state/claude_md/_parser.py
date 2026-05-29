@@ -51,7 +51,6 @@ def load_claude_md_template(trw_dir: Path) -> str:
         "{{ceremony_quick_ref}}"
         "{{framework_reference}}"
         "{{delegation_section}}"
-        "{{agent_teams_section}}"
         "{{behavioral_protocol}}"
         "{{rationalization_watchlist}}"
         "{{ceremony_phases}}"

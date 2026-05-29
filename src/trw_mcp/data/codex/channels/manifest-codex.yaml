@@ -1,0 +1,159 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: codex-agents-md-hotspots
+  client: codex
+  surface: codex_agents_md_segment
+  telemetry_tag: codex_agents_md_hotspots
+  file: AGENTS.md
+  lock_file: .trw/channels/codex-agents-md-hotspots.lock
+  status: active
+  write_strategy: MARKER_REPLACE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: <!-- trw-distill:hotspots BEGIN -->
+    end: <!-- trw-distill:hotspots END -->
+  distill_record_types: []
+  ttl_commits: 20
+  ttl_days: 7
+  quota_total_bytes: 8192
+  quota_warn_bytes: 7168
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: TTL_EXCEEDED
+    action: CLEAR_SEGMENT
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: SHA256_SEGMENT
+  description: Codex AGENTS.md hotspot segment — top-N risk files and coding conventions.
+    T1 default (top-3 hotspots + top-3 conventions). T2 operator opt-in.
+  regenerate_cmd: trw-distill self-improve risk-report
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - codex
+  - instruction-file
+  - hotspots
+  notes:
+- id: codex-tool-return-t2
+  client: codex
+  surface: instruction_file_segment
+  telemetry_tag: codex_tool_return_t2
+  file:
+  lock_file:
+  status: active
+  write_strategy: EPHEMERAL_STDOUT
+  tier_default: T2
+  tier_min: T1
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: T2 default for trw_before_edit_hint when TRW_CLIENT_PROFILE=codex.
+    Detection via TRW_CLIENT_PROFILE env var only.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate:
+  tags:
+  - codex
+  - tool-return
+  - t2
+  notes:
+- id: codex-posttooluse-telemetry
+  client: codex
+  surface: instruction_file_segment
+  telemetry_tag: codex_posttooluse_telemetry
+  file: .codex/hooks/trw_post_edit_telemetry.py
+  lock_file: .trw/channels/codex-posttooluse-telemetry.lock
+  # ACTIVE as of 2026-05-28: stdin delivery empirically confirmed (codex-cli 0.133.0
+  # binary analysis — CODEX_HOOK_INPUT absent, "failed to write hook stdin:" present).
+  # turn_id field confirmed offline from binary strings of hook_runtime.rs section.
+  # Hook is fail-open: worst case is null turn_id (degraded correlation), never breakage.
+  # Optional refinement: run Phase 3 of verify-codex-hook-input.sh with OPENAI_API_KEY
+  # to fire a live Codex turn and confirm non-null turn_id in channel-events.jsonl.
+  # This is a belt-and-suspenders check, NOT a functional gate — channel works without it.
+  status: active
+  hook_schema_confirmed_at: "2026-05-28"
+  write_strategy: FULL_REWRITE
+  tier_default: T1
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes:
+  quota_warn_bytes:
+  provenance:
+    enabled: true
+    detection: SHA256_SEGMENT
+  cleanup:
+    trigger: DISABLED
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: >
+    PostToolUse hook script for Codex edit telemetry. ACTIVE: stdin delivery confirmed
+    via binary string analysis of codex-cli 0.133.0 (2026-05-28). Hook reads turn_id
+    from the PostToolUse JSON payload (snake_case wire protocol, confirmed from
+    hook_runtime.rs strings). Fail-open: missing/renamed turn_id records null (degraded
+    correlation) but never blocks. An optional live end-to-end smoke test (requires
+    OPENAI_API_KEY, Phase 3 of verify-codex-hook-input.sh) can additionally confirm
+    non-null turn_id from a real Codex turn — this is a refinement, not a gate.
+  regenerate_cmd: trw-mcp init-project --client codex
+  client_version_min: "0.131.0"
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: true
+  emit_on_conflict_skip: true
+  emit_on_lock_skip: true
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  activation_gate: null
+  tags:
+  - codex
+  - hook
+  - posttooluse
+  - active
+  notes:

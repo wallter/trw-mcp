@@ -65,12 +65,37 @@ def check_memory_integrity_on_deliver(
         result["ok"] = True
         result["detail"] = "db_missing"
     else:
-        try:
-            from trw_memory.storage.sqlite_backend import SQLiteBackend
+        # PRD-DIST-432: use a direct read-only URI sqlite3.connect that
+        # bypasses ``SQLiteBackend._connect`` (the singleton-aware path
+        # that historically produced false-positive ``"file is not a
+        # database"`` reports inside the MCP server's deliver flow —
+        # see PRD-DIST-429 for the cycle-274..278 evidence). Read-only
+        # mode does no WAL writes and no PRAGMA setup, so it can't
+        # interact with active connection state. ``PRAGMA quick_check``
+        # works identically in read-only mode.
+        import sqlite3
 
-            raw = SQLiteBackend.check_integrity(db_path)
-            result["ok"] = bool(raw.get("ok", False))
-            result["detail"] = str(raw.get("detail", ""))
+        try:
+            uri = f"file:{db_path}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+            try:
+                rows = conn.execute("PRAGMA quick_check").fetchall()
+            finally:
+                conn.close()
+            healthy = len(rows) == 1 and rows[0][0] == "ok"
+            result["ok"] = healthy
+            result["detail"] = rows[0][0] if rows else "empty"
+        except sqlite3.DatabaseError as exc:
+            # Genuine corruption surfaces here. Preserve the prior detail
+            # shape so downstream consumers (reflog, dashboards) keep
+            # working.
+            logger.debug(
+                "deliver_integrity_probe_failed",
+                db=str(db_path),
+                error=str(exc),
+            )
+            result["ok"] = False
+            result["detail"] = str(exc)
         except Exception as exc:  # justified: fail-open observability probe
             logger.debug(
                 "deliver_integrity_probe_failed",

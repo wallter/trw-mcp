@@ -237,12 +237,13 @@ def generate_review_md(
 
     target_path = repo_root / "REVIEW.md"
 
-    # Query learnings with review-relevant tags, high impact, active status
-    all_learnings = recall_learnings(
+    # PRD-FIX-085 FR05: use named factory.
+    from trw_mcp.state.recall_factories import recall_for_review_tags
+
+    all_learnings = recall_for_review_tags(
         trw_dir,
         tags=_REVIEW_TAGS,
         min_impact=_REVIEW_MIN_IMPACT,
-        status="active",
         max_results=_REVIEW_MAX_LEARNINGS,
     )
 

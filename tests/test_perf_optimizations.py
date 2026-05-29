@@ -103,11 +103,11 @@ class TestBatchAccessTracking:
         backend = get_backend(trw_dir)
 
         # Simulate batch path failure by temporarily hiding _conn
-        original_conn = backend._conn  # type: ignore[attr-defined]
+        original_conn = backend._conn
         mock_conn = MagicMock()
         mock_conn.execute.side_effect = RuntimeError("batch SQL failed")
         mock_conn.commit = MagicMock()
-        backend._conn = mock_conn  # type: ignore[attr-defined]
+        backend._conn = mock_conn
 
         try:
             # Should fall through to per-entry path, but that also
@@ -117,7 +117,7 @@ class TestBatchAccessTracking:
         except Exception:
             pytest.fail("update_access_tracking should not raise on batch failure")
         finally:
-            backend._conn = original_conn  # type: ignore[attr-defined]
+            backend._conn = original_conn
 
     def test_batch_sets_last_accessed_at(self, trw_dir: Path) -> None:
         """Batch update sets last_accessed_at timestamp."""
@@ -220,7 +220,7 @@ class TestSingleQueryKeywordSearch:
             call_count += 1
             return original_search(*args, **kwargs)
 
-        backend.search = counting_search  # type: ignore[assignment]
+        backend.search = counting_search
         try:
             results = _keyword_search(backend, "python testing gotcha")
             # Batch SQL path bypasses backend.search() (call_count == 0).
@@ -229,7 +229,7 @@ class TestSingleQueryKeywordSearch:
             assert call_count <= 3, f"Expected at most 3 search calls, got {call_count}"
             assert len(results) >= 1, "Expected at least 1 result for matching query"
         finally:
-            backend.search = original_search  # type: ignore[assignment]
+            backend.search = original_search
 
 
 # ---------------------------------------------------------------------------

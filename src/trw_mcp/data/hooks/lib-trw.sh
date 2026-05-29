@@ -289,7 +289,7 @@ trw_should_run_hooks() {
   esac
 }
 
-# cleanup_block_files: Remove stale per-teammate block count files.
+# cleanup_block_files: Remove stale per-helper block count files.
 # Called by session-end.sh as housekeeping.
 # Args: $1=context_dir
 cleanup_block_files() {

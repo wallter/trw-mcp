@@ -1,8 +1,13 @@
-"""Lint guard against Opus 4.7 removed sampling params (PRD-QUAL-072 FR05).
+"""Lint guard against removed sampling params (PRD-QUAL-072 FR05).
+
+Still current for Claude Opus 4.8: the 4.7→4.8 migration introduced no
+breaking API changes, so these keys continue to return HTTP 400. The guard
+applies to Opus 4.7 *and later* (incl. 4.8). See
+``docs/documentation/prompting/OPUS-4-8-RESEARCH-2026-05-28.md`` §3.
 
 Scans YAML frontmatter of every agent and skill markdown file under the
 canonical source trees and asserts NO occurrence of the keys removed by
-the Opus 4.7 API:
+the Opus 4.7 API (and still rejected by 4.8):
 
 * ``budget_tokens`` (extended thinking budgets — removed)
 * ``temperature``  (sampling knob — removed)
@@ -93,8 +98,9 @@ def test_no_removed_sampling_params_in_frontmatter() -> None:
             offenders.append(f"{rel}: {', '.join(bad)}")
     if offenders:
         pytest.fail(
-            "Opus 4.7 removed sampling params found in frontmatter "
-            "(delete them — they return HTTP 400 on 4.7):\n  " + "\n  ".join(offenders)
+            "Removed sampling params found in frontmatter "
+            "(delete them — they return HTTP 400 on Opus 4.7 and later, incl. 4.8):\n  "
+            + "\n  ".join(offenders)
         )
 
 

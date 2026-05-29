@@ -92,9 +92,11 @@ def recall_learnings(
     status: str | None = None,
     max_results: int = 25,
 ) -> list[dict[str, object]]:
-    """Query learnings from the memory adapter.
+    """Fail-safe wildcard recall for REVIEW.md / AGENTS.md injection.
 
-    Wraps ``memory_adapter.recall_learnings`` with a fail-safe fallback.
+    Wraps ``memory_adapter.recall_learnings`` with a query-less wildcard
+    (``"*"``) and degrades to an empty list when the memory layer is
+    unavailable, so instruction-file generation never blocks on recall.
     """
     try:
         from trw_mcp.state.memory_adapter import recall_learnings as _recall
@@ -108,4 +110,10 @@ def recall_learnings(
             max_results=max_results,
         )
     except (ImportError, OSError, ValueError, StateError):
+        logger.warning(
+            "review_md_recall_failed",
+            op="recall_learnings",
+            outcome="fail_open",
+            exc_info=True,
+        )
         return []

@@ -1,11 +1,19 @@
 ---
 name: trw-commit
-description: "Convention-enforced git commit. Analyzes changes, generates type(scope): msg format with WHY rationale and PRD-ID linking. Use: /trw-commit or /trw-commit \"optional message hint\"\n"
+description: >
+  Convention-enforced git commit. Analyzes changes, generates
+  type(scope): msg format with WHY rationale and PRD-ID linking.
+  Use: /trw-commit or /trw-commit "optional message hint"
+user-invocable: true
+disable-model-invocation: true
+argument-hint: "[optional message hint]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
 # Convention-Enforced Commit Skill
+
+Use when: creating a conventional TRW commit with PRD traceability and validation context.
 
 Create a git commit following TRW project conventions: `type(scope): message` format with `WHY:` rationale, PRD-ID linking, and Co-Authored-By trailer.
 
@@ -27,9 +35,9 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
 
 3. **Check recent commits**: Run `git log --oneline -5` to match the repository's commit style.
 
-4. **Check for new dependencies**: Run `git diff --cached` and scan for `+` lines in `requirements.txt`, `pyproject.toml`, and `package.json`. If any new package names are found, output:
+4. **Check for new dependencies**: Run `git diff --cached` and scan for `+` lines in dependency manifests used by the repo (`requirements*.txt`, `pyproject.toml`, `poetry.lock`, `package.json`, lockfiles, `Cargo.toml`, `go.mod`, `Gemfile`, etc.). If any new package names are found, output:
    ```
-   New dependencies detected: [{package_names}]. Confirm these have been scanned by `trw_build_check(scope='deps')` before committing.
+   New dependencies detected: [{package_names}]. Confirm these have been scanned by the project dependency/security check and recorded with `trw_build_check(scope='deps')` before committing.
    ```
    This is advisory only — do not block the commit on this warning. If no new dependencies found, skip silently.
 
@@ -51,9 +59,9 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
    PRD: PRD-{ID}
    AI-Provenance: model={model_id}, agent={agent_role}, shard={run_id}
    PRD-Scope: PRD-{ID}
-   Security-Scan: pip-audit={PASS|FAIL|SKIP}, trw-review={PASS|FAIL|SKIP}(confidence={n})
+   Security-Scan: deps={PASS|FAIL|SKIP}, trw-review={PASS|FAIL|SKIP}(confidence={n})
 
-   Co-Authored-By: Claude <noreply@anthropic.com>
+   Co-Authored-By: {name} <{email}>  # optional; use only when configured by the active client
    ```
 
    - The `FR:` and `PRD:` trailers are added when `commit_fr_trailer_enabled` is true (default) in `.trw/config.yaml`
@@ -61,7 +69,7 @@ Create a git commit following TRW project conventions: `type(scope): message` fo
    - `model_id`: read from active run's `run.yaml` field `model`, fallback to `unknown`
    - `agent_role`: read from `run.yaml` field `agent_type`, fallback to `unknown`
    - `run_id`: read from `run.yaml` field `run_id`, fallback to `unknown`
-   - `pip-audit`: read from `.trw/context/build-status.yaml` field `pip_audit_passed` (true→PASS, false→FAIL, absent→SKIP)
+   - `deps`: read from `.trw/context/build-status.yaml` dependency/security scan fields (for example `pip_audit_passed`, `npm_audit_passed`, `cargo_audit_passed`; true→PASS, false→FAIL, absent→SKIP)
    - `trw-review`: read from active run's `review.yaml` field `verdict` (pass/warn→PASS, block→FAIL, absent→SKIP)
    - `confidence`: minimum confidence of surfaced findings from `review.yaml`, or omit if no review
    - If `$ARGUMENTS` contains a message hint, use it to inform the description

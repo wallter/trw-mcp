@@ -107,13 +107,13 @@ class TestOnListTools:
 
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
-        ctx = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
 
         assert len(result) == 1
         compact = result[0]
-        assert compact.name == "trw_build_check"  # type: ignore[union-attr]
-        desc = compact.description  # type: ignore[union-attr]
+        assert compact.name == "trw_build_check"
+        desc = compact.description
         assert desc is not None
         assert len(desc) <= 80
         assert desc == "Run pytest and mypy."
@@ -129,11 +129,11 @@ class TestOnListTools:
 
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
-        ctx = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
 
         compact = result[0]
-        params = compact.parameters  # type: ignore[union-attr]
+        params = compact.parameters
         assert params == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
@@ -147,11 +147,11 @@ class TestOnListTools:
 
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
-        ctx = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
 
         compact = result[0]
-        meta = compact.meta  # type: ignore[union-attr]
+        meta = compact.meta
         assert meta is not None
         assert meta.get("_compact") is True
 
@@ -166,12 +166,12 @@ class TestOnListTools:
 
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
-        ctx = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
 
         full = result[0]
-        assert full.description == "Full description. Second sentence here."  # type: ignore[union-attr]
-        assert full.parameters == {  # type: ignore[union-attr]
+        assert full.description == "Full description. Second sentence here."
+        assert full.parameters == {
             "type": "object",
             "properties": {"x": {"type": "string"}},
             "required": ["x"],
@@ -196,7 +196,7 @@ class TestOnCallTool:
 
         params = CallToolRequestParams(name="trw_build_check")
         ctx = MiddlewareContext(message=params, method="tools/call")
-        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        await middleware.on_call_tool(ctx, call_next)
 
         assert "trw_build_check" in middleware.expanded
 
@@ -212,7 +212,7 @@ class TestOnCallTool:
 
         params = CallToolRequestParams(name="trw_learn")
         ctx = MiddlewareContext(message=params, method="tools/call")
-        result = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        result = await middleware.on_call_tool(ctx, call_next)
 
         assert result == "tool_result"
         call_next.assert_called_once()
@@ -230,18 +230,18 @@ class TestOnCallTool:
 
         params = CallToolRequestParams(name="trw_learn")
         ctx_call = MiddlewareContext(message=params, method="tools/call")
-        await middleware.on_call_tool(ctx_call, call_next_tool)  # type: ignore[arg-type]
+        await middleware.on_call_tool(ctx_call, call_next_tool)
 
         # Now: list tools — trw_learn should have full schema
         async def call_next_list(ctx: object) -> Sequence[object]:
             return [tool]
 
-        ctx_list = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx_list = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx_list, call_next_list)  # type: ignore[arg-type]
 
         listed = result[0]
-        assert listed.description == "Full description. Second sentence here."  # type: ignore[union-attr]
-        assert listed.parameters == {  # type: ignore[union-attr]
+        assert listed.description == "Full description. Second sentence here."
+        assert listed.parameters == {
             "type": "object",
             "properties": {"x": {"type": "string"}},
             "required": ["x"],
@@ -259,7 +259,7 @@ class TestOnCallTool:
         for name in ["trw_learn", "trw_recall", "trw_learn"]:
             params = CallToolRequestParams(name=name)
             ctx = MiddlewareContext(message=params, method="tools/call")
-            await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+            await middleware.on_call_tool(ctx, call_next)
 
         assert middleware.tools_used == ["trw_learn", "trw_recall", "trw_learn"]
 
@@ -494,7 +494,7 @@ class TestMiddlewareIntegration:
 
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
-        ctx = MiddlewareContext(message=None, method="tools/list")  # type: ignore[arg-type]
+        ctx = MiddlewareContext(message=None, method="tools/list")
         result = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
 
         # Hot set tools: full schema
@@ -502,11 +502,11 @@ class TestMiddlewareIntegration:
         compact_names = {"trw_learn", "trw_build_check"}
 
         for t in result:
-            if t.name in hot_names:  # type: ignore[union-attr]
-                assert t.parameters != {"type": "object", "properties": {}, "required": []}  # type: ignore[union-attr]
-            elif t.name in compact_names:  # type: ignore[union-attr]
-                assert t.parameters == {"type": "object", "properties": {}, "required": []}  # type: ignore[union-attr]
-                assert t.meta is not None and t.meta.get("_compact") is True  # type: ignore[union-attr]
+            if t.name in hot_names:
+                assert t.parameters != {"type": "object", "properties": {}, "required": []}
+            elif t.name in compact_names:
+                assert t.parameters == {"type": "object", "properties": {}, "required": []}
+                assert t.meta is not None and t.meta.get("_compact") is True
 
     @pytest.mark.asyncio
     async def test_on_demand_expansion_latency(self) -> None:
@@ -523,7 +523,7 @@ class TestMiddlewareIntegration:
         ctx = MiddlewareContext(message=params, method="tools/call")
 
         start = time.monotonic()
-        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+        await middleware.on_call_tool(ctx, call_next)
         elapsed_ms = (time.monotonic() - start) * 1000
 
         assert elapsed_ms < 100, f"Expansion took {elapsed_ms:.2f}ms (> 100ms)"

@@ -94,7 +94,7 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 
 ```
 /trw-learn "Pydantic v2 use_enum_values changes comparison semantics"
-/trw-learn "TaskCompleted hook must be soft gate" --impact 0.9
+/trw-learn "Completion gate must stay evidence-grounded and adapter-safe" --impact 0.9
 /trw-learn resolve L-abc12345 "Fixed in commit df6ec89"
 /trw-learn obsolete L-def67890 "Superseded by new update mechanism"
 /trw-learn resolve "the stop hook race condition"

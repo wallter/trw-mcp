@@ -112,7 +112,7 @@ def _default_config(
         lines.append(f"tests_relative_path: {test_path}")
 
     # Target platforms -- controls which instruction files are written
-    # (CLAUDE.md, AGENTS.md, .cursorrules, etc.) during deliver/sync.
+    # (client instruction file, AGENTS.md, .cursorrules, etc.) during deliver/sync.
     # Supported: claude-code, opencode, cursor, codex, copilot, gemini, aider
     lines.append("")
     lines.append("# Target platforms for instruction file sync")
@@ -245,7 +245,7 @@ def _verify_installation(
     """Run lightweight post-update health checks.
 
     Verifies hooks are executable, .mcp.json has trw entry, and
-    CLAUDE.md has TRW markers.  Adds warnings for any failures.
+    client instruction file has TRW markers.  Adds warnings for any failures.
     """
     # Check hooks are executable
     hooks_dir = target_dir / ".claude" / "hooks"
@@ -273,20 +273,30 @@ def _verify_installation(
             mcp_servers = data.get("mcp_servers", {})
             if not isinstance(mcp_servers, dict) or "trw" not in mcp_servers:
                 result["warnings"].append(".codex/config.toml missing TRW MCP entry")
+            else:
+                trw_server = mcp_servers.get("trw")
+                if isinstance(trw_server, dict) and "url" in trw_server and "command" not in trw_server:
+                    result["warnings"].append(
+                        ".codex/config.toml uses a direct TRW MCP HTTP URL; "
+                        "run update-project to restore the stdio proxy entry"
+                    )
             features = data.get("features", {})
-            if not isinstance(features, dict) or features.get("codex_hooks") is not True:
-                result["warnings"].append(".codex/config.toml does not enable codex_hooks")
+            if isinstance(features, dict) and features.get("codex_hooks") is True:
+                result["warnings"].append(
+                    ".codex/config.toml uses deprecated features.codex_hooks; "
+                    "run update-project to migrate to features.hooks"
+                )
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 
-    # Check CLAUDE.md has TRW markers
+    # Check client instruction file has TRW markers
     from trw_mcp.bootstrap._update_project import _TRW_END_MARKER, _TRW_START_MARKER
 
     claude_md = target_dir / "CLAUDE.md"
     if claude_md.exists():
         content = claude_md.read_text(encoding="utf-8")
         if _TRW_START_MARKER not in content or _TRW_END_MARKER not in content:
-            result["warnings"].append("CLAUDE.md missing TRW auto-generated markers")
+            result["warnings"].append("client instruction file missing TRW auto-generated markers")
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:
@@ -321,7 +331,17 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 
 # Supported IDEs - DRY constant for all IDE target operations
 # cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface
-SUPPORTED_IDES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider"]
+SUPPORTED_IDES = [
+    "claude-code",
+    "cursor-ide",
+    "cursor-cli",
+    "opencode",
+    "codex",
+    "copilot",
+    "gemini",
+    "aider",
+    "antigravity-cli",
+]
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -372,6 +392,8 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("gemini")
     if (target_dir / ".aider.conf.yml").is_file():
         detected.append("aider")
+    if (target_dir / ".antigravitycli").is_dir() or (target_dir / "ANTIGRAVITY.md").is_file():
+        detected.append("antigravity-cli")
     return detected
 
 
@@ -397,6 +419,8 @@ def detect_installed_clis() -> list[str]:
         detected.append("gemini")
     if shutil.which("aider"):
         detected.append("aider")
+    if shutil.which("antigravity-cli"):
+        detected.append("antigravity-cli")
     return detected
 
 
@@ -423,7 +447,7 @@ def resolve_ide_targets(
 
 
 # ---------------------------------------------------------------------------
-# CLAUDE.md content generators
+# client instruction file content generators
 # ---------------------------------------------------------------------------
 
 
@@ -455,11 +479,11 @@ def _minimal_review_md() -> str:
 
 
 def _minimal_claude_md() -> str:
-    """Generate ``CLAUDE.md`` with behavioral protocol and tool reference."""
+    """Generate a minimal Claude-compatible instruction file with TRW protocol."""
     return """\
-# CLAUDE.md
+# Project Instructions
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to AI coding clients when working with code in this repository.
 
 ## What This Is
 
@@ -487,7 +511,7 @@ TRW tools help you build effectively and preserve your work across sessions:
 
 **Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology your tools implement.
 
-The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and Agent Teams protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
+The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and portable coordination protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
 
 ## TRW Behavioral Protocol (Auto-Generated)
 
@@ -517,7 +541,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | RESEARCH | `trw_init` | New tasks — creates run directory for tracking |
 | Any | `trw_learn` | On errors/discoveries — saves for future sessions |
 | Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
-| VALIDATE | `trw_build_check` | Before delivery — runs tests + type-check |
+| VALIDATE | `trw_build_check` | Before delivery — records project-native validation results |
 | DELIVER | `trw_instructions_sync` | At delivery — refreshes the client instruction file |
 | DELIVER | `trw_deliver` | At task completion — persists everything in one call |
 

@@ -100,7 +100,7 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 
 ```
 /trw-learn "Pydantic v2 use_enum_values changes comparison semantics"
-/trw-learn "TaskCompleted hook must be soft gate" --impact 0.9
+/trw-learn "Completion gate must stay evidence-grounded and adapter-safe" --impact 0.9
 /trw-learn resolve L-abc12345 "Fixed in commit df6ec89"
 /trw-learn obsolete L-def67890 "Superseded by new update mechanism"
 /trw-learn resolve "the stop hook race condition"
@@ -109,7 +109,7 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 
 ## Notes
 
-- `trw_instructions_sync` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.); learnings surface via `trw_session_start()` recall, not by promotion into the instruction file
+- `trw_instructions_sync` refreshes the client instruction file (client instruction file (for example AGENTS.md, CLAUDE.md, GEMINI.md, or .codex/INSTRUCTIONS.md)); learnings surface via `trw_session_start()` recall, not by promotion into the instruction file
 - Resolved/obsolete learnings are excluded from recall results
 - The learning memory is shared across all sessions — every entry costs attention
 - Prefer retiring stale learnings over letting them accumulate noise

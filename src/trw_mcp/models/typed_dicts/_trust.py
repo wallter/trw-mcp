@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from typing_extensions import NotRequired, TypedDict
 
 
@@ -22,6 +24,22 @@ class HumanReviewResult(TypedDict):
     required: bool
     reason: str
     override_tier: bool
+
+
+class ApprovalControlPrimitive(TypedDict):
+    """Operator-facing approval primitive description."""
+
+    purpose: str
+    code_path: str
+
+
+class ApprovalControlMapResult(TypedDict):
+    """Return shape of ``approval_control_map()``."""
+
+    compliance_claim: Literal["none"]
+    non_compliance_boundary: str
+    operator_diagnostics: tuple[str, ...]
+    controls: dict[str, ApprovalControlPrimitive]
 
 
 class TrustSessionIncrementResult(TypedDict, total=True):

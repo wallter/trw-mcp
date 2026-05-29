@@ -12,6 +12,7 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from trw_mcp.security import mcp_registry as registry_mod
 from trw_mcp.security.mcp_registry import (
     AllowedTool,
     MCPRegistry,
@@ -130,6 +131,84 @@ def test_authorize_server_respects_allow_unsigned_flag(tmp_path: Path) -> None:
     assert decision.allowed is True
     assert decision.match_type == "unsigned_admission"
     assert decision.entry is None
+
+
+def test_signature_verification_cache_reuses_signed_content_hash(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Identical signed registry content is verified once per key/path/signature tuple."""
+
+    class FakePublicKey:
+        calls = 0
+
+        def verify(self, signature: bytes, payload: bytes) -> None:
+            FakePublicKey.calls += 1
+
+    signer_fingerprint = "sha256:" + "a" * 64
+    monkeypatch.setattr(registry_mod, "_SIGNATURE_CACHE", set())
+    monkeypatch.setattr(registry_mod, "_load_public_key", lambda path: (FakePublicKey(), signer_fingerprint))
+    allowlist_path = tmp_path / "allowlist.yaml"
+    public_key_path = tmp_path / "maintainer.pub"
+    public_key_path.write_text("not used by fake loader", encoding="utf-8")
+    payload = {
+        "version": 1,
+        "signing_algorithm": "ed25519",
+        "servers": [],
+        "signature_block": {
+            "algorithm": "ed25519",
+            "signed_at": "2026-04-24T00:00:00Z",
+            "signer_fingerprint": signer_fingerprint,
+            "signature": base64.b64encode(b"signature").decode("ascii"),
+        },
+    }
+    allowlist_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    MCPRegistry.load(canonical_path=allowlist_path, canonical_public_key_path=public_key_path)
+    MCPRegistry.load(canonical_path=allowlist_path, canonical_public_key_path=public_key_path)
+
+    assert FakePublicKey.calls == 1
+
+
+def test_signature_verification_cache_revalidates_signature_hash_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Same registry content with a different signature hash must verify again."""
+
+    class FakePublicKey:
+        calls = 0
+
+        def verify(self, signature: bytes, payload: bytes) -> None:
+            FakePublicKey.calls += 1
+
+    signer_fingerprint = "sha256:" + "b" * 64
+    monkeypatch.setattr(registry_mod, "_SIGNATURE_CACHE", set())
+    monkeypatch.setattr(registry_mod, "_load_public_key", lambda path: (FakePublicKey(), signer_fingerprint))
+    allowlist_path = tmp_path / "allowlist.yaml"
+    public_key_path = tmp_path / "maintainer.pub"
+    public_key_path.write_text("not used by fake loader", encoding="utf-8")
+    payload = {
+        "version": 1,
+        "signing_algorithm": "ed25519",
+        "servers": [],
+        "signature_block": {
+            "algorithm": "ed25519",
+            "signed_at": "2026-04-24T00:00:00Z",
+            "signer_fingerprint": signer_fingerprint,
+            "signature": base64.b64encode(b"signature-one").decode("ascii"),
+        },
+    }
+    allowlist_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    MCPRegistry.load(canonical_path=allowlist_path, canonical_public_key_path=public_key_path)
+
+    signature_block = payload["signature_block"]
+    assert isinstance(signature_block, dict)
+    signature_block["signature"] = base64.b64encode(b"signature-two").decode("ascii")
+    allowlist_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    MCPRegistry.load(canonical_path=allowlist_path, canonical_public_key_path=public_key_path)
+
+    assert FakePublicKey.calls == 2
 
 
 def test_signature_drift_quarantines_and_blocks_subsequent_calls(tmp_path: Path) -> None:

@@ -15,6 +15,37 @@ from typing import TextIO
 
 import structlog
 
+from trw_mcp.server._subcommands_check import (
+    _check_instructions_core as _check_instructions_core,
+)
+from trw_mcp.server._subcommands_check import (
+    _run_check_instructions as _run_check_instructions,
+)
+from trw_mcp.server._subcommands_lifecycle import (
+    _run_auth as _run_auth,
+)
+from trw_mcp.server._subcommands_lifecycle import (
+    _run_uninstall as _run_uninstall,
+)
+from trw_mcp.server._subcommands_misc import (
+    _run_config_reference as _run_config_reference,
+)
+from trw_mcp.server._subcommands_misc import (
+    _run_local as _run_local,
+)
+from trw_mcp.server._subcommands_release import (
+    _get_framework_version as _get_framework_version,
+)
+from trw_mcp.server._subcommands_release import (
+    _push_release as _push_release,
+)
+from trw_mcp.server._subcommands_release import (
+    _run_build_release as _run_build_release,
+)
+from trw_mcp.server._subcommands_release import (
+    _run_version_status as _run_version_status,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -56,7 +87,7 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
     if ide:
         _print_cli_line(f"Target IDE: {ide}")
     if codex_touched:
-        _print_cli_line("Codex: managed config, hooks, agents, skills, and AGENTS.md synced")
+        _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
     if warnings:
         _print_cli_line("")
         _print_cli_line("Warnings:")
@@ -93,6 +124,9 @@ def _run_init_project(args: argparse.Namespace) -> None:
 
     for e in result["errors"]:
         logger.error("init_project_error", op="init_project", error=str(e))
+    if detailed:
+        for w in result.get("warnings", []):
+            logger.warning("init_project_warning", op="init_project", detail=str(w))
 
     if not result["errors"]:
         if detailed:
@@ -105,6 +139,12 @@ def _run_init_project(args: argparse.Namespace) -> None:
             _print_cli_line(
                 f"Changes: {len(updated)} updated, {len(result['created'])} created, {len(preserved)} preserved"
             )
+            warnings = result.get("warnings", [])
+            if warnings:
+                _print_cli_line("")
+                _print_cli_line("Warnings:")
+                for warning in warnings:
+                    _print_cli_line(f"- {warning}")
             _print_cli_line("")
             _print_cli_line("Next: run your AI coding tool in this directory.")
 
@@ -260,294 +300,6 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def _run_build_release(args: argparse.Namespace) -> None:
-    """Handle the ``build-release`` subcommand."""
-    from trw_mcp.release_builder import build_release_bundle
-
-    version: str | None = getattr(args, "version", None)
-    output_dir = Path(getattr(args, "output_dir", ".")).resolve()
-
-    result = build_release_bundle(version=version, output_dir=output_dir)
-
-    logger.info(
-        "build_release_complete",
-        op="build_release",
-        bundle_path=str(result["path"]),
-        version=str(result["version"]),
-        checksum=str(result["checksum"]),
-        size_bytes=result["size_bytes"],
-    )
-
-    push = getattr(args, "push", False)
-    if push:
-        backend_url = getattr(args, "backend_url", None)
-        api_key = getattr(args, "api_key", None)
-        if not backend_url or not api_key:
-            logger.error("push_missing_args", op="build_release", detail="--push requires --backend-url and --api-key")
-            sys.exit(1)
-        _push_release(result, backend_url, api_key)
-
-    sys.exit(0)
-
-
-def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> None:
-    """Push release metadata to the backend."""
-    import json as _json
-    import urllib.request
-
-    url = f"{backend_url.rstrip('/')}/v1/releases"
-    payload = _json.dumps(
-        {
-            "version": str(result["version"]),
-            "artifact_url": str(result["path"]),
-            "artifact_checksum": str(result["checksum"]),
-            "artifact_size_bytes": int(str(result["size_bytes"])),
-            "framework_version": _get_framework_version(),
-        }
-    ).encode("utf-8")
-
-    req = urllib.request.Request(  # noqa: S310 — URL comes from CLI --backend-url arg (operator-supplied, not end-user input); HTTPS enforced by deployment
-        url,
-        data=payload,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — see Request comment above
-            data = _json.loads(resp.read().decode("utf-8"))
-            logger.info(
-                "release_published",
-                op="push_release",
-                version=data.get("version", "?"),
-                backend_url=backend_url,
-            )
-    except Exception as exc:  # justified: boundary, backend publish API call may fail
-        logger.exception("release_publish_failed", op="push_release", error=str(exc))
-        sys.exit(1)
-
-
-def _get_framework_version() -> str:
-    """Extract framework version from bundled FRAMEWORK.md."""
-    from trw_mcp.state._helpers import read_framework_version
-
-    return read_framework_version()
-
-
-def _run_uninstall(args: argparse.Namespace) -> None:
-    """Handle the ``uninstall`` subcommand -- remove TRW files from a project."""
-    import shutil
-
-    target = Path(getattr(args, "target_dir", ".")).resolve()
-    dry_run: bool = getattr(args, "dry_run", False)
-    yes: bool = getattr(args, "yes", False)
-
-    # Files and directories created by init-project
-    paths_to_remove: list[Path] = [
-        target / ".trw",
-        target / ".mcp.json",
-        target / ".claude" / "skills",
-        target / ".claude" / "agents",
-        target / ".claude" / "hooks",
-    ]
-
-    # Find what exists
-    existing = [p for p in paths_to_remove if p.exists()]
-
-    if not existing:
-        print("  No TRW files found in this project.")
-        return
-
-    print(f"\n  TRW files found in {target}:\n")
-    for p in existing:
-        kind = "dir " if p.is_dir() else "file"
-        size = ""
-        if p.is_dir():
-            count = sum(1 for _ in p.rglob("*") if _.is_file())
-            size = f" ({count} files)"
-        print(f"    {kind}  {p.relative_to(target)}{size}")
-
-    if dry_run:
-        print("\n  --dry-run: no files removed.")
-        return
-
-    if not yes:
-        print()
-        confirm = input("  Remove these files? [y/N] ").strip().lower()
-        if confirm not in ("y", "yes"):
-            print("  Aborted.")
-            return
-
-    # Remove
-    removed = 0
-    for p in existing:
-        try:
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink()
-            removed += 1
-            print(f"  Removed: {p.relative_to(target)}")
-        except OSError as exc:
-            print(f"  Error removing {p.relative_to(target)}: {exc}")
-
-    print(f"\n  Done. Removed {removed} item(s).")
-
-
-def _run_auth(args: argparse.Namespace) -> None:
-    """Handle the ``auth`` subcommand (login/logout/status)."""
-    from trw_mcp.cli.auth import run_auth_login, run_auth_logout, run_auth_status
-
-    config_path = Path.cwd() / ".trw" / "config.yaml"
-    api_url = getattr(args, "api_url", None) or "https://api.trwframework.com"
-
-    auth_cmd = getattr(args, "auth_command", None)
-    if auth_cmd == "login":
-        sys.exit(run_auth_login(api_url, config_path))
-    elif auth_cmd == "logout":
-        sys.exit(run_auth_logout(config_path))
-    elif auth_cmd == "status":
-        sys.exit(run_auth_status(config_path, api_url))
-    else:
-        # No auth subcommand: show help
-        print("Usage: trw-mcp auth {login|logout|status}")
-        print()
-        print("Commands:")
-        print("  login   Authenticate via device authorization flow")
-        print("  logout  Remove stored API key")
-        print("  status  Show current authentication status")
-        sys.exit(0)
-
-
-def _run_config_reference(args: argparse.Namespace) -> None:
-    """Handle the ``config-reference`` subcommand -- print config env vars."""
-    from trw_mcp.models.config._main_fields import _TRWConfigFields
-
-    print("# TRW Configuration Reference\n")
-    print("All values can be set via environment variables with `TRW_` prefix.\n")
-    print("| Environment Variable | Type | Default | Description |")
-    print("|---------------------|------|---------|-------------|")
-
-    for name, field_info in _TRWConfigFields.model_fields.items():
-        env_var = f"TRW_{name.upper()}"
-        annotation = field_info.annotation
-        field_type = str(annotation).replace("typing.", "").replace("<class '", "").replace("'>", "")
-        default = field_info.default if field_info.default is not None else ""
-        # Truncate long defaults
-        default_str = str(default)
-        if len(default_str) > 40:
-            default_str = default_str[:37] + "..."
-        desc = field_info.description or ""
-        print(f"| `{env_var}` | {field_type} | `{default_str}` | {desc} |")
-
-
-def _run_local(args: argparse.Namespace) -> None:
-    """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
-    from trw_mcp.services.orchestration_service import scaffold_run_directory, write_checkpoint
-
-    local_cmd = getattr(args, "local_command", None)
-
-    if local_cmd == "init":
-        task_name = getattr(args, "task", None)
-        if not task_name:
-            print("Error: --task is required for 'local init'")
-            sys.exit(1)
-        init_result = scaffold_run_directory(task_name)
-        print(f"Run initialized: {init_result['run_id']}")
-        print(f"  Path: {init_result['run_path']}")
-    elif local_cmd == "checkpoint":
-        message = getattr(args, "message", "") or ""
-        run_path_str = getattr(args, "run_path", None)
-        run_path = Path(run_path_str) if run_path_str else None
-        try:
-            cp_result = write_checkpoint(message, run_path=run_path)
-            print(f"Checkpoint created at {cp_result['timestamp']}")
-        except FileNotFoundError as exc:
-            print(f"Error: {exc}")
-            sys.exit(1)
-    else:
-        print("Usage: trw-mcp local {init|checkpoint}")
-        print()
-        print("Commands:")
-        print("  init        Create a run directory (--task NAME required)")
-        print("  checkpoint  Save progress (--message MSG)")
-        sys.exit(0)
-
-    sys.exit(0)
-
-
-def _check_instructions_core(target: Path) -> tuple[int, dict[str, list[str]]]:
-    """Core logic for check-instructions, separated for testability.
-
-    Returns:
-        Tuple of (exit_code, mismatches_dict).
-    """
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.claude_md._tool_manifest import (
-        resolve_exposed_tools,
-        validate_instruction_manifest,
-    )
-
-    config = TRWConfig()
-    exposed = resolve_exposed_tools(
-        mode=config.effective_tool_exposure_mode,
-        custom_list=config.tool_exposure_list,
-    )
-
-    files_to_check = ["AGENTS.md", "CLAUDE.md"]
-    all_mismatches: dict[str, list[str]] = {}
-    files_scanned = 0
-
-    for filename in files_to_check:
-        filepath = target / filename
-        if not filepath.exists():
-            continue
-        try:
-            content = filepath.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            logger.warning("check_instructions_read_error", path=str(filepath))
-            continue
-        files_scanned += 1
-        mismatches = validate_instruction_manifest(content, exposed)
-        if mismatches:
-            all_mismatches[filename] = mismatches
-
-    logger.info(
-        "check_instructions_complete",
-        target=str(target),
-        files_scanned=files_scanned,
-        exposed_count=len(exposed),
-        mismatch_files=len(all_mismatches),
-    )
-
-    exit_code = 1 if all_mismatches else 0
-    return exit_code, all_mismatches
-
-
-def _run_check_instructions(args: argparse.Namespace) -> None:
-    """Handle the ``check-instructions`` subcommand (PRD-CORE-135-FR02).
-
-    Scans instruction files (AGENTS.md, CLAUDE.md) for trw_* tool mentions
-    and compares against the effective tool exposure list from config.
-    Exits with code 1 if mismatches found, 0 if clean.
-    """
-    target = Path(getattr(args, "target_dir", ".")).resolve()
-    exit_code, all_mismatches = _check_instructions_core(target)
-
-    if not all_mismatches:
-        print("OK: all instruction files reference only exposed tools")
-        sys.exit(0)
-
-    for filename, tools in all_mismatches.items():
-        print(f"{filename}: mentions unexposed tools: {', '.join(tools)}")
-
-    total = sum(len(v) for v in all_mismatches.values())
-    print(f"\nTotal: {total} unexposed tool reference(s) in {len(all_mismatches)} file(s)")
-    sys.exit(exit_code)
-
-
 def _run_gc(args: argparse.Namespace) -> None:
     """Handle the ``gc`` subcommand — stale-run sweep (PRD-CORE-141 FR11).
 
@@ -643,6 +395,13 @@ def _run_gc(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def _run_channel_doctor(args: argparse.Namespace) -> None:
+    """Lazy dispatch to channel-doctor implementation (PRD-DIST-2400 FR18)."""
+    from trw_mcp.cli.channel_doctor import run_channel_doctor
+
+    run_channel_doctor(args)
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -650,10 +409,23 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "export": _run_export,
     "import-learnings": _run_import_learnings,
     "build-release": _run_build_release,
+    "version-status": _run_version_status,
     "auth": _run_auth,
     "uninstall": _run_uninstall,
     "config-reference": _run_config_reference,
     "local": _run_local,
     "check-instructions": _run_check_instructions,
     "gc": _run_gc,
+    "channel-doctor": _run_channel_doctor,
 }
+
+
+# PRD-DIST-1996 (c748): tier entitlement provisioning subcommand.
+# Lazy-imported to avoid circular import with _entitlements.
+def _run_tier_lazy(args: argparse.Namespace) -> None:
+    from trw_mcp.server._subcommands_tier import run_tier
+
+    run_tier(args)
+
+
+SUBCOMMAND_HANDLERS["tier"] = _run_tier_lazy

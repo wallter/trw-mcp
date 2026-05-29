@@ -272,8 +272,17 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
                 # non-kwarg argument (i.e. looks like production code).
                 # Legacy paths typically rely on the process UUID default.
                 src_line = text.splitlines()[node.lineno - 1]
-                # Skip comment-only or obvious compat shims
-                if "# compat" in src_line.lower() or "# legacy" in src_line.lower():
+                # Skip comment-only or obvious compat shims, plus call sites
+                # the source explicitly annotates as intentional pin-only
+                # no-arg calls (PRD-FIX-085 — e.g. the auto-checkpoint
+                # telemetry helper). Marker-based exemption is line-drift-proof,
+                # unlike a hardcoded line number.
+                src_line_lower = src_line.lower()
+                if (
+                    "# compat" in src_line_lower
+                    or "# legacy" in src_line_lower
+                    or "prd-fix-085" in src_line_lower
+                ):
                     continue
                 violations.append((str(py_path.relative_to(tools_dir.parent.parent)), node.lineno, callee))
 
@@ -287,9 +296,10 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
         "_recall_impl.py",
     )
     violations = [v for v in violations if not any(exempt in v[0] for exempt in _process_scoped_exempt)]
-    # checkpoint.py:81 is the auto-checkpoint telemetry helper
-    # (_maybe_auto_checkpoint) — excluded for the same reason.
-    violations = [v for v in violations if not (v[0].endswith("checkpoint.py") and v[1] == 81)]
+    # The auto-checkpoint telemetry helper (_maybe_auto_checkpoint in
+    # checkpoint.py) is an intentional process-scoped pin-only no-arg call;
+    # it carries an inline ``# noqa: PRD-FIX-085`` marker which the marker-based
+    # skip above already exempts (line-drift-proof, no hardcoded line number).
 
     assert not violations, (
         "PRD-CORE-141 FR03 call-site violations (pin helpers invoked without "

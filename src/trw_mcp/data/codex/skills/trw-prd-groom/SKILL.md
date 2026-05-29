@@ -1,10 +1,14 @@
 ---
 name: trw-prd-groom
-description: "Internal phase: Groom a PRD to sprint-ready quality. Researches codebase, drafts missing sections, iterates until validation passes. Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.\n"
+description: >
+  Internal phase: Groom a PRD to sprint-ready quality. Researches codebase,
+  drafts missing sections, iterates until validation passes.
+  Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
+user-invocable: false
+argument-hint: "[PRD-ID or file path]"
 ---
 
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
-
+> Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 <!-- ultrathink -->
 
 # PRD Grooming Skill
@@ -23,8 +27,10 @@ Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through sys
 
 4. **Research phase**:
    - Call `trw_recall` with keywords from the PRD Background section
-   - Use Grep/Glob to find relevant codebase patterns, interfaces, and data structures
+   - Use Grep/Glob to find relevant codebase patterns, interfaces, seams, data structures, workflows, and test conventions
    - Read related PRDs referenced in `traceability.depends_on` and `traceability.enables`
+   - Infer the project's language/framework/test runner from nearby config and existing files; do not assume Python unless the PRD is actually Python-focused
+   - Identify the smallest vertical tracer-bullet path that can prove the feature end-to-end
 
 5. **Drafting phase** — for each weak/missing section, follow AARE-F 12-section guidance:
    - **Problem Statement**: Root cause + measurable impact + affected stakeholders
@@ -32,13 +38,14 @@ Groom a PRD to sprint-ready quality (total_score >= 65, REVIEW tier) through sys
    - **User Stories**: As a [role], I want [capability], so that [benefit] + Given/When/Then
    - **Functional Requirements**: EARS patterns (When/While/If/Where) + confidence scores
    - **Non-Functional Requirements**: Quantitative thresholds with units
-   - **Technical Approach**: Architecture decisions with rationale, reference existing patterns
-   - **Test Strategy**: Map to requirements, specify unit/integration/e2e split
+   - **Technical Approach**: Architecture decisions with rationale, affected modules/interfaces/seams, deep-module opportunities, and references to existing patterns
+   - **Test Strategy**: Map to requirements, specify the project-appropriate test framework/commands, and include vertical-slice coverage in addition to unit/integration/e2e tiers
    - **Rollout Plan**: Phased with rollback criteria
    - **Success Metrics**: Quantitative with baselines and targets
    - **Dependencies & Risks**: Concrete risks with likelihood/impact + mitigation
    - **Open Questions**: Unresolved items needing stakeholder input
    - **Traceability Matrix**: Map requirements to test cases and source files
+   - **Decision Tree / Assumptions**: If upstream creation included a drill preflight, preserve resolved decisions and unresolved assumptions instead of smoothing them into prose
 
 6. **Validation loop** (max 3 iterations):
    a. Write updated PRD
@@ -84,5 +91,8 @@ Only suggest assertions for ~30% of FRs — most requirements are not grep/glob-
 - ALWAYS preserve PRD ID, frontmatter structure, and section numbering
 - ALWAYS use EARS patterns for functional requirements
 - ALWAYS include confidence scores on requirements
+- ALWAYS preserve visible uncertainty from PRD drill/preflight decisions; ambiguous requirements belong in Open Questions, not hidden assumptions
+- ALWAYS keep the PRD language-agnostic unless the feature itself is language-specific
+- SHOULD prefer deep modules (small stable interfaces hiding complexity) and vertical tracer-bullet slices over broad horizontal layer plans
 - If hitting total_score >= 65 requires inventing ungrounded content, stop and document gaps in Open Questions
 - If total_score remains below 45 (DRAFT tier) after 3 iterations, STOP and report to the caller — the feature description likely needs more detail from the user

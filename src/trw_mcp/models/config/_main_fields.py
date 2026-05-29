@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
+from trw_mcp.models.config._fields_feedback import _FeedbackFields
 from trw_mcp.models.config._fields_memory import _MemoryFields
 from trw_mcp.models.config._fields_orchestration import _OrchestrationFields
 from trw_mcp.models.config._fields_paths import _PathsFields
@@ -36,6 +37,7 @@ class _TRWConfigFields(
     _OrchestrationFields,
     _TelemetryFields,
     _CeremonyFields,
+    _FeedbackFields,
     _BanditFields,
     _BuildFields,
     _ToolsFields,

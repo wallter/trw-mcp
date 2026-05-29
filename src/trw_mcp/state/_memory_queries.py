@@ -190,12 +190,22 @@ def _search_entries(
     tags: list[str] | None = None,
     mem_status: MemoryStatus | None = None,
     min_impact: float = 0.0,
+    allow_cold_embedding_init: bool = True,
 ) -> list[MemoryEntry]:
     """Search entries using hybrid (keyword + vector RRF) or keyword fallback.
 
     When embedder is available, runs keyword search and sqlite-vec vector search
     in parallel, then fuses via Reciprocal Rank Fusion. Otherwise falls back to
     multi-token intersection keyword search.
+
+    Cycle 148: ``allow_cold_embedding_init`` (default True for backward
+    compat) routes between :func:`get_embedder` (may trigger cold model
+    load on first call) and :func:`get_initialized_embedder` (skips cold
+    init). The MCP hot path (`recall_factories`, `_session_recall_phase`)
+    passes ``False`` to avoid latency spikes; the trw-distill connector
+    path passes ``True`` so the canary fixture's first vector recall
+    triggers the embed step. Closes the cycle-147 cross-package API
+    mismatch that broke 3 tests in tests/eval/test_retrieval_connector.py.
     """
     # Always run keyword search
     keyword_results = _keyword_search(
@@ -207,10 +217,17 @@ def _search_entries(
         min_impact=min_impact,
     )
 
-    # Try vector search when embedder is available
-    from trw_mcp.state._memory_connection import get_embedder
+    # Try vector search when embedder is available. Route between cold-init
+    # and skip-cold-init variants based on caller's tolerance for the hot
+    # model-load latency.
+    if allow_cold_embedding_init:
+        from trw_mcp.state._memory_connection import get_embedder
 
-    embedder = get_embedder()
+        embedder = get_embedder()
+    else:
+        from trw_mcp.state._memory_connection import get_initialized_embedder
+
+        embedder = get_initialized_embedder()
     if embedder is None:
         return keyword_results
 

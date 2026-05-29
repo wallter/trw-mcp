@@ -43,21 +43,24 @@ sweep MUST NOT crash partway through.
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import structlog
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
 
 from trw_mcp.state._paths import iter_run_dirs
+from trw_mcp.state._run_gc_io import (
+    _append_event_best_effort,
+    _dump_run_yaml_atomic,
+    _load_run_yaml,
+    _prefilter_protected,
+)
+from trw_mcp.state._run_gc_io import (
+    _prefilter_status as _prefilter_status,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -141,83 +144,6 @@ def _normalize_pinned_paths(pinned_paths: Iterable[Path]) -> set[str]:
     return normalized
 
 
-def _load_run_yaml(run_yaml_path: Path) -> dict[str, Any] | None:
-    """Round-trip load *run_yaml_path*, returning ``None`` on any parse failure.
-
-    Uses ruamel ``YAML(typ="rt")`` so we preserve every field on rewrite —
-    the sweep only mutates ``status``; every other field (phase, confidence,
-    wave data, complexity signals, etc.) round-trips unchanged.
-    """
-    yaml = YAML(typ="rt")
-    try:
-        with run_yaml_path.open("r", encoding="utf-8") as fh:
-            data = yaml.load(fh)
-    except (OSError, YAMLError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    # Copy into a plain dict[str, Any] for type-checker happiness while
-    # preserving the ruamel mapping so downstream dump preserves ordering.
-    return data
-
-
-def _dump_run_yaml_atomic(run_yaml_path: Path, data: dict[str, Any]) -> None:
-    """Atomically write *data* back to *run_yaml_path* using ruamel round-trip.
-
-    Pattern mirrors :class:`trw_mcp.state.persistence.FileStateWriter`:
-    write to a ``.tmp`` sibling, fsync, ``os.replace``.
-    """
-    yaml = YAML(typ="rt")
-    run_yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_str = tempfile.mkstemp(
-        dir=str(run_yaml_path.parent),
-        suffix=".yaml.tmp",
-    )
-    tmp_path = Path(tmp_str)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            yaml.dump(data, fh)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, run_yaml_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _append_event_best_effort(
-    events_path: Path,
-    event: str,
-    payload: dict[str, Any],
-) -> None:
-    """Append a single JSON line to *events_path* — log on failure, never raise.
-
-    FR14 obligation: record the abandonment decision in the run's own audit
-    trail.  If append fails (disk full, perms), log ``sweep_event_append_failed``
-    WARN and carry on — we do NOT revert the status change because operators
-    would rather have a stale-abandoned run with no audit entry than an
-    actively-competing ``active`` run the sweep silently gave up on.
-    """
-    record = {"ts": _iso_utc_now(), "event": event, "data": payload}
-    try:
-        events_path.parent.mkdir(parents=True, exist_ok=True)
-        with events_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
-            fh.flush()
-    except OSError as exc:
-        logger.warning(
-            "sweep_event_append_failed",
-            path=str(events_path),
-            error=type(exc).__name__,
-            detail=str(exc),
-        )
-
-
-def _iso_utc_now() -> str:
-    """Return current UTC time as an ISO8601 string with ``Z`` suffix."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
-
-
 def sweep_stale_runs(
     runs_root: Path,
     staleness_hours: int,
@@ -286,42 +212,76 @@ def sweep_stale_runs(
         runs_scanned += 1
         run_id = run_dir.name
 
-        data = _load_run_yaml(run_yaml_path)
-        if data is None:
-            runs_skipped_malformed += 1
-            logger.warning(
-                "sweep_skipped_malformed",
-                run_id=run_id,
-                path=str(run_yaml_path),
-            )
-            continue
-
-        status_raw = data.get("status")
-        status = str(status_raw).strip().lower() if status_raw is not None else ""
-
-        if status in _TERMINAL_STATUSES:
+        # Fast path: regex-prefilter status + protected from the file
+        # header so we can short-circuit without invoking the YAML parser.
+        # A handful of legacy run.yaml files have ballooned to several MB
+        # from accumulated audit_pattern_promotions arrays — parsing those
+        # with ruamel rt-mode takes seconds per file and dominates boot
+        # time. Lazy-load YAML only when we actually need to mutate.
+        prefilter_status = _prefilter_status(run_yaml_path)
+        if prefilter_status in _TERMINAL_STATUSES:
             runs_skipped_terminal += 1
             logger.debug(
                 "sweep_skipped_terminal",
                 run_id=run_id,
-                status=status,
+                status=prefilter_status,
+                prefilter=True,
             )
             continue
 
-        if status != "active":
-            # Unknown/unsupported status — treat conservatively as terminal
-            # rather than silently abandoning something we do not understand.
+        # If the prefilter resolved status to anything other than "active",
+        # treat it as terminal/unknown without a YAML load. The authoritative
+        # parser only runs when status was unparseable from the header.
+        prefilter_protected: bool | None = None
+        if prefilter_status == "active":
+            data: dict[str, Any] | None = None
+            status = "active"
+            prefilter_protected = _prefilter_protected(run_yaml_path)
+        elif prefilter_status is not None:
+            # Unknown/unsupported status — conservative: treat as terminal.
             runs_skipped_terminal += 1
             logger.debug(
                 "sweep_skipped_terminal",
                 run_id=run_id,
-                status=status or "unknown",
+                status=prefilter_status or "unknown",
+                prefilter=True,
             )
             continue
+        else:
+            # Prefilter ambiguous — fall back to authoritative parse.
+            data = _load_run_yaml(run_yaml_path)
+            if data is None:
+                runs_skipped_malformed += 1
+                logger.warning(
+                    "sweep_skipped_malformed",
+                    run_id=run_id,
+                    path=str(run_yaml_path),
+                )
+                continue
+            status_raw = data.get("status")
+            status = str(status_raw).strip().lower() if status_raw is not None else ""
+            if status in _TERMINAL_STATUSES:
+                runs_skipped_terminal += 1
+                logger.debug(
+                    "sweep_skipped_terminal",
+                    run_id=run_id,
+                    status=status,
+                )
+                continue
+            if status != "active":
+                runs_skipped_terminal += 1
+                logger.debug(
+                    "sweep_skipped_terminal",
+                    run_id=run_id,
+                    status=status or "unknown",
+                )
+                continue
 
         # Protected runs are preserved regardless of age (FR10).
-        protected_raw = data.get("protected")
-        if protected_raw is True:
+        if prefilter_protected is True:
+            runs_preserved_protected += 1
+            continue
+        if prefilter_protected is None and data is not None and data.get("protected") is True:
             runs_preserved_protected += 1
             continue
 
@@ -380,7 +340,23 @@ def sweep_stale_runs(
             )
             continue
 
-        # Mutate run.yaml — preserve every field except `status`.
+        # Mutate run.yaml — preserve every field except `status`. Load
+        # YAML lazily here: read paths short-circuit via the prefilter,
+        # so the expensive ruamel rt-mode parse only happens for the
+        # rare run we are actually about to abandon.
+        if data is None:
+            data = _load_run_yaml(run_yaml_path)
+        if data is None:
+            abandoned_ids.pop()
+            runs_abandoned -= 1
+            runs_skipped_malformed += 1
+            logger.warning(
+                "sweep_skipped_malformed",
+                run_id=run_id,
+                path=str(run_yaml_path),
+                reason="yaml_read_failed_at_abandon",
+            )
+            continue
         data["status"] = "abandoned"
         try:
             _dump_run_yaml_atomic(run_yaml_path, data)

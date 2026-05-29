@@ -28,6 +28,7 @@ def test_registry_contains_expected_client_integrations() -> None:
         "codex",
         "copilot",
         "gemini",
+        "antigravity-cli",
     ]
 
 

@@ -103,6 +103,7 @@ from trw_mcp.models.typed_dicts._ceremony import (
     TierCeremonyScoreResult,
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
+    WalCheckpointResultDict,
 )
 
 # _codex
@@ -219,14 +220,18 @@ from trw_mcp.models.typed_dicts._telemetry import (
 
 # _tools
 from trw_mcp.models.typed_dicts._tools import (
+    BuildCheckResultDict,
     CheckpointResultDict,
     DeliverResultDict,
     KnowledgeSyncResultDict,
     LearnResultDict,
     PreCompactResultDict,
     ProgressiveExpandResult,
+    QLearningDeferredDict,
+    QLearningHealthDict,
     RecallContextDict,
     RecallResultDict,
+    RunCostLedgerEntryDict,
     RunReportResultDict,
     RunStatusDict,
     SessionStartResultDict,
@@ -285,6 +290,7 @@ __all__ = [
     "BatchDedupResult",
     "BatchSendResult",
     "BootstrapFileResult",
+    "BuildCheckResultDict",
     "CodexConfigDict",
     "CodexFeaturesConfig",
     "CodexHookCommand",
@@ -357,6 +363,8 @@ __all__ = [
     "PublishLearningsResult",
     "PublishResult",
     "PytestResultDict",
+    "QLearningDeferredDict",
+    "QLearningHealthDict",
     "RecallContextDict",
     "RecallOutcomeStepResult",
     "RecallResultDict",
@@ -397,6 +405,7 @@ __all__ = [
     "TrustLevelResult",
     "TrustSessionIncrementResult",
     "TrwInitConfigDataDict",
+    "RunCostLedgerEntryDict",
     "TrwStatusDict",
     "UsageCallerEntryDict",
     "UsageGroupEntryDict",
@@ -404,6 +413,7 @@ __all__ = [
     "UsageReportResult",
     "ValidateResultDict",
     "ValidationFailureDict",
+    "WalCheckpointResultDict",
     "WaveDetailDict",
     "WaveProgressDict",
     "WaveShardCountsDict",

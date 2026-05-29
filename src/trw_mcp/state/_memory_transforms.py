@@ -23,6 +23,7 @@ from trw_memory.models.memory import (
 )
 
 from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 _NAMESPACE = DEFAULT_NAMESPACE
@@ -34,18 +35,23 @@ _SourceType = Literal["human", "agent", "tool", "consolidated", "team_sync"]
 logger = structlog.get_logger(__name__)
 
 
-def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
+def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> LearningEntryDict:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
 
     The returned dict matches the YAML-era learning entry format so callers
-    (FRAMEWORK.md, hooks, etc.) see no API change.
+    (FRAMEWORK.md, hooks, etc.) see no API change. The declared type is the
+    canonical :class:`LearningEntryDict` contract; the field set built here is
+    the single source of truth that ``LearningEntryDict`` mirrors. Recall
+    callers therefore receive a typed element shape instead of a bare
+    ``dict[str, object]``.
 
     Args:
         entry: Memory entry from SQLite.
         compact: When True, return only essential fields.
 
     Returns:
-        Dict with ``id``, ``summary``, ``tags``, ``impact``, ``status``, etc.
+        ``LearningEntryDict`` with ``id``, ``summary``, ``tags``, ``impact``,
+        ``status``, and (when not compact) the full extended field set.
     """
     tags = entry.tags[:COMPACT_TAGS_CAP] if compact else entry.tags
     base: dict[str, object] = {
@@ -56,7 +62,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
         "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
     }
     if compact:
-        return base
+        return cast("LearningEntryDict", base)
 
     base.update(
         {
@@ -105,7 +111,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
 
     base["session_count"] = entry.session_count or 0
 
-    return base
+    return cast("LearningEntryDict", base)
 
 
 def _learning_to_memory_entry(
@@ -136,17 +142,27 @@ def _learning_to_memory_entry(
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
     anchor_validity: float = 1.0,
+    # PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata for
+    # promotion-policy keys (utility_grade, current_status, etc.).
+    metadata: dict[str, str] | None = None,
 ) -> MemoryEntry:
     """Build a :class:`MemoryEntry` from trw_learn parameters.
 
     Pre-seeds q_value from impact score so high-impact learnings start
     with an elevated Q-value before any observations accumulate.
+
+    Caller-supplied ``metadata`` (PRD-DIST-254 §FR02) is merged with
+    internal keys (``shard_id``, etc.); caller keys win on collision.
+    Used by trw-distill PolicyFilter to plumb DIST-247 grader output
+    into stored records.
     """
     from trw_mcp.scoring._correlation import compute_initial_q_value
 
-    metadata: dict[str, str] = {}
+    merged_metadata: dict[str, str] = {}
     if shard_id:
-        metadata["shard_id"] = shard_id
+        merged_metadata["shard_id"] = shard_id
+    if metadata:
+        merged_metadata.update(metadata)
 
     # Validate and attach assertions (PRD-CORE-086)
     assertion_objects: list[Assertion] = []
@@ -179,7 +195,7 @@ def _learning_to_memory_entry(
         client_profile=client_profile,
         model_id=model_id,
         namespace=_NAMESPACE,
-        metadata=metadata,
+        metadata=merged_metadata,
         q_value=compute_initial_q_value(impact),
         assertions=assertion_objects,
         # PRD-CORE-110: Typed learning fields - convert strings to enums

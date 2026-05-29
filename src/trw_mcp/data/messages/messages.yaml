@@ -2,8 +2,7 @@
 # PRD-INFRA-012: Centralized AI-Facing Messaging Registry with Value-Oriented Framing.
 #
 # Framing principle: value-oriented (what it gives you) > prescriptive (MUST/ALWAYS/NEVER).
-# Research basis: Anthropic Claude 4.6 best practices, context engineering guide,
-#   Constitutional AI — understanding enables generalization to novel situations.
+# Research basis: context engineering, motivation framing, and instruction portability — understanding enables generalization to novel situations.
 #
 # Consumed by:
 #   - Python: trw_mcp.prompts.messaging loads this file via get_message()
@@ -19,4 +18,4 @@ server_instructions: "TRW gives you engineering memory that persists across sess
 ceremony_warning: "{tool:trw_session_start}() has not been called yet for this session.\nWithout it, you are working without:\n  - Prior session learnings (patterns and gotchas that prevent re-work)\n  - Active run state (phase, progress, last checkpoint)\nCall {tool:trw_session_start}(query='your task domain') now — pass a query for focused recall, or call without args for default high-impact recall."
 
 # --- Delegation Guidance (CLAUDE.md auto-generated section, session-start hint) ---
-delegation_guidance: "Your primary role is orchestration — assess, delegate, verify, and preserve knowledge. For non-trivial tasks (2+ files), delegating to focused subagents or Agent Teams gives each agent a clean context window and enables the self-review checklist that catches most integration issues. Reserve direct implementation for trivial fixes (≤3 lines, 1 file). Default: subagents. Use Agent Teams when teammates need peer communication or tasks span 2+ modules."
+delegation_guidance: "Your primary role is orchestration — assess, delegate, verify, and preserve knowledge. For non-trivial tasks (2+ files), using focused helpers when the active harness supports them gives each worker a clean context window and enables self-review that catches integration issues. Reserve direct implementation for trivial or tightly coupled fixes. If helpers are unavailable, execute the same shards sequentially with checkpoints."

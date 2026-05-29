@@ -18,21 +18,71 @@ from trw_mcp.server._app import mcp
 from trw_mcp.server._origin_check import OriginGuardMiddleware, origin_check_enabled
 from trw_mcp.server._proxy import ensure_http_server, run_stdio_proxy
 
+SUPPORTED_RUNTIME_RELOAD_FIELDS: frozenset[str] = frozenset(
+    {
+        "mcp_http_rate_limit_enabled",
+        "mcp_http_rate_limit_capacity",
+        "mcp_http_rate_limit_refill_per_second",
+        "mcp_proxy_handshake_timeout_seconds",
+    }
+)
 
-def _http_transport_kwargs() -> dict[str, Any]:
+
+def _http_transport_kwargs(config: TRWConfig | None = None) -> dict[str, Any]:
     """Build transport_kwargs for FastMCP HTTP transports.
 
     Adds the Origin-guard middleware to block cross-origin browser requests
     against the loopback-bound MCP server. See ``_origin_check.py`` for the
     threat model. No-op when ``TRW_MCP_DISABLE_ORIGIN_CHECK=1``.
     """
-    if not origin_check_enabled():
-        return {}
-    # Late import: starlette is pulled in transitively by fastmcp, but only on
-    # HTTP paths — keep stdio launches free of the dependency probe.
-    from starlette.middleware import Middleware
+    middleware = []
+    if origin_check_enabled():
+        # Late import: starlette is pulled in transitively by fastmcp, but only on
+        # HTTP paths — keep stdio launches free of the dependency probe.
+        from starlette.middleware import Middleware
 
-    return {"middleware": [Middleware(OriginGuardMiddleware)]}
+        middleware.append(Middleware(OriginGuardMiddleware))
+    if config is not None and config.mcp_http_rate_limit_enabled:
+        from starlette.middleware import Middleware
+
+        from trw_mcp.server._rate_limit import LocalTokenBucketMiddleware
+
+        middleware.append(
+            Middleware(
+                LocalTokenBucketMiddleware,
+                capacity=config.mcp_http_rate_limit_capacity,
+                refill_per_second=config.mcp_http_rate_limit_refill_per_second,
+            )
+        )
+    if not middleware:
+        return {}
+    return {"middleware": middleware}
+
+
+def build_transport_fallback_diagnostic(reason: str, config: TRWConfig) -> dict[str, object]:
+    """Return structured fallback guidance for wedged stdio/proxy transports."""
+    proxy_url = f"http://{config.mcp_host}:{config.mcp_port}/mcp"
+    return {
+        "diagnostic_event": "trw_transport_fallback_diagnostic",
+        "reason": reason,
+        "fallback": "standalone_stdio",
+        "http_proxy_url": proxy_url,
+        "operator_guidance": (
+            "If stdio remains wedged, start the shared HTTP server and point the client "
+            f"at {proxy_url}; for offline ceremony use `trw-mcp local status|learn|deliver`."
+        ),
+    }
+
+
+def summarize_runtime_reload(old: TRWConfig, new: TRWConfig) -> dict[str, object]:
+    """Summarize config changes supported by the safe runtime reload boundary."""
+    changed = [field for field in sorted(SUPPORTED_RUNTIME_RELOAD_FIELDS) if getattr(old, field) != getattr(new, field)]
+    return {
+        "reload_supported": True,
+        "changed_fields": changed,
+        "requires_source_restart": False,
+        "boundary": "config_only_no_python_hot_reload",
+    }
 
 
 def resolve_and_run_transport(
@@ -81,7 +131,7 @@ def resolve_and_run_transport(
                 transport=transport,  # type: ignore[arg-type]
                 host=host,
                 port=port,
-                **_http_transport_kwargs(),
+                **_http_transport_kwargs(config),
             )
 
     elif config.mcp_transport == "stdio":
@@ -130,22 +180,19 @@ def _run_http_proxy_transport(
         import asyncio
 
         try:
-            asyncio.run(run_stdio_proxy(url))
+            asyncio.run(
+                run_stdio_proxy(
+                    url,
+                    handshake_timeout_seconds=float(config.mcp_proxy_handshake_timeout_seconds),
+                )
+            )
         except (KeyboardInterrupt, EOFError):
             pass  # Clean exit when Claude Code disconnects
         except ConnectionError:
             # Proxy exhausted retries -- fall back to standalone
-            log.warning(
-                "trw_proxy_fallback",
-                reason="proxy_connect_failed",
-                fallback="standalone_stdio",
-            )
+            log.warning("trw_proxy_fallback", **build_transport_fallback_diagnostic("proxy_connect_failed", config))
             mcp.run()
     else:
         # FR06: Fallback to standalone stdio on failure
-        log.warning(
-            "trw_proxy_fallback",
-            reason="http_server_start_failed",
-            fallback="standalone_stdio",
-        )
+        log.warning("trw_proxy_fallback", **build_transport_fallback_diagnostic("http_server_start_failed", config))
         mcp.run()

@@ -21,6 +21,7 @@ class CodexMcpServerEntry(TypedDict, total=False):
 
     command: str
     args: list[str]
+    cwd: str
     url: str
     enabled: bool
     enabled_tools: list[str]
@@ -43,6 +44,8 @@ class CodexSkillsConfig(TypedDict, total=False):
 class CodexFeaturesConfig(TypedDict, total=False):
     """Codex `features` table."""
 
+    hooks: bool
+    # Legacy input accepted for migration; TRW-managed output writes `hooks`.
     codex_hooks: bool
 
 

@@ -331,6 +331,109 @@ class TestSelectLearningsForTask:
             # Should complete without error using defaults
             assert mock_recall.called
 
+    def test_dispatches_through_injection_factory_with_active_status(self) -> None:
+        """PRD-FIX-085 FR05: select_learnings_for_task routes through the named
+        factory (recall_for_learning_injection), NOT an ad-hoc adapter call.
+
+        Unlike the sibling tests that patch the ``recall_learnings`` shim, this
+        test patches the factory itself (``recall_for_learning_injection``) so
+        the dispatch branch inside the shim is exercised end-to-end from the
+        public entry point. This catches a regression where
+        ``select_learnings_for_task`` drops the ``status="active"`` filter (which
+        would route to the unfiltered adapter path and surface
+        resolved/obsolete learnings) or drifts the resolved min_impact.
+        """
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.learning_injection import select_learnings_for_task
+
+        cfg = get_config()
+        mock_results = [
+            {
+                "id": "L-active-001",
+                "summary": "active learning",
+                "impact": 0.9,
+                "tags": ["admin"],
+                "status": "active",
+            },
+        ]
+
+        # Patch the FACTORY (not the shim). The shim's active-status branch
+        # must invoke this for the injection path; the factory's own pinned
+        # status="active" filter is the active semantics this exercises.
+        with patch(
+            "trw_mcp.state.recall_factories.recall_for_learning_injection",
+            return_value=mock_results,
+        ) as mock_factory:
+            results = select_learnings_for_task(
+                task_description="implement admin endpoint",
+                file_paths=["backend/routers/admin.py"],
+                # max_results / min_impact omitted -> config-resolved defaults.
+            )
+
+        # (a) The factory IS reached from the public entry point.
+        assert mock_factory.called, "Injection path must dispatch through the named factory"
+        assert results and results[0]["id"] == "L-active-001"
+
+        # (b) It receives active semantics + the config-resolved min_impact with
+        #     no param drift. The factory pins status="active" internally, so the
+        #     shim must route here (the active branch) — proven by the factory
+        #     being called at all rather than the adapter. min_impact must equal
+        #     the config default (sentinel None resolved), not a hardcoded value.
+        first_call = mock_factory.call_args_list[0]
+        assert first_call.kwargs["min_impact"] == cfg.agent_learning_min_impact
+        # Over-fetch is max * 3 for re-ranking; proves max_results threaded through.
+        assert first_call.kwargs["max_results"] == cfg.agent_learning_max * 3
+        # The task description is forwarded as the positional query arg.
+        assert first_call.args[1] == "implement admin endpoint"
+        # Inferred domain tags (admin file path) reach the factory.
+        assert "admin" in (first_call.kwargs["tags"] or [])
+
+    def test_drops_to_query_only_fallback_still_via_factory(self) -> None:
+        """When the tag-filtered factory call returns empty, the query-only
+        fallback ALSO routes through the factory with status='active' preserved.
+
+        Guards against a regression where the fallback branch bypasses the
+        factory (losing the active-status filter) on the second attempt.
+        """
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.learning_injection import select_learnings_for_task
+
+        cfg = get_config()
+        call_count = 0
+
+        def factory_side_effect(*args: object, **kwargs: object) -> list[dict[str, object]]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return []  # tag-filtered call yields nothing
+            return [
+                {
+                    "id": "L-fallback",
+                    "summary": "fallback learning",
+                    "impact": 0.7,
+                    "tags": [],
+                    "status": "active",
+                },
+            ]
+
+        with patch(
+            "trw_mcp.state.recall_factories.recall_for_learning_injection",
+            side_effect=factory_side_effect,
+        ) as mock_factory:
+            results = select_learnings_for_task(
+                task_description="some task",
+                file_paths=["backend/routers/admin.py"],
+            )
+
+        assert call_count == 2, "Both the tag-filtered and fallback calls go via the factory"
+        assert results and results[0]["id"] == "L-fallback"
+        # Fallback call (second) must NOT pass tags but must keep the resolved
+        # min_impact — proving no param drift on the fallback branch either.
+        fallback_call = mock_factory.call_args_list[1]
+        assert fallback_call.kwargs.get("tags") is None
+        assert fallback_call.kwargs["min_impact"] == cfg.agent_learning_min_impact
+        assert fallback_call.kwargs["max_results"] == cfg.agent_learning_max * 2
+
 
 # ---------------------------------------------------------------------------
 # FR-2: format_learning_injection

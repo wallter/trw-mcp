@@ -21,12 +21,13 @@ Treat **score-gaming** or density-chasing as failure modes; add prose only when
 it improves implementability, traceability, or proof quality.
 
 1. Detect whether the input is a feature description, PRD ID, or file path.
-2. Call `trw_recall()` for related learnings.
-3. If needed, call `trw_prd_create()`.
-4. Validate the PRD with `trw_prd_validate()`.
-5. If it is not ready, improve the PRD directly in the current thread using repository evidence.
-6. Re-validate and stop either when the PRD is ready or the blocking questions are explicit.
-7. Report the score, blockers, and next implementation step.
+2. Call `trw_recall()` for related learnings and likely duplicate PRDs. If a likely duplicate exists, stop creation and ask whether to reuse/groom it.
+3. For ambiguous new feature descriptions, run a lightweight preflight before creation: answer from code/docs when possible, otherwise ask one question at a time with a recommended default and tradeoff. Capture affected modules/interfaces/seams, deep-module opportunity, vertical tracer-bullet proof path, non-goals, and open assumptions.
+4. If needed, call `trw_prd_create()` with the preflight decision tree included in the input.
+5. Validate the PRD with `trw_prd_validate()`.
+6. If it is not ready, improve the PRD directly in the current thread using repository evidence.
+7. Re-validate and stop either when the PRD is ready or the blocking questions are explicit.
+8. Report the score, blockers, decision tree, and next implementation step.
 
 Constraints:
 - Do not assume subagents are available.

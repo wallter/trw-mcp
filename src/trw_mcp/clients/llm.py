@@ -1,11 +1,11 @@
-"""LLM client abstraction over Anthropic SDK.
+"""LLM client abstraction over the optional Anthropic adapter.
 
 Provides a thin wrapper that gracefully degrades when the SDK is
 not installed. Tools check ``LLMClient.available`` before calling
 and fall back to pure-Python logic when unavailable.
 
-The default model is Haiku for cost efficiency; callers can
-override per-request.
+The default uses the adapter's fast/low-cost alias; callers can override
+per-request. Core TRW logic must not depend on a particular vendor model.
 """
 
 from __future__ import annotations
@@ -37,6 +37,9 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 
 
 _MODEL_MAP: dict[str, str] = {
+    "fast": "claude-haiku-4-5-20251001",
+    "balanced": "claude-sonnet-4-6",
+    "frontier": "claude-opus-4-7",
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-4-6",
     "opus": "claude-opus-4-7",
@@ -52,10 +55,13 @@ class LLMClient:
     """Abstraction over Anthropic SDK for internal LLM calls.
 
     Gracefully degrades: ``ask()`` returns ``None`` when the SDK
-    is unavailable.  Uses Haiku by default for cost efficiency.
+    is unavailable. Uses the adapter's fast/low-cost default for cost
+    efficiency.
 
     Args:
-        model: Default model identifier — ``"haiku"``, ``"sonnet"``, or ``"opus"``.
+        model: Default model identifier. Capability aliases (``"fast"``,
+            ``"balanced"``, ``"frontier"``) are preferred; legacy Anthropic
+            aliases remain supported for compatibility.
         max_turns: Maximum agentic turns per query (default 1 for simple Q&A).
         system_prompt: Optional system prompt applied to all queries.
     """

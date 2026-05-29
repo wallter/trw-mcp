@@ -49,19 +49,19 @@ def _make_run_with_events(
 
 
 # ---------------------------------------------------------------------------
-# RC-003 + RC-006: trw_deliver warns when no build_check_complete event
+# RC-003 + RC-006: trw_deliver blocks when no build_check_complete event
 # ---------------------------------------------------------------------------
 
 
 class TestDeliverBuildGate:
-    """trw_deliver should warn when build_check_complete is missing or failed."""
+    """trw_deliver should require build_check_complete or an explicit override."""
 
-    def test_deliver_warns_no_build_check(
+    def test_deliver_blocks_no_build_check(
         self,
         tmp_path: Path,
         writer: FileStateWriter,
     ) -> None:
-        """Delivery without a build_check_complete event produces a warning."""
+        """Delivery without build_check evidence is blocked, not silently delivered."""
         project = tmp_path / "project"
         task_root = project / "docs"
         run_dir = _make_run_with_events(
@@ -94,7 +94,54 @@ class TestDeliverBuildGate:
             result = deliver_fn()
 
         assert "build_gate_warning" in result
+        assert result["success"] is False
+        assert "build_gate_block" in result
         assert "no successful build check" in str(result["build_gate_warning"]).lower()
+        assert "allow_unverified=true" in str(result["build_gate_block"])
+
+    def test_deliver_allows_documented_unverified_override(
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+    ) -> None:
+        """A documented acceptable-failure override records the rationale."""
+        project = tmp_path / "project"
+        task_root = project / "docs"
+        run_dir = _make_run_with_events(
+            task_root,
+            "my-task",
+            "20260227T100000Z-aaaa",
+            [
+                {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
+                {"event": "checkpoint", "ts": "2026-02-27T11:00:00Z"},
+                {"event": "tool_invocation", "ts": "2026-02-27T11:30:00Z"},
+            ],
+            writer,
+        )
+
+        from fastmcp import FastMCP
+
+        from trw_mcp.tools.ceremony import register_ceremony_tools
+
+        server = FastMCP("test")
+        register_ceremony_tools(server)
+        deliver_fn = get_tools_sync(server)["trw_deliver"].fn
+
+        with (
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+        ):
+            (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True)
+            (tmp_path / ".trw" / "reflections").mkdir(parents=True)
+            result = deliver_fn(
+                allow_unverified=True,
+                unverified_reason="doc-only change validated by source inspection",
+            )
+
+        assert "build_gate_warning" in result
+        assert str(result["build_gate_override"]) == "doc-only change validated by source inspection"
+        assert "build_gate_block" not in result
 
     def test_deliver_no_warning_when_build_passed(
         self,
@@ -171,8 +218,8 @@ Some other content here.
         unchecked = [c for c in criteria if not c["checked"]]
         assert len(checked) == 3
         assert len(unchecked) == 2
-        assert "Coverage >= 80%" in unchecked[0]["text"]
-        assert "Admin dashboard" in unchecked[1]["text"]
+        assert "Coverage >= 80%" in str(unchecked[0]["text"])
+        assert "Admin dashboard" in str(unchecked[1]["text"])
 
 
 # ---------------------------------------------------------------------------

@@ -7,9 +7,13 @@ intelligence must not ship in trw-mcp. The backend-only surfaces include
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from check_import_boundaries import check_import_boundaries
 
 # Root of the trw_mcp source tree
 _SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
@@ -102,6 +106,22 @@ class TestNoIntelligenceImports:
     def test_import_trw_mcp_succeeds(self) -> None:
         """import trw_mcp works after intelligence code removal."""
         import trw_mcp  # noqa: F401
+
+    def test_package_import_boundaries_are_clean(self) -> None:
+        """Coarse package import-boundary policy passes for public/private package seams."""
+        assert check_import_boundaries(Path(__file__).resolve().parents[2]) == []
+
+    def test_import_boundary_policy_reports_unparseable_python(self, tmp_path: Path) -> None:
+        """Malformed files fail closed with an operator-facing diagnostic."""
+        source = tmp_path / "trw-mcp" / "src" / "trw_mcp"
+        source.mkdir(parents=True)
+        bad_file = source / "bad.py"
+        bad_file.write_text("from backend import app\nif True print('broken')\n", encoding="utf-8")
+
+        violations = check_import_boundaries(tmp_path)
+
+        assert violations
+        assert any("could not parse" in violation for violation in violations)
 
     def test_deleted_modules_raise_import_error(self) -> None:
         """Importing deleted backend-only intelligence modules raises ImportError."""

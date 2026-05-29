@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 # Sprint Completion Skill
 
-Use when: an active sprint is done and you want deliverables validated, PRD statuses updated, and delivery ceremony run.
+Use when: closing an active sprint after validating PRDs, exit criteria, build gates, and archival steps.
 
 Complete an active sprint by validating deliverables, running the build gate, archiving the sprint document, and executing the full delivery ceremony.
 
@@ -43,7 +43,7 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 
 4. **Parse exit criteria checkboxes**: Spec reconciliation (`trw_review(mode='reconcile')`) should have been run during the REVIEW phase for each governing PRD. Extract all `- [ ]` and `- [x]` lines from the "Exit Criteria" section of the sprint doc.
    - For each **unchecked** (`- [ ]`) item, classify it:
-     - **Auto-verifiable**: build passes, coverage >= N%, mypy clean, PRD status = done — verify these now and report pass/fail
+     - **Auto-verifiable**: build passes, coverage >= N%, project type/static checks clean, PRD status = done — verify these now and report pass/fail
      - **Manual**: pen testing completed, docs published, deployment verified — require explicit user waiver (`WAIVE: criterion text`)
    - **`verify:` command support (PRD-QUAL-045-FR04)**: If an exit criterion has an inline `verify: <command>` field, run the command (with a 60s timeout) and use its exit code to determine pass/fail. This allows automated verification of criteria like "grep -c pattern file".
    - If **any criterion is unchecked AND not auto-verified AND not waived**: BLOCK sprint completion
@@ -53,7 +53,7 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
 4a. **Wave completion check (PRD-INFRA-036-FR04)**: If the sprint doc contains a wave manifest (YAML `waves:` block), check that each wave has at least one checkpoint with a matching `wave_id`. Warn (do not block) if any wave lacks a completion checkpoint — this indicates incomplete tracking, not necessarily incomplete work.
 
 5. **Build gate with coverage threshold**: Extract coverage target from exit criteria (pattern: `coverage >= X%` or `coverage_threshold: X` in YAML frontmatter). Default to 80% if not specified.
-   - Call `trw_build_check(scope="full")` to run tests + type-check
+   - Run the project-appropriate full verification command, then call `trw_build_check(scope="full")` to record tests + type/static checks
    - If coverage is below the threshold: BLOCK with message showing actual vs required
    - If build **fails**: Report failures, do NOT proceed. The sprint cannot be completed with a failing build.
    - If build **passes** and coverage meets threshold: Continue to step 5a.
@@ -71,19 +71,13 @@ Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-a
    ```
    This step is REQUIRED — sprint docs left in `planned/` or `active/` after completion cause confusion in future sprint planning (this was identified as a recurring framework bug).
 
-6d. **Team memory promotion (PRD-CORE-048-FR08)**: Before the final delivery ceremony, call `memory_consolidate(namespace="team:*")` so all active team namespaces are promoted into `project:default`.
-   - If the result returns `status: skipped` / `skipped_reason: no_team_namespaces`, log a DEBUG note and continue.
-   - If the result includes per-namespace summaries, surface each namespace's `promoted_count` and `discarded_count` in the sprint-finish report.
-   - If one namespace fails but others succeed, continue the sprint-finish workflow and report the failure summary instead of aborting the entire sprint.
-
 7. **Delivery ceremony**: Call `trw_deliver()` for full delivery (reflect, checkpoint, claude_md_sync, index_sync).
 
 8. **Report**:
    - Exit criteria verification table (criterion | status)
    - Completed PRDs (count and IDs)
-   - Team memory promotion summary (`memory_consolidate(namespace="team:*")`, per-namespace counts, failures if any)
    - Test results (total, passed, coverage vs threshold)
-   - mypy status
+   - Type/static-check status
    - Sprint doc archive path
    - Learnings promoted
    - Suggested next steps

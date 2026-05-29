@@ -39,9 +39,6 @@ from trw_mcp.state.claude_md.sections import (
     generate_behavioral_protocol_md as generate_behavioral_protocol_md,
 )
 from trw_mcp.state.claude_md.sections import (
-    render_agent_teams_protocol as render_agent_teams_protocol,
-)
-from trw_mcp.state.claude_md.sections import (
     render_agents_trw_section as render_agents_trw_section,
 )
 from trw_mcp.state.claude_md.sections import (
@@ -101,7 +98,6 @@ __all__ = [
     "_load_analytics_counts",
     "_load_prompting_guide",
     "generate_behavioral_protocol_md",
-    "render_agent_teams_protocol",
     "render_agents_trw_section",
     "render_behavioral_protocol",
     "render_ceremony_flows",
