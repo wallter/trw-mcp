@@ -151,6 +151,7 @@ def recall_for_review_tags(
     """
     return _default_recall()(
         trw_dir,
+        query="*",
         tags=tags,
         min_impact=min_impact,
         max_results=max_results,
