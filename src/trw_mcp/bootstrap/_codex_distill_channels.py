@@ -6,6 +6,7 @@ and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
   - .codex/hooks/trw_post_edit_telemetry.py  (codex-posttooluse-telemetry)
+  - .codex/hooks.json                         (PostToolUse group for distill hook)
   - .trw/channels/manifest.yaml              (three codex channel entries merged)
 
 AGENTS.md segment (codex-agents-md-hotspots) is a runtime channel managed by
@@ -16,6 +17,7 @@ PRD-DIST-2402 FR41-FR43.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +38,126 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "bootstrap_codex_channel_manifest",
     "install_codex_distill_channels",
+    "merge_distill_hook_into_hooks_json",
 ]
+
+# Sentinel string used to detect idempotency — if this appears in the command
+# of any existing PostToolUse hook, we skip the duplicate insertion.
+_DISTILL_HOOK_SENTINEL = "trw_post_edit_telemetry"
+_CODEX_HOOKS_JSON = ".codex/hooks.json"
+
+
+def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
+    """Merge the TRW distill PostToolUse hook group into .codex/hooks.json.
+
+    Safe-merge semantics:
+    - If .codex/hooks.json exists, load it and APPEND the distill group to
+      hooks.PostToolUse (preserves all existing ceremony or user entries).
+    - If the file does not exist, create it with only the distill group.
+    - Idempotent: if a PostToolUse command containing ``trw_post_edit_telemetry``
+      already exists, does not duplicate it.
+
+    The hook command uses an absolute-git-root-relative path so the script
+    resolves correctly regardless of the working directory when Codex fires the
+    hook.
+
+    Returns:
+        Dict with keys: written (bool), path (str), skipped (bool),
+        error (str | None).
+    """
+    hooks_json_path = target_dir / _CODEX_HOOKS_JSON
+
+    # Use the absolute path to the hook script (computed at install time).
+    # The hooks.json command string is NOT run through a shell by Codex, so
+    # $(git rev-parse --show-toplevel) shell expansion is NOT available here.
+    # We use the absolute path so the script resolves correctly when Codex
+    # spawns the hook process.
+    hook_script_abs = target_dir.resolve() / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
+
+    # Build the distill PostToolUse group in the hooks.json format:
+    # hooks.PostToolUse is an array of groups; each group has description + hooks array.
+    hook_command = f'python3 "{hook_script_abs}"'
+
+    distill_group: dict[str, Any] = {
+        "description": "TRW managed: trw-distill PostToolUse telemetry",
+        "hooks": [
+            {
+                "type": "command",
+                "command": hook_command,
+                "statusMessage": "Recording TRW distill telemetry",
+            }
+        ],
+    }
+
+    # Load existing hooks.json if present
+    existing: dict[str, Any] = {}
+    if hooks_json_path.exists():
+        try:
+            raw = hooks_json_path.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                existing = parsed
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning(
+                "codex_distill_hooks_json_parse_failed",
+                path=str(hooks_json_path),
+                error=str(exc),
+                outcome="warning",
+            )
+            # Start fresh so we don't leave a corrupt file
+
+    # Idempotency: check if already registered
+    hooks_section = existing.get("hooks", {})
+    post_tool_groups: list[dict[str, Any]] = []
+    if isinstance(hooks_section, dict):
+        raw_groups = hooks_section.get("PostToolUse", [])
+        if isinstance(raw_groups, list):
+            post_tool_groups = list(raw_groups)
+
+    already_registered = any(
+        _DISTILL_HOOK_SENTINEL in str(cmd.get("command", ""))
+        for group in post_tool_groups
+        if isinstance(group, dict)
+        for cmd in (group.get("hooks") or [])
+        if isinstance(cmd, dict)
+    )
+
+    if already_registered:
+        log.debug(
+            "codex_distill_hook_already_registered",
+            path=str(hooks_json_path),
+            outcome="skipped",
+        )
+        return {"written": False, "path": str(hooks_json_path), "skipped": True, "error": None}
+
+    # Append the distill group
+    if not isinstance(hooks_section, dict):
+        hooks_section = {}
+    if "PostToolUse" not in hooks_section or not isinstance(hooks_section["PostToolUse"], list):
+        hooks_section["PostToolUse"] = []
+    hooks_section["PostToolUse"].append(distill_group)
+    existing["hooks"] = hooks_section
+
+    try:
+        hooks_json_path.parent.mkdir(parents=True, exist_ok=True)
+        hooks_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        log.warning(
+            "codex_distill_hooks_json_write_failed",
+            path=str(hooks_json_path),
+            error=str(exc),
+            outcome="error",
+        )
+        return {"written": False, "path": str(hooks_json_path), "skipped": False, "error": str(exc)}
+
+    log.debug(
+        "codex_distill_hook_registered",
+        path=str(hooks_json_path),
+        command=hook_command,
+        outcome="written",
+    )
+    return {"written": True, "path": str(hooks_json_path), "skipped": False, "error": None}
+
 
 # ---------------------------------------------------------------------------
 # Data paths
@@ -73,9 +194,7 @@ def bootstrap_codex_channel_manifest(repo_root: Path) -> dict[str, object]:
         try:
             validated.append(ChannelEntry.model_validate(entry_dict))
         except Exception as exc:
-            raise ManifestValidationError(
-                f"codex manifest entry validation failed: {exc}"
-            ) from exc
+            raise ManifestValidationError(f"codex manifest entry validation failed: {exc}") from exc
 
     # Load or recreate target manifest
     manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
@@ -148,6 +267,20 @@ def install_codex_distill_channels(
     except Exception as exc:  # justified: fail-open, hook is best-effort
         log.warning("codex_hook_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"Codex PostToolUse hook install failed: {exc}")
+
+    # 1b. Register the distill hook in .codex/hooks.json so Codex actually invokes it.
+    #     Codex only fires hooks listed in hooks.json; without this the script is orphaned.
+    try:
+        hooks_json_result = merge_distill_hook_into_hooks_json(target_dir)
+        if hooks_json_result.get("error"):
+            result["errors"].append(f"hooks.json merge failed: {hooks_json_result['error']}")
+        elif hooks_json_result.get("skipped"):
+            result["preserved"].append(_CODEX_HOOKS_JSON)
+        else:
+            result["updated"].append(_CODEX_HOOKS_JSON)
+    except Exception as exc:  # justified: fail-open, hooks.json merge is best-effort
+        log.warning("codex_hooks_json_merge_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"hooks.json merge failed: {exc}")
 
     # 2. Bootstrap channel manifest (three codex channel entries)
     try:
