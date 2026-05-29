@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from trw_mcp.bootstrap._copilot import (
+    _COPILOT_ADAPTER_INSTALL_PATH,
+    _COPILOT_ADAPTER_SCRIPT_NAME,
     _COPILOT_HOOK_MAP,
     _COPILOT_HOOKS_PATH,
     _COPILOT_INSTRUCTIONS_DIR,
     _PATH_SCOPED_TEMPLATES,
     _TRW_HOOK_DESCRIPTION_PREFIX,
+    _build_hook_adapter_command,
+    _bundled_adapter_script_path,
     _copilot_hooks_payload,
     _is_trw_hook_group,
     _merge_copilot_hooks,
@@ -146,23 +151,48 @@ class TestCopilotHooks:
         assert any("My custom startup hook" in description for description in descriptions)
         assert any(description.startswith(_TRW_HOOK_DESCRIPTION_PREFIX) for description in descriptions)
 
-    def test_hooks_stdin_adapter_in_command(self, fake_git_repo: Path) -> None:
-        """Verify hook commands reference stdin reading (cat pattern)."""
+    def test_hooks_command_references_adapter_script(self, fake_git_repo: Path) -> None:
+        """Hook commands must invoke the trw-copilot-adapter.sh script (no inline shell)."""
         generate_copilot_hooks(fake_git_repo)
         data = json.loads((fake_git_repo / _COPILOT_HOOKS_PATH).read_text())
         for event_name, groups in data["hooks"].items():
             for group in groups:
                 for hook in group.get("hooks", []):
                     command = hook.get("command", "")
-                    assert "_input=$(cat)" in command, f"Hook {event_name} missing stdin adapter"
+                    assert _COPILOT_ADAPTER_SCRIPT_NAME in command, (
+                        f"Hook {event_name} command should invoke {_COPILOT_ADAPTER_SCRIPT_NAME}"
+                    )
 
-    def test_hooks_pre_tool_use_has_permission_decision(self, fake_git_repo: Path) -> None:
-        """preToolUse hook must output JSON with permissionDecision."""
+    def test_hooks_command_includes_event_name(self, fake_git_repo: Path) -> None:
+        """Each hook command must pass the event name as an argument to the adapter."""
+        generate_copilot_hooks(fake_git_repo)
+        data = json.loads((fake_git_repo / _COPILOT_HOOKS_PATH).read_text())
+        for event_name, groups in data["hooks"].items():
+            if not event_name.startswith("TRW") and event_name in _COPILOT_HOOK_MAP:
+                for group in groups:
+                    for hook in group.get("hooks", []):
+                        command = hook.get("command", "")
+                        assert event_name in command, (
+                            f"Hook command for {event_name} should include the event name as arg"
+                        )
+
+    def test_hooks_pre_tool_use_references_adapter(self, fake_git_repo: Path) -> None:
+        """preToolUse hook command must invoke the adapter (permission logic is in the script)."""
         generate_copilot_hooks(fake_git_repo)
         data = json.loads((fake_git_repo / _COPILOT_HOOKS_PATH).read_text())
         pre_tool_groups = data["hooks"]["preToolUse"]
         command = pre_tool_groups[0]["hooks"][0]["command"]
-        assert "permissionDecision" in command
+        assert _COPILOT_ADAPTER_SCRIPT_NAME in command
+        assert "preToolUse" in command
+
+    def test_hooks_adapter_script_installed(self, fake_git_repo: Path) -> None:
+        """generate_copilot_hooks installs trw-copilot-adapter.sh alongside hooks.json."""
+        result = generate_copilot_hooks(fake_git_repo)
+        assert not result["errors"]
+        adapter_path = fake_git_repo / _COPILOT_ADAPTER_INSTALL_PATH
+        assert adapter_path.is_file(), "trw-copilot-adapter.sh was not installed"
+        # Must be executable
+        assert adapter_path.stat().st_mode & 0o111, "adapter script is not executable"
 
     def test_hooks_force_overwrites_existing(self, fake_git_repo: Path) -> None:
         """force=True ignores existing hooks.json entirely."""
@@ -239,3 +269,135 @@ class TestCopilotHooksMerge:
         assert merged["version"] == 1
         for event in _COPILOT_HOOK_MAP:
             assert event in merged["hooks"]
+
+
+@pytest.mark.unit
+class TestCopilotHookCommandShellValidity:
+    """Regression tests: generated hook commands must be bash-syntax-valid.
+
+    PRD fix: the previous single-quote outer wrapper with inner single-quoted
+    grep/sed patterns caused 'unexpected EOF while looking for matching' when
+    Copilot ran the command via bash -c.  These tests are the permanent guard.
+    """
+
+    def test_all_events_pass_bash_n(self) -> None:
+        """Every hook event's generated command passes bash -n (no syntax errors)."""
+        for event_name in _COPILOT_HOOK_MAP:
+            cmd = _build_hook_adapter_command(event_name, "/tmp/fake-hook.sh")
+            result = subprocess.run(
+                ["bash", "-n", "-c", cmd],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"bash -n failed for event '{event_name}': {result.stderr.strip()!r}\n"
+                f"Command was: {cmd!r}"
+            )
+
+    def test_command_is_simple_invocation_no_inline_shell(self) -> None:
+        """Generated command is a clean /bin/sh invocation — no nested quoting."""
+        for event_name in _COPILOT_HOOK_MAP:
+            cmd = _build_hook_adapter_command(event_name, "/tmp/fake-hook.sh", "/tmp/adapter.sh")
+            # Command must be exactly: /bin/sh "<adapter>" "<hook>" "<event>"
+            assert cmd == f'/bin/sh "/tmp/adapter.sh" "/tmp/fake-hook.sh" "{event_name}"', (
+                f"Unexpected command shape for {event_name}: {cmd!r}"
+            )
+
+    def test_adapter_script_passes_bash_n(self) -> None:
+        """The bundled trw-copilot-adapter.sh script is shell-syntax-valid."""
+        adapter = _bundled_adapter_script_path()
+        assert adapter.is_file(), f"Bundled adapter script missing: {adapter}"
+        result = subprocess.run(["bash", "-n", str(adapter)], capture_output=True, text=True)
+        assert result.returncode == 0, f"bash -n failed on adapter script: {result.stderr.strip()!r}"
+
+
+@pytest.mark.unit
+class TestCopilotAdapterScriptBehavior:
+    """Behavioral tests for trw-copilot-adapter.sh.
+
+    Tests run the real shell script with synthetic input to verify:
+    - toolName extraction from Copilot JSON payload
+    - preToolUse allow/deny JSON decision output
+    - fail-open when hook script is missing
+    """
+
+    @pytest.fixture()
+    def adapter(self) -> Path:
+        """Return the bundled adapter script path."""
+        p = _bundled_adapter_script_path()
+        assert p.is_file()
+        return p
+
+    @pytest.fixture()
+    def allow_hook(self, tmp_path: Path) -> Path:
+        """A fake TRW hook that exits 0 (allow)."""
+        hook = tmp_path / "allow-hook.sh"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        hook.chmod(0o755)
+        return hook
+
+    @pytest.fixture()
+    def deny_hook(self, tmp_path: Path) -> Path:
+        """A fake TRW hook that exits 2 (deny)."""
+        hook = tmp_path / "deny-hook.sh"
+        hook.write_text("#!/bin/sh\nexit 2\n")
+        hook.chmod(0o755)
+        return hook
+
+    @pytest.fixture()
+    def echo_tool_name_hook(self, tmp_path: Path) -> Path:
+        """A fake TRW hook that echoes $TOOL_NAME."""
+        hook = tmp_path / "echo-hook.sh"
+        hook.write_text('#!/bin/sh\nprintf "TOOL_NAME=%s\\n" "$TOOL_NAME"\nexit 0\n')
+        hook.chmod(0o755)
+        return hook
+
+    def _run_adapter(
+        self, adapter: Path, hook: Path, event: str, payload: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/sh", str(adapter), str(hook), event],
+            input=payload,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_tool_name_extracted_via_grep_fallback(
+        self, adapter: Path, echo_tool_name_hook: Path
+    ) -> None:
+        """toolName is correctly extracted from the Copilot JSON payload."""
+        payload = '{"toolName":"str_replace_editor","tool_input":{"path":"foo.py"}}'
+        result = self._run_adapter(adapter, echo_tool_name_hook, "postToolUse", payload)
+        assert result.returncode == 0
+        assert "str_replace_editor" in result.stdout
+
+    def test_pre_tool_use_allow_on_exit_0(self, adapter: Path, allow_hook: Path) -> None:
+        """preToolUse emits allow JSON when hook exits 0."""
+        payload = '{"toolName":"trw_learn","tool_input":{}}'
+        result = self._run_adapter(adapter, allow_hook, "preToolUse", payload)
+        assert result.returncode == 0
+        assert result.stdout == '{"permissionDecision":"allow"}'
+
+    def test_pre_tool_use_deny_on_exit_2(self, adapter: Path, deny_hook: Path) -> None:
+        """preToolUse emits deny JSON when hook exits 2."""
+        payload = '{"toolName":"trw_deliver","tool_input":{}}'
+        result = self._run_adapter(adapter, deny_hook, "preToolUse", payload)
+        assert result.returncode == 0
+        assert result.stdout == '{"permissionDecision":"deny"}'
+
+    def test_fail_open_missing_hook(self, adapter: Path, tmp_path: Path) -> None:
+        """preToolUse fails open (allow) when the hook script does not exist."""
+        missing = tmp_path / "nonexistent-hook.sh"
+        payload = '{"toolName":"anything","tool_input":{}}'
+        result = self._run_adapter(adapter, missing, "preToolUse", payload)
+        assert result.returncode == 0
+        assert result.stdout == '{"permissionDecision":"allow"}'
+
+    def test_non_permission_hook_fail_open_on_error(
+        self, adapter: Path, tmp_path: Path
+    ) -> None:
+        """Non-permission hooks fail open (exit 0) when hook script is missing."""
+        missing = tmp_path / "nonexistent-hook.sh"
+        payload = '{"toolName":"anything","tool_input":{}}'
+        result = self._run_adapter(adapter, missing, "postToolUse", payload)
+        assert result.returncode == 0

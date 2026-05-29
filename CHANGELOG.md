@@ -4,6 +4,74 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.12] — 2026-05-28
+
+### Fixed
+
+- **Copilot hook adapter shell-quoting bug — eliminates `unexpected EOF` spam.**
+  `_build_hook_adapter_command()` previously generated a `/bin/sh -c '...'`
+  command whose outer single-quote wrapper was closed early by inner
+  single-quoted `grep`/`sed` patterns (e.g. `grep -o '"toolName"...'`).
+  When GitHub Copilot ran the command via `bash -c`, it emitted
+  `unexpected EOF while looking for matching '"'` on every hook event.
+
+  Fix: the inline shell logic is extracted into a real bundled script
+  `data/copilot/hooks/trw-copilot-adapter.sh` that `generate_copilot_hooks`
+  installs at `.github/hooks/trw-copilot-adapter.sh`. The generated
+  `command` in `hooks.json` is now a simple `/bin/sh "<adapter>" "<hook>"
+  "<event>"` invocation with no nested quoting — eliminating the entire
+  bug class permanently. The adapter script reads Copilot stdin JSON,
+  extracts `toolName` (jq preferred, grep/sed fallback), pipes the payload
+  to the target TRW hook, and for `preToolUse` translates the hook exit code
+  to a JSON `permissionDecision` object. All error paths fail-open so no
+  hook failure can block a user tool call.
+
+  Regression guard: `TestCopilotHookCommandShellValidity.test_all_events_pass_bash_n`
+  now asserts `bash -n` exits 0 for every event in `_COPILOT_HOOK_MAP`.
+  Behavioral tests in `TestCopilotAdapterScriptBehavior` verify toolName
+  extraction, allow/deny decisions, and fail-open for missing hooks.
+
+## [0.48.11] — 2026-05-28
+
+### Changed
+
+- **Opus 4.8 effort recalibration for bundled agents.** Claude Opus 4.8
+  lowered the default effort to `high` (from 4.7's `xhigh`) and recalibrated
+  the levels (`high` now thinks somewhat less than 4.7's `high`). Anthropic
+  recommends the frontmatter ceiling (`high`) for coding/agentic and
+  intelligence-sensitive work. Bumped `effort: medium|low → high` on the seven
+  reasoning-heavy agents: `trw-implementer`, `trw-reviewer` (was `low` — too
+  shallow for a 7-dimension OWASP rubric review under 4.8's strict low-end
+  adherence), `trw-tester`, `trw-auditor`, `trw-adversarial-auditor`,
+  `trw-researcher`, and `trw-prd-groomer`. Bounded/cheap agents
+  (`trw-requirement-reviewer`, `trw-requirement-writer`, `trw-code-simplifier`,
+  `trw-traceability-checker`; `trw-lead` already `high`) are unchanged. Effort
+  stays a portable, all-client knob; `model:` stays a capability tier.
+
+### Fixed
+
+- **`trw-distill-explorer` frontmatter hygiene.** Description now opens with
+  "Use when you need:" (was "Use for:") so it satisfies the agent-frontmatter
+  `use when` trigger check (source `_explorer_subagent.py` + dev-repo copy).
+- **Stale agent-count assertions.** `test_agent_frontmatter.py` and
+  `test_agents_sync.py` now exclude the two dev-only channel agents
+  (`trw-distill-explorer`, `trw-distill-sonnet-judge`) from the 12-bundled
+  count, instead of hard-coding `== 12` against a directory that legitimately
+  ships 14.
+- **Agent-parity test contradiction.** `test_agents_sync.py::test_parity_after_marker_expansion`
+  applied marker expansion only, while `test_bundled_agents.py` (PRD-INFRA-104)
+  and `scripts/sync-agents.py` apply marker expansion **+ capability-tier
+  resolution** (`frontier→opus`, `balanced→sonnet`, `local-small→haiku`). The
+  parity test now applies both transforms, and `.claude/agents/` is regenerated
+  tier-resolved to match what shipped users get after `trw-mcp init`.
+
+### Docs
+
+- New Opus 4.8 prompting research + adapter best-practices under
+  `docs/documentation/prompting/` (canonical snapshot, supersedes the 4.7 pair).
+  The `test_opus_47_lint.py` sampling-param guard rationale now notes it applies
+  to Opus 4.7 *and later* (incl. 4.8).
+
 ## [0.48.10] — 2026-05-27
 
 ### Added
