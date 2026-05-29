@@ -290,7 +290,7 @@ class CopilotPathInstructionsRenderer:
 
         # Build content
         hotspots_raw: list[Any] = sidecar_data.get("hotspots", [])
-        top_hotspots = hotspots_raw[:self.MAX_HOTSPOT_FILES]
+        top_hotspots = hotspots_raw[: self.MAX_HOTSPOT_FILES]
 
         # Extract hotspot file paths for glob derivation
         hotspot_files: list[str] = []
@@ -312,9 +312,7 @@ class CopilotPathInstructionsRenderer:
 
         file_content = render_c2_path_instructions(
             apply_to=apply_to,
-            hotspot_entries=[
-                (h if isinstance(h, dict) else {"file": str(h)}) for h in top_hotspots
-            ],
+            hotspot_entries=[(h if isinstance(h, dict) else {"file": str(h)}) for h in top_hotspots],
             ts=ts,
         )
 

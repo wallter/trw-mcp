@@ -343,9 +343,7 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
             sidecar_sha = result.distill_sidecar_sha or ""
-            record_ids = (
-                [f"hotspot:{file_path}@{sidecar_sha[:8]}"] if sidecar_sha else []
-            )
+            record_ids = [f"hotspot:{file_path}@{sidecar_sha[:8]}"] if sidecar_sha else []
             emit_tool_call(
                 tool_name="trw_before_edit_hint",
                 file_path=file_path,

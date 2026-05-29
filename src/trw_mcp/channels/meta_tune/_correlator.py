@@ -38,9 +38,7 @@ __all__ = [
 # Event classification
 # ---------------------------------------------------------------------------
 
-PUSH_EVENT_TYPES: frozenset[str] = frozenset(
-    {"push_write", "push_ephemeral", "pull_tool_call"}
-)
+PUSH_EVENT_TYPES: frozenset[str] = frozenset({"push_write", "push_ephemeral", "pull_tool_call"})
 
 OUTCOME_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -179,9 +177,7 @@ def correlate(
         t = _ts_to_seconds(oc.get("ts", ""))
         if t is None:
             continue
-        parsed_outcomes.append(
-            (oc.get("session_id"), oc.get("file_path"), t)
-        )
+        parsed_outcomes.append((oc.get("session_id"), oc.get("file_path"), t))
 
     # Aggregate per (channel_id, client)
     totals: dict[tuple[str, str], int] = {}

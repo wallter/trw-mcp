@@ -86,9 +86,7 @@ def compute_channel_stats_result(
             manifest_path=manifest_path if manifest_path.exists() else None,
         )
 
-        channels_out: list[dict[str, Any]] = [
-            e.model_dump() for e in report.channels
-        ]
+        channels_out: list[dict[str, Any]] = [e.model_dump() for e in report.channels]
 
         return {
             "status": "ok",

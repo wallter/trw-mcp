@@ -35,9 +35,7 @@ def _update_opencode_distill_channels(
         if isinstance(errors, list):
             result["errors"].extend(errors)
     except Exception as exc:  # justified: fail-open, distill channels are additive
-        result.setdefault("warnings", []).append(
-            f"opencode distill channels update skipped: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"opencode distill channels update skipped: {exc}")
 
 
 def _update_codex_distill_channels(
@@ -54,9 +52,7 @@ def _update_codex_distill_channels(
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)
     except Exception as exc:  # justified: fail-open, distill channels are additive
-        result.setdefault("warnings", []).append(
-            f"codex distill channels update skipped: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"codex distill channels update skipped: {exc}")
 
 
 def _update_copilot_distill_channels(
@@ -73,9 +69,7 @@ def _update_copilot_distill_channels(
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)
     except Exception as exc:  # justified: fail-open, distill channels are additive
-        result.setdefault("warnings", []).append(
-            f"copilot distill channels update skipped: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"copilot distill channels update skipped: {exc}")
 
 
 def _update_antigravity_distill_channels(
@@ -92,9 +86,7 @@ def _update_antigravity_distill_channels(
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)
     except Exception as exc:  # justified: fail-open, distill channels are additive
-        result.setdefault("warnings", []).append(
-            f"antigravity distill channels update skipped: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"antigravity distill channels update skipped: {exc}")
 
 
 def _update_cursor_distill_channels(
@@ -111,6 +103,4 @@ def _update_cursor_distill_channels(
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)
     except Exception as exc:  # justified: fail-open, distill channels are additive
-        result.setdefault("warnings", []).append(
-            f"cursor distill channels update skipped: {exc}"
-        )
+        result.setdefault("warnings", []).append(f"cursor distill channels update skipped: {exc}")

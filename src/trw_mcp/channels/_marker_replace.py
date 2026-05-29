@@ -94,7 +94,7 @@ def replace_distill_segment(
         end_idx = content.find(end, start_idx + len(start))
         if end_idx != -1:
             # Both markers present in correct order — replace interior only.
-            before = content[:start_idx + len(start)]
+            before = content[: start_idx + len(start)]
             after = content[end_idx:]
             return before + "\n" + new_interior + "\n" + after
 

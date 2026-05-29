@@ -171,11 +171,7 @@ def compute_channel_render(
         }
 
     # Use enum value or string for surface comparison.
-    surface_val: str = (
-        entry.surface.value
-        if hasattr(entry.surface, "value")
-        else str(entry.surface)
-    )
+    surface_val: str = entry.surface.value if hasattr(entry.surface, "value") else str(entry.surface)
 
     if surface_val not in _INSTRUCTION_SURFACES:
         return {

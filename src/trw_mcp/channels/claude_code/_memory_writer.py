@@ -129,10 +129,7 @@ def update_memory_index(
         snapshot_filename: Filename of the snapshot inside *memory_dir*.
     """
     memory_index = memory_dir / "MEMORY.md"
-    pointer_block = (
-        f"- [{snapshot_filename}]({snapshot_filename})"
-        " — TRW distill codebase intelligence snapshot"
-    )
+    pointer_block = f"- [{snapshot_filename}]({snapshot_filename}) — TRW distill codebase intelligence snapshot"
     new_section = f"{MEMORY_INDEX_MARKER_START}\n{pointer_block}\n{MEMORY_INDEX_MARKER_END}"
 
     if memory_index.exists():
@@ -142,9 +139,7 @@ def update_memory_index(
             import re
 
             updated = re.sub(
-                re.escape(MEMORY_INDEX_MARKER_START)
-                + r".*?"
-                + re.escape(MEMORY_INDEX_MARKER_END),
+                re.escape(MEMORY_INDEX_MARKER_START) + r".*?" + re.escape(MEMORY_INDEX_MARKER_END),
                 new_section,
                 original,
                 flags=re.DOTALL,
@@ -208,9 +203,7 @@ def write_distill_snapshot(
     if sidecar_path is not None:
         sidecar = _load_sidecar(sidecar_path)
     else:
-        default_sidecar_path = (
-            repo_root / ".trw" / "distill" / "map-cache" / f"before-edit-hint-{sha}.json"
-        )
+        default_sidecar_path = repo_root / ".trw" / "distill" / "map-cache" / f"before-edit-hint-{sha}.json"
         sidecar = _load_sidecar(default_sidecar_path)
 
     # FR14: Skip if T0 beacon already written and sidecar still absent

@@ -31,10 +31,7 @@ class FeedbackFields(BaseModel):
 
     proactive: bool = Field(
         default=False,
-        description=(
-            "Master opt-in gate (NFR04). When False, no nudge ever "
-            "fires regardless of counter state."
-        ),
+        description=("Master opt-in gate (NFR04). When False, no nudge ever fires regardless of counter state."),
     )
     build_check_fail_threshold: int = Field(
         default=3,
@@ -49,10 +46,7 @@ class FeedbackFields(BaseModel):
     bug_learning_threshold: int = Field(
         default=1,
         ge=1,
-        description=(
-            "trw_learn entries tagged BOTH 'bug' AND 'trw-internal' that "
-            "arm the nudge."
-        ),
+        description=("trw_learn entries tagged BOTH 'bug' AND 'trw-internal' that arm the nudge."),
     )
 
 

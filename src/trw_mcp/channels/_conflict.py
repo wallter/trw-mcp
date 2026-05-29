@@ -109,9 +109,7 @@ class RenderLog:
                 outcome="render_log_write_failed",
             )
 
-    def last_for(
-        self, channel_id: str, target_path: Path
-    ) -> RenderLogEntry | None:
+    def last_for(self, channel_id: str, target_path: Path) -> RenderLogEntry | None:
         """Return the last log entry for *(channel_id, target_path)*.
 
         Scans the log file from end to start (reversed). Returns None if not
@@ -128,9 +126,7 @@ class RenderLog:
                     continue
                 try:
                     d: dict[str, object] = json.loads(line)
-                    if d.get("channel_id") == channel_id and d.get(
-                        "target_path"
-                    ) == target_str:
+                    if d.get("channel_id") == channel_id and d.get("target_path") == target_str:
                         return RenderLogEntry.from_dict(d)
                 except (json.JSONDecodeError, KeyError):
                     continue

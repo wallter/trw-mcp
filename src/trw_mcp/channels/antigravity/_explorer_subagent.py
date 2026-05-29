@@ -72,9 +72,7 @@ _MUTATION_TOOLS = frozenset({"write_file", "edit_file", "trw_deliver"})
 _PLACEHOLDER_HOTSPOT_ROW = "| {path} | {score} | {churn} | {callers} |"
 
 _PLACEHOLDER_ROWS = [
-    _PLACEHOLDER_HOTSPOT_ROW.format(
-        path="<path>", score="<score>", churn="<churn>", callers="<callers>"
-    )
+    _PLACEHOLDER_HOTSPOT_ROW.format(path="<path>", score="<score>", churn="<churn>", callers="<callers>")
     for _ in range(5)
 ]
 
@@ -243,8 +241,7 @@ def _assert_no_template_vars(content: str) -> None:
     """Raise ValueError if unsubstituted Jinja2-style template vars found."""
     if _TEMPLATE_SENTINEL in content:
         raise ValueError(
-            "Unsubstituted template variable found in AG-02 subagent content; "
-            "aborting write to prevent broken output."
+            "Unsubstituted template variable found in AG-02 subagent content; aborting write to prevent broken output."
         )
 
 

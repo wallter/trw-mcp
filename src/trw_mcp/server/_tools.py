@@ -159,6 +159,7 @@ def _register_tools() -> None:
     register_channel_render_tools(mcp)
     # PRD-DIST-2400 §meta-tune: channel correlation + throttle stats MCP tool
     from trw_mcp.tools.channel_stats import register_channel_stats_tools
+
     register_channel_stats_tools(mcp)
 
     register_config_resources(mcp)

@@ -91,14 +91,10 @@ PRUNE_LINES_ON_CAP: int = 25_000
 # ---------------------------------------------------------------------------
 
 # path-keyed: "type:repo/relative/path@sha8+" (4-40 hex chars)
-RECORD_ID_PATH_KEYED_RE: re.Pattern[str] = re.compile(
-    r"^[a-z_]+:[^@]+@[a-f0-9]{4,40}$"
-)
+RECORD_ID_PATH_KEYED_RE: re.Pattern[str] = re.compile(r"^[a-z_]+:[^@]+@[a-f0-9]{4,40}$")
 
 # slug-keyed: "type:slug" — alphanumeric, hyphens, underscores
-RECORD_ID_SLUG_KEYED_RE: re.Pattern[str] = re.compile(
-    r"^[a-z_]+:[a-z0-9_-]+$"
-)
+RECORD_ID_SLUG_KEYED_RE: re.Pattern[str] = re.compile(r"^[a-z_]+:[a-z0-9_-]+$")
 
 # ---------------------------------------------------------------------------
 # Default log path
@@ -132,13 +128,10 @@ def validate_record_id(record_id: str) -> bool:
     Raises:
         ValueError: if neither pattern matches.
     """
-    if RECORD_ID_PATH_KEYED_RE.match(
-        record_id
-    ) or RECORD_ID_SLUG_KEYED_RE.match(record_id):
+    if RECORD_ID_PATH_KEYED_RE.match(record_id) or RECORD_ID_SLUG_KEYED_RE.match(record_id):
         return True
     raise ValueError(
-        f"record_id {record_id!r} does not match canonical format "
-        f"('<type>:<path>@<sha>' or '<type>:<slug>')"
+        f"record_id {record_id!r} does not match canonical format ('<type>:<path>@<sha>' or '<type>:<slug>')"
     )
 
 
@@ -209,9 +202,7 @@ def _write_channel_event(
 ) -> None:
     """Inner writer — may raise; caller wraps with fail-open try/except."""
     if event_type not in VALID_EVENT_TYPES:
-        raise ValueError(
-            f"event_type {event_type!r} is not in VALID_EVENT_TYPES"
-        )
+        raise ValueError(f"event_type {event_type!r} is not in VALID_EVENT_TYPES")
 
     # Validate record_ids format if provided (warn but do NOT drop event)
     record_ids = optional_fields.get("record_ids")

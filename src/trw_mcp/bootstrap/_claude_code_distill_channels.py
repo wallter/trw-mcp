@@ -79,9 +79,7 @@ def bootstrap_cc_channel_manifest(repo_root: Path) -> dict[str, object]:
         try:
             validated.append(ChannelEntry.model_validate(entry_dict))
         except Exception as exc:
-            raise ManifestValidationError(
-                f"claude-code manifest entry validation failed: {exc}"
-            ) from exc
+            raise ManifestValidationError(f"claude-code manifest entry validation failed: {exc}") from exc
 
     # Load or recreate target manifest
     manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"

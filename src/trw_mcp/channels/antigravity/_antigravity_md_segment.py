@@ -224,8 +224,7 @@ def _assert_no_template_vars(content: str, context: str) -> None:
     """
     if _TEMPLATE_SENTINEL in content:
         raise ValueError(
-            f"Unsubstituted template variable found in {context}; "
-            f"aborting write to prevent broken output."
+            f"Unsubstituted template variable found in {context}; aborting write to prevent broken output."
         )
 
 

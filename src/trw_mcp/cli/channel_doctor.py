@@ -74,16 +74,8 @@ def _run_validate(args: argparse.Namespace, channels_dir: Path) -> None:
     warnings: list[str] = []
     hook_surfaces = {"hook_script", "hook_stdout_ephemeral"}
     for entry in manifest.channels:
-        surface_val: str = (
-            entry.surface.value
-            if hasattr(entry.surface, "value")
-            else str(entry.surface)
-        )
-        status_val: str = (
-            entry.status.value
-            if hasattr(entry.status, "value")
-            else str(entry.status)
-        )
+        surface_val: str = entry.surface.value if hasattr(entry.surface, "value") else str(entry.surface)
+        status_val: str = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
         if surface_val in hook_surfaces and status_val == "active":
             schema_key = getattr(entry, "hook_schema_confirmed_at", None)
             if schema_key is None:
@@ -178,11 +170,7 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
 
             manifest = load(manifest_path)
             for entry in manifest.channels:
-                status_val: str = (
-                    entry.status.value
-                    if hasattr(entry.status, "value")
-                    else str(entry.status)
-                )
+                status_val: str = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
                 if entry.lock_file:
                     lp = Path(entry.lock_file)
                     if status_val in {"disabled", "deprecated"}:

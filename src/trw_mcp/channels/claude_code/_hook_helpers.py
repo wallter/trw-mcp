@@ -53,9 +53,7 @@ _CEREMONY_MODE_FIELD: str = "ceremony_mode"
 CC03_HINTS_DIR: str = ".trw/context/cc03-hints"
 
 # P0-10 fix: safe-to-skip extensions ALLOWLIST (extensions that never get hint)
-DEFAULT_SKIP_EXTENSIONS: frozenset[str] = frozenset(
-    {".md", ".txt", ".rst", ".lock", ".log", ".gitignore"}
-)
+DEFAULT_SKIP_EXTENSIONS: frozenset[str] = frozenset({".md", ".txt", ".rst", ".lock", ".log", ".gitignore"})
 
 # Hint file TTL for pruning
 _HINT_FILE_TTL_SECONDS: int = 86400  # 24 hours
@@ -112,9 +110,7 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
                 defaults["cc03_t0_silent"] = bool(cc03_cfg.get("t0_silent", False))
                 defaults["debounce_seconds"] = int(cc03_cfg.get("debounce_seconds", 180))
             else:
-                defaults["cc03_hook_enabled"] = bool(
-                    channels_cfg.get("cc03_hook_enabled", False)
-                )
+                defaults["cc03_hook_enabled"] = bool(channels_cfg.get("cc03_hook_enabled", False))
 
         # Also check top-level cc03_hook_enabled (FR09)
         if "cc03_hook_enabled" in raw:

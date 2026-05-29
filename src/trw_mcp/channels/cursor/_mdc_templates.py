@@ -232,13 +232,7 @@ def assemble_mdc_frontmatter(
     else:
         globs_str = globs
 
-    return (
-        f"---\n"
-        f"description: {description}\n"
-        f"globs: {globs_str}\n"
-        f"alwaysApply: {always_apply_str}\n"
-        f"---\n"
-    )
+    return f"---\ndescription: {description}\nglobs: {globs_str}\nalwaysApply: {always_apply_str}\n---\n"
 
 
 # ---------------------------------------------------------------------------
@@ -326,30 +320,15 @@ def render_conventions_t1(
 
     convention_section = ""
     if records:
-        rows = "\n".join(
-            f"| `{r.slug}` | {r.title} |" for r in records
-        )
-        convention_section = (
-            "\n## Conventions\n\n"
-            "| Slug | Title |\n"
-            "|---|---|\n"
-            f"{rows}\n"
-        )
+        rows = "\n".join(f"| `{r.slug}` | {r.title} |" for r in records)
+        convention_section = f"\n## Conventions\n\n| Slug | Title |\n|---|---|\n{rows}\n"
         for rec in records:
             convention_section += f"\n### {rec.title}\n\n{rec.body}\n"
 
     hotspot_section = ""
     if sorted_hotspots:
-        rows = "\n".join(
-            f"| `{h.file_path}` | {h.risk_score:.2f} | {h.reason} |"
-            for h in sorted_hotspots[:10]
-        )
-        hotspot_section = (
-            "\n## High-Risk Files\n\n"
-            "| File | Risk | Reason |\n"
-            "|---|---|---|\n"
-            f"{rows}\n"
-        )
+        rows = "\n".join(f"| `{h.file_path}` | {h.risk_score:.2f} | {h.reason} |" for h in sorted_hotspots[:10])
+        hotspot_section = f"\n## High-Risk Files\n\n| File | Risk | Reason |\n|---|---|---|\n{rows}\n"
 
     heading = "# TRW Distill — Conventions"
     return f"{fm}\n{heading}\n\n{provenance}\n{convention_section}{hotspot_section}"
@@ -388,31 +367,19 @@ def render_hotspot_dir_t1(
 
     sorted_records = sorted(records, key=lambda h: (-h.risk_score, h.file_path))
 
-    file_rows = "\n".join(
-        f"| `{r.file_path}` | {r.risk_score:.2f} | {r.reason} |"
-        for r in sorted_records
-    ) if sorted_records else "_no high-risk files_"
+    file_rows = (
+        "\n".join(f"| `{r.file_path}` | {r.risk_score:.2f} | {r.reason} |" for r in sorted_records)
+        if sorted_records
+        else "_no high-risk files_"
+    )
 
     ec_section = ""
     if edge_cases:
-        ec_rows = "\n".join(
-            f"| `{e.file_path}` | {e.description[:80]} |"
-            for e in edge_cases[:5]
-        )
-        ec_section = (
-            "\n## Edge Cases\n\n"
-            "| File | Description |\n"
-            "|---|---|\n"
-            f"{ec_rows}\n"
-        )
+        ec_rows = "\n".join(f"| `{e.file_path}` | {e.description[:80]} |" for e in edge_cases[:5])
+        ec_section = f"\n## Edge Cases\n\n| File | Description |\n|---|---|\n{ec_rows}\n"
 
     heading = f"# TRW Distill — Hotspots: {directory}/"
-    file_table = (
-        "## High-Risk Files\n\n"
-        "| File | Risk | Reason |\n"
-        "|---|---|---|\n"
-        f"{file_rows}\n"
-    )
+    file_table = f"## High-Risk Files\n\n| File | Risk | Reason |\n|---|---|---|\n{file_rows}\n"
 
     return f"{fm}\n{heading}\n\n{provenance}\n\n{file_table}{ec_section}"
 
@@ -443,9 +410,7 @@ def render_dangerous_edits_t1(
 
     survivor_section = ""
     if survivors:
-        rows = "\n".join(
-            f"| `{e.file_path}` | {e.description[:80]} |" for e in survivors
-        )
+        rows = "\n".join(f"| `{e.file_path}` | {e.description[:80]} |" for e in survivors)
         survivor_section = (
             "\n## Survivor Patterns\n\n"
             f"_{len(survivors)} pattern(s) that survived review_\n\n"
@@ -456,9 +421,7 @@ def render_dangerous_edits_t1(
 
     undoc_section = ""
     if undocumented:
-        rows = "\n".join(
-            f"| `{e.file_path}` | {e.description[:80]} |" for e in undocumented
-        )
+        rows = "\n".join(f"| `{e.file_path}` | {e.description[:80]} |" for e in undocumented)
         undoc_section = (
             "\n## Undocumented Traps\n\n"
             f"_{len(undocumented)} undocumented public symbol(s)_\n\n"

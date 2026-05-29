@@ -268,9 +268,7 @@ class SyncPusher:
             "metadata": metadata,
         }
         raw_sync_hash = d.get("sync_hash")
-        payload["sync_hash"] = (
-            raw_sync_hash if _is_valid_sync_hash(raw_sync_hash) else _content_sync_hash(payload)
-        )
+        payload["sync_hash"] = raw_sync_hash if _is_valid_sync_hash(raw_sync_hash) else _content_sync_hash(payload)
         return payload
 
     def _get_client_id(self) -> str:

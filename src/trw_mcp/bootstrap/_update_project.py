@@ -1,4 +1,3 @@
-# ruff: noqa: E402
 """update_project flow — selectively updates TRW framework files.
 
 ``trw-mcp update-project`` selectively updates framework files (hooks,

@@ -37,18 +37,18 @@ from trw_mcp.state._paths import (
     resolve_pin_key,
     resolve_trw_dir,
 )
-from trw_mcp.state.persistence import (
-    FileEventLogger,
-    FileStateReader,
-    FileStateWriter,
-)
 
 # Re-exported so the claude_md sync path (resolved via
 # ``getattr(trw_mcp.tools.ceremony, "execute_claude_md_sync", ...)`` in
 # _ceremony_runtime_helpers) and tests can patch it at this facade. A
 # refactor dropped the binding; restoring it keeps the monkeypatch
 # indirection (and the runtime getattr lookup) working.
-from trw_mcp.state.claude_md import execute_claude_md_sync as execute_claude_md_sync  # noqa: F401
+from trw_mcp.state.claude_md import execute_claude_md_sync as execute_claude_md_sync
+from trw_mcp.state.persistence import (
+    FileEventLogger,
+    FileStateReader,
+    FileStateWriter,
+)
 from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,

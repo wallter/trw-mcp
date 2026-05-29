@@ -302,9 +302,7 @@ def prd_diff_report(*, before_path: str, after_path: str) -> dict[str, Any]:
         "added": added,
         "removed": removed,
         "changed": changed,
-        "changes": [
-            {"key": key, "change_type": "added", "after": after_items[key]["line"]} for key in added
-        ]
+        "changes": [{"key": key, "change_type": "added", "after": after_items[key]["line"]} for key in added]
         + [{"key": key, "change_type": "removed", "before": before_items[key]["line"]} for key in removed]
         + [
             {

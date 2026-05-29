@@ -72,8 +72,7 @@ T1_BYTE_QUOTA = 6144  # hard byte cap (FR09 / NFR05)
 
 # Stale notice appended when sidecar SHA doesn't match HEAD (FR04)
 _STALE_NOTICE = (
-    "\n\n> **(STALE — sidecar outdated,"
-    " run: trw-distill self-improve risk-report --repo . --persist-sidecar)**"
+    "\n\n> **(STALE — sidecar outdated, run: trw-distill self-improve risk-report --repo . --persist-sidecar)**"
 )
 
 # Footer line (FR02)
@@ -116,11 +115,7 @@ def _t1_content(sidecar_data: dict[str, Any], *, stale: bool = False) -> str:
     # Apply IP filter (P2-10 / FR07)
     paths = [h.get("file", h.get("path", "")) for h in raw_hotspots]
     filtered_paths = set(filter_proprietary_paths(paths))
-    hotspots = [
-        h
-        for h in raw_hotspots
-        if h.get("file", h.get("path", "")) in filtered_paths
-    ]
+    hotspots = [h for h in raw_hotspots if h.get("file", h.get("path", "")) in filtered_paths]
 
     top_spots = hotspots[:5]
     top_convs = conventions[:3]
@@ -207,12 +202,8 @@ def build_opencode_agents_md_entry(
             trigger=CleanupTrigger.TTL_EXCEEDED,
             action=CleanupAction.CLEAR_SEGMENT,
         ),
-        regenerate_cmd=(
-            "trw-distill self-improve risk-report --repo . --persist-sidecar"
-        ),
-        description=(
-            "opencode AGENTS.md distill segment — top-5 hotspots + top-3 conventions"
-        ),
+        regenerate_cmd=("trw-distill self-improve risk-report --repo . --persist-sidecar"),
+        description=("opencode AGENTS.md distill segment — top-5 hotspots + top-3 conventions"),
         sidecar_schema="risk-report-sidecar/v0",
         activation_gate=None,
     )
@@ -268,9 +259,7 @@ def install_opencode_agents_md_distill_segment(
     sidecar_data: dict[str, Any] | None,
     sidecar_sha: str | None,
     *,
-    distill_action: str = (
-        "trw-distill self-improve risk-report --repo . --persist-sidecar"
-    ),
+    distill_action: str = ("trw-distill self-improve risk-report --repo . --persist-sidecar"),
     stale: bool = False,
     force: bool = False,
     dry_run: bool = False,

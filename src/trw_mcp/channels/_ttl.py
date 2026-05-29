@@ -147,9 +147,7 @@ def check_staleness(
     # ---- days-based TTL ----
     if last_render_ts is not None and entry.ttl_days is not None:
         try:
-            last_dt = datetime.fromisoformat(
-                last_render_ts.replace("Z", "+00:00")
-            )
+            last_dt = datetime.fromisoformat(last_render_ts.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             delta = now - last_dt
             days_since = delta.total_seconds() / 86400.0

@@ -282,9 +282,7 @@ def register_entity_risk_map_tools(server: FastMCP) -> None:
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
             sidecar_sha = result.distill_sidecar_sha or ""
-            record_ids = (
-                [f"entity-risk-map@{sidecar_sha[:8]}"] if sidecar_sha else []
-            )
+            record_ids = [f"entity-risk-map@{sidecar_sha[:8]}"] if sidecar_sha else []
             emit_tool_call(
                 tool_name="trw_entity_risk_map",
                 tier=result.tier,

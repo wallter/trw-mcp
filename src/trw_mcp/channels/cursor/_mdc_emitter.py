@@ -113,9 +113,7 @@ class MdcEmitter:
         self._repo_root = repo_root
         self._max_instantiations = max_instantiations
         self._max_combined_tokens = max_combined_tokens
-        self._render_log = render_log or RenderLog(
-            repo_root / ".trw" / "channels" / "render-log.jsonl"
-        )
+        self._render_log = render_log or RenderLog(repo_root / ".trw" / "channels" / "render-log.jsonl")
         self._manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
         self._entries: dict[str, ChannelEntry] = {e.id: e for e in DEFAULT_ENTRIES}
 
@@ -344,9 +342,7 @@ class MdcEmitter:
         dangerous_result = self.emit_dangerous_edits(sidecar, force=force, dry_run=dry_run)
 
         # Compute combined token estimate
-        total_tokens = self._compute_combined_tokens(
-            conventions_result, hotspot_results, dangerous_result
-        )
+        total_tokens = self._compute_combined_tokens(conventions_result, hotspot_results, dangerous_result)
 
         if total_tokens > self._max_combined_tokens:
             self._emit_event(
@@ -419,17 +415,13 @@ class MdcEmitter:
     def _render_conventions_t1_from_sidecar(self, sidecar: dict[str, Any]) -> str:
         conventions = extract_conventions(sidecar)
         hotspots = extract_hotspots(sidecar)
-        return render_conventions_t1(
-            conventions, hotspots, get_sidecar_sha(sidecar), get_sidecar_ts(sidecar)
-        )
+        return render_conventions_t1(conventions, hotspots, get_sidecar_sha(sidecar), get_sidecar_ts(sidecar))
 
     def _render_dangerous_edits_t1_from_sidecar(self, sidecar: dict[str, Any]) -> str:
         all_ec = extract_edge_cases(sidecar)
         survivors = [e for e in all_ec if e.survived]
         undocumented = [e for e in all_ec if not e.survived]
-        return render_dangerous_edits_t1(
-            survivors, undocumented, get_sidecar_sha(sidecar), get_sidecar_ts(sidecar)
-        )
+        return render_dangerous_edits_t1(survivors, undocumented, get_sidecar_sha(sidecar), get_sidecar_ts(sidecar))
 
     # ------------------------------------------------------------------
     # Combined token computation

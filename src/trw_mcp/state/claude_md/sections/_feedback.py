@@ -64,9 +64,7 @@ def render_feedback_reporting(profile: ClientProfile) -> str:
         # NFR03 hard cap: 120 chars. When the skill name is long enough to
         # blow the budget, fall back to the link-only form so the cap holds
         # for every operator-configurable ``feedback_skill`` value.
-        full_line = (
-            f"TRW issues: see {_LLMS_TXT_ANCHOR} or call {skill_invocation}."
-        )
+        full_line = f"TRW issues: see {_LLMS_TXT_ANCHOR} or call {skill_invocation}."
         link_only_line = f"TRW issues: see {_LLMS_TXT_ANCHOR}."
         return f"{full_line if len(full_line) <= 120 else link_only_line}\n"
 

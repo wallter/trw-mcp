@@ -397,17 +397,11 @@ class CopilotInstructionsDistillRenderer:
                 insert_after = idx + len(ceremony_end)
                 before = existing[:insert_after]
                 after = existing[insert_after:]
-                new_section = (
-                    f"\n\n{self.START_MARKER}\n{wrapped_segment}\n{self.END_MARKER}\n"
-                )
+                new_section = f"\n\n{self.START_MARKER}\n{wrapped_segment}\n{self.END_MARKER}\n"
                 full_content = before + new_section + after.lstrip("\n")
             else:
-                new_section = (
-                    f"{self.START_MARKER}\n{wrapped_segment}\n{self.END_MARKER}\n"
-                )
-                full_content = existing + (
-                    "\n\n" + new_section if existing.strip() else new_section
-                )
+                new_section = f"{self.START_MARKER}\n{wrapped_segment}\n{self.END_MARKER}\n"
+                full_content = existing + ("\n\n" + new_section if existing.strip() else new_section)
 
         bytes_written = len(full_content.encode("utf-8"))
         tokens_estimated = _count_tokens_estimate(wrapped_segment)

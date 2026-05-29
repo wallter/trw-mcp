@@ -135,10 +135,7 @@ def _load_tier_map(manifest_path: Path | None) -> dict[str, str]:
         from trw_mcp.channels._manifest_loader import load
 
         manifest = load(manifest_path)
-        return {
-            f"{entry.client}:{entry.id}": entry.tier_default
-            for entry in manifest.channels
-        }
+        return {f"{entry.client}:{entry.id}": entry.tier_default for entry in manifest.channels}
     except Exception as exc:
         log.debug(
             "meta_tune_stats_tier_map_load_failed",
@@ -157,10 +154,7 @@ def _load_tier_map(manifest_path: Path | None) -> dict[str, str]:
 def format_stats_table(report: ChannelStatsReport) -> str:
     """Render a human-readable stats table for CLI display."""
     if not report.channels:
-        return (
-            f"No channel stats (0 events in log: {report.log_path})\n"
-            f"Window: {report.window_seconds}s"
-        )
+        return f"No channel stats (0 events in log: {report.log_path})\nWindow: {report.window_seconds}s"
 
     lines: list[str] = [
         f"Channel Stats  events={report.total_events}  window={report.window_seconds}s",

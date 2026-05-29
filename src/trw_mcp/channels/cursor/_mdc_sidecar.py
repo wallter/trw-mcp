@@ -84,12 +84,6 @@ def extract_edge_cases(sidecar: dict[str, Any]) -> list[EdgeCaseRecord]:
     return records
 
 
-def extract_edge_cases_for_dir(
-    sidecar: dict[str, Any], directory: str
-) -> list[EdgeCaseRecord]:
+def extract_edge_cases_for_dir(sidecar: dict[str, Any], directory: str) -> list[EdgeCaseRecord]:
     """Extract edge-case records that belong to a specific directory."""
-    return [
-        ec
-        for ec in extract_edge_cases(sidecar)
-        if ec.file_path.replace("\\", "/").rsplit("/", 1)[0] == directory
-    ]
+    return [ec for ec in extract_edge_cases(sidecar) if ec.file_path.replace("\\", "/").rsplit("/", 1)[0] == directory]

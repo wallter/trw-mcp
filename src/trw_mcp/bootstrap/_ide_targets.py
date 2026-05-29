@@ -206,6 +206,7 @@ def _update_opencode_artifacts(
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_opencode_distill_channels
+
     _update_opencode_distill_channels(target_dir, result)
 
 
@@ -296,6 +297,7 @@ def _update_codex_artifacts(
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_codex_distill_channels
+
     _update_codex_distill_channels(target_dir, result)
 
 
@@ -362,6 +364,7 @@ def _update_copilot_artifacts(
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_copilot_distill_channels
+
     _update_copilot_distill_channels(target_dir, result)
 
 
@@ -462,6 +465,7 @@ def _update_antigravity_artifacts(
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_antigravity_distill_channels
+
     _update_antigravity_distill_channels(target_dir, result)
 
 
@@ -594,6 +598,7 @@ def _update_cursor_artifacts(
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_cursor_distill_channels
+
     _update_cursor_distill_channels(target_dir, result)
 
 

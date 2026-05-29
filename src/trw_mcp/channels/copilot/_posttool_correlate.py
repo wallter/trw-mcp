@@ -246,9 +246,7 @@ def main() -> int:
     Returns:
         Exit code (always 0 — fail-open pattern, P1-22).
     """
-    parser = argparse.ArgumentParser(
-        description="Correlate postToolUse events with distill channel push events."
-    )
+    parser = argparse.ArgumentParser(description="Correlate postToolUse events with distill channel push events.")
     parser.add_argument(
         "--file-path",
         default="",

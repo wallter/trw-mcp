@@ -304,9 +304,7 @@ def _ensure_sequential_placement(
         insert_after = end_idx + len(trw_end_marker)
         before = agents_md_content[:insert_after]
         after = agents_md_content[insert_after:]
-        new_section = (
-            f"\n\n{HOTSPOTS_BEGIN}\n{interior_content}\n{HOTSPOTS_END}\n"
-        )
+        new_section = f"\n\n{HOTSPOTS_BEGIN}\n{interior_content}\n{HOTSPOTS_END}\n"
         return before + new_section + after.lstrip("\n")
 
     # Fallback: append at EOF.
@@ -445,9 +443,7 @@ def _render_and_inject_under_lock(
 
     # Apply sequential placement into the existing AGENTS.md.
     # _ensure_sequential_placement handles marker injection/replacement.
-    existing_content = (
-        resolved_target.read_text(encoding="utf-8") if resolved_target.exists() else ""
-    )
+    existing_content = resolved_target.read_text(encoding="utf-8") if resolved_target.exists() else ""
     merged_content = _ensure_sequential_placement(existing_content, interior_content)
     bytes_written = len(merged_content.encode("utf-8"))
 

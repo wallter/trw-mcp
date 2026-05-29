@@ -204,9 +204,7 @@ class ChannelEntry(BaseModel):
     @classmethod
     def _validate_id(cls, v: str) -> str:
         if not _ID_PATTERN.match(v):
-            raise ValueError(
-                f"Channel id {v!r} must be alphanumeric with hyphens/underscores only"
-            )
+            raise ValueError(f"Channel id {v!r} must be alphanumeric with hyphens/underscores only")
         return v
 
 

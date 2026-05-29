@@ -83,14 +83,13 @@ from trw_mcp.state.claude_md.sections._tool_lifecycle import (
 )
 
 __all__ = [
+    "FEEDBACK_MARKER_END",
+    "FEEDBACK_MARKER_START",
     "_analytics_cache",
     "_format_learning_session_claim",
     "_load_analytics_counts",
     "_load_prompting_guide",
-    "FEEDBACK_MARKER_END",
-    "FEEDBACK_MARKER_START",
     "generate_behavioral_protocol_md",
-    "render_feedback_reporting",
     "render_agents_trw_section",
     "render_behavioral_protocol",
     "render_ceremony_flows",
@@ -100,6 +99,7 @@ __all__ = [
     "render_codex_instructions",
     "render_codex_trw_section",
     "render_delegation_protocol",
+    "render_feedback_reporting",
     "render_framework_reference",
     "render_imperative_opener",
     "render_memory_harmonization",

@@ -228,9 +228,7 @@ def register_codebase_risk_report_tools(server: FastMCP) -> None:
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
             sidecar_sha = result.distill_sidecar_sha or ""
-            record_ids = (
-                [f"risk-report@{sidecar_sha[:8]}"] if sidecar_sha else []
-            )
+            record_ids = [f"risk-report@{sidecar_sha[:8]}"] if sidecar_sha else []
             emit_tool_call(
                 tool_name="trw_codebase_risk_report",
                 tier=result.tier,

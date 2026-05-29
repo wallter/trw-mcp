@@ -161,9 +161,7 @@ def load(path: Path) -> ChannelManifest:
     if not fv:
         raise ManifestValidationError("format_version is required")
     if fv != MANIFEST_FORMAT_VERSION:
-        raise ManifestValidationError(
-            f"format_version must be {MANIFEST_FORMAT_VERSION!r}, got {fv!r}"
-        )
+        raise ManifestValidationError(f"format_version must be {MANIFEST_FORMAT_VERSION!r}, got {fv!r}")
 
     raw_channels = raw.get("channels", [])
     if not isinstance(raw_channels, list):
@@ -260,6 +258,4 @@ def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
             collisions.append(marker)
 
     if collisions:
-        raise MarkerCollisionError(
-            f"Marker collision in {target_file}: {collisions!r}"
-        )
+        raise MarkerCollisionError(f"Marker collision in {target_file}: {collisions!r}")

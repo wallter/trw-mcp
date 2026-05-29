@@ -157,9 +157,7 @@ def make_cur05_entry() -> ChannelEntry:
             end="<!-- TRW:DISTILL:END -->",
         ),
         provenance=ProvenanceConfig(enabled=True, detection=HumanEditDetection.MARKER_BOUNDARY),
-        cleanup=CleanupConfig(
-            trigger=CleanupTrigger.TTL_EXCEEDED, action=CleanupAction.CLEAR_SEGMENT
-        ),
+        cleanup=CleanupConfig(trigger=CleanupTrigger.TTL_EXCEEDED, action=CleanupAction.CLEAR_SEGMENT),
     )
 
 

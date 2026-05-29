@@ -62,15 +62,11 @@ def render_cursor_cli_t1(sidecar: dict[str, Any]) -> str:
 
     # Key conventions (up to 3)
     conventions = payload.get("conventions", [])
-    top_conventions = [
-        c for c in conventions if isinstance(c, dict)
-    ][:3]
+    top_conventions = [c for c in conventions if isinstance(c, dict)][:3]
 
     # Top-3 survivors
     survivors = payload.get("edge_case_survivors", [])
-    top_survivors = [
-        s for s in survivors if isinstance(s, dict)
-    ][:3]
+    top_survivors = [s for s in survivors if isinstance(s, dict)][:3]
 
     lines: list[str] = [
         f"## TRW Distill Summary (sha={sha}, ts={ts})\n",
@@ -153,9 +149,7 @@ class AgentsMdSegmentWriter:
         """
         entry = self._entry
         channel_id = entry.id
-        resolved_target = target_file or (
-            self._repo_root / entry.file if entry.file else self._repo_root / "AGENTS.md"
-        )
+        resolved_target = target_file or (self._repo_root / entry.file if entry.file else self._repo_root / "AGENTS.md")
 
         # Acquire lock
         lock_path: Path
@@ -224,9 +218,7 @@ class AgentsMdSegmentWriter:
 
         # Quota enforcement with tier-down
         quota = entry.quota_total_bytes
-        while quota is not None and not check_quota(
-            content_bytes=len(body.encode("utf-8")), quota_total_bytes=quota
-        ):
+        while quota is not None and not check_quota(content_bytes=len(body.encode("utf-8")), quota_total_bytes=quota):
             next_tier = tier_down(tier, tier_min=entry.tier_min)
             if next_tier == tier:
                 break
@@ -275,6 +267,7 @@ class AgentsMdSegmentWriter:
 
         # Persist state
         import hashlib
+
         seg_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
         new_state = ChannelState(
             channel_id=channel_id,

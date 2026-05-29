@@ -117,12 +117,8 @@ def render_c2_path_instructions(
             lines.append(f"- `{path}` (risk: {score_str}){reason_part}")
         lines.append("")
 
-    lines.append(
-        "_Path-scoped instructions active in VS Code Copilot and cloud agent only._"
-    )
-    lines.append(
-        "_NOT active in bare CLI sessions._"
-    )
+    lines.append("_Path-scoped instructions active in VS Code Copilot and cloud agent only._")
+    lines.append("_NOT active in bare CLI sessions._")
 
     return "\n".join(lines) + "\n"
 

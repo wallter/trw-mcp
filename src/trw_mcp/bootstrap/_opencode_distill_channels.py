@@ -70,6 +70,7 @@ _CLIENT_PROFILE_ENV_CONTENT = "TRW_CLIENT_PROFILE=opencode\n"
 # Managed-artifacts helper
 # ---------------------------------------------------------------------------
 
+
 def _load_managed_artifacts(repo_root: Path) -> dict[str, Any]:
     """Load .trw/managed-artifacts.yaml, returning empty dict if absent."""
     path = repo_root / _MANAGED_ARTIFACTS_PATH
@@ -97,6 +98,7 @@ def _save_managed_artifacts(repo_root: Path, data: dict[str, Any]) -> None:
 # Manifest bootstrap
 # ---------------------------------------------------------------------------
 
+
 def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
     """Load manifest-opencode.yaml and merge six ChannelEntry records.
 
@@ -113,13 +115,7 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
     Raises:
         ManifestValidationError: If any entry fails ChannelEntry.model_validate().
     """
-    manifest_data_path = (
-        Path(__file__).parent.parent
-        / "data"
-        / "opencode"
-        / "channels"
-        / "manifest-opencode.yaml"
-    )
+    manifest_data_path = Path(__file__).parent.parent / "data" / "opencode" / "channels" / "manifest-opencode.yaml"
     yaml = YAML(typ="safe")
     raw = yaml.load(manifest_data_path.read_text(encoding="utf-8")) or {}
     raw_channels: list[dict[str, Any]] = raw.get("channels", [])
@@ -130,9 +126,7 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
         try:
             validated.append(ChannelEntry.model_validate(entry_dict))
         except Exception as exc:
-            raise ManifestValidationError(
-                f"opencode manifest entry validation failed: {exc}"
-            ) from exc
+            raise ManifestValidationError(f"opencode manifest entry validation failed: {exc}") from exc
 
     # Load existing manifest
     manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
@@ -168,6 +162,7 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Main entry-point
 # ---------------------------------------------------------------------------
+
 
 def install_opencode_distill_channels(
     repo_root: Path,

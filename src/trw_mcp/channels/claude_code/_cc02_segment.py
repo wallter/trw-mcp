@@ -85,7 +85,9 @@ def _render_metadata_comment(*, sha: str, commits_since: int | None) -> str:
 
 
 def _render_t0_beacon() -> str:
-    return "TRW distill intelligence available. Run `trw-mcp channel-render cc-02-claude-md-distill-segment` to refresh."
+    return (
+        "TRW distill intelligence available. Run `trw-mcp channel-render cc-02-claude-md-distill-segment` to refresh."
+    )
 
 
 def _render_t1_content(

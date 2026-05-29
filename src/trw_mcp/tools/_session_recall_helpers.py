@@ -298,9 +298,7 @@ def perform_session_recalls(
                 else:
                     seen_ids = {str(e.get("id", "")) for e in baseline}
                     fresh_additions = [
-                        e
-                        for e in fresh
-                        if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
+                        e for e in fresh if str(e.get("created", "")) >= cutoff and str(e.get("id", "")) not in seen_ids
                     ]
                     # Fresh entries are highest-priority context for the current
                     # session; surface them before the high-impact baseline.

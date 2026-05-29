@@ -125,11 +125,7 @@ def cleanup_channel(
     # CleanupConfig lacks use_enum_values so the field may be an enum instance
     # or a str depending on construction path.
     raw_action = entry.cleanup.action
-    action_str: str = (
-        raw_action.value
-        if isinstance(raw_action, CleanupAction)
-        else str(raw_action)
-    )
+    action_str: str = raw_action.value if isinstance(raw_action, CleanupAction) else str(raw_action)
 
     # ---- SUPPRESS ----
     if action_str == CleanupAction.SUPPRESS.value:
@@ -145,9 +141,8 @@ def cleanup_channel(
         return {"status": "noop"}
 
     # ---- T0 beacon exemption for destructive actions ----
-    if (
-        action_str in (CleanupAction.FULL_PRUNE.value, CleanupAction.CLEAR_SEGMENT.value)
-        and _is_t0_exempt(entry, target_path)
+    if action_str in (CleanupAction.FULL_PRUNE.value, CleanupAction.CLEAR_SEGMENT.value) and _is_t0_exempt(
+        entry, target_path
     ):
         log.debug(
             "cleanup_t0_exempt",
@@ -188,11 +183,7 @@ def cleanup_channel(
     # ---- CLEAR_SEGMENT ----
     if action_str == CleanupAction.CLEAR_SEGMENT.value:
         try:
-            existing = (
-                target_path.read_text(encoding="utf-8")
-                if target_path.exists()
-                else ""
-            )
+            existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
             markers: MarkersConfig = entry.markers
             cleared = replace_distill_segment(existing, "", markers=markers)
             target_path.parent.mkdir(parents=True, exist_ok=True)

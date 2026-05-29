@@ -78,9 +78,7 @@ if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
 
-FEEDBACK_NUDGE_TEXT = (
-    "If this looks like a TRW bug, consider /trw-feedback to file a report."
-)
+FEEDBACK_NUDGE_TEXT = "If this looks like a TRW bug, consider /trw-feedback to file a report."
 """Frozen nudge text. Single source of truth -- tests assert against this."""
 
 
@@ -196,9 +194,7 @@ def _get_or_create(state: _State, session_id: str) -> _SessionCounters:
     return state[session_id]
 
 
-def record_build_check_outcome(
-    session_id: str, passed: bool, trw_dir: Path
-) -> None:
+def record_build_check_outcome(session_id: str, passed: bool, trw_dir: Path) -> None:
     """Record a ``trw_build_check`` outcome for the session.
 
     Consecutive failures increment ``build_check_fail_count``. A pass
@@ -221,9 +217,7 @@ def record_unhandled_exception(session_id: str, trw_dir: Path) -> None:
     _write_state(trw_dir, state)
 
 
-def record_bug_learning(
-    session_id: str, tags: list[str], trw_dir: Path
-) -> None:
+def record_bug_learning(session_id: str, tags: list[str], trw_dir: Path) -> None:
     """Record a bug-tagged learning entry.
 
     Increments ONLY when ``tags`` contains both ``bug`` and
@@ -239,9 +233,7 @@ def record_bug_learning(
     _write_state(trw_dir, state)
 
 
-def maybe_emit_feedback_nudge(
-    session_id: str, trw_dir: Path, config: TRWConfig
-) -> str | None:
+def maybe_emit_feedback_nudge(session_id: str, trw_dir: Path, config: TRWConfig) -> str | None:
     """Return the nudge text if armed, else ``None``.
 
     Returns ``None`` unconditionally when ``config.feedback.proactive``
@@ -261,8 +253,7 @@ def maybe_emit_feedback_nudge(
         return None
     armed = (
         counters["build_check_fail_count"] >= feedback.build_check_fail_threshold
-        or counters["unhandled_exception_count"]
-        >= feedback.unhandled_exception_threshold
+        or counters["unhandled_exception_count"] >= feedback.unhandled_exception_threshold
         or counters["bug_learning_count"] >= feedback.bug_learning_threshold
     )
     if not armed:
@@ -276,7 +267,7 @@ def maybe_emit_feedback_nudge(
 __all__ = [
     "FEEDBACK_NUDGE_TEXT",
     "maybe_emit_feedback_nudge",
-    "record_build_check_outcome",
     "record_bug_learning",
+    "record_build_check_outcome",
     "record_unhandled_exception",
 ]

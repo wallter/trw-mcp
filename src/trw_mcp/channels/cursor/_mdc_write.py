@@ -118,8 +118,11 @@ def emit_mdc_under_lock(
             )
             if human_edit:
                 emit_event(
-                    channel_id, entry.client, "mdc_conflict_skip",
-                    outcome="preserved_human_edits", policy="skip",
+                    channel_id,
+                    entry.client,
+                    "mdc_conflict_skip",
+                    outcome="preserved_human_edits",
+                    policy="skip",
                 )
                 return {"status": "skipped_conflict", "channel_id": channel_id, "conflict_detected": True}
 
@@ -133,14 +136,19 @@ def emit_mdc_under_lock(
 
     # Step 6: Quota enforcement with tier-down
     quota = entry.quota_total_bytes
-    while quota is not None and not check_quota(
-        content_bytes=len(content.encode("utf-8")), quota_total_bytes=quota
-    ):
+    while quota is not None and not check_quota(content_bytes=len(content.encode("utf-8")), quota_total_bytes=quota):
         next_tier = tier_down(tier, tier_min=entry.tier_min)
         if next_tier == tier:
             break
-        emit_event(channel_id, entry.client, "tier_down", from_tier=tier, to_tier=next_tier,
-                   bytes_would_be=len(content.encode("utf-8")), outcome="tier_down")
+        emit_event(
+            channel_id,
+            entry.client,
+            "tier_down",
+            from_tier=tier,
+            to_tier=next_tier,
+            bytes_would_be=len(content.encode("utf-8")),
+            outcome="tier_down",
+        )
         tier = next_tier
         content = render_at_tier(tier)
 
@@ -157,13 +165,19 @@ def emit_mdc_under_lock(
 
     # Step 8: dry_run
     if dry_run:
-        return {"status": "dry_run", "channel_id": channel_id, "tier_used": tier,
-                "would_write": content, "bytes_would_be": len(content.encode("utf-8"))}
+        return {
+            "status": "dry_run",
+            "channel_id": channel_id,
+            "tier_used": tier,
+            "would_write": content,
+            "bytes_would_be": len(content.encode("utf-8")),
+        }
 
     # Step 9: Atomic write
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    log_entry = write_atomic(target_path, content, channel_id=channel_id,
-                              render_log=render_log, sidecar_sha=sidecar_sha)
+    log_entry = write_atomic(
+        target_path, content, channel_id=channel_id, render_log=render_log, sidecar_sha=sidecar_sha
+    )
 
     # Step 10: Write state
     tokens = tokens_from_bytes(log_entry.bytes_written)
@@ -179,8 +193,20 @@ def emit_mdc_under_lock(
     write_state(new_state, state_file)
 
     # Step 11: Telemetry
-    emit_event(channel_id, entry.client, "push_write", tier=tier,
-               bytes_written=log_entry.bytes_written, tokens_estimated=tokens, outcome="written")
+    emit_event(
+        channel_id,
+        entry.client,
+        "push_write",
+        tier=tier,
+        bytes_written=log_entry.bytes_written,
+        tokens_estimated=tokens,
+        outcome="written",
+    )
 
-    return {"status": "written", "channel_id": channel_id, "tier_used": tier,
-            "bytes_written": log_entry.bytes_written, "tokens_estimated": tokens}
+    return {
+        "status": "written",
+        "channel_id": channel_id,
+        "tier_used": tier,
+        "bytes_written": log_entry.bytes_written,
+        "tokens_estimated": tokens,
+    }
