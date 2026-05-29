@@ -255,6 +255,7 @@ class TestSkills:
         "trw-deliver",
         "trw-dry-check",
         "trw-exec-plan",
+        "trw-feedback",
         "trw-framework-check",
         "trw-learn",
         "trw-memory-audit",

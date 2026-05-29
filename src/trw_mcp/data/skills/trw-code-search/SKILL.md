@@ -9,8 +9,8 @@ argument-hint: "[query or symbol]"
 
 # TRW Code Search Skill
 
-Use this skill when you need token-efficient code context from a repository
-without reading whole files.
+Use when: You need token-efficient code context from a repository without reading whole files.
+
 
 ## Workflow
 

@@ -265,6 +265,8 @@ def register_channel_render_tools(server: FastMCP) -> None:
         directly; other surfaces return status="unsupported_surface_in_substrate"
         (downstream PRDs 2401/2405/2406 implement those).
 
+        Use when: you need to render or re-render a specific channel from the manifest to keep segments in sync.
+
         Returns: {channel_id, status, tier_used, tokens_emitted, bytes_written,
                   conflict_detected, ttl_commits_remaining, would_write, error}.
         NEVER raises.

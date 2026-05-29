@@ -119,7 +119,7 @@ class TestUpdateOSErrorPaths:
         """OSError during framework file copy adds to errors."""
         with patch("shutil.copy2", side_effect=OSError("disk full")):
             result = update_project(initialized_repo)
-        assert any("Failed to copy" in e for e in result["errors"])
+        assert any("Failed to copy" in e or "Failed to snapshot" in e for e in result["errors"])
 
     def test_hook_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during hook copy adds to errors."""

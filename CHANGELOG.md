@@ -4,6 +4,32 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.48.10] — 2026-05-27
+
+### Added
+
+- **`trw_submit_feedback` MCP tool** (PRD-CORE-182). Thin client wrapper
+  for the new backend submission portal endpoint
+  (`POST /v1/submissions`). Lets TRW framework users submit memos —
+  bug reports, installation problems, feedback, feature requests,
+  questions — directly from their IDE without leaving the editor.
+
+  Auto-populates client metadata (`trw_mcp_version`, `python_version`,
+  `os_platform`) so the maintainer can triage without guessing the
+  environment. Reads the backend URL + API key from the existing
+  `TRWConfig.resolved_backend_url` / `resolved_backend_api_key`
+  accessors — no new configuration required for users on the standard
+  `install-trw.py` device-auth flow.
+
+  Validation is mirrored client-side (category enum, length bounds,
+  metadata caps, control-character guard) to fail fast before paying
+  for the HTTP round-trip; the server is authoritative.
+
+  The tool never raises — transport errors, validation errors, and
+  non-2xx HTTP responses all surface via the stable
+  `{success, submission_id?, error?, status_code, metadata_attached}`
+  return shape, so calling agents can react gracefully.
+
 ## [0.48.9] — 2026-05-20
 
 ### Added

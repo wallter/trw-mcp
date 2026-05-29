@@ -357,7 +357,12 @@ def register_query_tools(server: FastMCP) -> None:
         before_path: str,
         after_path: str,
     ) -> dict[str, Any]:
-        """Diff two PRD files with requirement, metric, and acceptance-gate focus."""
+        """Diff two PRD files with requirement, metric, and acceptance-gate focus.
+
+        Use when:
+        - Reviewing changes between two PRD versions or drafts.
+        - Auditing how requirements or acceptance criteria have evolved.
+        """
         consult_mcp_security(
             "trw_prd_diff",
             {"before_path": before_path, "after_path": after_path},

@@ -76,6 +76,16 @@ Default to `trw_learn()` for knowledge. Use native auto-memory only for personal
 
 Gotcha or error pattern → `trw_learn()`. User’s preferred commit style → native memory. Build trick that saves time → `trw_learn()`. Communication preference → native memory.
 
+<!-- BEGIN: feedback-reporting -->
+### Reporting Issues to TRW
+
+When the operator asks how to report a TRW bug, install issue, or feature request, surface the `/trw-feedback` skill or call the `trw_submit_feedback` MCP tool directly. Both wrap the authenticated `POST /v1/submissions` channel (PRD-CORE-182).
+
+Valid `category` values: `bugfix`, `installation`, `feedback`, `feature_request`, `question`, `other`.
+
+The channel is auth-gated via the operator's `platform_api_key` from `.trw/config.yaml`. PII redaction (license keys, API key prefixes, `$HOME` paths, sensitive env vars) runs before the network call. Canonical operator-facing description: https://trwframework.com/llms.txt#reporting-issues-to-trw.
+<!-- END: feedback-reporting -->
+
 ### Session Boundaries
 
 Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
