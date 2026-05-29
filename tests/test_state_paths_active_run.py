@@ -6,21 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.state._paths import find_active_run
+from trw_mcp.state._paths import find_run_via_mtime_scan
 from trw_mcp.state.persistence import FileStateWriter
 
 from ._state_paths_support import _make_run
 
 
 class TestFindActiveRun:
-    """Tests for find_active_run() -- lexicographic most-recent run."""
+    """Tests for find_run_via_mtime_scan() -- lexicographic most-recent run."""
 
     def test_no_task_root_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Returns None when task_root directory does not exist."""
         project = tmp_path / "project"
         project.mkdir()
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result is None
 
     def test_single_run_returns_it(
@@ -32,7 +32,7 @@ class TestFindActiveRun:
         run = _make_run(runs_root, "task1", "20260219T100000Z-aaa", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == run
 
     def test_returns_lexicographically_latest(
@@ -45,7 +45,7 @@ class TestFindActiveRun:
         run2 = _make_run(runs_root, "task1", "20260220T100000Z-bbb", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == run2
 
     def test_across_multiple_tasks(
@@ -58,7 +58,7 @@ class TestFindActiveRun:
         run2 = _make_run(runs_root, "task-b", "20260221T120000Z-bbb", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == run2
 
     def test_dirs_without_run_yaml_skipped(
@@ -72,7 +72,7 @@ class TestFindActiveRun:
         good_run = _make_run(runs_root, "task1", "20260219T100000Z-good", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == good_run
 
     def test_task_dir_without_run_subdirs_skipped(
@@ -85,7 +85,7 @@ class TestFindActiveRun:
         valid_run = _make_run(runs_root, "valid-task", "20260219T100000Z-valid", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result == valid_run
 
     def test_empty_runs_root_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,7 +93,7 @@ class TestFindActiveRun:
         project = tmp_path / "project"
         (project / ".trw" / "runs").mkdir(parents=True)
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result is None
 
     def test_oserror_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,5 +103,5 @@ class TestFindActiveRun:
             raise OSError("permission denied")
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", raise_oserror)
-        result = find_active_run()
+        result = find_run_via_mtime_scan()
         assert result is None
