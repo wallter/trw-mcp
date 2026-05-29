@@ -15,9 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
 from trw_mcp.tools._sidecar_substrate import (
     DEFAULT_CACHE_DIR_REL,
     check_tier_for_feature,
@@ -261,6 +262,7 @@ def register_entity_risk_map_tools(server: FastMCP) -> None:
         cache_dir: str | None = None,
         top_n: int = 20,
         changed_only: bool = False,
+        ctx: Context | None = None,
     ) -> dict[str, object]:
         """Return entity-level structural risk rows for the current SHA.
 
@@ -275,6 +277,7 @@ def register_entity_risk_map_tools(server: FastMCP) -> None:
             top_n=top_n,
             changed_only=changed_only,
         )
+        # --- telemetry (fail-open) ---
         try:
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
@@ -289,7 +292,17 @@ def register_entity_risk_map_tools(server: FastMCP) -> None:
             )
         except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
             pass
-        return cast("dict[str, object]", result.model_dump(mode="json"))
+        # --- tier-aware response enrichment (fail-open) ---
+        base: dict[str, object] = cast("dict[str, object]", result.model_dump(mode="json"))
+        try:
+            from trw_mcp.channels._tool_return_tiers import enrich_response
+
+            client = resolve_client_profile(ctx=ctx)
+            client_tier = resolve_tier_for_client(client)
+            return enrich_response(base, client_tier=client_tier)
+        except Exception:  # justified: BLE001 — enrichment never breaks the base response
+            pass
+        return base
 
 
 __all__ = [

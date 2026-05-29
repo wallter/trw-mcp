@@ -34,13 +34,13 @@ import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 # c749 (PRD-DIST-2002): LearningSummary extracted to shared
 # `_learnings_collector` module. Re-exported here for backward
 # compatibility with callers that still import from this module.
-from trw_mcp.tools._client_detection import resolve_client_profile
+from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
 from trw_mcp.tools._learnings_collector import LearningSummary
 
 _SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
@@ -318,6 +318,7 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
         file_path: str,
         repo_root: str | None = None,
         cache_dir: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Return cold-start codebase intelligence for ``file_path``.
 
@@ -328,15 +329,16 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
         - trw-distill sidecar (tier-gated; requires team/pro/enterprise)
         - existing learnings via trw_recall (always)
 
-        Returns BeforeEditHintResult.model_dump(). NEVER raises — failure
-        paths populate ``distill_status`` + ``distill_action`` so the
-        operator gets an actionable next step.
+        Returns BeforeEditHintResult.model_dump() enriched by client tier.
+        NEVER raises — failure paths populate ``distill_status`` +
+        ``distill_action`` so the operator gets an actionable next step.
         """
         result = compute_before_edit_hint(
             file_path=file_path,
             repo_root=repo_root,
             cache_dir=cache_dir,
         )
+        # --- telemetry (fail-open) ---
         try:
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
@@ -352,7 +354,17 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
             )
         except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
             pass
-        return result.model_dump()
+        # --- tier-aware response enrichment (fail-open) ---
+        base: dict[str, Any] = result.model_dump()
+        try:
+            from trw_mcp.channels._tool_return_tiers import enrich_response
+
+            client = resolve_client_profile(ctx=ctx)
+            client_tier = resolve_tier_for_client(client)
+            return enrich_response(base, client_tier=client_tier)
+        except Exception:  # justified: BLE001 — enrichment never breaks the base response
+            pass
+        return base
 
 
 __all__ = [

@@ -4,11 +4,24 @@ Extracted to honour the 350 effective-LOC module gate (P1-05 audit fix).
 Re-exported from before_edit_hint and the channels telemetry layer.
 
 PRD-DIST-2400 §6.4 (Phase D2 extraction).
+
+Gap 1 (CUR-04 / STUB-02) — client_profile propagation via FastMCP ctx
+-----------------------------------------------------------------------
+``resolve_client_profile`` now accepts an optional FastMCP ``Context``
+object.  When provided, it probes ``ctx.session.client_params.clientInfo.name``
+(the MCP initialize-handshake clientInfo field) before falling back to the
+``TRW_CLIENT_PROFILE`` env var.  All ctx access is fail-open: any
+``RuntimeError`` or ``AttributeError`` is silently ignored and the env-var
+path is tried next.
 """
 
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fastmcp import Context
 
 __all__ = [
     "resolve_client_profile",
@@ -35,22 +48,56 @@ _CLIENT_DEFAULT_TIER: dict[str, str] = {
 }
 
 
-def resolve_client_profile(ctx_client_profile: str | None = None) -> str:
+def _probe_ctx_client_name(ctx: Any) -> str | None:
+    """Attempt to read clientInfo.name from a FastMCP Context.
+
+    Probes ``ctx.session.client_params.clientInfo.name`` (the MCP
+    initialize-handshake field).  Returns None on any exception or if the
+    value is blank — callers fall through to the env-var path.
+
+    Never raises.
+    """
+    try:
+        session = ctx.session  # raises RuntimeError when no session yet
+        client_params = session.client_params  # may be None pre-initialize
+        if client_params is None:
+            return None
+        client_info = client_params.clientInfo  # mcp.types.Implementation
+        name = getattr(client_info, "name", None)
+        if isinstance(name, str) and name.strip():
+            return name.strip().lower()
+    except Exception:
+        pass
+    return None
+
+
+def resolve_client_profile(
+    ctx_client_profile: str | None = None,
+    *,
+    ctx: Context | None = None,
+) -> str:
     """Return the active client profile string.
 
     Resolution order:
-    1. *ctx_client_profile* argument (from MCP ctx.client_profile or similar).
-    2. ``TRW_CLIENT_PROFILE`` environment variable.
-    3. ``"unknown"`` fallback.
+    1. *ctx_client_profile* explicit string argument.
+    2. ``ctx.session.client_params.clientInfo.name`` when *ctx* is provided
+       (MCP initialize-handshake; Option A propagation).
+    3. ``TRW_CLIENT_PROFILE`` environment variable.
+    4. ``"unknown"`` fallback.
 
     Args:
-        ctx_client_profile: Optional explicit profile from the call context.
+        ctx_client_profile: Optional explicit profile override.
+        ctx: Optional FastMCP ``Context`` to probe for client identity.
 
     Returns:
         Non-empty client profile string, or ``"unknown"``.
     """
     if ctx_client_profile and ctx_client_profile.strip():
         return ctx_client_profile.strip()
+    if ctx is not None:
+        name = _probe_ctx_client_name(ctx)
+        if name:
+            return name
     value = os.environ.get(_ENV_VAR, "").strip()
     return value or _UNKNOWN_CLIENT
 
