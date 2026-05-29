@@ -5,12 +5,16 @@ and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
-  - .antigravitycli/agents/trw-distill-explorer.md  (AG-02 T1 stub)
-  - .trw/channels/manifest.yaml                      (four AG channel entries merged)
+  - .antigravitycli/agents/trw-distill-explorer.md              (AG-02 T1 stub)
+  - .antigravitycli/hooks.json                                   (AG-03 PreToolUse hook entry)
+  - .antigravitycli/hooks/trw_before_edit_telemetry.py           (AG-03 hook script)
+  - .trw/channels/manifest.yaml                                  (four AG channel entries merged)
 
 AG-01 ANTIGRAVITY.md segment is a runtime channel managed by
 ``render_antigravity_distill_segment()`` — no stub file is written at install.
-AG-03 before-edit hook is aspirational — no implementation.
+AG-03 before-edit hook empirically confirmed 2026-05-28 (agy v1.0.2):
+  hooks file is .antigravitycli/hooks.json (separate from settings.json),
+  event key "PreToolUse", format {"PreToolUse": [{"matcher": "...", "command": "..."}]}.
 AG-04 is a telemetry pull channel — no file written.
 
 PRD-DIST-2404 FR41-FR43.
@@ -156,7 +160,28 @@ def install_antigravity_distill_channels(
         log.warning("ag02_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"AG-02 subagent install failed: {exc}")
 
-    # 2. Bootstrap channel manifest (four antigravity channel entries)
+    # 2. Install AG-03 before-edit hook
+    #    Empirically confirmed 2026-05-28: hooks.json is separate from settings.json,
+    #    event key "PreToolUse", format {"PreToolUse": [{"matcher": "...", "command": "..."}]}
+    try:
+        from trw_mcp.channels.antigravity import install_before_edit_hook
+
+        hook_result = install_before_edit_hook(target_dir, overwrite=force)
+        hook_script_rel = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
+        hooks_json_rel = ".antigravitycli/hooks.json"
+        if hook_result.get("skipped"):
+            result["preserved"].append(hook_script_rel)
+            result["preserved"].append(hooks_json_rel)
+        elif hook_result.get("installed"):
+            result["created"].append(hook_script_rel)
+            result["created"].append(hooks_json_rel)
+        elif hook_result.get("error"):
+            result["errors"].append(f"AG-03 hook install failed: {hook_result['error']}")
+    except Exception as exc:  # justified: fail-open, hook is best-effort
+        log.warning("ag03_hook_install_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"AG-03 hook install failed: {exc}")
+
+    # 3. Bootstrap channel manifest (four antigravity channel entries)
     try:
         bootstrap_antigravity_channel_manifest(target_dir)
     except ManifestValidationError as exc:

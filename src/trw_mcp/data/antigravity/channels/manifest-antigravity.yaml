@@ -98,12 +98,12 @@ channels:
   notes:
 - id: ag-03-before-edit-hook
   client: antigravity-cli
-  surface: instruction_file_segment
+  surface: hook_script
   telemetry_tag: ag03_before_edit_hook
-  file:
-  lock_file:
-  status: aspirational
-  write_strategy: NONE
+  file: .antigravitycli/hooks.json
+  lock_file: .trw/channels/ag-03-before-edit-hook.lock
+  status: active
+  write_strategy: FULL_REWRITE
   tier_default: T1
   tier_min: T0
   operator_tier_override_key:
@@ -123,10 +123,11 @@ channels:
     action: NONE
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
-  description: AG-03 Before-edit hook injection. DEFERRED — hook surface unconfirmed.
-    Status aspirational.
-  regenerate_cmd:
-  client_version_min:
+  description: AG-03 Before-edit hook injection. ACTIVE — hooks.json confirmed
+    2026-05-28 via agy v1.0.2 binary analysis. Event key PreToolUse. Separate
+    from settings.json. Script at .antigravitycli/hooks/trw_before_edit_telemetry.py.
+  regenerate_cmd: trw-mcp channel-render --channel ag-03-before-edit-hook
+  client_version_min: '1.0.2'
   mdc_description:
   mdc_globs:
   mdc_always_apply: false
@@ -134,16 +135,17 @@ channels:
   emit_on_ttl_skip: true
   emit_on_conflict_skip: true
   emit_on_lock_skip: true
-  sidecar_schema: risk-report-sidecar/v0
+  sidecar_schema:
   sidecar_path:
-  hook_schema_confirmed_at:
-  activation_gate: "OQ-01: Confirm exact hook JSON schema in .antigravitycli/settings.json
-    from official Antigravity CLI documentation.\n"
+  hook_schema_confirmed_at: '2026-05-28'
+  activation_gate:
   tags:
   - antigravity-cli
   - hook
-  - aspirational
-  notes:
+  - pre-tool-use
+  notes: 'Hooks file: .antigravitycli/hooks.json (separate from settings.json).
+    Event key: PreToolUse. Schema confirmed via agy v1.0.2 binary string analysis
+    (google3/third_party/jetski/cortex/customization/hooks/jsonhook/). OQ-01 resolved.'
 - id: ag-04-tool-return-enrichment
   client: antigravity-cli
   surface: ephemeral_stdout
