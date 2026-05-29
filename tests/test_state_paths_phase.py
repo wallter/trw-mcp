@@ -29,9 +29,10 @@ class TestDetectCurrentPhase:
         """Returns phase when active run exists."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
-        _make_run(runs_root, "task1", "20260219T100000Z-aaa", phase="implement", writer=writer)
+        run = _make_run(runs_root, "task1", "20260219T100000Z-aaa", phase="implement", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
+        pin_active_run(run)
         result = detect_current_phase()
         assert result == "implement"
 
@@ -41,9 +42,10 @@ class TestDetectCurrentPhase:
         """Returns None when run status is not 'active'."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
-        _make_run(runs_root, "task1", "20260219T100000Z-done", status="complete", phase="deliver", writer=writer)
+        run = _make_run(runs_root, "task1", "20260219T100000Z-done", status="complete", phase="deliver", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
+        pin_active_run(run)
         result = detect_current_phase()
         assert result is None
 
@@ -54,9 +56,10 @@ class TestDetectCurrentPhase:
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         _make_run(runs_root, "task1", "20260219T100000Z-old", phase="research", writer=writer)
-        _make_run(runs_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
+        new = _make_run(runs_root, "task1", "20260220T100000Z-new", phase="validate", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
+        pin_active_run(new)
         result = detect_current_phase()
         assert result == "validate"
 
@@ -66,11 +69,12 @@ class TestDetectCurrentPhase:
         """Skips completed/failed runs and returns phase from latest active run."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
-        _make_run(runs_root, "task1", "20260219T100000Z-old", phase="implement", writer=writer)
+        active_run = _make_run(runs_root, "task1", "20260219T100000Z-old", phase="implement", writer=writer)
         _make_run(runs_root, "task1", "20260220T100000Z-done", status="complete", phase="deliver", writer=writer)
         _make_run(runs_root, "task1", "20260221T100000Z-fail", status="failed", phase="validate", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
+        pin_active_run(active_run)
         result = detect_current_phase()
         assert result == "implement"
 
