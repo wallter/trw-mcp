@@ -40,7 +40,7 @@ _EXPLORER_CONTENT = """\
 name: trw-distill-explorer
 description: >
   Read-only codebase intelligence specialist powered by trw-distill.
-  Use for: full codebase risk analysis, entity risk map, ordering comparison,
+  Use when you need: full codebase risk analysis, entity risk map, ordering comparison,
   top-N hotspot ranking, and convention summaries.
   Do NOT use for single-file pre-edit hints — use the PreToolUse hook instead.
 model: haiku

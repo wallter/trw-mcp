@@ -7,7 +7,8 @@ names, matching what ``trw_mcp.prompts.messaging._expand_tool_placeholders``
 would produce with ``profile=None``).
 
 This test asserts every ``.claude/agents/*.md`` equals the marker-expansion
-of its bundled counterpart, byte for byte (SHA-256).
+*and* capability-tier resolution of its bundled counterpart, byte for byte
+(SHA-256) — the same two transforms ``scripts/sync-agents.py`` applies.
 
 Regenerate drift via ``scripts/sync-agents.py``.
 """
@@ -26,7 +27,7 @@ BUNDLED_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
 
 _TOOL_MARKER_RE = re.compile(r"\{tool:(trw_\w+)\}")
-_DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md"}
+_DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md", "trw-distill-explorer.md"}
 
 _MANIFEST_SPEC = importlib.util.spec_from_file_location(
     "bundle_hash_manifest",
@@ -55,17 +56,25 @@ _AGENT_PARAMS = [pytest.param(name, id=name) for name in _agent_names()]
 
 @pytest.mark.parametrize("agent_name", _AGENT_PARAMS)
 def test_parity_after_marker_expansion(agent_name: str) -> None:
-    """``.claude/agents/X`` equals marker-expansion of the bundled copy."""
+    """``.claude/agents/X`` equals marker-expansion + tier resolution of the bundled copy."""
+    from trw_mcp.agents.tier_resolver import rewrite_model_line
+
     src = BUNDLED_DIR / agent_name
     dst = CLAUDE_DIR / agent_name
     assert src.is_file(), f"bundled source missing: {src}"
     assert dst.is_file(), f".claude/agents copy missing: {dst} (run scripts/sync-agents.py)"
 
-    expected = _expand_markers(src.read_text(encoding="utf-8")).encode("utf-8")
+    # .claude/agents/ mirrors what shipped Claude Code users get after
+    # ``trw-mcp init``: markers expanded AND capability tiers resolved to
+    # Claude shortnames (frontier->opus, balanced->sonnet, local-small->haiku).
+    # See PRD-INFRA-104 FR-04 and test_bundled_agents::
+    # test_audit_agent_prompt_pairs_match_root_sources (same two transforms).
+    expanded = _expand_markers(src.read_text(encoding="utf-8"))
+    expected = rewrite_model_line(expanded, client="claude-code").encode("utf-8")
     actual = dst.read_bytes()
     assert _sha256(actual) == _sha256(expected), (
         f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
-        "expansion. Run scripts/sync-agents.py to regenerate."
+        "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
     )
 
 

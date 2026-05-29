@@ -4,34 +4,7 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
-## [0.48.12] — 2026-05-28
-
-### Fixed
-
-- **Copilot hook adapter shell-quoting bug — eliminates `unexpected EOF` spam.**
-  `_build_hook_adapter_command()` previously generated a `/bin/sh -c '...'`
-  command whose outer single-quote wrapper was closed early by inner
-  single-quoted `grep`/`sed` patterns (e.g. `grep -o '"toolName"...'`).
-  When GitHub Copilot ran the command via `bash -c`, it emitted
-  `unexpected EOF while looking for matching '"'` on every hook event.
-
-  Fix: the inline shell logic is extracted into a real bundled script
-  `data/copilot/hooks/trw-copilot-adapter.sh` that `generate_copilot_hooks`
-  installs at `.github/hooks/trw-copilot-adapter.sh`. The generated
-  `command` in `hooks.json` is now a simple `/bin/sh "<adapter>" "<hook>"
-  "<event>"` invocation with no nested quoting — eliminating the entire
-  bug class permanently. The adapter script reads Copilot stdin JSON,
-  extracts `toolName` (jq preferred, grep/sed fallback), pipes the payload
-  to the target TRW hook, and for `preToolUse` translates the hook exit code
-  to a JSON `permissionDecision` object. All error paths fail-open so no
-  hook failure can block a user tool call.
-
-  Regression guard: `TestCopilotHookCommandShellValidity.test_all_events_pass_bash_n`
-  now asserts `bash -n` exits 0 for every event in `_COPILOT_HOOK_MAP`.
-  Behavioral tests in `TestCopilotAdapterScriptBehavior` verify toolName
-  extraction, allow/deny decisions, and fail-open for missing hooks.
-
-## [0.48.11] — 2026-05-28
+## [0.48.13] — 2026-05-28
 
 ### Changed
 
@@ -71,6 +44,33 @@ All notable changes to the TRW MCP server package.
   `docs/documentation/prompting/` (canonical snapshot, supersedes the 4.7 pair).
   The `test_opus_47_lint.py` sampling-param guard rationale now notes it applies
   to Opus 4.7 *and later* (incl. 4.8).
+
+## [0.48.12] — 2026-05-28
+
+### Fixed
+
+- **Copilot hook adapter shell-quoting bug — eliminates `unexpected EOF` spam.**
+  `_build_hook_adapter_command()` previously generated a `/bin/sh -c '...'`
+  command whose outer single-quote wrapper was closed early by inner
+  single-quoted `grep`/`sed` patterns (e.g. `grep -o '"toolName"...'`).
+  When GitHub Copilot ran the command via `bash -c`, it emitted
+  `unexpected EOF while looking for matching '"'` on every hook event.
+
+  Fix: the inline shell logic is extracted into a real bundled script
+  `data/copilot/hooks/trw-copilot-adapter.sh` that `generate_copilot_hooks`
+  installs at `.github/hooks/trw-copilot-adapter.sh`. The generated
+  `command` in `hooks.json` is now a simple `/bin/sh "<adapter>" "<hook>"
+  "<event>"` invocation with no nested quoting — eliminating the entire
+  bug class permanently. The adapter script reads Copilot stdin JSON,
+  extracts `toolName` (jq preferred, grep/sed fallback), pipes the payload
+  to the target TRW hook, and for `preToolUse` translates the hook exit code
+  to a JSON `permissionDecision` object. All error paths fail-open so no
+  hook failure can block a user tool call.
+
+  Regression guard: `TestCopilotHookCommandShellValidity.test_all_events_pass_bash_n`
+  now asserts `bash -n` exits 0 for every event in `_COPILOT_HOOK_MAP`.
+  Behavioral tests in `TestCopilotAdapterScriptBehavior` verify toolName
+  extraction, allow/deny decisions, and fail-open for missing hooks.
 
 ## [0.48.10] — 2026-05-27
 

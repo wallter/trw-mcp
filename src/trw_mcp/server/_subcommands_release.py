@@ -281,9 +281,7 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
             "live_server_version": live_server_version,
         },
         "compatibility_matrix": {
-            "independent_packages": sorted(
-                package for package in package_versions if package not in {PACKAGE_KEY_TRW_MCP}
-            ),
+            "independent_packages": sorted(package for package in package_versions if package != PACKAGE_KEY_TRW_MCP),
             "must_match": [
                 ["packages.trw-mcp", "installed_asset_trw_mcp_version"],
                 ["packages.trw-mcp", "live_server_version"],

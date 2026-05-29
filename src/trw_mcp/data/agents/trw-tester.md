@@ -7,7 +7,7 @@ description: >
   integration tests. Not for production-code implementation (use
   trw-implementer) or ad-hoc debugging.
 model: balanced
-effort: medium
+effort: high
 maxTurns: 100
 memory: project
 allowedTools:

@@ -27,6 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 
 _VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
+# Dev-repo-only agents installed by channel bootstrap (e.g. trw-distill channels),
+# not part of the 12 bundled-mirror set. They still receive hygiene checks via the
+# parametrized tests, but are excluded from the bundled-count sanity assertion.
+_DEV_ONLY_AGENTS: frozenset[str] = frozenset({"trw-distill-explorer.md", "trw-distill-sonnet-judge.md"})
 _PRESCRIPTIVE_LINE_START_RE = re.compile(r"^(MUST|CRITICAL|RIGID):", re.MULTILINE)
 
 # FR09 scoping: MUST / CRITICAL / RIGID are blanket-banned at line start.
@@ -118,7 +122,7 @@ def test_no_prescriptive_line_starts(agent_path: Path) -> None:
     body = _agent_body(agent_path)
     matches = _PRESCRIPTIVE_LINE_START_RE.findall(body)
     assert not matches, (
-        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; soften per OPUS-4-7-BEST-PRACTICES.md §4"
+        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; soften per OPUS-4-8-BEST-PRACTICES.md §2"
     )
 
 
@@ -176,5 +180,9 @@ def test_auditors_reference_shared_doc() -> None:
 
 
 def test_agents_dir_has_expected_count() -> None:
-    """Sanity: 12 agents are present so parametrize didn't silently collapse."""
-    assert len(_agent_files()) == 12, f"expected 12 agents in {AGENTS_DIR}, found {len(_agent_files())}"
+    """Sanity: the 12 bundled-mirror agents are present (dev-only channel agents excluded)."""
+    bundled_mirror = [p for p in _agent_files() if p.name not in _DEV_ONLY_AGENTS]
+    assert len(bundled_mirror) == 12, (
+        f"expected 12 bundled-mirror agents in {AGENTS_DIR}, found {len(bundled_mirror)} "
+        f"(dev-only excluded: {sorted(_DEV_ONLY_AGENTS)}; total files: {len(_agent_files())})"
+    )

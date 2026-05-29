@@ -92,7 +92,7 @@ def scaffold_run_directory(
     # Write minimal run.yaml
     run_yaml_path = run_root / "meta" / "run.yaml"
     ts_iso = datetime.now(timezone.utc).isoformat()
-    run_data = {
+    run_data: dict[str, object] = {
         "run_id": run_id,
         "task": task_name,
         "status": "active",
@@ -101,6 +101,7 @@ def scaffold_run_directory(
         "source": "local_cli",
     }
     from trw_mcp.state.persistence import FileStateWriter
+
     FileStateWriter().write_yaml(run_yaml_path, run_data)
 
     # Write initial event
@@ -223,6 +224,7 @@ def read_local_status(*, run_path: Path | None = None) -> LocalStatusResult:
     resolved = _resolve_run_path(run_path)
     meta = resolved / "meta"
     from trw_mcp.state.persistence import FileStateReader
+
     run_data = FileStateReader().read_yaml(meta / "run.yaml")
     checkpoints = _count_jsonl(meta / "checkpoints.jsonl")
     events = _count_jsonl(meta / "events.jsonl")
@@ -247,6 +249,7 @@ def mark_local_delivered(
     meta = resolved / "meta"
     run_yaml = meta / "run.yaml"
     from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
     run_data = FileStateReader().read_yaml(run_yaml)
     run_data["status"] = "delivered"
     run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()

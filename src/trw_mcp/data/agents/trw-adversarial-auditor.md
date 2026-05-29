@@ -1,6 +1,6 @@
 ---
 name: trw-adversarial-auditor
-effort: medium
+effort: high
 description: >
   Adversarial spec-vs-code auditor. Use when you need a red-team pass on a PRD
   implementation — assumes gaps exist until proven otherwise, hunts for

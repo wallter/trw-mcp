@@ -51,9 +51,7 @@ _ALLOWED_CATEGORIES: frozenset[str] = frozenset(
 # idempotent) so it is trivially unit-testable. Patterns compiled at import
 # so redaction stays O(n) over the message body per call.
 _LICENSE_KEY_RE = re.compile(r"trw_lic_\S+")
-_API_KEY_RE = re.compile(
-    r"(?:sk_(?:live|test)_\S+|pk_(?:live|test)_\S+|AKIA[0-9A-Z]{16})"
-)
+_API_KEY_RE = re.compile(r"(?:sk_(?:live|test)_\S+|pk_(?:live|test)_\S+|AKIA[0-9A-Z]{16})")
 _ENV_RE = re.compile(
     r"\b(?:PASSWORD|SECRET|TOKEN|API[_-]?KEY|AWS_(?:ACCESS|SECRET)_KEY)\s*=\s*\S+",
     re.IGNORECASE,
@@ -79,6 +77,7 @@ def _redact_pii(text: str) -> str:
         if home_norm:
             redacted = redacted.replace(home_norm, "$HOME")
     return redacted
+
 
 # Validation caps mirrored from PRD-CORE-182 FR01/FR06. If the server tightens
 # them this file is the single place we have to update on the client side.
@@ -138,9 +137,7 @@ def _merge_metadata(
     """
     merged: dict[str, str] = {k: v for k, v in auto_metadata.items() if v}
     if user_metadata:
-        for k, v in user_metadata.items():
-            if v:
-                merged[k] = v
+        merged.update({k: v for k, v in user_metadata.items() if v})
     return merged
 
 
@@ -154,10 +151,7 @@ def _validate(
 ) -> str:
     """Client-side validation. Returns an error string, or "" if OK."""
     if category not in _ALLOWED_CATEGORIES:
-        return (
-            f"invalid category {category!r}; expected one of "
-            f"{sorted(_ALLOWED_CATEGORIES)}"
-        )
+        return f"invalid category {category!r}; expected one of {sorted(_ALLOWED_CATEGORIES)}"
     if not isinstance(subject, str) or not subject.strip():
         return "subject must be a non-empty string"
     if len(subject) > MAX_SUBJECT_LEN:
@@ -184,9 +178,8 @@ def _validate(
                 return f"metadata value for key {k!r} exceeds {MAX_METADATA_VALUE_LEN} chars"
             if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
                 return "metadata must not contain newline characters"
-    if contact_email is not None:
-        if not isinstance(contact_email, str) or "@" not in contact_email:
-            return "contact_email must be a valid email address"
+    if contact_email is not None and (not isinstance(contact_email, str) or "@" not in contact_email):
+        return "contact_email must be a valid email address"
     return ""
 
 
@@ -299,8 +292,7 @@ def submit_feedback(
         return SubmitFeedbackResult(
             success=False,
             error=(
-                "backend not configured — set TRW_BACKEND_URL and "
-                "TRW_BACKEND_API_KEY (or run install-trw to provision)"
+                "backend not configured — set TRW_BACKEND_URL and TRW_BACKEND_API_KEY (or run install-trw to provision)"
             ),
             status_code=0,
         )
@@ -371,8 +363,8 @@ def register_submit_feedback_tools(server: FastMCP) -> None:
 
 __all__ = [
     "MAX_MESSAGE_LEN",
-    "MAX_METADATA_KEY_LEN",
     "MAX_METADATA_KEYS",
+    "MAX_METADATA_KEY_LEN",
     "MAX_METADATA_VALUE_LEN",
     "MAX_SUBJECT_LEN",
     "MIN_MESSAGE_LEN",

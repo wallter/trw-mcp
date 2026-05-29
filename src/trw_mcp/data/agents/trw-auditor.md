@@ -1,6 +1,6 @@
 ---
 name: trw-auditor
-effort: medium
+effort: high
 description: >
   Spec-vs-code auditor with bidirectional traceability verification. Use when
   you need to verify a PRD has been implemented as specified — every FR traced
