@@ -32,7 +32,7 @@ class TestCeremonyStateMutationWiring:
 
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools._ceremony_helpers._resolve_trw_dir_compat", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
         ):
             result = tools["trw_session_start"].fn()

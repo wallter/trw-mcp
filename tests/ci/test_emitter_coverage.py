@@ -186,7 +186,7 @@ def meas_workspace(
 
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
-    monkeypatch.setattr("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", lambda: trw_dir)
+    monkeypatch.setattr("trw_mcp.tools._ceremony_helpers._resolve_trw_dir_compat", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.build._registration.resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.ceremony._find_active_run_compat", lambda _ctx: run_dir)
 

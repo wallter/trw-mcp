@@ -193,7 +193,7 @@ class TestSessionStartBootGate:
         monkeypatch.setenv("TRW_SESSION_ID", "sess-123")
         monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
         monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
-        monkeypatch.setattr("trw_mcp.tools._ceremony_helpers.resolve_trw_dir", lambda: trw_dir)
+        monkeypatch.setattr("trw_mcp.tools._ceremony_helpers._resolve_trw_dir_compat", lambda: trw_dir)
         pin_active_run(run_dir, session_id="sess-123")
         _reset_config(None)
         clear_pricing_cache()
