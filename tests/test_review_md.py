@@ -126,7 +126,7 @@ class TestGenerateReviewMd:
         trw_dir.mkdir(parents=True)
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=[],
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -168,7 +168,7 @@ class TestGenerateReviewMd:
         ]
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=mock_learnings,
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -205,7 +205,7 @@ class TestGenerateReviewMd:
         ]
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=mock_learnings,
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -224,7 +224,7 @@ class TestGenerateReviewMd:
         trw_dir.mkdir(parents=True)
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=[],
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -246,7 +246,7 @@ class TestGenerateReviewMd:
 
         with (
             patch(
-                "trw_mcp.state.claude_md._sync.recall_learnings",
+                "trw_mcp.state.recall_factories.recall_for_review_tags",
                 return_value=[],
             ),
             patch(
@@ -269,7 +269,7 @@ class TestGenerateReviewMd:
 
         with (
             patch(
-                "trw_mcp.state.claude_md._sync.recall_learnings",
+                "trw_mcp.state.recall_factories.recall_for_review_tags",
                 return_value=[],
             ),
             patch(
@@ -291,7 +291,7 @@ class TestGenerateReviewMd:
 
         with (
             patch(
-                "trw_mcp.state.claude_md._sync.recall_learnings",
+                "trw_mcp.state.recall_factories.recall_for_review_tags",
                 return_value=[],
             ),
             patch(
@@ -311,7 +311,7 @@ class TestGenerateReviewMd:
         trw_dir.mkdir(parents=True)
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=[],
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -330,7 +330,7 @@ class TestGenerateReviewMd:
         trw_dir.mkdir(parents=True)
 
         with patch(
-            "trw_mcp.state.claude_md._sync.recall_learnings",
+            "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=[],
         ):
             result = generate_review_md(trw_dir, repo_root=tmp_path)
@@ -359,7 +359,7 @@ class TestGenerateReviewMd:
         repo_root = tmp_path
 
         mock_recall = MagicMock(return_value=[])  # returns empty — simulates threshold filtering
-        with patch("trw_mcp.state.claude_md._sync.recall_learnings", mock_recall):
+        with patch("trw_mcp.state.recall_factories.recall_for_review_tags", mock_recall):
             result = generate_review_md(trw_dir, repo_root=repo_root)
 
         # Verify the threshold argument is passed correctly
@@ -389,7 +389,7 @@ class TestGenerateReviewMd:
         repo_root = tmp_path
 
         mock_recall = MagicMock(return_value=[])  # returns empty — simulates status filtering
-        with patch("trw_mcp.state.claude_md._sync.recall_learnings", mock_recall):
+        with patch("trw_mcp.state.recall_factories.recall_for_review_tags", mock_recall):
             result = generate_review_md(trw_dir, repo_root=repo_root)
 
         # Verify the status argument is passed correctly

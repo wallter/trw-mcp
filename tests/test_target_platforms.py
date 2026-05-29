@@ -113,7 +113,7 @@ class TestInitTargetPlatforms:
         assert not result["errors"]
         platforms = _read_target_platforms(fake_git_repo)
         assert sorted(platforms) == sorted(
-            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"]
+            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider", "antigravity-cli"]
         )
 
     def test_init_detects_opencode_dir(self, fake_git_repo: Path) -> None:
@@ -251,7 +251,7 @@ class TestUpdateTargetPlatforms:
 
         platforms = _read_target_platforms(initialized_repo)
         assert sorted(platforms) == sorted(
-            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider"]
+            ["claude-code", "copilot", "cursor-ide", "cursor-cli", "opencode", "codex", "gemini", "aider", "antigravity-cli"]
         )
 
 
