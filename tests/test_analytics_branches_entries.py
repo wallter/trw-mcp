@@ -15,6 +15,7 @@ from trw_mcp.state.analytics import (
     has_existing_success_learning,
     surface_validated_learnings,
 )
+from ._analytics_branches_support import trw_dir  # noqa: F401
 
 
 class TestIterEntryFilesIndexYamlSkipped:

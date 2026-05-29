@@ -9,6 +9,8 @@ from unittest.mock import patch
 from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import _do_reflect, _get_run_status
 from trw_mcp.tools.checkpoint import _do_checkpoint
+from ._tools_ceremony_support import trw_project  # noqa: F401
+from ._tools_ceremony_support import run_dir  # noqa: F401
 
 
 class TestFindActiveRun:

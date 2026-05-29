@@ -13,6 +13,7 @@ from trw_mcp.state.analytics import (
     backfill_source_attribution,
     mark_promoted,
 )
+from ._analytics_branches_support import trw_dir  # noqa: F401
 
 
 class TestMarkPromotedNoEntriesDir:

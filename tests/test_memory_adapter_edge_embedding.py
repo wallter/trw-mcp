@@ -12,6 +12,7 @@ from trw_mcp.state.memory_adapter import (
     find_entry_by_id,
     store_learning,
 )
+from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 
 
 class TestEmbedText:

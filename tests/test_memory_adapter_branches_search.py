@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
 from trw_mcp.state.memory_adapter import _keyword_search, _search_entries, get_backend
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 
 class TestKeywordSearchMultiToken:

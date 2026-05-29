@@ -8,6 +8,8 @@ import pytest
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state.memory_adapter import ensure_migrated, find_yaml_path_for_entry, get_backend
+from ._memory_adapter_support import trw_dir_with_entries  # noqa: F401
+from ._memory_adapter_support import trw_dir  # noqa: F401
 
 
 class TestEnsureMigrated:

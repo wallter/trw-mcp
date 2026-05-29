@@ -11,6 +11,7 @@ from trw_mcp.state.ceremony_feedback import (
     get_ceremony_status,
     read_feedback_data,
 )
+from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
 
 class TestCeremonyStatus:

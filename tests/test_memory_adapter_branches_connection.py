@@ -17,6 +17,7 @@ from trw_mcp.state.memory_adapter import (
     get_embedder,
     reset_embedder,
 )
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 
 class TestGetBackendAutoResolve:

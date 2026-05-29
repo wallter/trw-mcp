@@ -11,6 +11,7 @@ from tests._telemetry_pipeline_support import (
     _make_event,
     _read_jsonl,
 )
+from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
 
 class TestDisabledPipeline:

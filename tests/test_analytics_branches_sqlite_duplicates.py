@@ -8,6 +8,7 @@ from unittest.mock import patch
 from tests._analytics_branches_support import _reader, _write_entry
 from trw_mcp.models.learning import LearningEntry
 from trw_mcp.state.analytics import auto_prune_excess_entries, update_learning_index
+from ._analytics_branches_support import trw_dir  # noqa: F401
 
 
 class TestUpdateLearningIndexOverflow:

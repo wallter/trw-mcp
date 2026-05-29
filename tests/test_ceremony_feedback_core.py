@@ -11,6 +11,7 @@ from trw_mcp.state.ceremony_feedback import (
     read_feedback_data,
     record_session_outcome,
 )
+from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
 
 class TestTaskClassifier:

@@ -14,6 +14,7 @@ from tests._telemetry_pipeline_support import (
     _make_fake_cfg,
     make_configured_pipeline,
 )
+from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
 
 class TestTimerThread:

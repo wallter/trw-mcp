@@ -17,6 +17,7 @@ from ._reconciliation_support import (
     SAMPLE_PRD,
     make_config,
 )
+from ._reconciliation_support import run_dir  # noqa: F401
 
 
 class TestHandleReconcileMode:

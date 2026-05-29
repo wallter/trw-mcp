@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
+from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
 
 
 class TestPhaseContextualRecall:

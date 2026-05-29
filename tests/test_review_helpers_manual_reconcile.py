@@ -13,6 +13,7 @@ from trw_mcp.tools._review_helpers import (
     handle_manual_mode,
     handle_reconcile_mode,
 )
+from ._review_helpers_support import run_dir  # noqa: F401
 
 
 class TestHandleManualMode:
