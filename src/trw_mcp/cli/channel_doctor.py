@@ -1,18 +1,21 @@
 """Channel manifest hygiene CLI — trw-mcp channel-doctor sub-command.
 
-Provides four sub-commands (argparse dispatched from _subcommands.py):
+Provides six sub-commands (argparse dispatched from _subcommands.py):
 
   trw-mcp channel-doctor init      — create .trw/channels/ + empty manifest
   trw-mcp channel-doctor validate  — validate manifest.yaml schema (exit 1 on error)
   trw-mcp channel-doctor scan      — list orphaned locks + stale state files
   trw-mcp channel-doctor clean     — remove orphaned locks older than --max-age-hours
+  trw-mcp channel-doctor stats     — show correlation + throttle stats table
+  trw-mcp channel-doctor throttle  — evaluate (and optionally apply) throttle decisions
 
-PRD-DIST-2400 FR18.
+PRD-DIST-2400 FR18 + §meta-tune.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -233,6 +236,107 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# stats + throttle sub-commands (meta-tune consumer)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_LOG_PATH = Path(".trw/telemetry/channel-events.jsonl")
+_DEFAULT_MANIFEST_PATH_ALIAS = Path(".trw/channels/manifest.yaml")
+
+
+def _run_stats(args: argparse.Namespace, project_dir: Path) -> None:
+    """Print correlation + throttle stats table."""
+    window_hours: int = getattr(args, "window_hours", 1)
+    as_json: bool = getattr(args, "json", False)
+
+    log_path = project_dir / _DEFAULT_LOG_PATH
+    manifest_path = project_dir / _DEFAULT_MANIFEST_PATH_ALIAS
+
+    try:
+        from trw_mcp.channels.meta_tune._stats import (
+            compute_channel_stats,
+            format_stats_table,
+        )
+
+        report = compute_channel_stats(
+            log_path,
+            window_seconds=window_hours * 3600,
+            manifest_path=manifest_path if manifest_path.exists() else None,
+        )
+
+        if as_json:
+            print(json.dumps(report.model_dump(), indent=2))
+        else:
+            print(format_stats_table(report))
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_throttle(args: argparse.Namespace, project_dir: Path) -> None:
+    """Evaluate throttle decisions; optionally apply tier changes."""
+    window_hours: int = getattr(args, "window_hours", 1)
+    dry_run: bool = not getattr(args, "apply", False)
+
+    log_path = project_dir / _DEFAULT_LOG_PATH
+    manifest_path = project_dir / _DEFAULT_MANIFEST_PATH_ALIAS
+
+    try:
+        from trw_mcp.channels.meta_tune._stats import compute_channel_stats
+        from trw_mcp.channels.meta_tune._throttle import (
+            ThrottleVerdict,
+            apply_throttle,
+            evaluate_throttle,
+        )
+
+        report = compute_channel_stats(
+            log_path,
+            window_seconds=window_hours * 3600,
+            manifest_path=manifest_path if manifest_path.exists() else None,
+        )
+
+        if not report.channels:
+            print("No channel data — nothing to throttle.")
+            return
+
+        applied: list[str] = []
+        held: list[str] = []
+
+        for entry in report.channels:
+            stat_dict = {
+                "adjusted_rate": entry.adjusted_rate,
+                "total_pushes": entry.total_pushes,
+            }
+            decision = evaluate_throttle(entry.channel_id, entry.client, stat_dict)
+            label = f"{entry.client}:{entry.channel_id}"
+
+            if decision.verdict in (
+                ThrottleVerdict.THROTTLE_DOWN,
+                ThrottleVerdict.THROTTLE_CLEAR,
+            ):
+                if dry_run:
+                    print(
+                        f"  [dry-run] {label} -> {decision.verdict.value} "
+                        f"(adj={entry.adjusted_rate:.3f} threshold={decision.threshold})"
+                    )
+                    applied.append(label)
+                else:
+                    ok = apply_throttle(entry.channel_id, decision, manifest_path)
+                    status = "applied" if ok else "failed"
+                    print(f"  [{status}] {label} -> {decision.verdict.value}")
+                    applied.append(label)
+            else:
+                held.append(label)
+
+        if held:
+            print(f"HOLD ({len(held)} channels within thresholds or insufficient data)")
+        if dry_run and applied:
+            print("(dry-run: pass --apply to execute tier changes)")
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Public dispatch
 # ---------------------------------------------------------------------------
 
@@ -253,12 +357,18 @@ def run_channel_doctor(args: argparse.Namespace) -> None:
         _run_scan(args, channels_dir)
     elif sub == "clean":
         _run_clean(args, channels_dir)
+    elif sub == "stats":
+        _run_stats(args, project_dir)
+    elif sub == "throttle":
+        _run_throttle(args, project_dir)
     else:
         # No sub-command: print help.
         print(
-            "Usage: trw-mcp channel-doctor {init,validate,scan,clean} [options]\n"
+            "Usage: trw-mcp channel-doctor {init,validate,scan,clean,stats,throttle} [options]\n"
             "  init      Create .trw/channels/ + empty manifest if absent\n"
             "  validate  Validate manifest.yaml schema (exits 1 on error)\n"
             "  scan      List orphaned locks + stale state files\n"
             "  clean     Remove orphaned locks older than --max-age-hours\n"
+            "  stats     Show per-channel correlation + throttle stats\n"
+            "  throttle  Evaluate throttle decisions; --apply executes tier changes\n"
         )

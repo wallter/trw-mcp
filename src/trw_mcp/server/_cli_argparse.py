@@ -469,6 +469,50 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Preview removals without deleting",
     )
 
+    # channel-doctor stats (meta-tune consumer)
+    cd_stats = cd_sub.add_parser(
+        "stats",
+        help="Show per-channel correlation + throttle stats (meta-tune consumer)",
+    )
+    cd_stats.add_argument(
+        "--window-hours",
+        type=int,
+        default=1,
+        dest="window_hours",
+        help="Correlation time window in hours (default: 1)",
+    )
+    cd_stats.add_argument(
+        "--json",
+        action="store_true",
+        dest="json",
+        help="Output stats as JSON instead of a human table",
+    )
+
+    # channel-doctor throttle (meta-tune consumer)
+    cd_throttle = cd_sub.add_parser(
+        "throttle",
+        help="Evaluate (and optionally apply) throttle decisions for all channels",
+    )
+    cd_throttle.add_argument(
+        "--window-hours",
+        type=int,
+        default=1,
+        dest="window_hours",
+        help="Correlation time window in hours (default: 1)",
+    )
+    cd_throttle.add_argument(
+        "--apply",
+        action="store_true",
+        dest="apply",
+        help="Execute tier changes (default: dry-run)",
+    )
+    cd_throttle.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Preview throttle decisions without applying (default mode)",
+    )
+
     # version-status
     version_parser = subparsers.add_parser(
         "version-status",
