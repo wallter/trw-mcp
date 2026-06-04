@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.channels.claude_code._memory_path import (
     derive_claude_project_id,
     resolve_memory_dir,

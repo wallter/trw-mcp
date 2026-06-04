@@ -5,9 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tests._tools_learning_shared import _get_tools
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter
+
+# Project-root / trw-dir isolation is provided by the autouse conftest
+# ``_isolate_trw_dir`` fixture, which patches the source module
+# ``trw_mcp.state._paths``. The claude_md sync path late-resolves through that
+# module at call time, so no claude_md-specific binding patch is required here.
 
 
 class TestTrwClaudeMdSync:
@@ -206,3 +213,48 @@ class TestClaudeMdSyncAtomicWrite:
             result = tools["trw_claude_md_sync"].fn(scope="root")
             assert result["status"] == "synced"
             assert mock_instance.write_text.call_count >= 1
+
+
+class TestClaudeMdSyncLateResolve:
+    """The sync write target is resolved via LATE lookup through ``_paths``.
+
+    Regression guard for the import-time-binding gap (L-u9hc): the dispatcher
+    and section renderers must read ``trw_mcp.state._paths.resolve_project_root``
+    /``resolve_trw_dir`` at call time, NOT a copy captured at import. If they
+    captured the binding at import, monkeypatching the source module would not
+    redirect the write and a sync would pollute the real repo CLAUDE.md.
+    """
+
+    def test_sync_honours_paths_source_patch_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Patching ONLY ``_paths`` (the source module) redirects the write.
+
+        This deliberately does NOT patch the legacy claude_md ``__init__`` /
+        ``_static_sections`` re-export bindings — proving production resolves
+        late through ``_paths`` rather than via an import-time copy.
+        """
+        target_root = tmp_path / "late_resolve_root"
+        target_root.mkdir()
+
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_project_root", lambda: target_root
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_trw_dir", lambda: target_root / ".trw"
+        )
+
+        tools = _get_tools()
+        tools["trw_learn"].fn(
+            summary="Late resolve target learning",
+            detail="Should write under the patched _paths root",
+            impact=0.9,
+        )
+        result = tools["trw_claude_md_sync"].fn(scope="root")
+
+        assert result["status"] == "synced"
+        written = target_root / "CLAUDE.md"
+        assert written.exists()
+        assert "trw:start" in written.read_text(encoding="utf-8")
+        # The path reported by the tool reflects the late-resolved root.
+        assert str(target_root) in str(result["path"])

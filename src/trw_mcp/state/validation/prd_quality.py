@@ -18,11 +18,13 @@ import structlog
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.requirements import (
     DimensionScore,
+    ImprovementSuggestion,
     PRDQualityGates,
     SmellFinding,
     ValidationFailure,
     ValidationResultV2,
 )
+from trw_mcp.state.validation import _prd_scoring_smells as _smells
 
 # ---------------------------------------------------------------------------
 # Re-exports from _prd_scoring (metric computation)
@@ -72,6 +74,7 @@ from trw_mcp.state.validation._prd_scoring import (
 from trw_mcp.state.validation._prd_scoring import (
     score_traceability_v2 as score_traceability_v2,
 )
+from trw_mcp.state.validation._prd_scoring_smells import classify_ears, detect_smells
 
 # ---------------------------------------------------------------------------
 # Re-exports from _prd_validation (gate checks, tier classification)
@@ -209,10 +212,17 @@ def validate_prd_quality_v2(
             logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
             dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
-    # Backward-compatible placeholder collections -- remain empty (no scorer behind them)
-    smell_findings: list[SmellFinding] = []
+    # Requirement-smell + EARS detection (AARE-F v3.0.0 §2.4/§2.1). Advisory only:
+    # validation_smell_weight / validation_ears_weight stay 0, so total_score is
+    # unchanged -- these populate informational diagnostics that were empty stubs.
+    try:
+        smell_findings: list[SmellFinding] = detect_smells(content)
+        ears_classifications: list[dict[str, object]] = classify_ears(content)
+    except Exception:  # justified: fail-open, advisory diagnostics must not block scoring
+        logger.warning("smell_ears_detection_failed", exc_info=True)
+        smell_findings = []
+        ears_classifications = []
     readability_metrics: dict[str, float] = {}
-    ears_classifications: list[dict[str, object]] = []
 
     # Compute total score (normalized to 0-100 against active dimensions)
     max_possible = sum(d.max_score for d in dimensions)
@@ -233,6 +243,17 @@ def validate_prd_quality_v2(
 
     # Generate improvement suggestions
     suggestions = generate_improvement_suggestions(dimensions)
+
+    # PRD-QUAL-092 FR01: surface warning-severity smells as exactly ONE bounded
+    # advisory suggestion so the grooming workflow sees them. Looked up via the
+    # module so test monkeypatches on ``summarize_smells`` propagate. Informational
+    # only: this does NOT change total_score (NFR01) nor valid/tier (FR03).
+    smell_advisory = _smells.summarize_smells(smell_findings)
+    if smell_advisory is not None:
+        priority = "high" if len([f for f in smell_findings if f.severity == "warning"]) >= 5 else "medium"
+        suggestions.append(
+            ImprovementSuggestion(dimension="smell", priority=priority, message=smell_advisory)
+        )
 
     # V1-compatible fields -- use pre-computed result if provided (GAP-FR-007)
     if v1_result is not None:
@@ -287,6 +308,13 @@ def validate_prd_quality_v2(
     combined_failures = [*v1_failures, *integrity_failures]
     is_valid = is_valid and not integrity_failures
 
+    # PRD-QUAL-096 FR01: informational measured traceability coverage ratio
+    # (FRs with both impl + test refs / total FRs). Additive only — does NOT affect
+    # the binary traceability_coverage gate or `valid` (NFR01/FR02).
+    from trw_mcp.state.validation._prd_validation import compute_measured_traceability_coverage
+
+    measured_trace_cov = compute_measured_traceability_coverage(content)
+
     result = ValidationResultV2(
         # V1 fields (computed inline)
         valid=is_valid,
@@ -294,6 +322,7 @@ def validate_prd_quality_v2(
         ambiguity_rate=ambiguity_rate,
         completeness_score=v1_completeness,
         traceability_coverage=v1_trace_coverage,
+        measured_traceability_coverage=measured_trace_cov,
         consistency_score=0.0,
         # V2 fields
         total_score=total_score,

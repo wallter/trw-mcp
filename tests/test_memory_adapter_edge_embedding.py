@@ -182,8 +182,16 @@ class TestStoreLearningTagInference:
 
 class TestStoreLearningEmbedding:
     def test_embed_input_is_summary_plus_detail(self, trw_dir: Path) -> None:
-        """store_learning passes 'summary detail' to _embed_and_store."""
-        with patch("trw_mcp.state.memory_adapter._embed_and_store") as mock_embed:
+        """store_learning passes 'summary detail' to the embed helper.
+
+        PRD-FIX-COMPOUNDING-2 FR02: store_learning now calls
+        ``_embed_and_store_returning`` (which RETURNS the vector so the graph
+        scheduler can reuse it) instead of the void ``_embed_and_store``.
+        """
+        with patch(
+            "trw_mcp.state.memory_adapter._embed_and_store_returning",
+            return_value=None,
+        ) as mock_embed:
             with patch(
                 "trw_mcp.state.analytics.infer_topic_tags",
                 return_value=[],

@@ -11,8 +11,6 @@ PRD-DIST-2406.
 
 from __future__ import annotations
 
-from typing import Any
-
 from trw_mcp.channels._provenance import render_provenance_comment
 from trw_mcp.channels._telemetry import append_channel_event
 from trw_mcp.channels.copilot._templates import render_c1_t0_beacon, render_c1_t1_segment
@@ -42,7 +40,7 @@ def count_tokens_estimate(text: str) -> int:
 
 
 def render_with_tier_down(
-    sidecar_data: dict[str, Any],
+    sidecar_data: dict[str, object],
     *,
     ts: str,
     budget_tokens: int = BUDGET_TOKENS,
@@ -67,8 +65,10 @@ def render_with_tier_down(
     Returns:
         (rendered_content, tier_used) tuple.
     """
-    conventions_raw: list[Any] = sidecar_data.get("conventions", [])
-    hotspots_raw: list[Any] = sidecar_data.get("hotspots", [])
+    _convs = sidecar_data.get("conventions")
+    conventions_raw: list[object] = list(_convs) if isinstance(_convs, list) else []
+    _spots = sidecar_data.get("hotspots")
+    hotspots_raw: list[object] = list(_spots) if isinstance(_spots, list) else []
 
     conventions = [_to_str(c) for c in conventions_raw]
     hotspots_full = [_hotspot_str_full(h) for h in hotspots_raw]
@@ -136,13 +136,13 @@ def render_with_tier_down(
 # ---------------------------------------------------------------------------
 
 
-def _to_str(item: Any) -> str:
+def _to_str(item: object) -> str:
     if isinstance(item, dict):
         return str(item.get("text", item.get("description", str(item))))
     return str(item)
 
 
-def _hotspot_str_full(item: Any) -> str:
+def _hotspot_str_full(item: object) -> str:
     if isinstance(item, dict):
         path = item.get("file", item.get("path", "unknown"))
         score = item.get("risk_score", item.get("score", 0.0))
@@ -154,7 +154,7 @@ def _hotspot_str_full(item: Any) -> str:
     return str(item)
 
 
-def _hotspot_str_minimal(item: Any) -> str:
+def _hotspot_str_minimal(item: object) -> str:
     if isinstance(item, dict):
         path = item.get("file", item.get("path", "unknown"))
         score_raw = item.get("risk_score", item.get("score", 0.0))

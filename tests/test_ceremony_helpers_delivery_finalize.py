@@ -11,6 +11,8 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 from trw_mcp.tools._ceremony_helpers import check_delivery_gates, finalize_run
 from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
 
+from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
+
 pytest_plugins = ("tests._ceremony_helpers_support",)
 
 
@@ -80,6 +82,21 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "build_gate_warning" in result
+
+    def test_build_gate_warning_on_empty_events_jsonl(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """Empty/truncated events.jsonl = no build evidence; the gate must warn
+        (A-P1-07 symmetry with 'events present but no passing build'), not silently
+        pass as it did pre-fix when _check_build_and_work_events returned (None, None)."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events_path.write_text("", encoding="utf-8")
+
+        result = check_delivery_gates(run_dir, reader)
+        assert "build_gate_warning" in result
+        assert "No events found" in str(result["build_gate_warning"])
 
     def test_no_build_gate_warning_when_build_passed(
         self,
@@ -181,6 +198,32 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "warning" not in result
+
+    def test_premature_delivery_warning_with_session_start_event(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """session_start is a ceremony bootstrap event, not work.
+
+        A run that logs only run_init + session_start before deliver has done no
+        real work and MUST trip the premature-delivery guard. Regression for the
+        _CEREMONY_ONLY_EVENTS gap that let the (always-emitted) session_start
+        event count as work and silently defeat the guard for every real run.
+        """
+        events_path = run_dir / "meta" / "events.jsonl"
+        events = [
+            {"event": "run_init", "data": {}},
+            {"event": "session_start", "data": {"run_detected": True}},
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n",
+            encoding="utf-8",
+        )
+
+        result = check_delivery_gates(run_dir, reader)
+        assert "warning" in result
+        assert "Premature delivery" in str(result["warning"])
 
     def test_build_gate_failopen_on_read_error(
         self,

@@ -40,6 +40,7 @@ def test_recall_baseline_high_impact_pins_constants(tmp_path: Path) -> None:
     assert kwargs["compact"] is True
     assert kwargs["max_results"] == 5
     assert kwargs["allow_cold_embedding_init"] is False
+    assert kwargs["status"] == "active"  # session-start leak fix: exclude obsolete/archived
 
 
 def test_recall_focused_pins_min_impact(tmp_path: Path) -> None:
@@ -51,6 +52,7 @@ def test_recall_focused_pins_min_impact(tmp_path: Path) -> None:
     assert kwargs["min_impact"] == 0.3
     assert kwargs["compact"] is True
     assert kwargs["max_results"] == 10
+    assert kwargs["status"] == "active"
 
 
 def test_recall_recent_bypass_returns_full_entries(tmp_path: Path) -> None:
@@ -61,6 +63,7 @@ def test_recall_recent_bypass_returns_full_entries(tmp_path: Path) -> None:
     assert kwargs["query"] == "*"
     assert kwargs["min_impact"] == 0.3
     assert kwargs["compact"] is False
+    assert kwargs["status"] == "active"
 
 
 def test_recall_for_nudge_pool_uses_compact_false(tmp_path: Path) -> None:
@@ -73,6 +76,7 @@ def test_recall_for_nudge_pool_uses_compact_false(tmp_path: Path) -> None:
     assert kwargs["min_impact"] == 0.5
     assert kwargs["max_results"] == 10
     assert kwargs["compact"] is False
+    assert kwargs["status"] == "active"
 
 
 def test_recall_for_review_tags_pins_status_active(tmp_path: Path) -> None:
@@ -98,6 +102,72 @@ def test_recall_for_learning_injection_pins_status_active(tmp_path: Path) -> Non
     assert kwargs["min_impact"] == 0.5
     assert kwargs["max_results"] == 10
     assert kwargs["status"] == "active"
+
+
+@pytest.mark.parametrize(
+    ("factory", "args", "kwargs"),
+    [
+        ("recall_baseline_high_impact", (), {"max_results": 5}),
+        ("recall_focused", ("auth scoring",), {"max_results": 5}),
+        ("recall_recent_bypass", (), {"max_results": 5, "min_impact": 0.3}),
+        ("recall_for_nudge_pool", (), {"max_results": 5}),
+        ("recall_for_review_tags", (), {"tags": ["pattern"], "min_impact": 0.7, "max_results": 5}),
+        ("recall_for_learning_injection", ("fix auth bug",), {"max_results": 5}),
+    ],
+)
+def test_every_factory_passes_nonempty_query(
+    tmp_path: Path,
+    factory: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    """Regression guard: every factory must pass a non-empty ``query``.
+
+    A factory that omits ``query`` (or passes ``""``) silently degrades the
+    underlying ``recall_learnings`` call — exactly the bug fixed in
+    ``recall_for_review_tags`` (it had no ``query='*'``). recall_learnings has
+    a required ``query`` positional, so an omission raises TypeError at runtime;
+    this test pins the contract at the factory layer so the regression is caught
+    in the fast unit tier, not in production.
+    """
+    with patch.object(recall_factories, "_default_recall", return_value=_captured_call):
+        getattr(recall_factories, factory)(tmp_path, *args, **kwargs)
+    captured = _captured_call.kwargs  # type: ignore[attr-defined]
+    assert "query" in captured, f"{factory} did not pass a query kwarg to recall_learnings"
+    assert isinstance(captured["query"], str)
+    assert captured["query"].strip() != "", f"{factory} passed an empty query"
+
+
+def test_factories_pass_query_positional_to_real_recall_signature(tmp_path: Path) -> None:
+    """The recall signature requires ``query`` — a missing query is a hard error.
+
+    Binds each factory's call against the REAL ``recall_learnings`` signature
+    (not a permissive ``*args, **kwargs`` stub). If a factory ever drops the
+    required ``query`` argument, ``Signature.bind`` raises TypeError here.
+    """
+    import inspect
+
+    from trw_mcp.state.memory_adapter import recall_learnings
+
+    sig = inspect.signature(recall_learnings)
+    bound_calls: list[inspect.BoundArguments] = []
+
+    def _binding_recall(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        bound_calls.append(sig.bind(*args, **kwargs))
+        return []
+
+    with patch.object(recall_factories, "_default_recall", return_value=_binding_recall):
+        recall_factories.recall_baseline_high_impact(tmp_path, max_results=5)
+        recall_factories.recall_focused(tmp_path, "q", max_results=5)
+        recall_factories.recall_recent_bypass(tmp_path, max_results=5, min_impact=0.2)
+        recall_factories.recall_for_nudge_pool(tmp_path, max_results=5)
+        recall_factories.recall_for_review_tags(tmp_path, tags=["pattern"], min_impact=0.7, max_results=5)
+        recall_factories.recall_for_learning_injection(tmp_path, "task", max_results=5)
+
+    assert len(bound_calls) == 6
+    for call in bound_calls:
+        call.apply_defaults()
+        assert str(call.arguments["query"]).strip() != ""
 
 
 def test_known_callers_use_factories() -> None:

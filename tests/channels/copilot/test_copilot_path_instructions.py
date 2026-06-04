@@ -178,7 +178,8 @@ def test_stale_ttl_full_delete(tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
     # Mock check_staleness to simulate TTL exceeded in a real git repo
     monkeypatch.setattr(
         "trw_mcp.channels.copilot._path_instructions.check_staleness",
-        lambda **kwargs: CheckResult(is_stale=True, ttl_unknown=False, commits_since=25),
+        # MED-6: commits_since renamed to ttl_commits_remaining in CheckResult
+        lambda **kwargs: CheckResult(is_stale=True, ttl_unknown=False, ttl_commits_remaining=-15),
     )
 
     # Second render — TTL check will report stale
@@ -208,6 +209,71 @@ def test_gitignore_entry_added(tmp_path: Path) -> None:
     assert gitignore.exists()
     content = gitignore.read_text(encoding="utf-8")
     assert "trw-distill-hotspots.instructions.md" in content
+
+
+def test_dry_run_no_write(tmp_path: Path) -> None:
+    """dry_run=True returns would_write without writing any file."""
+    renderer = _make_renderer()
+
+    result = renderer.render(
+        tmp_path,
+        _make_sidecar(),
+        sidecar_sha="sha-dry",
+        dry_run=True,
+    )
+
+    assert result.status == "dry_run"
+    assert result.would_write is not None
+    assert "applyTo" in result.would_write
+    # File should not exist
+    target = tmp_path / ".github" / "instructions" / "trw-distill-hotspots.instructions.md"
+    assert not target.exists()
+
+
+def test_no_sidecar_data_skips_render(tmp_path: Path) -> None:
+    """Passing sidecar_data=None returns skipped_quota_exempt."""
+    renderer = _make_renderer()
+
+    result = renderer.render(
+        tmp_path,
+        None,
+        sidecar_sha="sha-none",
+    )
+
+    assert result.status == "skipped_quota_exempt"
+
+
+def test_lock_skip_c2(tmp_path: Path) -> None:
+    """C2 lock skip returns skipped_lock (channel_lock_skip event type used)."""
+    from trw_mcp.channels._lock import ChannelLock
+    from trw_mcp.channels._telemetry import VALID_EVENT_TYPES
+    import threading
+
+    assert "channel_lock_skip" in VALID_EVENT_TYPES
+
+    lock_path = tmp_path / ".trw" / "channels" / "copilot-path-instructions-distill.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    bg_lock = ChannelLock(lock_path)
+    acquired_event = threading.Event()
+    release_event = threading.Event()
+
+    def _hold() -> None:
+        bg_lock.__enter__()
+        acquired_event.set()
+        release_event.wait(timeout=5.0)
+        bg_lock.__exit__(None, None, None)
+
+    t = threading.Thread(target=_hold, daemon=True)
+    t.start()
+    acquired_event.wait(timeout=2.0)
+    try:
+        renderer = _make_renderer()
+        result = renderer.render(tmp_path, _make_sidecar(), sidecar_sha="lock-sha")
+        assert result.status == "skipped_lock"
+    finally:
+        release_event.set()
+        t.join(timeout=2.0)
 
 
 def test_idempotency_same_sha(tmp_path: Path) -> None:

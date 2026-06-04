@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog
 from fastmcp import FastMCP
 
 # Prefer monorepo sources over stale site-packages when tests run from the checkout.
@@ -39,6 +40,14 @@ for _path in (str(_TRW_MEMORY_SRC), str(_TRW_MCP_SRC)):
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+
+# Capture structlog's pristine global config at conftest import time. The root
+# conftest is imported by pytest BEFORE any test module — and before any module
+# does ``from trw_mcp.server import ...``, which runs ``configure_logging()`` at
+# import and installs a CRITICAL-level filtering ``wrapper_class`` process-wide.
+# Restoring to THIS clean baseline (not whatever each test inherits) is what
+# makes ``capture_logs()`` reliable regardless of collection/import order.
+_PRISTINE_STRUCTLOG_CONFIG = structlog.get_config()
 
 
 def _run_async(coro: Any) -> Any:
@@ -101,10 +110,8 @@ _TOOL_GROUPS: dict[str, tuple[str, str]] = {
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
     "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
-    "report": ("trw_mcp.tools.report", "register_report_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
-    "usage": ("trw_mcp.tools.usage", "register_usage_tools"),
 }
 
 
@@ -186,12 +193,19 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_core080_template_variants.py",
         "test_response_optimizer.py",
         "test_scoring_q_preseed.py",
+        # PRD-CORE-184: task-type detection + nudge weights — pure logic, no I/O
+        "test_task_type_detection.py",
+        "test_task_type_nudge_weights.py",
+        # PRD-FIX-106: stdio↔HTTP proxy per-call request timeout — pure logic, no I/O
+        "test_proxy_request_timeout.py",
         # Pure model/config validation — no filesystem I/O
         "test_client_profile.py",
         "test_sprint44_models.py",
         "test_api_import.py",
         "test_fix044_module_config.py",
         "test_fix056_status_integrity.py",
+        # PRD-IMPROVE-MCP-01 FR1/FR2: pure tag coercion + regex policy, no I/O
+        "test_learn_ergonomics_improve_mcp_01.py",
         # PRD-CORE-099: Pure env-var detection — no filesystem I/O
         "test_source_detection_unit.py",
         # PRD-CORE-104: Delivery metrics — pure scoring, no I/O
@@ -440,6 +454,38 @@ def _reset_telemetry_run_cache() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _restore_structlog_config() -> Iterator[None]:
+    """Save structlog's global config before each test, restore it after.
+
+    Root-cause isolation fix: ``trw_mcp._logging.configure_logging()`` installs a
+    filtering ``wrapper_class`` (``make_filtering_bound_logger``) into structlog's
+    process-global config. It runs at import time of ``trw_mcp.server`` and from
+    the CLI/server boot path, so any test that imports the server or dispatches a
+    production tool leaves the filtering wrapper bound for the rest of the
+    process. ``structlog.testing.capture_logs()`` installs its LogCapture
+    processor but the already-bound filtering wrapper drops events below CRITICAL
+    *before* they reach processors — yielding empty ``logs`` lists and false
+    failures in alphabetically-later tests that assert on captured events.
+
+    The poison also happens at *collection* time (several test modules do
+    ``from trw_mcp.server import ...`` at module level), so a per-test
+    save-of-the-inherited-config would just save and re-apply the already-poisoned
+    state forever. Instead we restore to ``_PRISTINE_STRUCTLOG_CONFIG`` — the
+    config captured at conftest import time, before any server import.
+
+    Restoring on BOTH setup and teardown keeps ``capture_logs()`` reliable
+    regardless of collection/import order: setup guarantees the test body starts
+    from the pristine config even if collection already poisoned it, and teardown
+    reverts any mutation the test itself made (e.g. calling ``configure_logging``).
+    """
+    structlog.configure(**_PRISTINE_STRUCTLOG_CONFIG)
+    try:
+        yield
+    finally:
+        structlog.configure(**_PRISTINE_STRUCTLOG_CONFIG)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect all resolve_trw_dir() and resolve_project_root() calls to tmp dirs.
 
@@ -521,6 +567,15 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
         monkeypatch.setattr("trw_mcp.resources.run_state.resolve_project_root", _fake_project_root)
     except AttributeError:
         pass  # Not yet imported
+
+    # The claude_md sync path (profile dispatcher + section renderers) resolves
+    # its write target via LATE lookup through ``_paths.resolve_project_root`` /
+    # ``_paths.resolve_trw_dir`` (read at call time, not bound at import). The
+    # source-module patches above therefore already redirect every claude_md
+    # write to the tmp project root — no claude_md-specific binding patch is
+    # needed. (Historically those bindings were captured at import and a sync
+    # silently regrew the auto-gen block in the REAL repo CLAUDE.md; the
+    # production late-resolve refactor closed that gap.)
 
     yield
 

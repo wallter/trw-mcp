@@ -251,8 +251,22 @@ class TestPathsCoverage:
         cfg = TRWConfig()
         object.__setattr__(cfg, "runs_root", ".trw/runs")
 
+        # PRD-FIX-083/084: detect_current_phase() is now pin-only — it reads
+        # the per-session pinned run (.trw/runtime/pins.json) instead of
+        # scanning disk. Pin the run we just wrote INSIDE the patched roots so
+        # pins.json lands under tmp_path, then exercise the phase-extraction
+        # path under test.
+        from trw_mcp.state import _pin_store
+
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
-                result = _paths.detect_current_phase()
+                _pin_store.invalidate_pin_store_cache()
+                _paths._reset_session_id()
+                _paths.pin_active_run(run_dir)
+                try:
+                    result = _paths.detect_current_phase()
+                finally:
+                    _paths.unpin_active_run()
+                    _pin_store.invalidate_pin_store_cache()
 
         assert result == "implement"

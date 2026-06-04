@@ -111,9 +111,17 @@ class TestResolveRunPathAlignment:
         assert resolved == run_a, f"Expected pinned run {run_a.name}, got {resolved.name}"
 
     def test_active_run_wins_over_complete_run_without_pin(self, project_with_runs: Path) -> None:
-        """No pin: find_active_run's status filter picks the active run even
-        when a completed run has a newer mtime."""
-        from trw_mcp.state._paths import resolve_run_path
+        """No pin: the status-aware scan picks the active run even
+        when a completed run has a newer mtime.
+
+        PRD-FIX-085 relocated the status-filtered mtime scan out of
+        ``find_active_run`` (now pin-only) into the explicit
+        ``find_run_via_mtime_scan`` entry point. With no pin,
+        ``resolve_run_path`` falls back to a pure-mtime ``_find_latest_run_dir``
+        (which is NOT status-aware), so the status-filter contract this test
+        locks now lives on ``find_run_via_mtime_scan``. We assert it there to
+        preserve the original intent without weakening it."""
+        from trw_mcp.state._paths import find_run_via_mtime_scan
 
         runs_root = project_with_runs / ".trw" / "runs"
         run_active = _make_run(
@@ -131,7 +139,7 @@ class TestResolveRunPathAlignment:
             touch_ts=9_000_000.0,  # newer mtime, but complete
         )
 
-        resolved = resolve_run_path()
+        resolved = find_run_via_mtime_scan()
         assert resolved == run_active, "Active run must win over later-mtime complete run"
 
     def test_mtime_fallback_when_no_active_runs_exist(self, project_with_runs: Path) -> None:

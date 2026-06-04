@@ -126,7 +126,7 @@ tools = get_tools_sync(server)
 deliver_fn = extract_tool_fn(make_test_server("ceremony"), "trw_deliver")
 
 # Available tool groups: build, ceremony, ceremony_feedback, checkpoint,
-# knowledge, learning, orchestration, report, requirements, review, usage
+# knowledge, learning, orchestration, requirements, review
 ```
 
 For existing helpers, `get_resources_sync` and `get_prompts_sync` are also available in conftest.

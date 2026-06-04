@@ -579,4 +579,4 @@ Re-read the verification checks section above and confirm all check categories w
 ---
 
 *Traceability Analysis Prompts v1.0.0*
-*AARE-F Framework v1.1.0 Implementation*
+*AARE-F Framework Implementation*

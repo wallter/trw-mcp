@@ -122,6 +122,8 @@ For each FR, answer three questions:
 
 Assign verdict per FR: PASS | PARTIAL | FAIL | MISSING.
 
+**Respect the `trw:intentional` marker.** Code carrying a `# trw:intentional <reason>` (or `// trw:intentional <reason>`) comment on or just above a line is a settled, deliberate decision — counterintuitive-by-design code prior reviewers already litigated (e.g. a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values). Treat the marker as strong evidence the code is correct and do NOT raise a finding against it on "this looks wrong" grounds; raise one ONLY with concrete evidence the marker's cited reason no longer holds, and state that evidence. See [`docs/documentation/intentional-marker.md`](../../../../../docs/documentation/intentional-marker.md).
+
 ### Phase 4: Code Quality and Type Safety Audit (Wave 4)
 
 **Type safety (language-appropriate):** Types explicit and precise throughout. No escape hatches (`Any`, `object`, `unknown`, `interface{}`, untyped generics). No bare `dict`/`map`/`HashMap` — use typed alternatives. Type suppressions (`# type: ignore`, `@ts-ignore`, `as any`) are findings unless justified. Cross-function/file types consistent. Shared types in dedicated modules.

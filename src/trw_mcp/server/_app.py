@@ -64,23 +64,6 @@ def _try_load_config() -> TRWConfig | None:
         return None
 
 
-def _try_init_progressive(config: TRWConfig) -> object | None:
-    """Try to initialize ProgressiveDisclosureMiddleware. Returns None on failure."""
-    if not config.progressive_disclosure:
-        return None
-    try:
-        from trw_mcp.state._paths import resolve_trw_dir
-        from trw_mcp.state.progressive_middleware import ProgressiveDisclosureMiddleware
-        from trw_mcp.state.usage_profiler import TOOL_GROUPS, compute_hot_set
-
-        trw_dir = resolve_trw_dir()
-        hot_set = set(compute_hot_set(trw_dir))
-        return ProgressiveDisclosureMiddleware(hot_set=hot_set, tool_groups=TOOL_GROUPS)
-    except Exception:  # justified: fail-open, progressive disclosure is optional enhancement
-        logger.warning("middleware_init_failed", component="ProgressiveDisclosureMiddleware")
-        return None
-
-
 def _try_init_observation_masking(config: TRWConfig) -> object | None:
     """Try to initialize ContextBudgetMiddleware. Returns None on failure."""
     if not config.observation_masking:
@@ -144,7 +127,6 @@ def _build_middleware() -> list[object]:
     middleware.extend(
         mw
         for mw in (
-            _try_init_progressive(config),
             _try_init_observation_masking(config),
             _try_init_response_optimizer(),
         )

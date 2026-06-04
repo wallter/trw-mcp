@@ -471,7 +471,9 @@ def update_project(
 
         if not dry_run:
             _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
-    except Exception as exc:
+    except (
+        Exception
+    ) as exc:  # justified: fail-open — update-project errors are captured here and rolled back in finally
         result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
     finally:
         if snapshot_root is not None:

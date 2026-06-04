@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from structlog.testing import capture_logs
 
+from tests._structlog_capture import captured_structlog  # noqa: F401
 from trw_mcp.state._paths import (
     HOT_PATH,
     HotPathLegacyScanError,
@@ -51,16 +51,23 @@ def patched_runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_warn_fires_when_scan_called_in_hot_path(
     patched_runs_root: Path,
+    captured_structlog: list[dict],  # noqa: F811
 ) -> None:
-    """find_run_via_mtime_scan() while HOT_PATH=True logs hot_path_legacy_scan_attempted."""
+    """find_run_via_mtime_scan() while HOT_PATH=True logs hot_path_legacy_scan_attempted.
+
+    Uses the shared ``captured_structlog`` fixture (not raw capture_logs):
+    sibling startup-path tests leak a CRITICAL filtering wrapper via the
+    ``trw_mcp.server._app`` import side effect, which drops WARN events before
+    capture_logs processors run. The fixture resets structlog to a
+    capture-friendly default and restores it on teardown.
+    """
     token = HOT_PATH.set(True)
     try:
-        with capture_logs() as logs:
-            find_run_via_mtime_scan()
+        find_run_via_mtime_scan()
     finally:
         HOT_PATH.reset(token)
 
-    warn_events = [e for e in logs if e.get("event") == "hot_path_legacy_scan_attempted"]
+    warn_events = [e for e in captured_structlog if e.get("event") == "hot_path_legacy_scan_attempted"]
     assert warn_events, "hot_path_legacy_scan_attempted WARN must fire when called from hot path"
     payload = warn_events[-1]
     # Caller info should point at this test (or the calling frame).
@@ -71,13 +78,13 @@ def test_warn_fires_when_scan_called_in_hot_path(
 
 def test_no_warn_when_scan_called_outside_hot_path(
     patched_runs_root: Path,
+    captured_structlog: list[dict],  # noqa: F811
 ) -> None:
     """find_run_via_mtime_scan() outside the hot path is silent (legitimate use)."""
     # HOT_PATH defaults to False; we don't set it.
-    with capture_logs() as logs:
-        find_run_via_mtime_scan()
+    find_run_via_mtime_scan()
 
-    warn_events = [e for e in logs if e.get("event") == "hot_path_legacy_scan_attempted"]
+    warn_events = [e for e in captured_structlog if e.get("event") == "hot_path_legacy_scan_attempted"]
     assert warn_events == [], f"Legitimate scan use should not warn; got {warn_events}"
 
 

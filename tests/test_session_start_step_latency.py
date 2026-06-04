@@ -32,7 +32,10 @@ def test_session_start_emits_step_durations_ms(
 
     # Run the function. Many steps may exit fast; what matters is that
     # the result includes the step_durations_ms key with float values.
-    result: dict[str, Any] = fn(ctx=None, query="*")
+    # verbose=True: step_durations_ms is a diagnostic sub-block that
+    # compact-by-default (PRD-IMPROVE-MCP-04) folds into health_summary; the
+    # full per-step telemetry is only returned in verbose mode.
+    result: dict[str, Any] = fn(ctx=None, query="*", verbose=True)
 
     assert "step_durations_ms" in result, (
         f"trw_session_start result must include step_durations_ms; got keys: {sorted(result.keys())}"
@@ -81,7 +84,9 @@ def test_session_start_total_is_at_least_sum_of_named_steps(
     deferral checks). It must never be smaller.
     """
     fn = _get_session_start_fn()
-    result: dict[str, Any] = fn(ctx=None, query="*")
+    # verbose=True so the diagnostic step_durations_ms block is returned
+    # (compact-by-default folds it into health_summary — PRD-IMPROVE-MCP-04).
+    result: dict[str, Any] = fn(ctx=None, query="*", verbose=True)
     durations = result["step_durations_ms"]
     if "total" not in durations:
         pytest.skip("total not recorded (partial failure path)")
@@ -148,7 +153,9 @@ def test_session_start_warm_p95_under_5_seconds(
 
     call_total_ms: list[float] = []
     for _ in range(10):
-        result: dict[str, Any] = fn(ctx=None, query="warm-perf")
+        # verbose=True surfaces step_durations_ms in the result (compact mode
+        # folds it into health_summary — PRD-IMPROVE-MCP-04).
+        result: dict[str, Any] = fn(ctx=None, query="warm-perf", verbose=True)
         durations = result.get("step_durations_ms", {})
         if "total" in durations:
             call_total_ms.append(float(durations["total"]))

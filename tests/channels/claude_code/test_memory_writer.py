@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
+from unittest.mock import patch
 
 from trw_mcp.channels.claude_code._memory_path import (
-    derive_claude_project_id,
     resolve_memory_dir,
 )
 from trw_mcp.channels.claude_code._memory_writer import (
     MEMORY_INDEX_MARKER_END,
     MEMORY_INDEX_MARKER_START,
-    MEMORY_INDEX_NEAR_CAP_THRESHOLD,
+    WriteSnapshotResult,
+    _is_t0_beacon,
+    _load_sidecar,
     update_memory_index,
     write_distill_snapshot,
 )
@@ -138,11 +137,13 @@ class TestWriteDistillSnapshot:
         r1 = write_distill_snapshot(
             repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir
         )
-        content1 = r1.snapshot_path.read_text(encoding="utf-8")  # type: ignore[union-attr]
+        assert r1.snapshot_path is not None
+        content1 = r1.snapshot_path.read_text(encoding="utf-8")
         r2 = write_distill_snapshot(
             repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir
         )
-        content2 = r2.snapshot_path.read_text(encoding="utf-8")  # type: ignore[union-attr]
+        assert r2.snapshot_path is not None
+        content2 = r2.snapshot_path.read_text(encoding="utf-8")
         assert content1 == content2
 
 
@@ -185,3 +186,224 @@ class TestUpdateMemoryIndex:
         update_memory_index(memory_dir)
         content = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
         assert "distill_snapshot.md" in content
+
+    def test_near_cap_telemetry_exception_swallowed(self, tmp_path: Path) -> None:
+        """Covers lines 165-166: telemetry exception in near-cap path is swallowed."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        # Pre-populate 195 lines to trigger near-cap
+        existing_lines = "\n".join([f"- entry {i}" for i in range(195)])
+        (memory_dir / "MEMORY.md").write_text(existing_lines + "\n", encoding="utf-8")
+        # Patch append_channel_event to raise — should be swallowed
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.append_channel_event",
+            side_effect=RuntimeError("telemetry down"),
+        ):
+            update_memory_index(memory_dir)
+        content = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+        assert "distill_snapshot.md" in content
+
+
+class TestLoadSidecar:
+    def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
+        result = _load_sidecar(tmp_path / "nonexistent.json")
+        assert result is None
+
+    def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
+        f = tmp_path / "bad.json"
+        f.write_text("not json", encoding="utf-8")
+        result = _load_sidecar(f)
+        assert result is None
+
+    def test_returns_none_when_json_not_dict(self, tmp_path: Path) -> None:
+        f = tmp_path / "list.json"
+        f.write_text("[1, 2, 3]", encoding="utf-8")
+        result = _load_sidecar(f)
+        assert result is None
+
+    def test_returns_dict_on_valid_sidecar(self, tmp_path: Path) -> None:
+        f = tmp_path / "good.json"
+        f.write_text('{"schema_version": "risk-report-sidecar/v0", "key": "val"}', encoding="utf-8")
+        result = _load_sidecar(f)
+        assert result is not None
+        assert result["key"] == "val"
+
+
+class TestIsT0Beacon:
+    def test_false_when_file_missing(self, tmp_path: Path) -> None:
+        assert _is_t0_beacon(tmp_path / "none.md") is False
+
+    def test_true_when_tier_t0_in_content(self, tmp_path: Path) -> None:
+        f = tmp_path / "snap.md"
+        f.write_text("---\n# Tier: T0\n---\nTRW distill snapshot present.\n", encoding="utf-8")
+        assert _is_t0_beacon(f) is True
+
+    def test_false_when_tier_t2_in_content(self, tmp_path: Path) -> None:
+        f = tmp_path / "snap.md"
+        f.write_text("---\n# Tier: T2\n---\n## Top Risk Files\n", encoding="utf-8")
+        assert _is_t0_beacon(f) is False
+
+    def test_false_on_read_error(self, tmp_path: Path) -> None:
+        f = tmp_path / "snap.md"
+        f.write_text("Tier: T0", encoding="utf-8")
+        # Simulate OSError by removing read permission
+        f.chmod(0o000)
+        try:
+            result = _is_t0_beacon(f)
+            assert result is False
+        finally:
+            f.chmod(0o644)
+
+
+class TestWriteSnapshotResultAsDict:
+    def test_as_dict_returns_all_fields(self) -> None:
+        r = WriteSnapshotResult(status="written", bytes_written=100, tier_used="T2")
+        d = r.as_dict()
+        assert d["status"] == "written"
+        assert d["bytes_written"] == 100
+        assert d["tier_used"] == "T2"
+        assert d["snapshot_path"] is None
+
+    def test_as_dict_with_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "snap.md"
+        r = WriteSnapshotResult(status="written", snapshot_path=p)
+        d = r.as_dict()
+        assert str(p) in d["snapshot_path"]
+
+
+class TestWriteDistillSnapshotCoveragePaths:
+    """Cover uncovered paths in write_distill_snapshot."""
+
+    def test_with_explicit_sidecar_path(self, tmp_path: Path) -> None:
+        """FR11: sidecar_path override is loaded when provided."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+        # Write a valid sidecar at an explicit path
+        sidecar_file = tmp_path / "my_sidecar.json"
+        sidecar_file.write_text(
+            '{"schema_version": "risk-report-sidecar/v0", "risk_files": []}',
+            encoding="utf-8",
+        )
+        result = write_distill_snapshot(
+            repo_root=repo,
+            sha="a" * 40,
+            tier="T1",
+            sidecar_path=sidecar_file,
+            claude_projects_dir=claude_dir,
+        )
+        assert result.status == "written"
+
+    def test_error_result_on_write_failure(self, tmp_path: Path) -> None:
+        """Covers the except Exception block in write_distill_snapshot."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+        # Patch render_snapshot to raise so we exercise the error path
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.render_snapshot",
+            side_effect=RuntimeError("render failed"),
+        ):
+            result = write_distill_snapshot(
+                repo_root=repo,
+                sha="a" * 40,
+                tier="T0",
+                claude_projects_dir=claude_dir,
+            )
+        assert result.status == "error"
+
+    def test_lock_skip_returns_skipped_lock(self, tmp_path: Path) -> None:
+        """Covers the ChannelLockSkip branch in write_distill_snapshot."""
+        from trw_mcp.channels._lock import ChannelLockSkip
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.ChannelLock",
+            side_effect=ChannelLockSkip("locked"),
+        ):
+            result = write_distill_snapshot(
+                repo_root=repo,
+                sha="a" * 40,
+                tier="T0",
+                claude_projects_dir=claude_dir,
+            )
+        assert result.status == "skipped_lock"
+
+    def test_quota_tierdown_t1_when_t2_oversized(self, tmp_path: Path) -> None:
+        """Covers quota tier-down logic (lines 236, 243): T2 oversized → tier down to T1."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+
+        call_count = {"n": 0}
+
+        def _fake_render(**kwargs: object) -> str:
+            call_count["n"] += 1
+            tier = kwargs.get("tier", "T2")
+            # First call (T2): return oversized content to trigger tier-down
+            if call_count["n"] == 1:
+                return "x" * 9000  # > SNAPSHOT_QUOTA_BYTES (8192)
+            # Second call (T1): return oversized too to trigger T0 fallback
+            if call_count["n"] == 2:
+                return "y" * 9000
+            # Third call (T0): return normal content
+            return "---\n# Tier: T0\n---\nTRW distill snapshot present.\n"
+
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.render_snapshot",
+            side_effect=_fake_render,
+        ):
+            result = write_distill_snapshot(
+                repo_root=repo,
+                sha="a" * 40,
+                tier="T2",
+                claude_projects_dir=claude_dir,
+            )
+        # Should succeed via T0 fallback
+        assert result.status == "written"
+        assert call_count["n"] == 3  # T2, T1, T0 called
+
+    def test_telemetry_exception_is_swallowed(self, tmp_path: Path) -> None:
+        """Covers lines 266-267: telemetry append failure is swallowed (fail-open)."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.append_channel_event",
+            side_effect=RuntimeError("telemetry error"),
+        ):
+            result = write_distill_snapshot(
+                repo_root=repo,
+                sha="a" * 40,
+                tier="T0",
+                claude_projects_dir=claude_dir,
+            )
+        # Should still succeed despite telemetry failure
+        assert result.status == "written"
+
+    def test_finally_lock_exit_error_swallowed(self, tmp_path: Path) -> None:
+        """Covers lines 290-291: __exit__ error in finally is swallowed."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude_dir = tmp_path / "claude"
+
+        from unittest.mock import MagicMock
+
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = MagicMock(return_value=mock_lock)
+        mock_lock.__exit__ = MagicMock(side_effect=RuntimeError("exit error"))
+
+        with patch(
+            "trw_mcp.channels.claude_code._memory_writer.ChannelLock",
+            return_value=mock_lock,
+        ):
+            # Should not raise even if __exit__ fails
+            result = write_distill_snapshot(
+                repo_root=repo,
+                sha="a" * 40,
+                tier="T0",
+                claude_projects_dir=claude_dir,
+            )
+        assert result.status in ("written", "error")

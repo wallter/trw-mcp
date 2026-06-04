@@ -20,20 +20,39 @@ from trw_mcp.state.validation._prd_scoring_traceability import (
     _normalize_reference_token,
 )
 
+# Assertion keyword vocabulary for machine-verifiable assertions.
+# Existence types (PRD-QUAL-056-FR02) prove a symbol/file is present.
+# Behavioral types (PRD-QUAL-093-FR01) verify an output VALUE — anti-pattern A1
+# (AARE-F v3.0.0 §7, learning L-bGOd): existence != wiring.
+_EXISTENCE_ASSERTION_KEYWORDS = ("grep_present", "grep_absent", "file_exists", "glob_exists")
+_BEHAVIORAL_ASSERTION_KEYWORDS = ("asserts_value", "output_contains", "value_equals", "command_succeeds")
+_ALL_ASSERTION_KEYWORDS = _EXISTENCE_ASSERTION_KEYWORDS + _BEHAVIORAL_ASSERTION_KEYWORDS
+
+_ASSERTION_KEYWORD_ALTERNATION = "|".join(_ALL_ASSERTION_KEYWORDS)
+
 # Assertion keyword pattern for machine-verifiable assertions (PRD-QUAL-056-FR02)
-_ASSERTION_RE = re.compile(r"grep_present|grep_absent|file_exists|command_succeeds|glob_exists")
+_ASSERTION_RE = re.compile(_ASSERTION_KEYWORD_ALTERNATION)
 _ASSERTION_BLOCK_RE = re.compile(r"```assertions\b.*?```", re.IGNORECASE | re.DOTALL)
 _ASSERTIONS_HEADING_RE = re.compile(
     r"^\s*(?:\*\*|__)?Assertions(?:\*\*|__)?\s*:\s*$",
     re.IGNORECASE,
 )
 _ASSERTION_LINE_RE = re.compile(
-    r"^\s*(?:[-*]\s*)?`?(?:grep_present|grep_absent|file_exists|command_succeeds|glob_exists)\b",
+    rf"^\s*(?:[-*]\s*)?`?(?:{_ASSERTION_KEYWORD_ALTERNATION})\b",
     re.MULTILINE,
 )
 _ASSERTION_JSON_TYPE_RE = re.compile(
-    r'"type"\s*:\s*"(?:grep_present|grep_absent|file_exists|command_succeeds|glob_exists)"',
+    rf'"type"\s*:\s*"(?:{_ASSERTION_KEYWORD_ALTERNATION})"',
     re.IGNORECASE,
+)
+
+# Per-keyword matcher used by ``classify_assertions`` to tally behavioral vs
+# existence assertions. Matches both bullet (``- grep_present:``) and JSON
+# (``"type": "grep_present"``) assertion forms.
+_ASSERTION_CLASSIFY_RE = re.compile(
+    rf'(?:^\s*(?:[-*]\s*)?`?(?P<bullet>{_ASSERTION_KEYWORD_ALTERNATION})\b'
+    rf'|"type"\s*:\s*"(?P<json>{_ASSERTION_KEYWORD_ALTERNATION})")',
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # Recognizable verification commands in PRD text.
@@ -60,6 +79,28 @@ def _has_assertion_evidence(content: str) -> bool:
             if _ASSERTION_JSON_TYPE_RE.search(stripped):
                 return True
     return False
+
+
+def classify_assertions(content: str) -> dict[str, int]:
+    """Count behavioral vs existence assertions in PRD ``content`` (PRD-QUAL-093-FR02).
+
+    Behavioral assertions verify an output VALUE (``asserts_value``,
+    ``output_contains``, ``value_equals``, ``command_succeeds``); existence
+    assertions only prove a symbol/file is present (``grep_present``,
+    ``grep_absent``, ``file_exists``, ``glob_exists``). Per anti-pattern A1,
+    behavioral assertions are the wiring-verifying kind authors should prefer.
+    """
+    behavioral = 0
+    existence = 0
+    for match in _ASSERTION_CLASSIFY_RE.finditer(content):
+        keyword = match.group("bullet") or match.group("json")
+        if keyword is None:
+            continue
+        if keyword.lower() in _BEHAVIORAL_ASSERTION_KEYWORDS:
+            behavioral += 1
+        else:
+            existence += 1
+    return {"behavioral": behavioral, "existence": existence}
 
 
 def _count_impl_refs(content: str) -> int:

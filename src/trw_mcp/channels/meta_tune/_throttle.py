@@ -24,6 +24,7 @@ from trw_mcp.channels._manifest_models import (
     COPILOT_THROTTLE_MIN_N,
     DEFAULT_THROTTLE_MIN_N,
 )
+from trw_mcp.channels._quota import TIER_DOWN_LADDER as _QUOTA_TIER_DOWN_LADDER
 
 log = structlog.get_logger(__name__)
 
@@ -35,17 +36,21 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Tier ladder (ascending = better)
+# Tier ladder (ascending = better; derived from canonical _quota.TIER_DOWN_LADDER)
+#
+# _quota.TIER_DOWN_LADDER = ("T4", "T3", "T2", "T1", "T0") — descending (best→worst).
+# _TIER_LADDER reverses it to ascending (worst→best) so index 0=T0, index 4=T4.
+# Using the same canonical source avoids T4 omission and future drift (HIGH-2 fix).
 # ---------------------------------------------------------------------------
 
-_TIER_LADDER: list[str] = ["T0", "T1", "T2", "T3"]
+_TIER_LADDER: list[str] = list(reversed(_QUOTA_TIER_DOWN_LADDER))
 
 
 def _tier_index(tier: str) -> int:
     try:
         return _TIER_LADDER.index(tier)
     except ValueError:
-        return len(_TIER_LADDER) - 1  # unknown → treat as top
+        return len(_TIER_LADDER) - 1  # unknown → treat as top (T4)
 
 
 def _tier_down(tier: str) -> str:
@@ -278,8 +283,14 @@ def _apply(
         )
         return True
 
-    # Mutate the tier_default field (Pydantic v2 — model_fields_set aware)
-    target.__dict__["tier_default"] = new_tier
+    # HIGH-5 fix: use model_copy(update=...) instead of __dict__ mutation so
+    # Pydantic v2 validation runs and the model remains consistent.  Then
+    # replace the entry in the channels list to propagate the change.
+    updated_entry = target.model_copy(update={"tier_default": new_tier})
+    manifest.channels = [
+        updated_entry if (e.id == channel_id and e.client == decision.client) else e
+        for e in manifest.channels
+    ]
 
     write(manifest, manifest_path)
 

@@ -8,7 +8,6 @@ import pytest
 
 import trw_mcp.state.analytics.report as analytics_mod
 from tests._test_tools_analytics_support import _write_run, writer  # noqa: F401
-from tests.conftest import get_tools_sync
 from trw_mcp.state.analytics.report import _parse_run_id_timestamp, scan_all_runs
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -63,45 +62,6 @@ class TestParseRunIdTimestamp:
         ]
         for run_id, expected in cases:
             assert _parse_run_id_timestamp(run_id) == expected, f"Failed for {run_id}"
-
-
-class TestAnalyticsReportToolLayer:
-    """Verify trw_analytics_report is registered and callable via FastMCP."""
-
-    def test_trw_analytics_report_registered(self) -> None:
-        """trw_analytics_report is discoverable after register_report_tools()."""
-        from fastmcp import FastMCP
-
-        from trw_mcp.tools.report import register_report_tools
-
-        srv = FastMCP("report-test")
-        register_report_tools(srv)
-        tools = get_tools_sync(srv)
-        assert "trw_analytics_report" in tools
-        assert "trw_run_report" in tools
-
-    def test_trw_analytics_report_callable(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """trw_analytics_report returns structured result when called through FastMCP."""
-        from fastmcp import FastMCP
-
-        from trw_mcp.tools.report import register_report_tools
-
-        monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
-        monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-
-        srv = FastMCP("report-callable-test")
-        register_report_tools(srv)
-        tools = get_tools_sync(srv)
-        result = tools["trw_analytics_report"].fn()
-        assert isinstance(result, dict)
-        assert "runs" in result
-        assert "aggregate" in result
-        assert result["runs_scanned"] == 0
 
 
 class TestAnalyticsIntegration:

@@ -228,7 +228,12 @@ def check_and_handle_dedup(
                 try:
                     data = reader.read_yaml(yaml_file)
                     if str(data.get("id", "")) == dedup_result.existing_id:
-                        from trw_mcp.models.learning import LearningEntry
+                        from trw_mcp.models.learning import (
+                            LearningConfidence,
+                            LearningEntry,
+                            LearningProtectionTier,
+                            LearningType,
+                        )
                         from trw_mcp.state.persistence import model_to_dict
 
                         entry = LearningEntry(
@@ -243,6 +248,25 @@ def check_and_handle_dedup(
                             source_identity=params.source_identity,
                             client_profile=params.client_profile,
                             model_id=params.model_id,
+                            # PRD-CORE-110: typed fields — preserve protection on merge
+                            # (str→enum coercion mirrors _learn_side_effects.py).
+                            type=LearningType(params.type) if isinstance(params.type, str) else params.type,
+                            nudge_line=params.nudge_line,
+                            expires=params.expires,
+                            confidence=LearningConfidence(params.confidence)
+                            if isinstance(params.confidence, str)
+                            else params.confidence,
+                            task_type=params.task_type,
+                            domain=params.domain or [],
+                            phase_origin=params.phase_origin,
+                            phase_affinity=params.phase_affinity or [],
+                            team_origin=params.team_origin,
+                            protection_tier=LearningProtectionTier(params.protection_tier)
+                            if isinstance(params.protection_tier, str)
+                            else params.protection_tier,
+                            # PRD-CORE-111: code-grounded anchors
+                            anchors=params.anchors or [],
+                            anchor_validity=params.anchor_validity,
                         )
                         entry_dict = model_to_dict(entry)
                         # PRD-CORE-086 FR05: Include assertions in merge data
@@ -314,6 +338,11 @@ def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, obj
                 for item in cast("list[object]", merged_entry.get("assertions") or [])
                 if isinstance(item, dict)
             ],
+            # PRD-CORE-110: propagate the protection-preserving merge result so
+            # the primary backend (recall source of truth) keeps the stronger tier.
+            protection_tier=str(merged_entry.get("protection_tier") or "normal"),
+            confidence=str(merged_entry.get("confidence") or "unverified"),
+            type=str(merged_entry.get("type") or "pattern"),
         )
     except Exception:  # justified: fail-open, merged-entry backend sync is best-effort after YAML updates
         logger.debug("dedup_backend_sync_failed", exc_info=True)
@@ -372,6 +401,12 @@ def enforce_distribution(
 
         if demotions:
             tier_name = "critical" if impact >= 0.9 else "high"
+            logger.warning(
+                "learn_distribution_demoted",
+                n_demoted=len(demoted_ids),
+                demoted_ids=demoted_ids,
+                tier=tier_name,
+            )
             distribution_warning = (
                 f"Impact tier '{tier_name}' exceeded cap. "
                 f"Forced distribution: demoted {len(demotions)} entr"

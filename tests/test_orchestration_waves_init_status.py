@@ -180,6 +180,14 @@ class TestTrwStatusVersionWarning:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """version_warning present when run framework differs from deployed version."""
+        # The staleness check lives in _orchestration_phase, which binds
+        # resolve_project_root at module level via a from-import. Conftest only
+        # patches the orchestration/_paths bindings, so redirect this one to the
+        # test tmp_path so the test-written VERSION.yaml is the one consulted.
+        monkeypatch.setattr(
+            "trw_mcp.tools._orchestration_phase.resolve_project_root",
+            lambda: tmp_path,
+        )
         init_result = orch_tools["trw_init"].fn(task_name="stale-version-task")
 
         version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
@@ -200,9 +208,18 @@ class TestTrwStatusVersionWarning:
 
     def test_status_no_version_warning_when_current(
         self,
+        tmp_path: Path,
         orch_tools: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No version_warning when run framework matches deployed version."""
+        # Redirect the staleness check's project root to the test tmp_path so it
+        # reads the VERSION.yaml that trw_init deploys (current framework version),
+        # not the real repo's VERSION.yaml. See sibling test for rationale.
+        monkeypatch.setattr(
+            "trw_mcp.tools._orchestration_phase.resolve_project_root",
+            lambda: tmp_path,
+        )
         init_result = orch_tools["trw_init"].fn(task_name="current-version-task")
         status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
         assert "version_warning" not in status

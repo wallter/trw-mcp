@@ -130,12 +130,12 @@ The generated PRD must:
 ## Prompt 2: PRD Enhancement from Existing Document
 
 ### Context
-Enhance an existing PRD to meet AARE-F v1.1 compliance standards.
+Enhance an existing PRD to meet AARE-F compliance standards.
 
 ### Prompt Template
 
 ```
-You are a requirements engineer enhancing a PRD for AARE-F v1.1 compliance. Analyze and improve the following PRD.
+You are a requirements engineer enhancing a PRD for AARE-F compliance. Analyze and improve the following PRD.
 
 ## Existing PRD
 {paste existing PRD content}
@@ -382,4 +382,4 @@ Re-read the structure checklist and AARE-F compliance checklist above to confirm
 ---
 
 *PRD Creation Prompts v1.0.0*
-*AARE-F Framework v1.1.0 Implementation*
+*AARE-F Framework Implementation*

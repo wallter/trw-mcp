@@ -26,7 +26,10 @@ from trw_mcp.tools.submit_feedback import (
     MIN_MESSAGE_LEN,
     SubmitFeedbackResult,
     _build_auto_metadata,
+    _extract_error_message,
+    _extract_submission_id,
     _merge_metadata,
+    _redact_metadata,
     _validate,
     register_submit_feedback_tools,
     submit_feedback,
@@ -207,6 +210,56 @@ def test_merge_metadata_handles_none_user() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Metadata redaction — keys AND values (finding 3b)
+# ---------------------------------------------------------------------------
+
+
+def test_redact_metadata_redacts_values() -> None:
+    """Baseline: a secret in a metadata VALUE is scrubbed."""
+    out = _redact_metadata({"trace": "conn postgres://admin:dbpw@host/app"})
+    assert out is not None
+    assert "dbpw" not in out["trace"]
+    assert "<REDACTED:credentials>" in out["trace"]
+
+
+def test_redact_metadata_redacts_secret_in_key() -> None:
+    """Finding 3b: a secret embedded in a metadata KEY must be redacted.
+
+    NFR01: ``{"sk_live_<secret>": "x"}`` previously leaked the key in clear
+    text. Both key and value now route through ``_redact_pii``.
+    """
+    secret_key = "sk_live_51Abc123Def456Ghi789"
+    out = _redact_metadata({secret_key: "note"})
+    assert out is not None
+    assert secret_key not in out
+    # The redacted key carries the placeholder; the value is untouched here.
+    assert any("<REDACTED:api_key>" in k for k in out)
+    assert "note" in out.values()
+
+
+def test_redact_metadata_handles_none() -> None:
+    assert _redact_metadata(None) is None
+
+
+def test_redact_metadata_collision_collapses_low_harm() -> None:
+    """Two keys that redact to the same placeholder collapse to one entry.
+
+    Documented acceptable behavior: both values are already redacted, so the
+    only loss is a duplicate diagnostic key — never a leaked secret.
+    """
+    out = _redact_metadata(
+        {
+            "sk_live_AAAAAAAAAAAAAAAAAAAA": "v1",
+            "sk_live_BBBBBBBBBBBBBBBBBBBB": "v2",
+        }
+    )
+    assert out is not None
+    # Both keys redact to "<REDACTED:api_key>" → single entry.
+    assert len(out) == 1
+    assert "<REDACTED:api_key>" in out
+
+
+# ---------------------------------------------------------------------------
 # HTTP wiring
 # ---------------------------------------------------------------------------
 
@@ -227,9 +280,7 @@ def test_submit_feedback_via_http_success() -> None:
     with patch("httpx.Client") as mock_client_cls:
         ctx_mgr = MagicMock()
         mock_client = MagicMock()
-        mock_client.post.return_value = _mock_httpx_response(
-            200, {"submission_id": "sub_abc123", "status": "accepted"}
-        )
+        mock_client.post.return_value = _mock_httpx_response(200, {"submission_id": "sub_abc123", "status": "accepted"})
         ctx_mgr.__enter__.return_value = mock_client
         mock_client_cls.return_value = ctx_mgr
 
@@ -262,9 +313,7 @@ def test_submit_feedback_via_http_strips_trailing_slash() -> None:
     with patch("httpx.Client") as mock_client_cls:
         ctx_mgr = MagicMock()
         mock_client = MagicMock()
-        mock_client.post.return_value = _mock_httpx_response(
-            200, {"submission_id": "sub_x"}
-        )
+        mock_client.post.return_value = _mock_httpx_response(200, {"submission_id": "sub_x"})
         ctx_mgr.__enter__.return_value = mock_client
         mock_client_cls.return_value = ctx_mgr
 
@@ -313,6 +362,50 @@ def test_submit_feedback_via_http_transport_error_is_returned_not_raised() -> No
     assert result.status_code == 0
 
 
+def test_submit_feedback_via_http_non_httperror_is_returned_not_raised() -> None:
+    """P1-4: a non-HTTPError exception (e.g. httpx.InvalidURL) must not escape.
+
+    ``httpx.InvalidURL`` derives from ``Exception`` directly, NOT from
+    ``httpx.HTTPError``, so a narrow ``except httpx.HTTPError`` would let it
+    propagate and break the documented "never raises" contract for direct
+    callers of this helper.
+    """
+    assert not issubclass(httpx.InvalidURL, httpx.HTTPError)  # guards the premise
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client_cls.side_effect = httpx.InvalidURL("not a valid url")
+        result = submit_feedback_via_http(
+            backend_url="://malformed",
+            api_key="k",
+            payload={"category": "feedback", "subject": "x", "message": "valid length"},
+        )
+
+    assert result.success is False
+    assert result.status_code == 0
+    assert "transport error" in result.error
+    # Generic — only the exception type, never str(exc) (could embed a secret).
+    assert "InvalidURL" in result.error
+    assert "not a valid url" not in result.error
+
+
+def test_submit_feedback_via_http_generic_exception_is_returned_not_raised() -> None:
+    """Any residual Exception from the POST path collapses into a result."""
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client_cls.side_effect = RuntimeError("secret-bearing boom")
+        result = submit_feedback_via_http(
+            backend_url="https://api.trw.test",
+            api_key="k",
+            payload={"category": "feedback", "subject": "x", "message": "valid length"},
+        )
+
+    assert result.success is False
+    assert result.status_code == 0
+    assert "transport error" in result.error
+    assert "RuntimeError" in result.error
+    # Must not echo the raw message — it could carry a secret.
+    assert "secret-bearing boom" not in result.error
+
+
 # ---------------------------------------------------------------------------
 # Top-level submit_feedback wiring
 # ---------------------------------------------------------------------------
@@ -337,9 +430,10 @@ def test_submit_feedback_errors_when_backend_not_configured() -> None:
         resolved_backend_url = ""
         resolved_backend_api_key = ""
 
-    with patch("trw_mcp.models.config.get_config", return_value=_StubCfg()), patch(
-        "trw_mcp.tools.submit_feedback.submit_feedback_via_http"
-    ) as http:
+    with (
+        patch("trw_mcp.models.config.get_config", return_value=_StubCfg()),
+        patch("trw_mcp.tools.submit_feedback.submit_feedback_via_http") as http,
+    ):
         result = submit_feedback(
             category="feedback",
             subject="x",
@@ -356,12 +450,11 @@ def test_submit_feedback_auto_attaches_metadata() -> None:
         resolved_backend_url = "https://api.trw.test"
         resolved_backend_api_key = "key-xyz"
 
-    fake = SubmitFeedbackResult(
-        success=True, submission_id="sub_abc", status_code=200, metadata_attached={}
-    )
-    with patch("trw_mcp.models.config.get_config", return_value=_StubCfg()), patch(
-        "trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake
-    ) as http:
+    fake = SubmitFeedbackResult(success=True, submission_id="sub_abc", status_code=200, metadata_attached={})
+    with (
+        patch("trw_mcp.models.config.get_config", return_value=_StubCfg()),
+        patch("trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake) as http,
+    ):
         result = submit_feedback(
             category="feedback",
             subject="hello",
@@ -388,9 +481,10 @@ def test_submit_feedback_forwards_contact_email_only_when_set() -> None:
 
     fake = SubmitFeedbackResult(success=True, submission_id="sub_x", status_code=200)
 
-    with patch("trw_mcp.models.config.get_config", return_value=_StubCfg()), patch(
-        "trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake
-    ) as http:
+    with (
+        patch("trw_mcp.models.config.get_config", return_value=_StubCfg()),
+        patch("trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake) as http,
+    ):
         submit_feedback(
             category="question",
             subject="x",
@@ -399,9 +493,10 @@ def test_submit_feedback_forwards_contact_email_only_when_set() -> None:
         )
         assert "contact_email" in http.call_args.kwargs["payload"]
 
-    with patch("trw_mcp.models.config.get_config", return_value=_StubCfg()), patch(
-        "trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake
-    ) as http:
+    with (
+        patch("trw_mcp.models.config.get_config", return_value=_StubCfg()),
+        patch("trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=fake) as http,
+    ):
         submit_feedback(
             category="question",
             subject="x",
@@ -435,9 +530,7 @@ def test_register_submit_feedback_tools_registers_tool_on_server() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "category", ["bugfix", "installation", "feedback", "feature_request", "question", "other"]
-)
+@pytest.mark.parametrize("category", ["bugfix", "installation", "feedback", "feature_request", "question", "other"])
 def test_validate_accepts_all_documented_categories(category: str) -> None:
     err = _validate(
         category=category,
@@ -470,9 +563,7 @@ def test_submit_feedback_redacts_pii_before_post(monkeypatch: pytest.MonkeyPatch
         resolved_backend_url = "https://api.trw.test"
         resolved_backend_api_key = "test-key"
 
-    monkeypatch.setattr(
-        "trw_mcp.models.config.get_config", lambda: _FakeConfig()
-    )
+    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _FakeConfig())
 
     captured: dict[str, Any] = {}
     with patch("httpx.Client") as mock_client_cls:
@@ -490,18 +581,20 @@ def test_submit_feedback_redacts_pii_before_post(monkeypatch: pytest.MonkeyPatch
 
         result = sf_mod.submit_feedback(
             category="bugfix",
-            subject="leaked-secret",
+            subject="bug with key sk_live_leakedSecret123 here",
             message=(
-                "Hit error: license trw_lic_abcdef123 against "
-                "PASSWORD=hunter2 in /home/operator/.trw/config.yaml"
+                "Hit error: license trw_lic_abcdef123 against PASSWORD=hunter2 in /home/operator/.trw/config.yaml"
             ),
             contact_email=None,
-            metadata=None,
+            metadata={
+                "trace": "conn postgres://admin:dbpw@host/app",
+                "note": "stripe key sk_live_noteSecretABCDEF here",
+            },
         )
 
     assert result.success is True
     sent_message = captured["json"]["message"]
-    # Three redaction classes must have fired.
+    # Three redaction classes must have fired on the message body.
     assert "trw_lic_abcdef123" not in sent_message
     assert "<REDACTED:license_key>" in sent_message
     assert "PASSWORD=hunter2" not in sent_message
@@ -515,3 +608,161 @@ def test_submit_feedback_redacts_pii_before_post(monkeypatch: pytest.MonkeyPatch
     if home_norm == operator_home:
         assert operator_home not in sent_message
         assert "$HOME/.trw/config.yaml" in sent_message
+
+    # P1-1: the SUBJECT must be redacted before the network call.
+    sent_subject = captured["json"]["subject"]
+    assert "sk_live_leakedSecret123" not in sent_subject, f"subject leaked: {sent_subject!r}"
+    assert "<REDACTED:api_key>" in sent_subject
+
+    # P1-1: each user-supplied METADATA value must be redacted before send.
+    sent_metadata = captured["json"]["metadata"]
+    assert "dbpw" not in sent_metadata["trace"], f"metadata leaked: {sent_metadata!r}"
+    assert "<REDACTED:credentials>" in sent_metadata["trace"]
+    assert "sk_live_noteSecretABCDEF" not in sent_metadata["note"], (
+        f"metadata leaked: {sent_metadata!r}"
+    )
+    assert "<REDACTED:api_key>" in sent_metadata["note"]
+    # Auto-attached metadata (known-safe, locally generated) must NOT be
+    # mangled by redaction — it carries no secrets and a redaction pass risks
+    # corrupting a benign platform string.
+    assert "python_version" in sent_metadata
+    assert sent_metadata["python_version"].count(".") == 2
+    assert "os_platform" in sent_metadata
+    assert "<REDACTED" not in sent_metadata["os_platform"]
+    assert "<REDACTED" not in sent_metadata["python_version"]
+
+
+# ---------------------------------------------------------------------------
+# Never-raises contract — top-level submit_feedback (NFR02)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_feedback_never_raises_on_config_error() -> None:
+    """A config-load explosion is caught and surfaced, not propagated.
+
+    PRD-INFRA-132 NFR02 / PRD-CORE-182-NFR02: the tool MUST NOT raise. An
+    unexpected error from `get_config()` (e.g. a corrupt .trw/config.yaml)
+    must collapse into a `success=False` result.
+    """
+
+    def _boom() -> Any:
+        raise RuntimeError("corrupt config")
+
+    with patch("trw_mcp.models.config.get_config", side_effect=_boom):
+        result = submit_feedback(
+            category="feedback",
+            subject="x",
+            message="valid length message body",
+        )
+
+    assert result.success is False
+    assert result.status_code == 0
+    # Generic error string — must not echo the raw exception message (could
+    # contain config/secret detail).
+    assert "unexpected error" in result.error
+    assert "corrupt config" not in result.error
+
+
+def test_submit_feedback_never_raises_on_auto_metadata_error() -> None:
+    """An exception while building auto-metadata is contained."""
+
+    class _StubCfg:
+        resolved_backend_url = "https://api.trw.test"
+        resolved_backend_api_key = "key"
+
+    with (
+        patch("trw_mcp.models.config.get_config", return_value=_StubCfg()),
+        patch(
+            "trw_mcp.tools.submit_feedback._build_auto_metadata",
+            side_effect=OSError("platform probe failed"),
+        ),
+    ):
+        result = submit_feedback(
+            category="feedback",
+            subject="x",
+            message="valid length message body",
+        )
+
+    assert result.success is False
+    assert "unexpected error" in result.error
+    assert "platform probe failed" not in result.error
+
+
+def test_submit_feedback_result_dict_shape_is_stable_on_failure() -> None:
+    """`model_dump()` (what the MCP tool wrapper returns) keeps the 5-key shape."""
+    with patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("x")):
+        result = submit_feedback(category="feedback", subject="s", message="valid length message").model_dump()
+
+    assert isinstance(result, dict)
+    assert set(result) == {
+        "success",
+        "submission_id",
+        "error",
+        "status_code",
+        "metadata_attached",
+    }
+    assert result["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# Response-parsing helpers — never raise, tolerate malformed bodies
+# ---------------------------------------------------------------------------
+
+
+def test_extract_submission_id_handles_non_dict_json() -> None:
+    """A 200 body that is a JSON list/scalar yields "" rather than raising."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.return_value = ["not", "a", "dict"]
+    assert _extract_submission_id(resp) == ""
+
+
+def test_extract_submission_id_handles_json_decode_error() -> None:
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.side_effect = ValueError("no json")
+    assert _extract_submission_id(resp) == ""
+
+
+def test_extract_error_message_falls_back_to_text() -> None:
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.side_effect = ValueError("no json")
+    resp.text = "Internal Server Error" * 50
+    msg = _extract_error_message(resp)
+    assert msg.startswith("Internal Server Error")
+    assert len(msg) == 200  # truncated to 200 chars
+
+
+def test_extract_error_message_handles_text_access_failure() -> None:
+    """If even `.text` raises, the helper still returns a string."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.side_effect = ValueError("no json")
+    type(resp).text = property(lambda _self: (_ for _ in ()).throw(RuntimeError("decode")))
+    assert _extract_error_message(resp) == ""
+
+
+def test_extract_error_message_string_detail() -> None:
+    resp = MagicMock(spec=httpx.Response)
+    resp.json.return_value = {"detail": "plain string detail"}
+    assert _extract_error_message(resp) == "plain string detail"
+
+
+def test_submit_feedback_via_http_200_with_non_dict_body_is_success() -> None:
+    """A 200 whose body is not a dict still succeeds with empty submission_id."""
+    with patch("httpx.Client") as mock_client_cls:
+        ctx_mgr = MagicMock()
+        mock_client = MagicMock()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.json.return_value = "accepted"  # scalar, not a dict
+        mock_client.post.return_value = resp
+        ctx_mgr.__enter__.return_value = mock_client
+        mock_client_cls.return_value = ctx_mgr
+
+        result = submit_feedback_via_http(
+            backend_url="https://api.trw.test",
+            api_key="k",
+            payload={"category": "feedback", "subject": "x", "message": "valid length"},
+        )
+
+    assert result.success is True
+    assert result.submission_id == ""
+    assert result.status_code == 200

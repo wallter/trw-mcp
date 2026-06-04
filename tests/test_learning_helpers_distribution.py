@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import structlog
+
 from tests._learning_helpers_test_support import _CFG, set_project_root  # noqa: F401
 from trw_mcp.tools._learning_helpers import enforce_distribution
 
@@ -178,3 +180,38 @@ class TestEnforceDistribution:
             assert "L-000" in demoted_ids
             assert "L-001" in demoted_ids
             assert "critical" in warning
+
+    def test_emits_structured_event_on_demotion(self, tmp_path: Path) -> None:
+        """FU-OBS-06: demotion emits a learn_distribution_demoted structlog event
+        carrying the actual demoted IDs, count, and tier name."""
+        active_entries: list[dict[str, object]] = [{"id": f"L-{i:03d}", "impact": 0.95} for i in range(20)]
+
+        with (
+            patch(
+                "trw_mcp.scoring.enforce_tier_distribution",
+                return_value=[("L-000", 0.69), ("L-001", 0.69)],
+            ),
+            patch("trw_mcp.state.memory_adapter.update_learning"),
+            structlog.testing.capture_logs() as logs,
+        ):
+            enforce_distribution(0.95, 0.75, "L-new009", active_entries, tmp_path, _CFG)
+
+        events = [e for e in logs if e.get("event") == "learn_distribution_demoted"]
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["log_level"] == "warning"
+        assert ev["n_demoted"] == 2
+        assert ev["demoted_ids"] == ["L-000", "L-001"]
+        assert ev["tier"] == "critical"
+
+    def test_no_structured_event_when_no_demotion(self, tmp_path: Path) -> None:
+        """FU-OBS-06: no learn_distribution_demoted event when nothing is demoted."""
+        active_entries: list[dict[str, object]] = []
+
+        with (
+            patch("trw_mcp.scoring.enforce_tier_distribution", return_value=[]),
+            structlog.testing.capture_logs() as logs,
+        ):
+            enforce_distribution(0.95, 0.75, "L-new010", active_entries, tmp_path, _CFG)
+
+        assert not [e for e in logs if e.get("event") == "learn_distribution_demoted"]

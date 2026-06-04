@@ -14,14 +14,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 
-def _default_recall() -> Callable[..., list[dict[str, Any]]]:
+def _default_recall() -> Callable[..., list[dict[str, object]]]:
     """Lazy import to avoid a cycle on package init."""
     from trw_mcp.state.memory_adapter import recall_learnings
 
@@ -38,7 +37,7 @@ def recall_baseline_high_impact(
     *,
     max_results: int,
     allow_cold_embedding_init: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Wildcard recall of high-impact learnings.
 
     Used by the session_start baseline path -- pulls universally-relevant
@@ -53,6 +52,7 @@ def recall_baseline_high_impact(
         max_results=max_results,
         compact=True,
         allow_cold_embedding_init=allow_cold_embedding_init,
+        status="active",  # exclude obsolete/archived — the wildcard path has no implicit status filter
     )
 
 
@@ -63,7 +63,7 @@ def recall_focused(
     max_results: int,
     min_impact: float = 0.3,
     allow_cold_embedding_init: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Focused recall on a user-supplied query.
 
     Used by the session_start focused path -- BM25 + vector hybrid search
@@ -76,6 +76,7 @@ def recall_focused(
         max_results=max_results,
         compact=True,
         allow_cold_embedding_init=allow_cold_embedding_init,
+        status="active",  # focused recall must not surface obsolete/archived learnings
     )
 
 
@@ -85,7 +86,7 @@ def recall_recent_bypass(
     max_results: int,
     min_impact: float,
     allow_cold_embedding_init: bool = False,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Pull recently-stored learnings that the high-impact baseline filters out.
 
     Session_start L-fovv fix: low-impact entries from the current/recent
@@ -100,6 +101,7 @@ def recall_recent_bypass(
         max_results=max_results,
         compact=False,
         allow_cold_embedding_init=allow_cold_embedding_init,
+        status="active",  # recent-bypass must not prepend obsolete entries at top priority
     )
 
 
@@ -115,7 +117,7 @@ def recall_for_nudge_pool(
     tags: list[str] | None = None,
     min_impact: float = 0.5,
     max_results: int = 10,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Recall candidates for nudge content selection.
 
     Used by ``_try_learning_nudge_content`` and ``select_learning_injection_content``
@@ -129,6 +131,7 @@ def recall_for_nudge_pool(
         min_impact=min_impact,
         max_results=max_results,
         compact=False,
+        status="active",  # nudges must not be sourced from obsolete/archived learnings
     )
 
 
@@ -143,7 +146,7 @@ def recall_for_review_tags(
     tags: list[str],
     min_impact: float,
     max_results: int,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Tag-scoped recall of active learnings.
 
     Used by ``state/claude_md`` review/publish flow. Filters on a fixed
@@ -166,12 +169,14 @@ def recall_for_learning_injection(
     tags: list[str] | None = None,
     min_impact: float = 0.0,
     max_results: int = 25,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Recall task-relevant active learnings for injection.
 
-    Used by ``state/learning_injection`` to find learnings that match a
-    task description (with optional tag boost). Status=active filter
-    excludes resolved/obsolete entries.
+    Called by ``state/learning_injection.recall_learnings`` (its ``trw_dir``-
+    resolving shim) whenever ``status="active"`` — i.e. the injection path in
+    ``select_learnings_for_task``. Matches a task description with an optional
+    tag boost; the pinned ``status="active"`` filter excludes
+    resolved/obsolete entries.
     """
     return _default_recall()(
         trw_dir,

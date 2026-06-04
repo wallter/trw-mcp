@@ -8,9 +8,22 @@ from pathlib import Path
 import pytest
 import tomllib
 
+import structlog
+
 from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals
+
+
+@pytest.fixture(autouse=True)
+def _restore_structlog_config() -> "object":
+    """init_project/update_project call configure_logging(), which globally
+    reconfigures structlog and breaks structlog.testing.capture_logs() in
+    later-running test files. Save and restore the config so the global
+    mutation does not leak. (See feedback_autouse_fixture_global_state.)"""
+    saved = structlog.get_config()
+    yield
+    structlog.configure(**saved)
 
 
 @pytest.mark.unit
@@ -63,7 +76,13 @@ class TestUpdateProjectMultiIDE:
         assert config["features"]["hooks"] is False
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
-        assert not (tmp_path / ".codex" / "hooks.json").exists()
+        # Legacy shell-hook opt-in stays disabled (features.hooks=False), so no
+        # "Open /hooks" review warning fires. The distill telemetry channel,
+        # however, installs its own PostToolUse hooks.json regardless.
+        codex_hooks = tmp_path / ".codex" / "hooks.json"
+        assert codex_hooks.exists()
+        hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
+        assert "PostToolUse" in hooks_doc["hooks"]
         assert "Open /hooks" not in "\n".join(result.get("warnings", []))
         assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()

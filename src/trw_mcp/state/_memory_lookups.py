@@ -14,7 +14,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from trw_memory.exceptions import StorageError
@@ -48,10 +48,15 @@ _LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
 
 
 def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | None:
-    """Look up a single learning entry by ID."""
+    """Look up a single learning entry by ID.
+
+    The element is a ``LearningEntryDict`` (the recall-layer contract);
+    widened to ``dict[str, object]`` at the boundary to match the existing
+    public signature consumed across scoring/tools.
+    """
     backend = get_backend(trw_dir)
     entry = backend.get(learning_id)
-    return _memory_to_learning_dict(entry) if entry is not None else None
+    return cast("dict[str, object]", _memory_to_learning_dict(entry)) if entry is not None else None
 
 
 def list_active_learnings(
@@ -64,7 +69,7 @@ def list_active_learnings(
     backend = get_backend(trw_dir)
     entries = backend.list_entries(status=MemoryStatus.ACTIVE, namespace=_NAMESPACE, limit=limit)
     return [
-        _memory_to_learning_dict(entry)
+        cast("dict[str, object]", _memory_to_learning_dict(entry))
         for entry in entries
         if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
     ]
@@ -85,7 +90,7 @@ def list_entries_by_status(
     backend = get_backend(trw_dir)
     entries = backend.list_entries(status=mem_status, namespace=_NAMESPACE, limit=limit)
     return [
-        _memory_to_learning_dict(entry)
+        cast("dict[str, object]", _memory_to_learning_dict(entry))
         for entry in entries
         if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
     ]
@@ -122,26 +127,39 @@ def count_entries(trw_dir: Path) -> int:
 
 
 def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
-    """Increment access_count and last_accessed_at for recalled entries."""
+    """Increment access_count, recall_count, and last_accessed_at for recalled entries.
+
+    PRD-FIX-104-FR01: calls increment_recall_access (not increment_access_counts)
+    so that both access_count AND recall_count are incremented in a single batch
+    UPDATE, enabling feedback_decay_score in trw-memory lifecycle scoring.
+    PRD-FIX-104-FR02: per-entry fallback also increments recall_count.
+    """
     backend = get_backend(trw_dir)
     unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
     if not unique_ids:
         return
     now = datetime.now(timezone.utc)
 
-    increment_access_counts = getattr(backend, "increment_access_counts", None)
-    if callable(increment_access_counts):
+    # FR01: use increment_recall_access (bumps access_count + recall_count atomically)
+    increment_recall_access = getattr(backend, "increment_recall_access", None)
+    if callable(increment_recall_access):
         try:
-            increment_access_counts(unique_ids, accessed_at=now)
+            increment_recall_access(unique_ids, accessed_at=now)
             return
         except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
             _warn("access_tracking_batch_update_failed", exc_info=True, entry_ids=unique_ids)
 
+    # FR02: per-entry fallback — also increments recall_count so decay fires
     for lid in unique_ids:
         try:
             entry = backend.get(lid)
             if entry is not None:
-                backend.update(lid, access_count=entry.access_count + 1, last_accessed_at=now)
+                backend.update(
+                    lid,
+                    access_count=entry.access_count + 1,
+                    recall_count=entry.recall_count + 1,
+                    last_accessed_at=now,
+                )
         except Exception:  # per-item: access tracking is best-effort, one failure must not break recall
             _warn("access_tracking_update_failed", exc_info=True, entry_id=lid)
             continue

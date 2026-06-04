@@ -10,6 +10,7 @@ from typing import Literal, TypeAlias, TypeGuard
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.analytics.entries import mark_promoted
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
     TRW_MARKER_END,
@@ -218,8 +219,23 @@ def _inject_learnings_to_agents(
         bullet_lines: list[str] = []
         for entry in learning_entries:
             summary = _sanitize_summary(str(entry.get("summary", "")))
-            if summary:
-                bullet_lines.append(f"- {summary}")
+            if not summary:
+                continue
+            bullet_lines.append(f"- {summary}")
+            # PRD-CORE-165 FR-05: a surfaced (actually-injected) learning is
+            # promoted. Skip entries without an id; never let promotion
+            # bookkeeping abort the AGENTS.md injection.
+            learning_id = str(entry.get("id", ""))
+            if not learning_id:
+                continue
+            try:
+                mark_promoted(trw_dir, learning_id)
+            except Exception:  # justified: fail-open — promotion bookkeeping must not block injection
+                logger.warning(
+                    "agents_md_mark_promoted_failed",
+                    learning_id=learning_id,
+                    exc_info=True,
+                )
         if bullet_lines:
             return "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
     except Exception:  # justified: fail-open — learning injection is optional AGENTS.md enrichment

@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
 
 
@@ -194,6 +198,12 @@ def write_ceremony_state(trw_dir: Path, state: CeremonyState) -> None:
             handle.write(content)
         os.replace(tmp_path, path)
     except OSError:
+        # Persistence here is load-bearing: the delivery gate reads
+        # build_check_result / session_started back from this file, so a silent
+        # write failure mis-fires the gate (e.g. blocks a passing build). Stay
+        # fail-open — a write failure must not crash a tool — but make it
+        # VISIBLE per CONSTITUTION §PERSISTENCE instead of swallowing silently.
+        logger.warning("ceremony_state_write_failed", state_path=str(path), exc_info=True)
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
 

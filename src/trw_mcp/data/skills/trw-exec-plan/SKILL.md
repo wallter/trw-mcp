@@ -43,9 +43,9 @@ Check `$ARGUMENTS` for a PRD ID or file path:
 
 ### Step 2: Validate PRD Readiness
 
-Call `trw_prd_validate(prd_path)` to check quality:
-- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-ready {PRD-ID} first."
-- If score >= 0.85: continue
+Call `trw_prd_validate(prd_path)` to check quality using the `total_score` field (0-100 scale). Do NOT use `completeness_score` (a deprecated 0-1 float):
+- If `total_score < 85` (below APPROVED tier): abort with "PRD is not sprint-ready (total_score: {total_score}). Run /trw-prd-ready {PRD-ID} first."
+- If `total_score >= 85` (APPROVED tier): continue
 
 ### Step 3: Research Context
 
@@ -280,7 +280,7 @@ When generating execution plan tasks for FRs that include assertions, add assert
 ## Constraints
 
 - NEVER fabricate file paths — use Grep/Glob to verify files exist
-- NEVER skip PRD validation — sub-0.85 PRDs produce unreliable execution plans
+- NEVER skip PRD validation — PRDs with `total_score < 85` (below APPROVED tier) produce unreliable execution plans
 - ALWAYS include verification commands with each FR (not "verify manually")
 - ALWAYS map dependencies — missing dependencies cause wave failures
 - ALWAYS infer language/framework/test runner from the project rather than copying Python examples

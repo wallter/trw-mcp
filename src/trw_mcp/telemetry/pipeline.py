@@ -7,6 +7,7 @@ backend POST on a timer thread. Fail-open throughout.
 
 from __future__ import annotations
 
+import atexit
 import collections
 import json
 import threading
@@ -70,6 +71,10 @@ class TelemetryPipeline:
         self._overflow_count = 0
         self._enabled = True
         self._writer = FileStateWriter()
+        # PRD-FIX (F23): guards one-time atexit drain registration so the
+        # handler is wired exactly once per instance even under concurrent
+        # enqueue(). Protected by self._lock alongside the queue.
+        self._atexit_registered = False
 
     # ------------------------------------------------------------------
     # Singleton
@@ -197,14 +202,43 @@ class TelemetryPipeline:
             self._enrich_phase(event)
             self._enrich_timestamp(event)
 
+            register_atexit = False
             with self._lock:
                 was_full = len(self._queue) == self._queue.maxlen
                 self._queue.append(event)
                 if was_full:
                     self._overflow_count += 1
+                # PRD-FIX (F23): claim the one-time atexit registration under
+                # the same lock that guards the queue so concurrent enqueues
+                # never double-register the drain handler.
+                if not self._atexit_registered:
+                    self._atexit_registered = True
+                    register_atexit = True
+
+            # PRD-FIX (F23): the flush thread was previously started only from
+            # the session_start path (_ceremony_telemetry). Events enqueued
+            # before that (or when session_start never runs) would queue but
+            # never flush. start() is idempotent and guarded by the alive
+            # check, so a lazy start here is race-safe and self-healing.
+            self.start()
+            if register_atexit:
+                atexit.register(self._atexit_drain)
 
         except Exception:  # justified: fail-open, telemetry must never block
             logger.debug("telemetry_enqueue_skipped", exc_info=True)  # justified: fail-open
+
+    def _atexit_drain(self) -> None:
+        """Flush any queued events on interpreter shutdown (best-effort).
+
+        Registered once via ``atexit`` from the first successful
+        :meth:`enqueue`. Covers the residual loss window where the process
+        exits before the periodic timer has flushed (e.g. a short-lived
+        invocation that never reached the session_start start() call).
+        """
+        try:
+            self.stop(drain=True)
+        except Exception:  # justified: fail-open, atexit drain is best-effort
+            logger.debug("pipeline_atexit_drain_error", exc_info=True)
 
     # ------------------------------------------------------------------
     # Timer lifecycle
@@ -215,16 +249,21 @@ class TelemetryPipeline:
 
         If the thread is already alive, this is a no-op.  The thread is
         started as a daemon so it does not prevent process exit.
+
+        Thread-safe: the alive-check and thread creation happen under
+        ``self._lock`` so concurrent first-time callers (e.g. the lazy
+        start in :meth:`enqueue`) cannot spawn two flush threads.
         """
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._shutdown.clear()
-        self._thread = threading.Thread(
-            target=self._timer_loop,
-            name="telemetry-pipeline",
-            daemon=True,
-        )
-        self._thread.start()
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._shutdown.clear()
+            self._thread = threading.Thread(
+                target=self._timer_loop,
+                name="telemetry-pipeline",
+                daemon=True,
+            )
+            self._thread.start()
 
     def stop(self, *, drain: bool = True, timeout: float = 10.0) -> None:
         """Signal the timer thread to stop and optionally drain the queue.

@@ -2,7 +2,7 @@
 
 Belongs to the ``ceremony.py`` facade. Re-exported there for back-compat.
 
-Six step helpers covering the trw_session_start flow:
+Seven step helpers covering the trw_session_start flow:
 
 - ``_write_session_start_ids`` — populate injected_learning_ids.txt
   (PRD-CORE-095 FR16) so auto-injection doesn't re-surface learnings.
@@ -12,6 +12,8 @@ Six step helpers covering the trw_session_start flow:
 - ``step_phase_auto_recall`` — step 6 phase-contextual auto-recall
   (PRD-CORE-049).
 - ``step_assertion_health`` — assertion-health summary (PRD-CORE-086 FR07).
+- ``step_pipeline_health_advisory`` — compact pipeline-health advisory injected
+  when any compounding-pipeline signal is degraded (PRD-FIX-COMPOUNDING-6 FR03).
 - ``finalize_session_start`` — errors/success/framework_reminder/
   ceremony_status/session_start_ok logging.
 
@@ -35,6 +37,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state._paths import TRWCallContext
 from trw_mcp.tools._ceremony_runtime_helpers import _persist_surface_snapshot_pointer
+from trw_mcp.tools._pipeline_health import step_pipeline_health
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -287,6 +290,72 @@ def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
         return None
     finally:
         logger.debug("assertion_health_computed", duration_ms=round((time.monotonic() - started) * 1000, 1))
+
+
+def step_graph_health(trw_dir: Path) -> dict[str, object] | None:
+    """PRD-FIX-COMPOUNDING-2 FR04 — graph-empty advisory for session_start.
+
+    Queries ``SELECT COUNT(*) FROM memory_graph_edges`` on the live backend.
+    When the graph is empty AND there are more than 10 memories, returns a
+    ``graph_health`` advisory so the wiring gap surfaces before more un-graphed
+    learnings accumulate. Returns ``None`` (advisory omitted) when the graph is
+    populated, when the corpus is small, or on any error (fail-open).
+    """
+    import sqlite3
+
+    from trw_mcp.state.memory_adapter import count_entries, get_backend
+
+    try:
+        backend = get_backend(trw_dir)
+        conn = getattr(backend, "_conn", None)
+        if not isinstance(conn, sqlite3.Connection):
+            return None
+        edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
+        memories = count_entries(trw_dir)
+        if edge_count == 0 and memories > 10:
+            return {
+                "status": "empty",
+                "memories": memories,
+                "advisory": (
+                    "knowledge graph empty — run trw_knowledge_sync or re-deliver to trigger backfill"
+                ),
+            }
+        return None
+    except Exception:  # justified: fail-open — graph-health probe must not block session start
+        logger.debug("graph_health_probe_failed", exc_info=True)
+        return None
+
+
+def step_pipeline_health_advisory(
+    trw_dir: Path,
+    results: dict[str, object],
+) -> None:
+    """PRD-FIX-COMPOUNDING-6 FR03 — inject compact pipeline-health advisory on degraded state.
+
+    Calls step_pipeline_health() with all five probes. When degraded=True,
+    injects ``pipeline_health_advisory`` (a single-line string) into results.
+    When healthy, does NOT inject the key (PRD-INFRA-068 lesson: no
+    focus-distraction on healthy sessions).
+
+    Fail-open: any exception is caught, logged, and the key is NOT injected
+    so trw_session_start is never blocked.
+
+    Args:
+        trw_dir: The resolved .trw directory path.
+        results: The session_start result dict (mutated in-place when degraded).
+    """
+    try:
+        health = step_pipeline_health(trw_dir)
+        if bool(health.get("degraded")):
+            advisory = str(health.get("advisory", ""))
+            if advisory:
+                results["pipeline_health_advisory"] = advisory
+                logger.warning(
+                    "session_start_pipeline_degraded",
+                    advisory=advisory,
+                )
+    except Exception:  # justified: fail-open, pipeline health must not block session start
+        logger.debug("session_start_pipeline_health_failed", exc_info=True)
 
 
 def finalize_session_start(

@@ -156,7 +156,9 @@ class TestSessionStartPartialFailure:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
         ):
-            result = tools["trw_session_start"].fn()
+            # verbose=True: assertion_health is a diagnostic sub-block that
+            # compact-by-default (PRD-IMPROVE-MCP-04) folds into health_summary.
+            result = tools["trw_session_start"].fn(verbose=True)
 
         assert result["success"] is True
         assert result["assertion_health"] == {
@@ -253,4 +255,62 @@ class TestSessionStartUpdateAdvisory:
             result = tools["trw_session_start"].fn()
 
         assert "update_advisory" not in result or result.get("update_advisory") is None
+
+
+@pytest.mark.integration
+class TestSessionStartPayloadTrimming:
+    """PRD-IMPROVE-MCP-04 FR1 — compact-by-default vs verbose, end-to-end."""
+
+    def test_default_is_compact_with_health_summary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        ):
+            result = tools["trw_session_start"].fn()
+
+        # Compact mode: flag set, diagnostic blocks folded into a summary,
+        # token estimate present, load-bearing fields intact.
+        assert result["compact"] is True
+        assert "health_summary" in result
+        assert "embed_health" not in result
+        assert "step_durations_ms" not in result
+        assert isinstance(result["payload_token_estimate"], int)
+        assert result["payload_token_estimate"] > 0
+        assert "run" in result
+        assert "framework_reminder" in result
+        assert "errors" in result
+
+    def test_verbose_returns_full_payload(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        ):
+            result = tools["trw_session_start"].fn(verbose=True)
+
+        # Verbose mode: full diagnostic payload, no summary collapse.
+        assert result["compact"] is False
+        assert "health_summary" not in result
+        assert "embed_health" in result
+        assert "step_durations_ms" in result
+        # Run/pin + framework reminder still present.
+        assert "run" in result
+        assert "framework_reminder" in result
         assert "timestamp" in result

@@ -9,10 +9,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -58,7 +56,6 @@ def test_segment_placed_after_trw_end(tmp_path: Path) -> None:
     """FR01: distill markers appear AFTER <!-- trw:end -->, not nested inside."""
     from trw_mcp.channels.codex._agents_hotspots import (
         HOTSPOTS_BEGIN,
-        HOTSPOTS_END,
         _ensure_sequential_placement,
     )
 
@@ -243,12 +240,12 @@ def test_concurrent_renders_idempotent(tmp_path: Path) -> None:
 
 def test_prune_preserves_empty_markers() -> None:
     """FR12: cleanup_on_prune: clear_segment preserves marker pair with empty interior."""
+    from trw_mcp.channels._manifest_models import MarkersConfig
+    from trw_mcp.channels._marker_replace import replace_distill_segment
     from trw_mcp.channels.codex._agents_hotspots import (
         HOTSPOTS_BEGIN,
         HOTSPOTS_END,
     )
-    from trw_mcp.channels._marker_replace import replace_distill_segment
-    from trw_mcp.channels._manifest_models import MarkersConfig
 
     content = (
         f"# Project\n\n"
@@ -388,6 +385,7 @@ def test_token_count_fallback_when_tiktoken_absent() -> None:
     try:
         # Re-import module to ensure fresh binding
         import importlib
+
         import trw_mcp.channels.codex._agents_hotspots as mod
         importlib.reload(mod)
 
@@ -404,6 +402,7 @@ def test_token_count_fallback_when_tiktoken_absent() -> None:
             sys.modules["tiktoken"] = original  # type: ignore[assignment]
         # Reload to restore real module state
         import importlib
+
         import trw_mcp.channels.codex._agents_hotspots as restore_mod
         importlib.reload(restore_mod)
 
@@ -458,3 +457,120 @@ def test_build_codex_channel_entry_t2_override() -> None:
 
     entry = build_codex_channel_entry(tier_default="T2")
     assert entry.tier_default == "T2"
+
+
+# ---------------------------------------------------------------------------
+# Coverage: dict-branch in _format_convention and _format_edge_case
+# ---------------------------------------------------------------------------
+
+
+def test_format_convention_dict_with_text_key() -> None:
+    """_format_convention handles dict with 'text' key."""
+    from trw_mcp.channels.codex._agents_hotspots import _format_convention
+
+    conv = {"text": "Use Pydantic for validation"}
+    result = _format_convention(conv, 1)
+    assert "Use Pydantic for validation" in result
+
+
+def test_format_convention_dict_with_description_key() -> None:
+    """_format_convention falls back to 'description' when 'text' absent."""
+    from trw_mcp.channels.codex._agents_hotspots import _format_convention
+
+    conv = {"description": "Always run mypy --strict"}
+    result = _format_convention(conv, 1)
+    assert "Always run mypy --strict" in result
+
+
+def test_format_edge_case_dict_with_description_key() -> None:
+    """_format_edge_case handles dict with 'description' key."""
+    from trw_mcp.channels.codex._agents_hotspots import _format_edge_case
+
+    ec = {"description": "Concurrent writes to shared state"}
+    result = _format_edge_case(ec)
+    assert "Concurrent writes to shared state" in result
+
+
+def test_format_edge_case_dict_with_text_key() -> None:
+    """_format_edge_case falls back to 'text' when 'description' absent."""
+    from trw_mcp.channels.codex._agents_hotspots import _format_edge_case
+
+    ec = {"text": "Race condition on DB flush"}
+    result = _format_edge_case(ec)
+    assert "Race condition on DB flush" in result
+
+
+def test_t2_empty_hotspots_renders_placeholder() -> None:
+    """T2 segment with no hotspot data renders placeholder text."""
+    from trw_mcp.channels.codex._agents_hotspots import _content_for_tier_factory
+
+    sidecar = {"hotspots": [], "conventions": [], "edge_cases": []}
+    cb = _content_for_tier_factory(sidecar)
+    content = cb("T2")
+    assert "No hotspot data available" in content
+
+
+def test_t1_empty_hotspots_renders_placeholder() -> None:
+    """T1 segment with no hotspot data renders placeholder text."""
+    from trw_mcp.channels.codex._agents_hotspots import _content_for_tier_factory
+
+    sidecar = {"hotspots": [], "conventions": [], "edge_cases": []}
+    cb = _content_for_tier_factory(sidecar)
+    content = cb("T1")
+    assert "No hotspot data available" in content
+
+
+def test_t2_empty_conventions_renders_placeholder() -> None:
+    """T2 segment with no convention data renders placeholder text."""
+    from trw_mcp.channels.codex._agents_hotspots import _content_for_tier_factory
+
+    sidecar = {
+        "hotspots": [{"file": "a.py", "risk_score": 0.9, "reason": "high churn"}],
+        "conventions": [],
+        "edge_cases": [],
+    }
+    cb = _content_for_tier_factory(sidecar)
+    content = cb("T2")
+    assert "No convention data available" in content
+
+
+def test_t1_empty_conventions_renders_placeholder() -> None:
+    """T1 segment with no convention data renders placeholder text."""
+    from trw_mcp.channels.codex._agents_hotspots import _content_for_tier_factory
+
+    sidecar = {
+        "hotspots": [{"file": "a.py", "risk_score": 0.9, "reason": "high churn"}],
+        "conventions": [],
+        "edge_cases": [],
+    }
+    cb = _content_for_tier_factory(sidecar)
+    content = cb("T1")
+    assert "No convention data available" in content
+
+
+# ---------------------------------------------------------------------------
+# Coverage: render_and_inject exception path
+# ---------------------------------------------------------------------------
+
+
+def test_render_and_inject_exception_path_returns_error_status(tmp_path: Path) -> None:
+    """render_and_inject returns status='error' when an exception occurs under lock."""
+    from unittest.mock import patch
+
+    from trw_mcp.channels.codex._agents_hotspots import render_and_inject
+
+    # Make write_atomic raise an exception to trigger the error path
+    with patch(
+        "trw_mcp.channels._conflict.write_atomic",
+        side_effect=RuntimeError("simulated write failure"),
+    ):
+        result = render_and_inject(
+            repo_root=tmp_path,
+            sidecar_data=_make_sidecar(),
+            sidecar_sha="abc123",
+            force=True,
+        )
+
+    # The function should catch the exception and return error status
+    assert result.status == "error"
+    assert result.error is not None

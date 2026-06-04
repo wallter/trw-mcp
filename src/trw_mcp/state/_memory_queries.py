@@ -249,9 +249,9 @@ def _search_entries(
 
         from trw_memory.retrieval.fusion import rrf_fuse
 
-        fused = rrf_fuse([keyword_ranking, vector_ranking], k=cfg.hybrid_rrf_k)
-
         # Build id->entry map from keyword results + vector-matched entries
+        # FIRST so the importances mapping below can read each candidate's
+        # impact/importance.
         entry_map: dict[str, MemoryEntry] = {e.id: e for e in keyword_results}
         # Fetch any vector-only hits not already in keyword results
         for eid, _ in vector_hits:
@@ -259,6 +259,24 @@ def _search_entries(
                 entry = backend.get(eid)
                 if entry is not None and _apply_entry_filters(entry, tags, mem_status, min_impact):
                     entry_map[eid] = entry
+
+        # F15 / R-FUSION-001: blend learning importance into the position-only
+        # RRF score, mirroring the MemoryClient path
+        # (trw_memory.retrieval.pipeline.hybrid_search). Pure-position fusion
+        # ignores impact, so impact-0.95 tribal knowledge tied at the same rank
+        # as impact-0.2 noise. Only pass importances when alpha < 1.0; alpha=1.0
+        # keeps the legacy pure-position behaviour bit-for-bit (back-compat).
+        importance_alpha = cfg.hybrid_rrf_importance_alpha
+        importances: dict[str, float] | None = (
+            {eid: e.importance for eid, e in entry_map.items()} if importance_alpha < 1.0 else None
+        )
+
+        fused = rrf_fuse(
+            [keyword_ranking, vector_ranking],
+            k=cfg.hybrid_rrf_k,
+            importances=importances,
+            alpha=importance_alpha,
+        )
 
         results: list[MemoryEntry] = []
         for eid, _ in fused[:top_k]:

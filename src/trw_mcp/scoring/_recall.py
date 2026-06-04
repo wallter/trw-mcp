@@ -476,7 +476,15 @@ def utility_based_prune_candidates(
         try:
             created = date.fromisoformat(created_str.replace("Z", "+00:00"))
         except ValueError:
-            continue
+            # Missing/unparseable created (e.g. a YAML-migrated entry whose
+            # created_at was never backfilled → "") must NOT exclude the entry
+            # from prune analysis. The old `continue` skipped it BEFORE the
+            # status-based Tier-1 cleanup below, so a resolved/obsolete straggler
+            # with no date was immortal — never nominated for pruning. Treat it
+            # as age 0 (today): conservative for the age-based tiers, while the
+            # status tier still catches dead entries.
+            _logger.debug("prune_candidate_undateable_created", entry_id=entry_id, created=created_str)
+            created = today
 
         age_days = (today - created).days
         recurrence = safe_int(data, "recurrence", 1)

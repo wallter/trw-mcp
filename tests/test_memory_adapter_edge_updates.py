@@ -106,21 +106,26 @@ class TestUpdateAccessTrackingMixed:
         entry3 = find_entry_by_id(trw_dir, "L-mx3")
         assert entry1 is not None
         assert entry1["access_count"] == 1
+        # PRD-FIX-104-FR03: recall_count MUST also be incremented (regression guard)
+        assert entry1["recall_count"] == 1
         assert entry3 is not None
         assert entry3["access_count"] == 1
+        assert entry3["recall_count"] == 1
 
     def test_empty_ids_list(self, trw_dir: Path) -> None:
         """Empty list of IDs does nothing and does not error."""
         update_access_tracking(trw_dir, [])
 
     def test_double_increment(self, trw_dir: Path) -> None:
-        """Calling twice increments access_count to 2."""
+        """Calling twice increments access_count to 2 and recall_count to 2."""
         store_learning(trw_dir, "L-di1", "Double increment", "d")
         update_access_tracking(trw_dir, ["L-di1"])
         update_access_tracking(trw_dir, ["L-di1"])
         entry = find_entry_by_id(trw_dir, "L-di1")
         assert entry is not None
         assert entry["access_count"] == 2
+        # PRD-FIX-104-FR03: recall_count tracks each recall call
+        assert entry["recall_count"] == 2
 
     def test_sets_last_accessed_at(self, trw_dir: Path) -> None:
         """Access tracking sets last_accessed_at to a non-None value."""
@@ -129,6 +134,36 @@ class TestUpdateAccessTrackingMixed:
         entry = find_entry_by_id(trw_dir, "L-la1")
         assert entry is not None
         assert entry["last_accessed_at"] is not None
+
+    def test_recall_count_increments_on_single_recall(self, trw_dir: Path) -> None:
+        """PRD-FIX-104-FR03: a single update_access_tracking call sets recall_count=1."""
+        store_learning(trw_dir, "L-rc1", "Recall count test", "d")
+        update_access_tracking(trw_dir, ["L-rc1"])
+        entry = find_entry_by_id(trw_dir, "L-rc1")
+        assert entry is not None
+        assert entry["recall_count"] == 1
+
+    def test_fallback_path_increments_recall_count(self, trw_dir: Path) -> None:
+        """PRD-FIX-104-FR02: per-entry fallback loop also increments recall_count.
+
+        When the backend is replaced with a mock that lacks increment_recall_access,
+        the per-entry fallback path must still increment recall_count.
+        """
+        from unittest.mock import MagicMock, patch
+
+        store_learning(trw_dir, "L-fb1", "Fallback test", "d")
+        real_backend = get_backend(trw_dir)
+        real_entry = real_backend.get("L-fb1")
+        assert real_entry is not None
+
+        mock_backend = MagicMock(spec_set=["get", "update"])
+        mock_backend.get.return_value = real_entry
+
+        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+            update_access_tracking(trw_dir, ["L-fb1"])
+
+        _args, kwargs = mock_backend.update.call_args
+        assert kwargs.get("recall_count") == real_entry.recall_count + 1
 
 
 class TestResetIdempotency:

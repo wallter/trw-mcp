@@ -165,7 +165,28 @@ def test_resolve_kill_switch_path_uses_upward_search(tmp_path: Path) -> None:
     assert resolved == repo_root / ".trw" / "config.yaml"
 
 
-def test_resolve_kill_switch_path_raises_without_anchor(tmp_path: Path) -> None:
+def test_resolve_kill_switch_path_raises_without_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Isolation: _resolve_repo_root walks tmp_path's parents looking for a
+    # ``.trw`` anchor, then falls back to ``git rev-parse``. Other suites can
+    # leak stray ``.trw`` dirs into the shared /tmp ancestry (e.g. /tmp/.trw),
+    # which would otherwise resolve as a false anchor and suppress the raise.
+    # Strip any ancestor ``.trw`` leakage and neutralize the git fallback so
+    # the "no anchor" contract is exercised deterministically.
+    import shutil as _shutil
+
+    resolved = tmp_path.resolve()
+    for ancestor in (resolved, *resolved.parents):
+        stray = ancestor / ".trw"
+        if stray.exists():
+            _shutil.rmtree(stray, ignore_errors=True)
+
+    def _no_git(*_a: object, **_k: object) -> object:
+        raise FileNotFoundError("git unavailable (isolated test)")
+
+    monkeypatch.setattr("trw_mcp.meta_tune.boot_checks.subprocess.run", _no_git)
+
     with pytest.raises(KillSwitchNotFoundError):
         resolve_kill_switch_path(
             MetaTuneConfig(kill_switch_path=".trw/config.yaml"),

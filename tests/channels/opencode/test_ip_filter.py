@@ -5,6 +5,8 @@ PRD-DIST-2403 FR07 / P2-10.
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_trw_distill_paths_excluded() -> None:
     """Paths starting with trw-distill/ are removed."""
@@ -67,16 +69,17 @@ def test_mixed_list_order_preserved() -> None:
 
 def test_ip_filtered_paths_count_logged(caplog: object) -> None:
     """filter_proprietary_paths logs the count of excluded paths."""
-    import logging
 
     from trw_mcp.channels.opencode._ip_filter import filter_proprietary_paths
 
     with __import__("structlog").testing.capture_logs() as cap:
-        result = filter_proprietary_paths([
-            "src/ok.py",
-            "trw-distill/internal.py",
-            "trw-distill/another.py",
-        ])
+        result = filter_proprietary_paths(
+            [
+                "src/ok.py",
+                "trw-distill/internal.py",
+                "trw-distill/another.py",
+            ]
+        )
 
     assert result == ["src/ok.py"]
     # Verify the debug log event was emitted with ip_filtered_paths=2
@@ -93,3 +96,20 @@ def test_path_must_start_with_prefix() -> None:
     result = filter_proprietary_paths(paths)
     assert "src/not-trw-distill/module.py" in result
     assert "trw-distill/secret.py" not in result
+
+
+@pytest.fixture(autouse=True)
+def _structlog_defaults_for_capture() -> object:
+    """File-scoped: reset structlog to defaults so ``capture_logs()`` sees WARN.
+
+    A prior test's ``configure_logging()`` (server import / init_project) installs
+    a filtering wrapper that drops WARN before ``capture_logs``'s processor, so
+    these warning-assertion tests fail only in full-suite ordering. Save+restore
+    (file-scoped, never a global reset — avoids the alphabetical-leak hazard).
+    """
+    import structlog
+
+    _saved = structlog.get_config()
+    structlog.reset_defaults()
+    yield
+    structlog.configure(**_saved)

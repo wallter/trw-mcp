@@ -73,7 +73,20 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
 
 
 class ReconcileReviewResult(TypedDict, total=False):
-    """Return shape of ``handle_reconcile_mode()``."""
+    """Return shape of ``handle_reconcile_mode()``.
+
+    Honesty qualifiers (do NOT read ``verdict='clean'`` as "FRs verified covered"):
+
+    - ``coverage_method``: how coverage was assessed. Reconcile does
+      *identifier-presence-in-diff* substring matching, NOT behavioral
+      verification, so this is the literal string
+      ``'identifier_presence_in_diff'``.
+    - ``fr_not_checkable``: FRs with no extractable identifier. These are
+      surfaced here instead of being silently counted as covered.
+    - ``not_checkable_count``: count of ``fr_not_checkable`` entries.
+    - ``no_governing_prd`` / ``reason``: set when no governing PRD was found,
+      so a ``'clean'`` verdict is not misread as "FRs verified covered".
+    """
 
     review_id: str
     verdict: str
@@ -83,18 +96,38 @@ class ReconcileReviewResult(TypedDict, total=False):
     total_frs: int
     mismatch_count: int
     reconciliation_yaml: str
+    coverage_method: str
+    fr_not_checkable: list[dict[str, str]]
+    not_checkable_count: int
+    no_governing_prd: bool
+    reason: str
 
 
-class MultiReviewerAnalysisResult(TypedDict):
-    """Return shape of ``_run_multi_reviewer_analysis()``."""
+class MultiReviewerAnalysisResult(TypedDict, total=False):
+    """Return shape of ``_run_multi_reviewer_analysis()``.
+
+    ``auto_analysis_limited`` (with ``limited_reason``) honestly labels the
+    pattern-scan-only path: when set ``True`` the ``findings`` come solely from
+    a TODO/FIXME/HACK/XXX marker scan of the diff, NOT from substantive
+    multi-reviewer / cross-model code-quality analysis. Downstream consumers
+    (deliver gate, eval scoring) must treat a limited result as a weak signal,
+    never as evidence that a real review happened.
+    """
 
     reviewer_roles_run: list[str]
     reviewer_errors: list[str]
     findings: list[dict[str, object]]
+    auto_analysis_limited: bool
+    limited_reason: str
 
 
 class AutoReviewResult(TypedDict, total=False):
-    """Return shape of ``handle_auto_mode()``."""
+    """Return shape of ``handle_auto_mode()``.
+
+    ``auto_analysis_limited``/``limited_reason`` propagate the honest-labeling
+    flag from ``_run_multi_reviewer_analysis()`` so the auto-review artifact
+    cannot pose as a substantive review when only the pattern-scan ran.
+    """
 
     review_id: str
     verdict: str
@@ -107,3 +140,5 @@ class AutoReviewResult(TypedDict, total=False):
     critical_count: int
     run_path: str | None
     review_yaml: str
+    auto_analysis_limited: bool
+    limited_reason: str

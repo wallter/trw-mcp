@@ -59,6 +59,21 @@ _GRADE_MAP: dict[QualityTier, str] = {
 # ---------------------------------------------------------------------------
 
 
+def _expected_section_count(frontmatter: dict[str, object]) -> int:
+    """Return the required section count for the PRD's category variant.
+
+    PRD-FIX-103-FR04: derives the count from the category→variant mapping
+    (feature=12, infrastructure=9, fix=8, research=7) instead of a hardcoded
+    12, so correctly-structured FIX/infrastructure/research PRDs are not
+    false-failed. Reuses ``get_required_sections`` (the single source of truth
+    for per-variant section lists) so the counts cannot drift.
+    """
+    from trw_mcp.state.validation.template_variants import get_required_sections
+
+    category = str(frontmatter.get("category", "") or "")
+    return len(get_required_sections(category))
+
+
 def validate_prd_quality(
     frontmatter: dict[str, object],
     sections: list[str],
@@ -99,8 +114,10 @@ def validate_prd_quality(
         if field not in frontmatter or not frontmatter[field]
     )
 
-    # Check for 12 required sections
-    expected_section_count = 12
+    # Check for the variant-appropriate number of required sections
+    # (PRD-FIX-103-FR04): feature=12, infrastructure=9, fix=8, research=7.
+    # A hardcoded 12 false-failed correctly-structured FIX/infra/research PRDs.
+    expected_section_count = _expected_section_count(frontmatter)
     if len(sections) < expected_section_count:
         failures.append(
             ValidationFailure(
@@ -178,6 +195,59 @@ def validate_prd_quality(
         failures=len(failures),
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Measured Traceability Coverage (PRD-QUAL-096-FR01)
+# ---------------------------------------------------------------------------
+
+
+def compute_measured_traceability_coverage(content: str) -> float:
+    """Measured (non-binary) traceability coverage ratio for a PRD.
+
+    PRD-QUAL-096-FR01: returns ``(# FRs with at least one resolved
+    implementation reference AND at least one test reference) / (total FRs)``,
+    in ``[0.0, 1.0]``. This is an *informational* metric — it is additive and
+    does NOT change the binary ``traceability_coverage`` (``1.0`` if any trace
+    link, else ``0.0``) used by the ``valid`` gate in ``validate_prd_quality``
+    (NFR01 backward-compat / FR02 no-regression).
+
+    Per-FR references are matched against the FR body joined with that FR's
+    Traceability Matrix row (mirrors the resolution in
+    ``_score_file_path_coverage``), reusing the existing extraction + reference
+    detectors so the matching logic cannot drift.
+
+    NFR01 Determinism: pure computation, no I/O.
+
+    Args:
+        content: Full PRD markdown content.
+
+    Returns:
+        Coverage ratio in ``[0.0, 1.0]``; ``0.0`` when the PRD has no FRs.
+    """
+    from trw_mcp.state.validation._prd_scoring import _extract_fr_sections
+    from trw_mcp.state.validation._prd_scoring_traceability import (
+        _extract_fr_id,
+        _extract_traceability_matrix_rows,
+        _has_impl_reference,
+        _has_test_reference,
+    )
+
+    fr_sections = _extract_fr_sections(content)
+    total_frs = len(fr_sections)
+    if total_frs == 0:
+        return 0.0
+
+    matrix_rows = _extract_traceability_matrix_rows(content)
+    fully_traced = 0
+    for name, body in fr_sections:
+        fr_id = _extract_fr_id(name)
+        matrix_row = matrix_rows.get(fr_id, "") if fr_id is not None else ""
+        combined = body if not matrix_row else f"{body}\n{matrix_row}"
+        if _has_impl_reference(combined) and _has_test_reference(combined):
+            fully_traced += 1
+
+    return fully_traced / total_frs
 
 
 # ---------------------------------------------------------------------------

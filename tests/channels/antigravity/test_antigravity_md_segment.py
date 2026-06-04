@@ -10,9 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -270,9 +267,7 @@ def test_quota_exceeded_triggers_tier_down(tmp_path: Path) -> None:
     """NFR10: quota enforcement tiers-down when content exceeds budget."""
     from trw_mcp.channels.antigravity._antigravity_md_segment import (
         build_ag01_channel_entry,
-        render_antigravity_distill_segment,
     )
-    from trw_mcp.channels._manifest_models import MarkersConfig
     from trw_mcp.channels.instruction_segment import render_instruction_segment
 
     # Build a very small quota so T1 won't fit.

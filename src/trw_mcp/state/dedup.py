@@ -48,6 +48,48 @@ class DedupResult(NamedTuple):
     similarity: float
 
 
+# PRD-CORE-110: strength ordering for protection-preserving merges. Higher
+# index = stronger; merge keeps the stronger of (survivor, incoming).
+_PROTECTION_TIER_ORDER = ("low", "normal", "high", "critical", "protected", "permanent")
+_CONFIDENCE_ORDER = ("hypothesis", "unverified", "low", "medium", "high", "verified")
+
+
+def _stronger(existing_val: str, new_val: str, order: tuple[str, ...], default: str) -> str:
+    """Return whichever of *existing_val* / *new_val* ranks higher in *order*.
+
+    Unknown values fall back to *default*'s rank so an unrecognised string
+    never silently wins over a known stronger tier.
+    """
+
+    def rank(v: str) -> int:
+        return order.index(v) if v in order else order.index(default)
+
+    return new_val if rank(new_val) > rank(existing_val) else existing_val
+
+
+def _merge_protection_fields(existing: dict[str, object], new_entry_data: dict[str, object]) -> None:
+    """Fold typed protection fields from the new entry into the survivor.
+
+    - ``protection_tier``: keep the stronger tier.
+    - ``confidence``: keep the higher confidence.
+    - ``type``: upgrade ``pattern`` → ``incident`` when the incoming entry is
+      an incident (incidents carry operational weight worth retaining).
+    Mutates *existing* in place. Absent fields default to the survivor's value.
+    """
+    existing_tier = str(existing.get("protection_tier") or "normal")
+    new_tier = str(new_entry_data.get("protection_tier") or "normal")
+    existing["protection_tier"] = _stronger(existing_tier, new_tier, _PROTECTION_TIER_ORDER, "normal")
+
+    existing_conf = str(existing.get("confidence") or "unverified")
+    new_conf = str(new_entry_data.get("confidence") or "unverified")
+    existing["confidence"] = _stronger(existing_conf, new_conf, _CONFIDENCE_ORDER, "unverified")
+
+    existing_type = str(existing.get("type") or "pattern")
+    new_type = str(new_entry_data.get("type") or "pattern")
+    if new_type == "incident" and existing_type != "incident":
+        existing["type"] = "incident"
+
+
 def _distance_to_similarity(distance: float) -> float:
     """Convert sqlite-vec L2 distance to cosine similarity.
 
@@ -118,6 +160,27 @@ def _check_duplicate_via_backend(
         return None
 
 
+def _check_exact_content_duplicate(summary: str, detail: str, entries_dir: Path) -> str | None:
+    """Embedding-independent exact-content duplicate lookup.
+
+    Queries the primary backend for an ACTIVE entry whose content (summary)
+    and detail match byte-for-byte. Returns the existing id on a hit, or None
+    (no match, or backend unavailable — fail-open so storage proceeds).
+
+    ``entries_dir`` is ``.trw/learnings/entries``; the backend is resolved
+    from its grandparent (``.trw``), matching the embedding fast path.
+    """
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        trw_dir = entries_dir.parent.parent
+        backend = get_backend(trw_dir)
+        return backend.find_active_by_content(summary, detail)
+    except Exception:  # justified: fail-open, exact dedup must never block storage when backend is unavailable
+        logger.debug("dedup_exact_content_unavailable", exc_info=True)
+        return None
+
+
 def check_duplicate(
     summary: str,
     detail: str,
@@ -153,7 +216,22 @@ def check_duplicate(
     _t0 = time.monotonic()
     cfg = config or TRWConfig()
 
-    # Respect embeddings_enabled config — dedup requires embeddings
+    # --- Embedding-INDEPENDENT exact-content dedup (PRD-CORE-042) ---
+    # Runs BEFORE the embeddings gate so default installs (embeddings_enabled
+    # defaults to False) still collapse byte-identical re-learns instead of
+    # accumulating exact duplicates. Returns "merge" (not "skip") so the new
+    # entry's tags/evidence/impact still fold into the survivor.
+    exact_id = _check_exact_content_duplicate(summary, detail, entries_dir)
+    if exact_id is not None:
+        logger.debug(
+            "dedup_exact_content_match",
+            duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+            existing_id=exact_id,
+            path="exact",
+        )
+        return DedupResult("merge", exact_id, 1.0)
+
+    # Respect embeddings_enabled config — fuzzy dedup requires embeddings
     if not cfg.embeddings_enabled:
         return DedupResult("store", None, 0.0)
 
@@ -333,6 +411,11 @@ def merge_entries(
                     existing_assertions.append(a)
                     seen_keys.add(key)
         existing["assertions"] = existing_assertions
+
+    # Typed fields (PRD-CORE-110): keep the STRONGER protection so merging a
+    # high-tier/verified/incident new entry into a normal/unverified/pattern
+    # survivor never silently downgrades it.
+    _merge_protection_fields(existing, new_entry_data)
 
     # merged_from: append new entry ID
     raw_merged_from = existing.get("merged_from") or []

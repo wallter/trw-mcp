@@ -25,6 +25,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -286,6 +287,48 @@ class TestStaleFlockRecovery:
         rec = _peek_deferred_lock_holder(lock)
         assert rec is not None
         assert rec["pid"] == 2
+
+    def test_stale_reclaim_flock_failure_closes_fd_no_leak(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P0 fd-leak guard: when the stale-reclaim flock ALSO fails (the
+        contested case the reclaim path exists for), the fd opened for the
+        reclaim must be closed. Without it the long-running MCP server leaks
+        one OS file descriptor per stale-lock reclaim race.
+        """
+        from trw_mcp.tools import _deferred_delivery as dd
+
+        lock_path = tmp_path / "deliver-deferred.lock"
+        # Stale record (very old timestamp) → the reclaim branch is entered.
+        lock_path.write_text(
+            json.dumps({"pid": 999_999, "ts": "2000-01-01T00:00:00+00:00"}) + "\n",
+            encoding="utf-8",
+        )
+
+        def _always_locked(_fileno: int) -> None:
+            raise BlockingIOError("flock contended")
+
+        # Both the initial acquire AND the reclaim flock fail → both except paths run.
+        monkeypatch.setattr(dd, "_lock_ex_nb", _always_locked)
+
+        opened_lock_fds: list[Any] = []
+        real_open = Path.open
+
+        def _tracking_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+            handle = real_open(self, *args, **kwargs)
+            if self == lock_path and args and args[0] == "a+":
+                opened_lock_fds.append(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", _tracking_open)
+
+        result = dd._try_acquire_deferred_lock(tmp_path, stale_threshold_seconds=60.0)
+
+        assert result is None  # contended + reclaim failed → no lock acquired
+        assert opened_lock_fds, "expected the reclaim path to open the lock file"
+        assert all(getattr(f, "closed", True) for f in opened_lock_fds), (
+            "every lock fd opened (initial + stale-reclaim) must be closed — a leak otherwise"
+        )
 
 
 # --- Watchdog cancellation ---

@@ -9,6 +9,8 @@ from trw_mcp.tools._deferred_delivery import _do_auto_progress, _do_index_sync
 from trw_mcp.tools.ceremony import _do_instruction_sync
 from ._tools_ceremony_support import trw_project  # noqa: F401
 
+from ._tools_ceremony_support import trw_project  # noqa: F401
+
 
 class TestDoClaudeMdSync:
     """CLAUDE.md sync during delivery ceremony."""
@@ -16,8 +18,8 @@ class TestDoClaudeMdSync:
     def test_creates_or_updates_claude_md(self, trw_project: Path) -> None:
         trw_dir = trw_project / ".trw"
         with (
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=trw_project),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
         ):
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
@@ -27,8 +29,8 @@ class TestDoClaudeMdSync:
         """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync."""
         trw_dir = trw_project / ".trw"
         with (
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=trw_project),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=trw_project),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
         ):
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"

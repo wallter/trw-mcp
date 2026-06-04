@@ -168,3 +168,20 @@ def test_step_durations_ms_mirrored_on_log_event(
         f"result step_durations_ms ({result_durations!r}). Divergence means "
         f"the log payload was assembled before all steps were recorded."
     )
+
+
+@pytest.fixture(autouse=True)
+def _structlog_defaults_for_capture() -> object:
+    """File-scoped: reset structlog to defaults so ``capture_logs()`` sees WARN.
+
+    A prior test's ``configure_logging()`` (server import / init_project) installs
+    a filtering wrapper that drops WARN before ``capture_logs``'s processor, so
+    these warning-assertion tests fail only in full-suite ordering. Save+restore
+    (file-scoped, never a global reset — avoids the alphabetical-leak hazard).
+    """
+    import structlog
+
+    _saved = structlog.get_config()
+    structlog.reset_defaults()
+    yield
+    structlog.configure(**_saved)

@@ -1,8 +1,12 @@
-"""Tests: AG-03 before-edit hook is now ACTIVE (confirmed 2026-05-28).
+"""Tests: AG-03 before-edit hook is implemented (not a NotImplementedError stub).
 
-AG-03 was previously aspirational (raise NotImplementedError stub). It is now
-implemented after empirical verification of the agy v1.0.2 hook surface via
-binary string analysis.
+AG-03 was previously a stub. It is now a real implementation and the installer
+registers it in .antigravitycli/hooks.json (schema verified via agy binary
+analysis). NOTE: the channel manifest status is ASPIRATIONAL, not active — a
+live agy turn (2026-05-29) confirmed the hook does NOT fire because agy
+v1.0.2-1.0.3 routes file edits through Step_CodeAction, bypassing the jsonhook
+PreToolUse path. These tests assert only that the implementation is real (not a
+stub), which holds regardless of agy's invocation gap.
 
 Empirical findings (2026-05-28):
 - agy v1.0.2 = real Antigravity CLI (Google "jetski" codename, Go binary)
@@ -34,8 +38,8 @@ def test_before_edit_hook_is_importable() -> None:
         import trw_mcp.channels.antigravity._before_edit_hook  # noqa: F401
     except NotImplementedError:
         raise AssertionError(
-            "_before_edit_hook.py must NOT raise NotImplementedError — AG-03 is now active"
-        )
+            "_before_edit_hook.py must NOT raise NotImplementedError — AG-03 is implemented (not a stub)"
+        ) from None
 
 
 def test_before_edit_hook_exports_public_api() -> None:

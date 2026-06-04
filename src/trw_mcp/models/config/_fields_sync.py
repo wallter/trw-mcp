@@ -29,3 +29,32 @@ class _SyncFields:
     # -- Feature gates --
     meta_tune_enabled: bool = False
     team_sync_enabled: bool = False
+
+    # -- Sync health surface (PRD-FIX-COMPOUNDING-1) --
+    # Env-overridable via TRW_SYNC_HEALTH_FAILURE_THRESHOLD / TRW_SYNC_HEALTH_STALE_HOURS.
+    sync_health_failure_threshold: int = Field(
+        default=10,
+        ge=1,
+        description="Consecutive push failures before sync_health marks degraded.",
+    )
+    sync_health_stale_hours: float = Field(
+        default=6.0,
+        ge=0.1,
+        description="Hours since last successful push before sync_health marks degraded.",
+    )
+
+    # -- Pipeline-health bandit probe (PRD-FIX-105-FR02) --
+    # The bandit_state.json file is written by the BACKEND meta-tune policy
+    # (backend/services/bandit_policy.py), NOT by the MCP runtime. In a dev repo
+    # or any deployment where the backend bandit is not actively driven, the file
+    # legitimately goes stale and the probe cries wolf. These knobs let operators
+    # tune the SLA or disable the probe entirely where no local writer exists.
+    pipeline_health_bandit_probe_enabled: bool = Field(
+        default=True,
+        description="Whether the pipeline-health bandit_state staleness probe is active.",
+    )
+    pipeline_health_bandit_stale_days: float = Field(
+        default=7.0,
+        ge=0.1,
+        description="Days since bandit_state.json mtime before the probe marks degraded.",
+    )

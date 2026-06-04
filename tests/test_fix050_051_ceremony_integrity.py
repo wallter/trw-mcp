@@ -531,3 +531,35 @@ class TestSessionsTrackedEndToEnd:
         assert data.get("sessions_tracked") == 1, (
             "sessions_tracked must survive a config singleton reset (reads from disk)"
         )
+
+    def test_concurrent_session_start_increments_are_not_lost(self, tmp_path: Path) -> None:
+        """The dev repo runs several MCP clients against one shared server, so
+        concurrent trw_session_start calls race the analytics read-modify-write.
+        Without the lock_for_rmw guard on _locked_analytics, last-write-wins drops
+        increments. With it, every increment lands: final == threads * per_thread.
+        """
+        import threading
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True)
+
+        threads_n = 4
+        per_thread = 10
+        errors: list[str] = []
+
+        def bump(n: int) -> None:
+            try:
+                for _ in range(n):
+                    increment_session_start_counter(trw_dir)
+            except Exception as exc:  # surface any thread error to the assertion
+                errors.append(str(exc))
+
+        threads = [threading.Thread(target=bump, args=(per_thread,)) for _ in range(threads_n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, f"thread errors: {errors}"
+        _, data = _read_analytics(trw_dir)
+        assert int(str(data["sessions_tracked"])) == threads_n * per_thread

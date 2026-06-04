@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _GATE_KEYS: tuple[str, ...] = (
+    "review_block",
     "review_warning",
     "review_advisory",
     "integration_review_block",
@@ -87,6 +88,27 @@ def step_clear_score(resolved_run: Path, results: DeliverResultDict) -> None:
         )
     except Exception:  # justified: fail-open — CLEAR scoring must not block deliver
         logger.debug("clear_score_step_failed", exc_info=True)
+
+
+def step_knowledge_sync(trw_dir: Path, results: DeliverResultDict) -> None:
+    """PRD-FIX-COMPOUNDING-2 FR03 — auto-trigger knowledge-graph topic sync.
+
+    After the core deliver logic succeeds, populate ``.trw/knowledge/`` from
+    graph data when the entry count meets ``knowledge_sync_threshold``.
+    ``execute_knowledge_sync`` already short-circuits below threshold, so the
+    result is surfaced under the ``knowledge_sync`` key either way. Fail-open
+    (NFR02): a sync failure must NOT fail the deliver — it is recorded as
+    ``{"status": "failed", ...}`` instead.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.knowledge_topology import execute_knowledge_sync
+
+        sync_result = execute_knowledge_sync(trw_dir, get_config(), dry_run=False)
+        results["knowledge_sync"] = sync_result
+    except Exception as exc:  # justified: fail-open — knowledge sync must not block deliver
+        logger.warning("deliver_knowledge_sync_failed", error=str(exc), exc_info=True)
+        results["knowledge_sync"] = {"status": "failed", "error": str(exc)}
 
 
 def log_deliver_complete(

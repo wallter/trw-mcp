@@ -244,6 +244,7 @@ async def run_stdio_proxy(
     max_retries: int = 3,
     *,
     handshake_timeout_seconds: float = 8.0,
+    request_timeout_seconds: float = 60.0,
 ) -> None:
     """Bridge stdio transport to a shared HTTP MCP server.
 
@@ -253,10 +254,17 @@ async def run_stdio_proxy(
 
     Retries initial connection up to ``max_retries`` times with exponential
     backoff to handle race conditions where the server is still starting.
+
+    ``request_timeout_seconds`` bounds every forwarded MCP request at the
+    session level (PRD-FIX-106). Without it the MCP SDK waits with
+    ``anyio.fail_after(None)`` -- an UNBOUNDED block -- so a restarted/replaced
+    shared HTTP server (new PID) whose in-flight response is orphaned hangs the
+    agent indefinitely instead of surfacing a REQUEST_TIMEOUT ``McpError``.
     """
     import time
+    from datetime import timedelta
 
-    from mcp import types
+    from mcp import McpError, types
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from mcp.server import Server
@@ -264,12 +272,21 @@ async def run_stdio_proxy(
     from pydantic import AnyUrl
 
     log = structlog.get_logger(__name__)
+    # Bound the session-level read wait so a gone/replaced backend fails fast
+    # rather than blocking on anyio.fail_after(None). (PRD-FIX-106)
+    request_timeout = timedelta(seconds=request_timeout_seconds)
+    # The MCP SDK raises McpError with this code (httpx REQUEST_TIMEOUT) when the
+    # bounded session read timeout elapses (mcp/shared/session.py send_request).
+    REQUEST_TIMEOUT = 408
 
     # Retry loop for initial connection (server may still be starting)
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
-            async with streamable_http_client(url) as (read, write, _), ClientSession(read, write) as session:
+            async with (
+                streamable_http_client(url) as (read, write, _),
+                ClientSession(read, write, read_timeout_seconds=request_timeout) as session,
+            ):
                 # Discover remote capabilities once at startup. This is on the
                 # client reconnect critical path, so bound the total remote
                 # discovery time and let the existing retry/fallback path handle
@@ -308,7 +325,30 @@ async def run_stdio_proxy(
                     name: str,
                     arguments: dict[str, object] | None = None,
                 ) -> types.CallToolResult:
-                    return await session.call_tool(name, arguments)
+                    # Bound the forwarded call: a gone/replaced backend raises a
+                    # REQUEST_TIMEOUT McpError within request_timeout instead of
+                    # blocking forever. (PRD-FIX-106). The error is surfaced to the
+                    # agent -- never swallowed or retried into another unbounded wait.
+                    try:
+                        return await session.call_tool(
+                            name,
+                            arguments,
+                            read_timeout_seconds=request_timeout,
+                        )
+                    except McpError as exc:
+                        if getattr(getattr(exc, "error", None), "code", None) == REQUEST_TIMEOUT:
+                            log.warning(
+                                "stdio_proxy_backend_timeout",
+                                url=url,
+                                tool=name,
+                                request_timeout_seconds=request_timeout_seconds,
+                                detail=(
+                                    "Forwarded tool call timed out -- shared HTTP backend is "
+                                    "gone/replaced. Proxy will surface the error so the host "
+                                    "client can re-spawn and rebind."
+                                ),
+                            )
+                        raise
 
                 @proxy.list_resources()  # type: ignore[no-untyped-call, untyped-decorator]
                 async def handle_list_resources(

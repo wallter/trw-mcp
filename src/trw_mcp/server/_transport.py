@@ -184,6 +184,7 @@ def _run_http_proxy_transport(
                 run_stdio_proxy(
                     url,
                     handshake_timeout_seconds=float(config.mcp_proxy_handshake_timeout_seconds),
+                    request_timeout_seconds=float(config.mcp_proxy_request_timeout_seconds),
                 )
             )
         except (KeyboardInterrupt, EOFError):

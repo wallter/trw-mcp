@@ -76,31 +76,40 @@ class ChannelLock:
         self._file_obj = fd
 
         deadline = time.monotonic() + self.timeout_ms / 1000.0
-        while True:
-            try:
-                _lock_ex_nb(self._fd)
-                log.debug(
-                    "channel_lock_acquired",
-                    lock_path=str(self.lock_path),
-                    timeout_ms=self.timeout_ms,
-                )
-                return self
-            except OSError as exc:
-                if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    # Lock is held by another process — retry
-                    if time.monotonic() >= deadline:
-                        self._close_fd()
-                        log.debug(
-                            "channel_lock_skip",
-                            lock_path=str(self.lock_path),
-                            timeout_ms=self.timeout_ms,
-                        )
-                        raise ChannelLockSkip(self.lock_path) from exc
-                    time.sleep(_POLL_INTERVAL_S)
-                else:
-                    # Unexpected OS error (permissions, etc.) — re-raise
-                    self._close_fd()
-                    raise
+        # Single close-on-failure guard around the whole acquire loop. __exit__
+        # is NOT called when __enter__ raises, so every exit EXCEPT a successful
+        # `return self` must close the fd here. Catching BaseException (not just
+        # OSError) is load-bearing: a KeyboardInterrupt or asyncio.CancelledError
+        # interrupting the time.sleep below would otherwise escape the OSError
+        # handler and leak the open fd until process exit (the 4s poll loop makes
+        # that cancellation window real under the async FastMCP runtime).
+        try:
+            while True:
+                try:
+                    _lock_ex_nb(self._fd)
+                    log.debug(
+                        "channel_lock_acquired",
+                        lock_path=str(self.lock_path),
+                        timeout_ms=self.timeout_ms,
+                    )
+                    return self
+                except OSError as exc:
+                    if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                        # Lock is held by another process — retry
+                        if time.monotonic() >= deadline:
+                            log.debug(
+                                "channel_lock_skip",
+                                lock_path=str(self.lock_path),
+                                timeout_ms=self.timeout_ms,
+                            )
+                            raise ChannelLockSkip(self.lock_path) from exc
+                        time.sleep(_POLL_INTERVAL_S)
+                    else:
+                        # Unexpected OS error (permissions, etc.) — re-raise
+                        raise
+        except BaseException:
+            self._close_fd()
+            raise
 
     def __exit__(
         self,

@@ -20,6 +20,7 @@ PRD-DIST-2403 FR01-FR09.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,11 +51,17 @@ from trw_mcp.channels.opencode._shared_lock import ChannelLockSkip, agents_md_lo
 
 log = structlog.get_logger(__name__)
 
+# Untyped sidecar JSON payload — type alias to avoid dict[str, Any] in public
+# function signatures (NFR04).  The sidecar format is a file contract
+# (risk-report-sidecar/v0) whose schema is outside this package.
+SidecarData = dict[str, Any]
+
 __all__ = [
     "DISTILL_BEGIN",
     "DISTILL_END",
     "T1_BYTE_QUOTA",
     "T1_TOKEN_BUDGET",
+    "SidecarData",
     "build_opencode_agents_md_entry",
     "install_opencode_agents_md_distill_segment",
 ]
@@ -142,11 +149,11 @@ def _t1_content(sidecar_data: dict[str, Any], *, stale: bool = False) -> str:
 
 
 def _content_for_tier_factory(
-    sidecar_data: dict[str, Any] | None,
+    sidecar_data: SidecarData | None,
     distill_action: str,
     *,
     stale: bool = False,
-) -> Any:
+) -> Callable[[str], str]:
     """Return a content_for_tier callback for render_instruction_segment."""
 
     def content_for_tier(tier: str) -> str:
@@ -256,7 +263,7 @@ def _ensure_sequential_placement(
 
 def install_opencode_agents_md_distill_segment(
     repo_root: Path,
-    sidecar_data: dict[str, Any] | None,
+    sidecar_data: SidecarData | None,
     sidecar_sha: str | None,
     *,
     distill_action: str = ("trw-distill self-improve risk-report --repo . --persist-sidecar"),
@@ -298,6 +305,8 @@ def install_opencode_agents_md_distill_segment(
             "opencode_agents_md_segment_lock_skip",
             outcome="skipped_lock",
         )
+        # Emit channel_lock_skip (substrate event type — not channel_conflict)
+        _emit_event(channel_id, entry.client, "channel_lock_skip", None, "skipped_lock")
         return InstructionSegmentResult(
             channel_id=channel_id,
             status="skipped_lock",
@@ -315,11 +324,13 @@ def install_opencode_agents_md_distill_segment(
             dry_run=dry_run,
         )
     except Exception as exc:
-        log.debug(
+        log.warning(
             "opencode_agents_md_segment_error",
             error=str(exc),
             outcome="error",
         )
+        # Emit channel_error (substrate event type — not channel_conflict)
+        _emit_event(channel_id, entry.client, "channel_error", None, "error")
         return InstructionSegmentResult(
             channel_id=channel_id,
             status="error",
@@ -336,7 +347,7 @@ def _render_and_inject_under_lock(
     *,
     entry: ChannelEntry,
     repo_root: Path,
-    sidecar_data: dict[str, Any] | None,
+    sidecar_data: SidecarData | None,
     sidecar_sha: str | None,
     distill_action: str,
     stale: bool,

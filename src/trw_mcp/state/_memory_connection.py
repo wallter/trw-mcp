@@ -47,6 +47,12 @@ _embedder_checked: bool = False
 _embed_failures: int = 0
 _embedder_unavailable_reason: str = ""
 
+# PRD-FIX-COMPOUNDING-3-FR01: Background embeddings backfill thread guard.
+# Same pattern as _memory_recovery._RECOVERY_THREAD — prevents concurrent
+# backfill races when get_backend() is called multiple times after a recovery.
+_BACKFILL_THREAD: threading.Thread | None = None
+_BACKFILL_LOCK = threading.Lock()
+
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = DEFAULT_NAMESPACE
 _MAX_ENTRIES = DEFAULT_LIST_LIMIT
@@ -74,6 +80,53 @@ def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError
         backup_path=exc.backup_path,
         action="raise",
     )
+
+
+def _schedule_post_recovery_backfill(trw_dir: Path) -> bool:
+    """Start a background embeddings backfill thread after recovery, if one is not already running.
+
+    PRD-FIX-COMPOUNDING-3-FR01: Called from get_backend() when backend.recovered==True
+    and from _memory_recovery._recover_and_reset_backend(). Mirrors the
+    _RECOVERY_THREAD guard pattern in _memory_recovery.py.
+
+    Returns:
+        True if a new backfill thread was started, False if one was already running.
+    """
+    global _BACKFILL_THREAD
+
+    def _run_backfill() -> None:
+        global _BACKFILL_THREAD
+        try:
+            backfill_embeddings(trw_dir)
+        except Exception:  # justified: fail-open, backfill thread must never crash MCP server
+            logger.exception("embeddings_backfill_failed", trw_dir=str(trw_dir))
+        finally:
+            with _BACKFILL_LOCK:
+                if _BACKFILL_THREAD is threading.current_thread():
+                    _BACKFILL_THREAD = None
+
+    with _BACKFILL_LOCK:
+        if _BACKFILL_THREAD is not None and _BACKFILL_THREAD.is_alive():
+            logger.warning(
+                "embeddings_backfill_already_running",
+                trw_dir=str(trw_dir),
+                reason="post_recovery",
+            )
+            return False
+        thread = threading.Thread(
+            target=_run_backfill,
+            name="trw-embed-backfill",
+            daemon=True,
+        )
+        _BACKFILL_THREAD = thread
+        thread.start()
+
+    logger.warning(
+        "embeddings_backfill_scheduled",
+        trw_dir=str(trw_dir),
+        reason="post_recovery",
+    )
+    return True
 
 
 def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBackend:
@@ -168,7 +221,11 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             sentinel = trw_dir / "memory" / _SENTINEL_NAME
             if sentinel.exists():
                 sentinel.unlink()
-            logger.info("yaml_backfill_triggered", reason="post_recovery")
+            logger.warning("yaml_backfill_triggered", reason="post_recovery")
+            # PRD-FIX-COMPOUNDING-3-FR01: Schedule vector backfill in background.
+            # YAML row migration via ensure_migrated() only restores the memories
+            # table — sqlite-vec tables remain empty after every recovery.
+            _schedule_post_recovery_backfill(trw_dir)
         ensure_migrated(trw_dir, backend)
         _backend = backend
         return _backend
@@ -375,14 +432,26 @@ def _append_wal_health(result: dict[str, object]) -> None:
         logger.debug("wal_health_check_failed", exc_info=True)
 
 
-def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
+def check_embeddings_status(
+    *,
+    allow_initialize: bool = True,
+    coverage_probe: bool = False,
+) -> dict[str, object]:
     """Check embedding readiness and return status for session_start advisory.
+
+    Args:
+        allow_initialize: Whether to initialize the embedder (cold load) if not yet checked.
+            Set False on the MCP hot path to avoid blocking model loads.
+        coverage_probe: When True, probe existing_vector_ids()/count() on the live backend
+            and compute a coverage_ratio. When below embeddings_coverage_warn_threshold,
+            adds an advisory (PRD-FIX-COMPOUNDING-3-FR02). Default False for backward compat.
 
     Returns a dict with:
     - ``enabled``: whether config has embeddings_enabled=True
     - ``available``: whether deps are installed and model loads
     - ``advisory``: human-readable message (empty when everything is fine)
     - ``recent_failures``: count of embed failures since process start (FR07)
+    - ``coverage_ratio``: (optional, when coverage_probe=True) vector count / entry count
     - ``wal_size_mb``: (optional) WAL file size when above threshold (FR06)
     - ``wal_advisory``: (optional) human-readable WAL size warning (FR06)
     """
@@ -412,12 +481,39 @@ def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, objec
 
     embedder = get_embedder() if allow_initialize else get_initialized_embedder()
     if embedder is not None:
+        advisory = ""
         result = {
             "enabled": True,
             "available": True,
-            "advisory": "",
+            "advisory": advisory,
             "recent_failures": _embed_failures,
         }
+        # PRD-FIX-COMPOUNDING-3-FR02: Optional coverage probe
+        if coverage_probe:
+            backend = peek_backend()
+            if backend is not None:
+                try:
+                    vec_count = len(backend.existing_vector_ids())
+                    total = backend.count()
+                    coverage_ratio: float = vec_count / total if total > 0 else 1.0
+                    result["coverage_ratio"] = coverage_ratio
+                    warn_threshold = getattr(cfg, "embeddings_coverage_warn_threshold", 0.10)
+                    if coverage_ratio < warn_threshold:
+                        advisory = (
+                            f"Vector coverage is low: {vec_count}/{total} entries have embeddings "
+                            f"({coverage_ratio:.1%}). Run 'update-project' to backfill vectors. "
+                            f"Hybrid KNN recall is degraded until backfill completes."
+                        )
+                        result["advisory"] = advisory
+                        logger.warning(
+                            "embeddings_coverage_low",
+                            coverage_ratio=round(coverage_ratio, 4),
+                            vec_count=vec_count,
+                            total=total,
+                            warn_threshold=warn_threshold,
+                        )
+                except Exception:  # justified: fail-open, coverage probe is advisory only
+                    logger.debug("embeddings_coverage_probe_failed", exc_info=True)
         _append_wal_health(result)
         return result
 
@@ -432,26 +528,43 @@ def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, objec
     return result
 
 
+def _embed_and_store_returning(backend: SQLiteBackend, entry_id: str, text: str) -> list[float] | None:
+    """Generate + store an embedding and RETURN the vector. Fail-silent.
+
+    PRD-FIX-COMPOUNDING-2 FR02: identical behavior to :func:`_embed_and_store`
+    (same single ``embedder.embed`` call, same ``_embed_failures`` increment,
+    same vector upsert) but returns the computed vector so the caller can pass
+    it to ``schedule_graph_update`` WITHOUT a second embed call. Returns ``None``
+    when the embedder is unavailable or the embed call fails.
+    """
+    global _embed_failures
+    embedder = get_embedder()
+    if embedder is None:
+        _embed_failures += 1
+        return None
+    try:
+        vector = embedder.embed(text)
+        if vector is not None:
+            backend.upsert_vector(entry_id, vector)
+        return vector
+    except (OSError, ValueError, RuntimeError):
+        # justified: embedding is optional enrichment -- store succeeds without it.
+        _embed_failures += 1
+        logger.debug("embed_and_store_failed", entry_id=entry_id)
+        return None
+
+
 def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
     """Generate embedding for text and upsert into vector table. Fail-silent.
 
     FR07 (PRD-FIX-053): Increments ``_embed_failures`` when embedder is
     unavailable or the embed call fails, so ``get_embed_failure_count()``
     can surface this to agents via ``check_embeddings_status()``.
+
+    Thin wrapper over :func:`_embed_and_store_returning` that discards the
+    vector — preserves the original ``-> None`` signature for existing callers.
     """
-    global _embed_failures
-    embedder = get_embedder()
-    if embedder is None:
-        _embed_failures += 1
-        return
-    try:
-        vector = embedder.embed(text)
-        if vector is not None:
-            backend.upsert_vector(entry_id, vector)
-    except (OSError, ValueError, RuntimeError):
-        # justified: embedding is optional enrichment -- store succeeds without it.
-        _embed_failures += 1
-        logger.debug("embed_and_store_failed", entry_id=entry_id)
+    _embed_and_store_returning(backend, entry_id, text)
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +665,8 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
     # COUNT/SELECT-ID queries, ~ms even on big corpora.
     already_embedded = backend.existing_vector_ids()
     entry_count = backend.count(namespace=_NAMESPACE)
+    missing_count = max(0, entry_count - len(already_embedded))
+
     if entry_count <= len(already_embedded):
         logger.info(
             "embeddings_backfill_complete",
@@ -560,6 +675,15 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
             failed=0,
         )
         return {"embedded": 0, "skipped": entry_count, "failed": 0}
+
+    # PRD-FIX-COMPOUNDING-3-FR04: Log at WARNING when vectors are missing so
+    # ops logs surface the gap. INFO was silent in agent output.
+    logger.warning(
+        "embeddings_backfill_start",
+        total_entries=entry_count,
+        already_embedded=len(already_embedded),
+        missing_count=missing_count,
+    )
 
     entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
 
@@ -589,10 +713,20 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
         except (OSError, ValueError, RuntimeError):
             failed += 1
 
-    logger.info(
-        "embeddings_backfill_complete",
-        embedded=embedded,
-        skipped=skipped,
-        failed=failed,
-    )
+    # PRD-FIX-COMPOUNDING-3-FR04: Log at WARNING when vectors were actually embedded
+    # so ops logs surface completion and counts are visible in agent output.
+    if embedded > 0 or failed > 0:
+        logger.warning(
+            "embeddings_backfill_complete",
+            embedded=embedded,
+            skipped=skipped,
+            failed=failed,
+        )
+    else:
+        logger.info(
+            "embeddings_backfill_complete",
+            embedded=embedded,
+            skipped=skipped,
+            failed=failed,
+        )
     return {"embedded": embedded, "skipped": skipped, "failed": failed}

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------
@@ -157,3 +158,31 @@ def test_install_all_three_commands(tmp_path: Path) -> None:
         assert res["status"] in ("written", "preserved"), f"{filename}: {res}"
         target = tmp_path / ".opencode" / "commands" / filename
         assert target.exists(), f"{filename} not found"
+
+
+def test_command_write_error_returns_error_status(tmp_path: Path) -> None:
+    """FR14: OSError during write returns error status (fail-open)."""
+    from trw_mcp.channels.opencode._custom_commands import install_custom_commands
+
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        results = install_custom_commands(tmp_path)
+
+    for filename, res in results.items():
+        assert res["status"] == "error", f"{filename}: expected error, got {res['status']}"
+        assert "error" in res
+
+
+def test_truncation_applied_when_content_exceeds_quota() -> None:
+    """FR15: _apply_quota truncates content over 4096 bytes with footer."""
+    from trw_mcp.channels.opencode._custom_commands import (
+        COMMAND_QUOTA_BYTES,
+        _apply_quota,
+        _TRUNCATION_FOOTER,
+    )
+
+    # Build content over the limit
+    oversized = "x" * (COMMAND_QUOTA_BYTES + 500)
+    result = _apply_quota(oversized)
+
+    assert len(result.encode("utf-8")) <= COMMAND_QUOTA_BYTES
+    assert result.endswith(_TRUNCATION_FOOTER)

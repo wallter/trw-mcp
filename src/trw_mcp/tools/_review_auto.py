@@ -45,13 +45,23 @@ def handle_auto_mode(
     diff = _helpers._get_git_diff()
 
     if reviewer_findings is not None:
+        # Real pre-collected findings from client-side multi-agent review:
+        # this is a substantive review, NOT the limited pattern-scan path.
         analysis: MultiReviewerAnalysisResult = {
             "reviewer_roles_run": list(_helpers.REVIEWER_ROLES),
             "reviewer_errors": [],
             "findings": reviewer_findings,
+            "auto_analysis_limited": False,
+            "limited_reason": "",
         }
     else:
+        # Pattern-scan-only fallback: _run_multi_reviewer_analysis flags this
+        # as auto_analysis_limited=True so the artifact cannot pose as a
+        # substantive review (see _review_multi.PATTERN_SCAN_LIMITED_REASON).
         analysis = _helpers._run_multi_reviewer_analysis(diff, config)  # type: ignore[operator]
+
+    auto_analysis_limited = bool(analysis.get("auto_analysis_limited", False))
+    limited_reason = str(analysis.get("limited_reason", "")) if auto_analysis_limited else ""
 
     all_auto_findings = analysis.get("findings", [])
     if not isinstance(all_auto_findings, list):
@@ -94,7 +104,19 @@ def handle_auto_mode(
         "confidence_threshold": confidence_threshold,
         "critical_count": critical_count,
         "run_path": str(resolved_run) if resolved_run else None,
+        # Honest labeling: True iff only the pattern-scan ran (no substantive
+        # multi-reviewer / cross-model findings). Downstream gates must not
+        # accept a limited auto-review as a code-quality signal.
+        "auto_analysis_limited": auto_analysis_limited,
+        "limited_reason": limited_reason,
     }
+    if auto_analysis_limited:
+        logger.info(
+            "auto_review_pattern_scan_limited",
+            review_id=review_id,
+            verdict=verdict,
+            reason=limited_reason,
+        )
 
     # SOC 2 fields (INFRA-027-FR04) -- compute from available context
     diff_hash = hashlib.sha256((diff or "").encode()).hexdigest() if diff else ""
@@ -120,6 +142,11 @@ def handle_auto_mode(
             "total_findings_count": len(all_auto_findings),
             "confidence_threshold": confidence_threshold,
             "findings": surfaced,
+            # Honest labeling persisted into the artifact so any reader of
+            # review.yaml can tell a limited pattern-scan from a real review.
+            "auto_analysis_limited": auto_analysis_limited,
+            "limited_reason": limited_reason,
+            "review_kind": "pattern-scan (limited)" if auto_analysis_limited else "multi-reviewer",
             # SOC 2 fields (INFRA-027-FR04)
             "reviewer_id": f"trw-auto-{review_id}",
             "reviewer_role": reviewer_role_str,
@@ -133,6 +160,7 @@ def handle_auto_mode(
             "mode": "auto",
             "surfaced_findings": len(surfaced),
             "total_findings": len(all_auto_findings),
+            "auto_analysis_limited": auto_analysis_limited,
             "prd_ids": list(prd_ids) if prd_ids else [],
         },
     )

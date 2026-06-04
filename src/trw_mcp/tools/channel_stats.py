@@ -120,6 +120,10 @@ def register_channel_stats_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Return channel correlation and throttle stats for operator review.
 
+        Use when:
+        - Inspecting active channel health, throttle decisions, or event telemetry statistics.
+        - Debugging channel latency, performance drops, or correlation issues.
+
         Reads channel-events.jsonl, computes push→outcome correlation rates
         per (channel_id, client), applies CLIENT_CORRECTION_FACTORS, and
         evaluates CLIENT_THROTTLE_THRESHOLDS to produce throttle decisions.

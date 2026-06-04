@@ -2,11 +2,13 @@
 
 Implements load/validate/write for .trw/channels/manifest.yaml.
 Performs alias normalization at load time (FR03) and manifest
-auto-recovery (FR15 partial — auto_recreate_empty helper).
+auto-recovery (FR15 — auto_recreate_empty helper + manifest_recovered telemetry).
 """
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from ruamel.yaml import YAML
 
 from trw_mcp.channels._manifest_models import (
+    DISTILL_MARKER_KEYS,
     MARKER_REGISTRY,
     ChannelEntry,
 )
@@ -184,38 +187,77 @@ def load(path: Path) -> ChannelManifest:
     return manifest
 
 
-def write(manifest: ChannelManifest, path: Path) -> None:
-    """Write *manifest* to *path* in round-trip-safe YAML.
+def _atomic_dump_yaml(data: dict[str, Any], path: Path) -> None:
+    """Dump *data* to *path* as round-trip YAML via a temp file + os.replace.
 
-    Creates parent directories if needed.
+    The manifest is the registry of every channel, so a half-written file is
+    catastrophic — load() would raise and all channel operations break. A direct
+    ``open("w")`` truncates in place, so a crash (MCP server restart) or a second
+    concurrent writer mid-dump can leave an unparseable manifest. Dumping to a
+    sibling temp file and ``os.replace``-ing it into position is atomic on POSIX:
+    a reader sees either the old or the new manifest, never a partial one. (This
+    makes each write crash-safe; it does not serialize concurrent writers, so a
+    lost update under true concurrency remains possible — callers that
+    read-modify-write should still coordinate.)
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     yaml = YAML(typ="rt")
     yaml.default_flow_style = False
-    data = manifest.model_dump(mode="json")
-    with path.open("w", encoding="utf-8") as fh:
-        yaml.dump(data, fh)
+    fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.tmp.")
+    tmp_path = Path(tmp_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            yaml.dump(data, fh)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def write(manifest: ChannelManifest, path: Path) -> None:
+    """Write *manifest* to *path* in round-trip-safe YAML.
+
+    Atomic (temp file + os.replace) so a crash or concurrent writer can never
+    leave a half-written, unparseable manifest. Creates parent dirs if needed.
+    """
+    _atomic_dump_yaml(manifest.model_dump(mode="json"), path)
     log.debug("manifest_written", path=str(path))
 
 
-def auto_recreate_empty(path: Path) -> None:
+def auto_recreate_empty(path: Path, *, log_path: Path | None = None) -> None:
     """Write a minimal valid manifest to *path*.
 
     Used for manifest auto-recovery (FR15 / SYS-04 fix).
     Creates parent directories if needed.
+    Emits a ``manifest_recovered`` telemetry event (FR15-AC4).
+
+    Args:
+        path: Destination path for the recovered manifest.
+        log_path: Override for the telemetry log path.  Defaults to the
+            standard ``append_channel_event`` resolution (TRW_REPO_ROOT or
+            ``.trw/telemetry/channel-events.jsonl``).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    yaml = YAML(typ="rt")
-    yaml.default_flow_style = False
     data: dict[str, Any] = {
         "format_version": MANIFEST_FORMAT_VERSION,
         "generated_by": "trw-mcp",
         "generated_at": "",
         "channels": [],
     }
-    with path.open("w", encoding="utf-8") as fh:
-        yaml.dump(data, fh)
+    _atomic_dump_yaml(data, path)
     log.warning("manifest_auto_recreated", path=str(path))
+
+    # FR15-AC4: emit manifest_recovered telemetry event on auto-recovery.
+    # Deferred import to avoid circular dependency (_telemetry → (nothing in loader)).
+    from trw_mcp.channels._telemetry import append_channel_event
+
+    append_channel_event(
+        channel_id="__system__",
+        client="__system__",
+        event_type="manifest_recovered",
+        log_path=log_path,
+        outcome="auto_recreated_empty",
+        manifest_path=str(path),
+    )
 
 
 def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
@@ -223,8 +265,21 @@ def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
 
     Skips aspirational channels (FR16).
 
+    A collision occurs when a distill-channel marker string belonging to a
+    DIFFERENT channel is already present in *target_file*.  The entry's own
+    configured markers (``entry.markers.start`` and ``entry.markers.end``) are
+    excluded from the check — finding them in the file is expected on re-install,
+    not a conflict.
+
+    MED-7 fix: generic ceremony markers (``<!-- trw:start -->`` /
+    ``<!-- trw:end -->``) are intentionally excluded from the collision scope.
+    CLAUDE.md and AGENTS.md files always contain these markers as part of the
+    standard TRW bootstrap; treating them as collisions would produce
+    false-positives on every standard deployment.  Only distill-channel–specific
+    markers (DISTILL_MARKER_KEYS) are checked.
+
     Raises:
-        MarkerCollisionError: listing each colliding string found.
+        MarkerCollisionError: listing each colliding foreign marker string found.
     """
     # Use the string value in case use_enum_values serialized it
     status_val = entry.status
@@ -236,25 +291,27 @@ def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
 
     content = target_file.read_text(encoding="utf-8")
 
-    # Collect markers from the entry itself
-    entry_markers: list[str] = []
+    # Collect this entry's own markers so we can exclude them from the check.
     if isinstance(entry.markers, dict):
-        start = entry.markers.get("start", "")
-        end = entry.markers.get("end", "")
+        own_start = entry.markers.get("start", "")
+        own_end = entry.markers.get("end", "")
     else:
-        start = entry.markers.start
-        end = entry.markers.end
-    if start:
-        entry_markers.append(start)
-    if end:
-        entry_markers.append(end)
+        own_start = entry.markers.start
+        own_end = entry.markers.end
 
-    # Also check against the canonical registry
-    all_markers_to_check = list(MARKER_REGISTRY.values()) + entry_markers
+    own_markers: frozenset[str] = frozenset(m for m in (own_start, own_end) if m)
+
+    # Check only distill-channel marker strings (ceremony markers excluded —
+    # see MED-7 rationale in the docstring).  Exclude the entry's own markers.
+    foreign_markers = [
+        MARKER_REGISTRY[k]
+        for k in DISTILL_MARKER_KEYS
+        if MARKER_REGISTRY[k] and MARKER_REGISTRY[k] not in own_markers
+    ]
 
     collisions: list[str] = []
-    for marker in all_markers_to_check:
-        if marker and marker in content and marker not in collisions:
+    for marker in foreign_markers:
+        if marker in content and marker not in collisions:
             collisions.append(marker)
 
     if collisions:

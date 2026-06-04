@@ -40,6 +40,7 @@ from trw_mcp.channels._manifest_loader import (
 from trw_mcp.channels._manifest_models import ChannelEntry
 from trw_mcp.channels._provenance import now_utc_iso8601
 from trw_mcp.channels.opencode._agents_md_segment import (
+    SidecarData,
     install_opencode_agents_md_distill_segment,
 )
 from trw_mcp.channels.opencode._custom_commands import install_custom_commands
@@ -166,7 +167,7 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
 
 def install_opencode_distill_channels(
     repo_root: Path,
-    sidecar_data: dict[str, Any] | None = None,
+    sidecar_data: SidecarData | None = None,
     sidecar_sha: str | None = None,
 ) -> dict[str, object]:
     """Install all six opencode distill channel artifacts.
@@ -223,6 +224,9 @@ def install_opencode_distill_channels(
     results["client_profile_env"] = "written"
 
     # 7. Bootstrap channel manifest (FR27 / FR30)
+    # Fail-soft: a bad manifest data file surfaces via result dict, not a raised
+    # exception, so a single invalid entry does not abort the entire install
+    # (matches cursor's bootstrap pattern — OC-M2 audit fix).
     try:
         manifest_result = bootstrap_channel_manifest(repo_root)
         results["manifest"] = manifest_result
@@ -233,7 +237,13 @@ def install_opencode_distill_channels(
             outcome="error",
         )
         results["manifest"] = {"status": "error", "error": str(exc)}
-        raise
+    except Exception as exc:  # justified: fail-open, manifest is best-effort
+        log.debug(
+            "opencode_manifest_bootstrap_failed",
+            error=str(exc),
+            outcome="error",
+        )
+        results["manifest"] = {"status": "error", "error": str(exc)}
 
     # 8. Gitignore entries (FR28)
     for entry_str in _GITIGNORE_ENTRIES:

@@ -32,6 +32,7 @@ from typing import Protocol, cast
 import structlog
 import yaml
 
+from trw_mcp.telemetry.constants import EventType, Status
 from trw_mcp.telemetry.event_base import ToolCallEvent
 from trw_mcp.telemetry.trace_context import build_tool_trace_fields, new_trace_event_id
 
@@ -147,6 +148,54 @@ def clear_pricing_cache() -> None:
     global _PRICING_CACHE, _PRICING_PATH_CACHE
     _PRICING_CACHE = None
     _PRICING_PATH_CACHE = None
+
+
+def _pipeline_projection(event: ToolCallEvent) -> dict[str, object]:
+    """Flatten a :class:`ToolCallEvent` into the pipeline/backend projection.
+
+    Mirrors the flat ``event_data`` shape the older ``@log_tool_call`` path
+    enqueues (``tools/telemetry.py::_write_tool_event``): top-level keys that
+    line up with the backend's ``MAPPED_FIELDS`` (``tool_name``,
+    ``duration_ms``, ``status``, ``event_type``, ``session_id``, ``run_id``,
+    ``error_type``) so they land in ``telemetry_events`` columns rather than
+    the catch-all payload JSON. ``outcome`` is carried alongside ``status``
+    for parity with the ``wrap_tool`` native vocabulary; the pipeline's
+    ``_scrub_pii``/``_enrich_*`` steps fill in installation_id, framework_version,
+    phase, and ts.
+    """
+    payload = event.payload
+    outcome = str(payload.get("outcome", "success"))
+    status = Status.SUCCESS if outcome == "success" else Status.ERROR
+    error_class = str(payload.get("error_class", "") or "")
+    projection: dict[str, object] = {
+        "tool_name": str(payload.get("tool", "")),
+        "duration_ms": payload.get("wall_ms", 0),
+        "outcome": outcome,
+        "status": status,
+        "success": outcome == "success",
+        "event_type": EventType.TOOL_INVOCATION,
+        "session_id": event.session_id,
+        "run_id": event.run_id,
+    }
+    if error_class:
+        projection["error_type"] = error_class
+    return projection
+
+
+def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
+    """Enqueue a flat tool event to the telemetry pipeline. Fail-open.
+
+    Mirrors ``tools/telemetry.py::_enqueue_to_pipeline`` so events emitted via
+    the unified ``wrap_tool`` path reach the backend (the senders read the
+    pipeline's ``pipeline-events.jsonl``, never the unified events file).
+    """
+    try:
+        from trw_mcp.telemetry.pipeline import TelemetryPipeline
+
+        pipeline = TelemetryPipeline.get_instance()
+        pipeline.enqueue(dict(event_data))
+    except Exception:  # justified: fail-open, telemetry pipeline enqueue must never block tool execution
+        logger.debug("tool_call_pipeline_enqueue_skipped", exc_info=True)  # justified: fail-open
 
 
 def _bind_call_args(fn: Callable[..., object], *args: object, **kwargs: object) -> dict[str, object]:
@@ -452,6 +501,17 @@ def wrap_tool(
                     except Exception:  # justified: fail-open, emit path must not block tool
                         logger.debug("tool_call_event_emit_failed", tool=recorded_name, exc_info=True)
 
+                    # F2: the unified events file is NOT read by any telemetry
+                    # sender (pipeline reads pipeline-events.jsonl, sender reads
+                    # tool-telemetry.jsonl), so wrap_tool emissions never reached
+                    # PostgreSQL. Also enqueue a flat projection to the telemetry
+                    # pipeline — the same path @log_tool_call uses — so backend
+                    # telemetry_events rows are written. Fail-open.
+                    try:
+                        _enqueue_to_pipeline(_pipeline_projection(event))
+                    except Exception:  # justified: fail-open, enqueue must not block tool
+                        logger.debug("tool_call_pipeline_enqueue_failed", tool=recorded_name, exc_info=True)
+
                     logger.debug(
                         "tool_call_event_constructed",
                         tool=recorded_name,
@@ -470,4 +530,10 @@ __all__ = [
     "build_tool_call_event",
     "clear_pricing_cache",
     "wrap_tool",
+]
+
+# Internal helpers exposed for test monkeypatching of the pipeline boundary.
+__test_internals__ = [
+    "_enqueue_to_pipeline",
+    "_pipeline_projection",
 ]

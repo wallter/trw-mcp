@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from trw_mcp.channels._manifest_models import ChannelEntry, ChannelSurface
-from trw_mcp.channels._ttl import CheckResult, check_staleness
-
+from trw_mcp.channels._ttl import check_staleness
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -65,7 +61,9 @@ def test_commit_stale_when_count_exceeds_ttl() -> None:
             last_render_ts=None,
         )
     assert result.is_stale is True
-    assert result.commits_since == 11
+    # MED-6: field renamed from commits_since to ttl_commits_remaining
+    # ttl_commits_remaining = ttl_commits - commits_elapsed = 10 - 11 = -1
+    assert result.ttl_commits_remaining == -1
     assert result.ttl_unknown is False
 
 
@@ -77,7 +75,8 @@ def test_commit_not_stale_when_count_within_ttl() -> None:
             last_render_ts=None,
         )
     assert result.is_stale is False
-    assert result.commits_since == 5
+    # ttl_commits_remaining = 10 - 5 = 5 commits remaining
+    assert result.ttl_commits_remaining == 5
 
 
 def test_commit_exactly_at_ttl_not_stale() -> None:
@@ -158,8 +157,10 @@ def test_days_stale_when_exceeds_ttl_days() -> None:
         last_render_ts=old_ts,
     )
     assert result.is_stale is True
-    assert result.days_since is not None
-    assert result.days_since > 10
+    # MED-6: field renamed from days_since to ttl_days_remaining
+    # ttl_days_remaining = ttl_days - days_elapsed ≈ 10 - 15 = -5 (negative → stale)
+    assert result.ttl_days_remaining is not None
+    assert result.ttl_days_remaining < 0
 
 
 def test_days_not_stale_when_within_ttl() -> None:
@@ -180,7 +181,8 @@ def test_days_ttl_no_render_ts_skipped() -> None:
         last_render_ts=None,
     )
     assert result.is_stale is False
-    assert result.days_since is None
+    # MED-6: field renamed from days_since to ttl_days_remaining
+    assert result.ttl_days_remaining is None
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +225,45 @@ def test_stale_from_commits_when_days_ok() -> None:
             last_render_ts=recent_ts,
         )
     assert result.is_stale is True
+
+
+# ---------------------------------------------------------------------------
+# MED-6 behavioral tests: renamed fields carry correct semantics
+# ---------------------------------------------------------------------------
+
+
+def test_ttl_commits_remaining_is_positive_when_not_stale() -> None:
+    """MED-6: ttl_commits_remaining must be positive when budget remains."""
+    with patch("trw_mcp.channels._ttl._git_commits_since", return_value=3):
+        result = check_staleness(
+            entry=_entry(ttl_commits=10),
+            last_sidecar_sha="abc123",
+            last_render_ts=None,
+        )
+    assert result.is_stale is False
+    assert result.ttl_commits_remaining == 7  # 10 - 3 = 7 remaining
+
+
+def test_ttl_commits_remaining_is_negative_when_stale() -> None:
+    """MED-6: ttl_commits_remaining is negative when budget exhausted."""
+    with patch("trw_mcp.channels._ttl._git_commits_since", return_value=15):
+        result = check_staleness(
+            entry=_entry(ttl_commits=10),
+            last_sidecar_sha="abc123",
+            last_render_ts=None,
+        )
+    assert result.is_stale is True
+    assert result.ttl_commits_remaining == -5  # 10 - 15 = -5
+
+
+def test_ttl_days_remaining_is_positive_when_not_stale() -> None:
+    """MED-6: ttl_days_remaining must be positive when days budget remains."""
+    recent_ts = _iso(datetime.now(timezone.utc) - timedelta(days=3))
+    result = check_staleness(
+        entry=_entry(ttl_days=10),
+        last_sidecar_sha="abc123",
+        last_render_ts=recent_ts,
+    )
+    assert result.is_stale is False
+    assert result.ttl_days_remaining is not None
+    assert result.ttl_days_remaining > 0  # 10 - 3 ≈ 7 remaining

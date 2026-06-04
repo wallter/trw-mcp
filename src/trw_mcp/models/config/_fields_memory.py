@@ -47,9 +47,30 @@ class _MemoryFields:
     embeddings_enabled: bool = False
     retrieval_embedding_model: str = "all-MiniLM-L6-v2"
     retrieval_embedding_dim: int = 384
+    # PRD-FIX-COMPOUNDING-3-FR02: Coverage warning threshold for coverage_probe.
+    # When coverage_ratio < this value, check_embeddings_status() emits an advisory.
+    # Default 0.10 (10%): fires on the current 3.6% post-recovery state; silent above 10%.
+    embeddings_coverage_warn_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
+    # PRD-FIX-105-FR01: When session_start detects low vector coverage (advisory
+    # set), schedule a BACKGROUND backfill thread so the corpus self-heals instead
+    # of the advisory crying wolf forever with no remediation. Uses the singleton
+    # _schedule_post_recovery_backfill thread guard (one backfill at a time, no-op
+    # while running), so it never starves the shared HTTP hot path the way a
+    # synchronous backfill would. Set False to keep the old advisory-only posture.
+    embeddings_auto_backfill_on_low_coverage: bool = True
     hybrid_bm25_candidates: int = 50
     hybrid_vector_candidates: int = 50
     hybrid_rrf_k: int = 60
+    # R-FUSION-001 / F15: blend learning importance into the in-process recall's
+    # positional RRF fusion (`_memory_queries._search_entries`), matching the
+    # MemoryClient path (`trw_memory.retrieval.pipeline.hybrid_search` →
+    # `rrf_fuse(..., alpha=...)`). The bare RRF score is position-only, so two
+    # results at the same fused rank tie even when one is impact-0.95 tribal
+    # knowledge and the other is impact-0.2 noise. `final = alpha * rrf_norm +
+    # (1 - alpha) * importance`. 1.0 = pure position (legacy back-compat, no
+    # importances passed), 0.0 = pure importance. Default 0.7 mirrors the
+    # MemoryClient default (`MemoryConfig.rrf_importance_alpha`).
+    hybrid_rrf_importance_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
     hybrid_reranking_enabled: bool = False
     retrieval_fallback_enabled: bool = True
     wal_checkpoint_threshold_mb: int = 10

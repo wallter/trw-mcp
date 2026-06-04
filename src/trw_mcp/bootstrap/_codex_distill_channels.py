@@ -24,6 +24,7 @@ from typing import Any
 import structlog
 from ruamel.yaml import YAML
 
+from trw_mcp.bootstrap._codex_hooks import codex_hooks_review_warning
 from trw_mcp.channels._manifest_loader import (
     ManifestValidationError,
     auto_recreate_empty,
@@ -245,13 +246,26 @@ def install_codex_distill_channels(
         force: When True, overwrite existing hook script unconditionally.
 
     Returns:
-        Dict with ``created``, ``updated``, ``preserved``, ``errors`` lists.
+        Dict with ``created``, ``updated``, ``preserved``, ``errors``, and
+        ``warnings`` lists.
+
+    Raises:
+        ValueError: If ``target_dir`` resolves to the user's home directory.
+            TRW does not write Codex distill channels to ``~/.codex/``.
     """
+    # FR13: Reject global home directory — TRW does not write to ~/.codex/AGENTS.md.
+    if target_dir.resolve() == Path.home().resolve():
+        raise ValueError(
+            "TRW does not write Codex distill channels to the home directory. "
+            "Pass a project repository root, not Path.home()."
+        )
+
     result: dict[str, list[str]] = {
         "created": [],
         "updated": [],
         "preserved": [],
         "errors": [],
+        "warnings": [],
     }
 
     # 1. Install PostToolUse telemetry hook script
@@ -295,6 +309,25 @@ def install_codex_distill_channels(
     except Exception as exc:  # justified: fail-open, manifest is best-effort
         log.warning("codex_manifest_bootstrap_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"Codex manifest bootstrap failed: {exc}")
+
+    # FR18: Add gitignore entries for runtime state/lock/telemetry files (not hook scripts,
+    # which are project config and SHOULD be git-tracked).
+    try:
+        from trw_mcp.channels._gitignore import add_gitignore_entry
+
+        _GITIGNORE_ENTRIES = [
+            ".trw/channels/codex-*.state.json",
+            ".trw/channels/codex-*.lock",
+            ".trw/telemetry/channel-events.jsonl*",
+        ]
+        for entry in _GITIGNORE_ENTRIES:
+            add_gitignore_entry(target_dir, entry)
+    except Exception as exc:  # justified: fail-open, gitignore is best-effort
+        log.warning("codex_distill_gitignore_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"gitignore update failed: {exc}")
+
+    # FR19: Emit hooks approval notice so the operator knows to run /hooks in Codex.
+    result["warnings"].append(codex_hooks_review_warning())
 
     log.debug(
         "codex_distill_channels_installed",

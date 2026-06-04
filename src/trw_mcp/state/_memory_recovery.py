@@ -32,12 +32,21 @@ _RECOVERY_LOCK = threading.Lock()
 _RECOVERY_THREAD: threading.Thread | None = None
 
 
-def check_embeddings_status(*, allow_initialize: bool = True) -> dict[str, object]:
-    """Check embedding readiness; honors memory_adapter._embed_failures override."""
+def check_embeddings_status(
+    *,
+    allow_initialize: bool = True,
+    coverage_probe: bool = False,
+) -> dict[str, object]:
+    """Check embedding readiness; honors memory_adapter._embed_failures override.
+
+    Args:
+        allow_initialize: Whether to initialize embedder if not yet checked.
+        coverage_probe: When True, probe vector coverage ratio (PRD-FIX-COMPOUNDING-3-FR02).
+    """
     from trw_mcp.state import memory_adapter
     from trw_mcp.state._memory_connection import check_embeddings_status as _impl
 
-    result = _impl() if allow_initialize else _impl(allow_initialize=False)
+    result = _impl(allow_initialize=allow_initialize, coverage_probe=coverage_probe)
     if memory_adapter._embed_failures is not None:
         result["recent_failures"] = memory_adapter._embed_failures
     return result
@@ -185,10 +194,20 @@ def _recover_and_reset_backend(trw_dir: Path) -> None:
     if sentinel.exists():
         sentinel.unlink()
     try:
-        _get_backend(trw_dir)
+        backend = _get_backend(trw_dir)
     except CorruptDatabaseUnsalvageableError as exc:
         _log_terminal_recovery(db_path, exc)
         raise
+    # PRD-FIX-COMPOUNDING-3-FR03: Schedule vector backfill after deferred recovery.
+    # get_backend() already fires _schedule_post_recovery_backfill when
+    # backend.recovered==True. Call it again here explicitly to handle the case
+    # where the newly created backend does NOT have recovered==True (because
+    # recovery_db was called manually above), ensuring the deferred-background
+    # recovery path always triggers backfill.
+    if not getattr(backend, "recovered", False):
+        from trw_mcp.state._memory_connection import _schedule_post_recovery_backfill
+
+        _schedule_post_recovery_backfill(trw_dir)
 
 
 def _logger() -> Any:

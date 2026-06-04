@@ -101,7 +101,12 @@ class TestRecallLogsSurfaceEvent:
 
     def test_recall_logs_surface_event_for_each_learning(self, tmp_path: Path) -> None:
         """trw_recall logs a surface event for each returned learning."""
-        entries = [_make_entry("L-a1"), _make_entry("L-a2")]
+        # Distinct summaries: identical content would (correctly) collapse under
+        # the recall-path exact-content dedup, leaving one surfaced learning.
+        entries = [
+            _make_entry("L-a1", summary="learning a1"),
+            _make_entry("L-a2", summary="learning a2"),
+        ]
         result, mock_log = _run_execute_recall(tmp_path, entries=entries)
 
         # Should have logged 2 events (one per learning)

@@ -374,11 +374,12 @@ class TestGenerateReviewMd:
             assert "L-low" not in content
 
     def test_fr08_retired_learning_excluded(self, tmp_path: Path) -> None:
-        """generate_review_md passes status='active' so retired learnings are filtered.
+        """generate_review_md filters retired learnings via status='active'.
 
-        The filtering happens inside recall_learnings (at the query layer). We verify
-        that generate_review_md calls recall_learnings with status='active' so retired
-        entries are excluded before they reach REVIEW.md.
+        The status='active' filter is now enforced inside the recall_for_review_tags
+        factory (PRD-FIX-085), which hardcodes status='active' when calling the
+        underlying recall_learnings. We verify the filter reaches recall_learnings
+        end-to-end so retired entries are excluded before they reach REVIEW.md.
         """
         from unittest.mock import MagicMock
 
@@ -389,10 +390,10 @@ class TestGenerateReviewMd:
         repo_root = tmp_path
 
         mock_recall = MagicMock(return_value=[])  # returns empty — simulates status filtering
-        with patch("trw_mcp.state.recall_factories.recall_for_review_tags", mock_recall):
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", mock_recall):
             result = generate_review_md(trw_dir, repo_root=repo_root)
 
-        # Verify the status argument is passed correctly
+        # Verify the status argument is passed through to the recall layer
         call_kwargs = mock_recall.call_args
         assert call_kwargs is not None
         assert call_kwargs.kwargs.get("status") == "active"
@@ -447,8 +448,8 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
             patch(
@@ -476,8 +477,8 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
             patch("trw_mcp.state.claude_md._sync.generate_review_md", side_effect=RuntimeError("boom")),
@@ -500,8 +501,8 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
             patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
             patch("trw_mcp.state.analytics.mark_promoted"),
             patch(

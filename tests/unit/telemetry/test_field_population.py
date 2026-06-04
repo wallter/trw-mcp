@@ -22,7 +22,7 @@ from typing import Any, Final
 import pytest
 
 from trw_mcp.models.config import _reset_config
-from trw_mcp.state._paths import pin_active_run, unpin_active_run
+from trw_mcp.state._paths import _reset_session_id, get_session_id, pin_active_run, unpin_active_run
 from trw_mcp.telemetry.event_base import (
     EVENT_PAYLOAD_KEY_REGISTRY,
     EVENT_TYPE_REGISTRY,
@@ -275,11 +275,19 @@ def production_workspace(
     monkeypatch.setattr("trw_mcp.tools._ceremony_helpers._resolve_trw_dir_compat", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.build._registration.resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.ceremony._find_active_run_compat", lambda _ctx: run_dir)
+    # ``wrap_tool``'s ctx-less ``_resolve_run_dir`` resolves the pin via the
+    # process-level session id (``get_session_id``), not the ``TRW_SESSION_ID``
+    # env var. Tools invoked without ``run_path``/``ctx`` (``trw_query_events``,
+    # ``trw_surface_diff``) therefore only land in this run when the process
+    # session id matches the pin key. Align it for the duration of the test.
+    _saved_session_id = get_session_id()
+    _reset_session_id("sess-123")
     pin_active_run(run_dir, session_id="sess-123")
     try:
         yield run_dir
     finally:
         unpin_active_run(session_id="sess-123")
+        _reset_session_id(_saved_session_id)
         _reset_config(None)
         clear_pricing_cache()
 

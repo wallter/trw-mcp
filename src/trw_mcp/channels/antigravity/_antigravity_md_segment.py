@@ -24,6 +24,7 @@ PRD-DIST-2404 FR03-FR06, FR11-FR13, FR15, FR17-FR18.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -189,7 +190,7 @@ def _t1_content(sidecar_data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _content_for_tier_factory(sidecar_data: dict[str, Any] | None) -> Any:
+def _content_for_tier_factory(sidecar_data: dict[str, Any] | None) -> Callable[[str], str]:
     """Return a content_for_tier callback bound to *sidecar_data*.
 
     T0: returns the single beacon comment.

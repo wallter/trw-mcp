@@ -118,34 +118,19 @@ def _persist_deferred_results(
         run_data = reader.read_yaml(run_yaml_path)
         run_data["deferred_results"] = dict(results)
 
-        consolidation = results.get("consolidation")
-        if isinstance(consolidation, dict):
-            promotions = consolidation.get("audit_pattern_promotions")
-            if isinstance(promotions, list):
-                run_data["audit_pattern_promotions"] = promotions
-                run_data["promotion_candidates"] = {
-                    "source": "consolidation",
-                    "audit_pattern_promotions": promotions,
-                    "audit_pattern_promotion_threshold": consolidation.get("audit_pattern_promotion_threshold"),
-                    # PRD-QUAL-056-FR10: make the current production wiring
-                    # explicit. CORE-093 removed automatic CLAUDE.md learning
-                    # promotion, and there is no shipped trw_meta_tune() tool.
-                    # These candidates are currently persisted as delivery
-                    # metadata for later reconciliation/follow-up, not auto-
-                    # promoted into another surface.
-                    "promotion_path": "metadata_only",
-                    "delivery_surface": "run.yaml",
-                    "claude_md_sync_integration": "not_applicable_prd_core_093",
-                    "meta_tune_integration": "tool_unavailable",
-                }
-                logger.info(
-                    "audit_pattern_promotions_persisted",
-                    count=len(promotions),
-                    promotion_path="metadata_only",
-                    delivery_surface="run.yaml",
-                    claude_md_sync_integration="not_applicable_prd_core_093",
-                    meta_tune_integration="tool_unavailable",
-                )
+        # F19 (2026-06-04): the audit-pattern "promotion candidates" used to be
+        # mirrored into dedicated ``audit_pattern_promotions`` /
+        # ``promotion_candidates`` run.yaml keys here, tagged
+        # ``promotion_path="metadata_only"`` / ``meta_tune_integration="tool_unavailable"``.
+        # That was a self-documented no-op: nothing in the codebase ever read
+        # those keys back (CORE-093 removed automatic CLAUDE.md learning
+        # promotion, and no trw_meta_tune() tool ships), so the signal was
+        # computed, written, and silently dropped. The arrays also ballooned
+        # legacy run.yaml files to multiple MB and dominated boot-time YAML
+        # parsing (see state/_run_gc.py). Wiring them into trw_instructions_sync
+        # would re-introduce exactly the CLAUDE.md promotion CORE-093 deleted, so
+        # the honest fix is to stop persisting the dead signal. The consolidation
+        # step's status still flows through ``deferred_results`` above for audit.
 
         writer.write_yaml(run_yaml_path, run_data)
         logger.info("deferred_results_persisted", path=str(run_yaml_path))
@@ -257,6 +242,7 @@ def _try_acquire_deferred_lock(
             holder=record,
             stale_threshold_seconds=stale_threshold_seconds,
         )
+        fd2: io.TextIOWrapper | None = None
         try:
             fd2 = lock_path.open("a+", encoding="utf-8")
             _lock_ex_nb(fd2.fileno())
@@ -278,6 +264,11 @@ def _try_acquire_deferred_lock(
             return fd2
         except Exception:  # justified: cleanup, stale-reclaim failure must not raise into the deliver path
             logger.debug("deferred_lock_reclaim_failed", exc_info=True)
+            # Close the fd we opened — the OS-level flock raised after open()
+            # (the expected contested case), so without this every stale-lock
+            # reclaim race leaks one fd in the long-running MCP server.
+            if fd2 is not None:
+                fd2.close()
     return None
 
 
@@ -472,7 +463,16 @@ def _run_deferred_steps(
         _timed_step("telemetry", lambda: _step_telemetry(resolved_run))
         _timed_step("batch_send", lambda: _step_batch_send())
         _timed_step("trust_increment", lambda: _step_trust_increment(resolved_run))
-        _timed_step("ceremony_feedback", lambda: _step_ceremony_feedback(resolved_run, critical_results))
+        # FIX-052: feed the LIVE deferred ``results`` (which already contains the
+        # ``telemetry`` step's computed ceremony_score, build_passed, and
+        # coverage_delta) rather than the PRE-deferred ``critical_results``
+        # snapshot. The snapshot never carried a ``telemetry`` key, so the
+        # feedback step recorded a constant ceremony_score=0.0 and the adaptive
+        # feedback loop had no gradient. The ``telemetry`` step runs above, so its
+        # output is present in ``results`` by the time this step executes.
+        _merge_results: dict[str, object] = dict(critical_results)
+        _merge_results.update(results)
+        _timed_step("ceremony_feedback", lambda: _step_ceremony_feedback(resolved_run, _merge_results))
 
         # Sprint 84: Delivery metrics (PRD-CORE-104)
         _timed_step("delivery_metrics", lambda: _step_delivery_metrics(trw_dir, resolved_run))

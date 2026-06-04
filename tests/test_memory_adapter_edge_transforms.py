@@ -66,6 +66,12 @@ class TestMemoryToLearningDict:
             "created",
             "updated",
             "access_count",
+            # PRD-FIX-104: production has emitted these three feedback/recall
+            # fields in full mode since commit 4f9b2d256. expected_keys was
+            # stale (PRD-IMPROVE-MCP-02 FR2) — kept asserting the FULL set.
+            "recall_count",
+            "helpful_count",
+            "unhelpful_count",
             "last_accessed_at",
             "q_value",
             "q_observations",
@@ -89,6 +95,43 @@ class TestMemoryToLearningDict:
             "session_count",
         }
         assert expected_keys == set(result.keys())
+
+    def test_full_keys_are_declared_in_learning_entry_dict(self) -> None:
+        """Every emitted key is a declared field of the LearningEntryDict contract.
+
+        Guards the SSOT relationship (PRD-FIX-085 FR05 typing follow-up):
+        ``_memory_to_learning_dict`` is the source of truth and
+        ``LearningEntryDict`` must mirror it. If a new key is added to the
+        transform without extending the TypedDict, this fails — preventing the
+        contract from silently drifting away from the runtime shape.
+        """
+        from trw_mcp.models.typed_dicts import LearningEntryCompactDict, LearningEntryDict
+
+        entry = self._make_entry()
+        declared = set(LearningEntryDict.__annotations__) | set(LearningEntryCompactDict.__annotations__)
+        full_keys = set(_memory_to_learning_dict(entry, compact=False).keys())
+        compact_keys = set(_memory_to_learning_dict(entry, compact=True).keys())
+        undeclared = (full_keys | compact_keys) - declared
+        assert undeclared == set(), f"transform emits keys not declared in LearningEntryDict: {undeclared}"
+        # Compact base must equal the always-present LearningEntryCompactDict fields.
+        assert compact_keys == set(LearningEntryCompactDict.__annotations__)
+
+    def test_assertions_key_present_when_entry_has_assertions(self) -> None:
+        """The ``assertions`` key (declared in LearningEntryDict) is populated."""
+        from trw_memory.models.memory import Assertion
+
+        entry = self._make_entry(
+            assertions=[
+                Assertion.model_validate(
+                    {"type": "grep_present", "pattern": "def recall_learnings", "target": "memory_adapter.py"},
+                    strict=False,
+                )
+            ]
+        )
+        result = _memory_to_learning_dict(entry, compact=False)
+        assert "assertions" in result
+        assert isinstance(result["assertions"], list)
+        assert result["assertions"]
 
     def test_maps_content_to_summary(self) -> None:
         """MemoryEntry.content maps to learning dict 'summary'."""

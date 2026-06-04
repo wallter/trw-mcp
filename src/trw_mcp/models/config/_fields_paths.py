@@ -81,6 +81,16 @@ class _PathsFields:
             "client reconnect windows."
         ),
     )
+    mcp_proxy_request_timeout_seconds: float = Field(
+        default=60.0,
+        ge=0.5,
+        description=(
+            "Per-tool-call read timeout (seconds) for the foreground stdio proxy's forwarded MCP requests to the "
+            "shared HTTP server. Bounds the session-level wait so a restarted/replaced backend fails fast with a "
+            "REQUEST_TIMEOUT McpError instead of hanging the agent indefinitely (PRD-FIX-106). Tune higher for "
+            "workspaces with legitimately long tool calls."
+        ),
+    )
     mcp_http_rate_limit_enabled: bool = Field(
         default=True,
         description="Enable local HTTP MCP token-bucket request limiting for loopback transports.",

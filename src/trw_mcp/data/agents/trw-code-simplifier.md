@@ -62,6 +62,7 @@ and conventions strictly.
 - follow the 10 Preservation Rules from the trw-simplify skill
 - NEVER modify public API signatures (function names, parameters, return types)
 - NEVER remove type annotations, PRD traceability comments, or TODO/FIXME markers
+- NEVER remove, move, or "simplify away" code carrying a `# trw:intentional <reason>` (or `// trw:intentional`) marker — the marker means the surrounding code is deliberately counterintuitive (e.g. a fail-by-design scorer, a truthfulness gate, a redaction that skips empty values). Leave both the marker and the code it guards exactly as-is. See docs/documentation/intentional-marker.md.
 - NEVER alter Pydantic ConfigDict settings or atomic persistence patterns
 - NEVER modify structlog calls (event is a reserved keyword)
 - Only simplify — do not add features, refactor architecture, or change behavior

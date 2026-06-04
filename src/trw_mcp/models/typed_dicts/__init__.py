@@ -24,7 +24,7 @@ _delivery      — TrustIncrementResult, TelemetryStepResult, PublishLearningsRe
 _audit         — AuditReport, AuditLearningsResult, etc.
 _dashboard     — CeremonyTrendResult, CoverageTrendResult, ReviewTrendResult, etc.
 _orchestration — TrwStatusDict, WaveProgressDict, CheckpointRecordDict, etc.
-_trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementResult, TrustLevelQueryResult
+_trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementResult
 _export        — ExportSummary, ExportMetadata, SyncIndexMdResult, etc.
 _dedup         — DedupHandleResult
 _bootstrap     — BootstrapFileResult (IDE config generation return shapes)
@@ -226,27 +226,19 @@ from trw_mcp.models.typed_dicts._tools import (
     KnowledgeSyncResultDict,
     LearnResultDict,
     PreCompactResultDict,
-    ProgressiveExpandResult,
     QLearningDeferredDict,
     QLearningHealthDict,
     RecallContextDict,
     RecallResultDict,
-    RunCostLedgerEntryDict,
-    RunReportResultDict,
     RunStatusDict,
     SessionStartResultDict,
     TelemetryRecordDict,
     ToolEventDataDict,
-    UsageCallerEntryDict,
-    UsageGroupEntryDict,
-    UsageModelEntryDict,
-    UsageReportResult,
 )
 
 # _trust
 from trw_mcp.models.typed_dicts._trust import (
     HumanReviewResult,
-    TrustLevelQueryResult,
     TrustLevelResult,
     TrustSessionIncrementResult,
 )
@@ -358,7 +350,6 @@ __all__ = [
     "PrdFrontmatterDict",
     "PreCompactResultDict",
     "ProgressionItem",
-    "ProgressiveExpandResult",
     "PruneCandidateDict",
     "PublishLearningsResult",
     "PublishResult",
@@ -380,7 +371,6 @@ __all__ = [
     "ReviewTrendResult",
     "RoadmapSyncResult",
     "RunAnalysisResult",
-    "RunReportResultDict",
     "RunStatusDict",
     "SectionScoreDict",
     "SessionRecallExtrasDict",
@@ -399,18 +389,12 @@ __all__ = [
     "TierSweepStepResult",
     "ToolEventDataDict",
     "TrustIncrementResult",
-    "TrustLevelQueryResult",
     "TrwAdoptRunResultDict",
     "TrwHeartbeatResultDict",
     "TrustLevelResult",
     "TrustSessionIncrementResult",
     "TrwInitConfigDataDict",
-    "RunCostLedgerEntryDict",
     "TrwStatusDict",
-    "UsageCallerEntryDict",
-    "UsageGroupEntryDict",
-    "UsageModelEntryDict",
-    "UsageReportResult",
     "ValidateResultDict",
     "ValidationFailureDict",
     "WalCheckpointResultDict",

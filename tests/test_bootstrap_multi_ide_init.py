@@ -6,9 +6,21 @@ import json
 from pathlib import Path
 
 import pytest
+import structlog
 import tomllib
 
 from trw_mcp.bootstrap import init_project
+
+
+@pytest.fixture(autouse=True)
+def _restore_structlog_config() -> "object":
+    """init_project calls configure_logging(), which globally reconfigures
+    structlog and breaks structlog.testing.capture_logs() in later-running
+    test files. Save and restore the config so the global mutation does not
+    leak. (See feedback_autouse_fixture_global_state.)"""
+    saved = structlog.get_config()
+    yield
+    structlog.configure(**saved)
 
 
 @pytest.mark.unit
@@ -52,7 +64,13 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / "opencode.json").exists()
         # Codex artifacts
         assert (tmp_path / ".codex" / "config.toml").exists()
-        assert not (tmp_path / ".codex" / "hooks.json").exists()
+        # The Codex distill telemetry channel writes hooks.json with a PostToolUse
+        # telemetry hook (separate from the legacy opt-in shell-hook system, which
+        # stays disabled via features.hooks=False). See _codex_distill_channels.py.
+        codex_hooks = tmp_path / ".codex" / "hooks.json"
+        assert codex_hooks.exists()
+        hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
+        assert "PostToolUse" in hooks_doc["hooks"]
         assert (tmp_path / ".codex" / "agents" / "trw-implementer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # Per-client instruction files (PRD-CORE-115)
@@ -95,7 +113,12 @@ class TestUpdateProjectMultiIDE:
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
-        assert not (tmp_path / ".codex" / "hooks.json").exists()
+        # Legacy shell-hook opt-in stays disabled (features.hooks=False above), but
+        # the distill telemetry channel still installs its own PostToolUse hooks.json.
+        codex_hooks = tmp_path / ".codex" / "hooks.json"
+        assert codex_hooks.exists()
+        hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
+        assert "PostToolUse" in hooks_doc["hooks"]
         assert (tmp_path / ".codex" / "agents" / "trw-docs-researcher.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # Per-client instruction file (PRD-CORE-115)

@@ -121,6 +121,9 @@ from trw_mcp.tools._session_recall_helpers import (
 from trw_mcp.tools._session_recall_helpers import (
     record_session_start_surfaces as record_session_start_surfaces,
 )
+from trw_mcp.tools._sync_health import (
+    step_sync_health as step_sync_health,
+)
 
 # fmt: on
 
@@ -400,10 +403,43 @@ def run_auto_maintenance(
         else:
             from trw_mcp.state.memory_adapter import check_embeddings_status
 
-            emb_status = check_embeddings_status(allow_initialize=False)
+            # PRD-FIX-COMPOUNDING-3-FR02: Pass coverage_probe=True so session_start
+            # surfaces the coverage_ratio advisory when vectors are missing post-recovery.
+            emb_status = check_embeddings_status(allow_initialize=False, coverage_probe=True)
             if emb_status.get("advisory"):
                 maintenance["embeddings_advisory"] = str(emb_status["advisory"])
-            elif emb_status.get("enabled") and emb_status.get("available"):
+            raw_ratio = emb_status.get("coverage_ratio")
+            if raw_ratio is not None and isinstance(raw_ratio, float):
+                maintenance["embeddings_coverage_ratio"] = raw_ratio
+            # PRD-FIX-105-FR01: When coverage is LOW (advisory present), the prior
+            # code only surfaced the warning and never remediated — so a
+            # post-recovery vector loss (canonical rows salvaged, vec0 tables
+            # reset) left the corpus stuck at ~4.6% coverage indefinitely while
+            # the advisory cried wolf every session. Schedule a BACKGROUND
+            # backfill (singleton thread guard, no-op while one is running) so
+            # the corpus self-heals without starving the shared HTTP hot path.
+            if (
+                emb_status.get("advisory")
+                and emb_status.get("enabled")
+                and emb_status.get("available")
+                and config.embeddings_auto_backfill_on_low_coverage
+            ):
+                from trw_mcp.state._memory_connection import (
+                    _schedule_post_recovery_backfill,
+                )
+
+                started = _schedule_post_recovery_backfill(trw_dir)
+                maintenance["embeddings_backfill_scheduled"] = {
+                    "reason": "low_coverage",
+                    "coverage_ratio": raw_ratio,
+                    "thread_started": started,
+                }
+                logger.warning(
+                    "embeddings_backfill_scheduled_low_coverage",
+                    coverage_ratio=raw_ratio,
+                    thread_started=started,
+                )
+            if not emb_status.get("advisory") and emb_status.get("enabled") and emb_status.get("available"):
                 # trw_session_start is an MCP hot path. A shared server may
                 # already have the local embedder initialized from a prior
                 # trw_learn call; in that state the previous behavior kicked

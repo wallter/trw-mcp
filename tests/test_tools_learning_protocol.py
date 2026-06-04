@@ -18,6 +18,13 @@ from trw_mcp.state.claude_md import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+# Project-root / trw-dir isolation is provided by the autouse conftest
+# ``_isolate_trw_dir`` fixture, which patches the source module
+# ``trw_mcp.state._paths``. The claude_md dispatcher and section renderers
+# (render_behavioral_protocol, render_memory_harmonization,
+# render_agents_trw_section) late-resolve through that module at call time, so
+# no claude_md-specific binding patch is required here.
+
 
 class TestProgressiveDisclosure:
     """Tests for PRD-CORE-061 progressive disclosure and PRD-CORE-062 context optimization."""
@@ -162,6 +169,12 @@ class TestProgressiveDisclosure:
     def test_render_memory_harmonization_uses_analytics_counts(self, tmp_path: Path) -> None:
         """FR06: memory routing scale claim reflects tracked analytics."""
         _write_analytics(tmp_path, sessions_tracked=12, total_learnings=34)
+        # The conftest _isolate_trw_dir fixture points resolve_project_root at
+        # tmp_path (late-resolved by the renderer); clear the turn-scoped
+        # analytics cache so the freshly-written tmp analytics.yaml is re-read.
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache
+
+        _analytics_cache.set(None)
 
         result = render_memory_harmonization()
 
@@ -170,6 +183,9 @@ class TestProgressiveDisclosure:
     def test_render_agents_trw_section_uses_analytics_counts(self, tmp_path: Path) -> None:
         """FR06: AGENTS-facing TRW section uses analytics-backed counts."""
         _write_analytics(tmp_path, sessions_tracked=7, total_learnings=19)
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache
+
+        _analytics_cache.set(None)
 
         result = render_agents_trw_section()
 

@@ -20,10 +20,20 @@ This module is the public facade -- all external imports should come here.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+from typing import cast
 
 import structlog
-from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
+from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
+
+# PRD-FIX-COMPOUNDING-2 FR01: ``schedule_graph_update`` is imported (and
+# re-exported) for the operator backfill runbook + parity with the trw-memory
+# MemoryClient store path. The in-process store path uses ``update_entry_graph``
+# directly on the singleton connection — see store_learning for the path-
+# divergence rationale.
+from trw_memory.graph import schedule_graph_update as schedule_graph_update
+from trw_memory.graph import update_entry_graph
 from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
 from trw_memory.security.recall_filter import filter_recall_window
@@ -36,11 +46,15 @@ from trw_memory.security.runtime import (
 )
 
 from trw_mcp.models.config import get_config as get_config
+from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 
 # Re-export: connection mgmt + embedding ops + query routing + transforms.
 from trw_mcp.state._memory_connection import (
     _embed_and_store as _embed_and_store,
+)
+from trw_mcp.state._memory_connection import (
+    _embed_and_store_returning as _embed_and_store_returning,
 )
 from trw_mcp.state._memory_connection import (
     backfill_embeddings as backfill_embeddings,
@@ -247,10 +261,35 @@ def store_learning(
                 continue
             raise
 
-    # Generate and store embedding when enabled
+    # Generate and store embedding when enabled. Capture the vector so the
+    # graph scheduler can reuse it (FR02 — single embed call per store).
     backend = get_backend(trw_dir)
     embed_input = f"{summary} {detail}"
-    _embed_and_store(backend, learning_id, embed_input)
+    embedding_vec = _embed_and_store_returning(backend, learning_id, embed_input)
+
+    # PRD-FIX-COMPOUNDING-2 FR01: enrich the knowledge graph after a successful
+    # store. The MCP store path mirrors MemoryClient.store_impl in trw-memory in
+    # every respect EXCEPT this dispatch — which is why memory_graph_edges was 0
+    # for the entire project lifespan. Fail-open (NFR02): graph enrichment
+    # failure must never fail a store_learning call.
+    #
+    # NOTE on path divergence (root-caused during FR05 wiring): the MCP server
+    # opens its SQLite singleton directly at ``.trw/memory/memory.db`` (NO
+    # per-namespace subdirectory), whereas ``schedule_graph_update``'s worker
+    # reopens a backend via ``create_backend_from_config`` which ALWAYS resolves
+    # ``storage_path/<namespace>/sqlite_db_name`` (e.g. ``.trw/memory/default/
+    # memory.db``). The async worker would therefore write edges into a DIFFERENT
+    # file than the one the singleton reads — silently producing 0 visible edges
+    # (the exact failure the async path would re-introduce). To land edges in the
+    # SAME database the singleton serves, enrich SYNCHRONOUSLY on the singleton's
+    # own connection via ``update_entry_graph`` (which uses ``backend._conn``).
+    # Quality > Velocity (value hierarchy): correct same-DB edges outrank the
+    # ~5ms NFR01 async budget.
+    try:
+        sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
+        update_entry_graph(decision.entry, backend, embedding=embedding_vec, config=sec_cfg)
+    except (StorageError, sqlite3.Error, ValueError, RuntimeError):  # justified: fail-open — graph enrichment is best-effort
+        logger.warning("graph_update_dispatch_failed", learning_id=learning_id, exc_info=True)
 
     logger.info(
         "memory_store_ok",
@@ -353,7 +392,12 @@ def recall_learnings(
         filter_recall_window(public_entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
     )
     filtered_entries = filter_result.accepted if filter_result is not None else public_entries
-    results: list[dict[str, object]] = []
+    # Elements are the typed ``LearningEntryDict`` contract (from
+    # ``_memory_to_learning_dict``). The public return is widened to
+    # ``list[dict[str, object]]`` via ``cast`` at the boundary so the existing
+    # downstream consumers (scoring/tools/claude_md) are unaffected — full
+    # ``list[LearningEntryDict]`` propagation is a cross-package follow-up.
+    results: list[LearningEntryDict] = []
     for entry in filtered_entries:
         # Wildcard: apply _apply_entry_filters to match search-path AND semantics.
         # Non-wildcard: search applies tags/status filters; still guard min_impact here.
@@ -363,13 +407,46 @@ def recall_learnings(
             continue
         results.append(_memory_to_learning_dict(entry, compact=compact))
 
+    # R-RANK-002/004: the wildcard branch fetches entries via
+    # ``backend.list_entries`` which orders by ``updated_at DESC`` only. Without
+    # this re-rank, the NEWEST learnings surface first instead of the
+    # HIGHEST-IMPACT/utility ones -- so a 0.95 tribal-knowledge entry loses to a
+    # trivial entry stored minutes later. Route wildcard results through
+    # ``rank_by_utility`` (impact/utility drives order, recency is a decay term,
+    # NOT the sole key). The non-wildcard branch is left untouched: its caller
+    # (``execute_recall``) already applies ``rank_by_utility`` downstream, and
+    # the keyword/hybrid search path returns relevance-ordered candidates.
+    ranked_results: list[dict[str, object]] = cast("list[dict[str, object]]", results)
+    if is_wildcard and ranked_results:
+        ranked_results = _rank_wildcard_by_utility(ranked_results)
+
     logger.info(
         "memory_search_ok",
         query=query[:50],
-        result_count=len(results),
+        result_count=len(ranked_results),
         is_wildcard=is_wildcard,
     )
-    return results
+    return ranked_results
+
+
+def _rank_wildcard_by_utility(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Re-rank wildcard recall results so impact/utility drives order.
+
+    R-RANK-002/004: ``backend.list_entries`` returns ``updated_at DESC`` only.
+    For a wildcard query every entry has relevance 1.0, so ``rank_by_utility``
+    blends ``(1 - lambda) * 1.0 + lambda * utility`` and the utility term
+    (impact + Ebbinghaus recency decay) becomes the sole differentiator. Fails
+    open: any ranking error returns the recency-ordered list unchanged.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.scoring import rank_by_utility
+
+        lambda_weight = get_config().recall_utility_lambda
+        return rank_by_utility(results, [], lambda_weight)
+    except Exception:  # justified: fail-open, ranking must never block recall
+        logger.debug("wildcard_utility_rank_failed", exc_info=True)
+        return results
 
 
 # Lookup, list, count, access tracking, WAL checkpoint helpers extracted to

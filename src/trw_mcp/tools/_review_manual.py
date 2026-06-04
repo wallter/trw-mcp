@@ -34,6 +34,13 @@ logger = structlog.get_logger(__name__)
 _FR_LABEL_PATTERN = r"(?:PRD-[\w-]+-)?FR\d+"
 _FR_CAPTURE_PATTERN = r"(?:PRD-[\w-]+-)?FR(\d+)"
 
+# Honest label for what reconcile coverage actually measures: a flat substring
+# test for extracted FR identifiers against added diff lines. This is NOT
+# behavioral / spec verification -- consumers must not read a 'clean' verdict
+# as "FRs verified covered". See VISION Principle #3 (honest evidence).
+# trw:intentional reconcile does presence-matching, not behavioral coverage
+RECONCILE_COVERAGE_METHOD = "identifier_presence_in_diff"
+
 
 # ---------------------------------------------------------------------------
 # Manual mode
@@ -194,6 +201,42 @@ def _extract_fr_mismatches(
     return mismatches
 
 
+def _extract_fr_not_checkable(
+    prd_content: str,
+    prd_id: str,
+) -> list[dict[str, str]]:
+    """Return FRs that have NO extractable identifier.
+
+    Reconcile coverage is identifier-presence-in-diff matching. An FR whose
+    text yields no backtick/``--flag``/PascalCase identifier cannot be checked
+    by that method at all -- previously such FRs passed *silently* (no
+    mismatch emitted), which let the ``clean`` verdict over-claim coverage.
+    Surfacing them as ``fr_not_checkable`` keeps the verdict honest.
+    """
+    not_checkable: list[dict[str, str]] = []
+    section = _extract_section(prd_content, "Functional Requirements")
+    if not section:
+        return not_checkable
+
+    fr_pattern = re.compile(
+        rf"(?:^|\n)(?:###?\s*)?{_FR_CAPTURE_PATTERN}\s*[:\-–]\s*(.+?)(?=\n(?:###?\s*)?{_FR_LABEL_PATTERN}|\Z)",
+        re.DOTALL,
+    )
+    for m in fr_pattern.finditer(section):
+        fr_num = m.group(1)
+        fr_text = m.group(2).strip()
+        if not _extract_identifiers(fr_text):
+            not_checkable.append(
+                {
+                    "prd_id": prd_id,
+                    "fr": f"FR{fr_num}",
+                    "reason": "no_extractable_identifier",
+                    "fr_text": fr_text[:200],
+                }
+            )
+    return not_checkable
+
+
 def _count_frs_in_prd(prd_path: Path) -> int:
     """Count FR entries in a PRD file."""
     try:
@@ -225,11 +268,16 @@ def handle_reconcile_mode(
         effective_prd_ids = discover_governing_prds(resolved_run, config)
 
     if not effective_prd_ids:
+        # No PRD to check against. 'clean' here means "nothing to reconcile",
+        # NOT "FRs verified covered" -- flag it so a consumer can't conflate them.
         return {
             "review_id": review_id,
             "verdict": "clean",
             "mismatches": [],
             "message": "No governing PRDs found",
+            "no_governing_prd": True,
+            "reason": "no_governing_prd_found_nothing_reconciled",
+            "coverage_method": RECONCILE_COVERAGE_METHOD,
         }
 
     diff = _helpers._get_git_diff()
@@ -238,6 +286,7 @@ def handle_reconcile_mode(
     prds_dir = project_root / config.prds_relative_path
 
     all_mismatches: list[dict[str, str]] = []
+    all_not_checkable: list[dict[str, str]] = []
     total_frs = 0
 
     for prd_id in effective_prd_ids:
@@ -252,6 +301,9 @@ def handle_reconcile_mode(
         total_frs += len(re.findall(rf"(?:^|\n)(?:###?\s*)?{_FR_LABEL_PATTERN}", fr_section))
         mismatches = _extract_fr_mismatches(prd_content, prd_id, diff)
         all_mismatches.extend(mismatches)
+        # FRs with no extractable identifier can't be checked by the
+        # presence-matching method -- surface them instead of passing silently.
+        all_not_checkable.extend(_extract_fr_not_checkable(prd_content, prd_id))
 
     verdict = "drift_detected" if all_mismatches else "clean"
 
@@ -262,6 +314,11 @@ def handle_reconcile_mode(
         "prd_count": len(effective_prd_ids),
         "total_frs": total_frs,
         "mismatch_count": len(all_mismatches),
+        # Honest labeling: this verdict reflects identifier substring presence
+        # in the diff, NOT behavioral / spec verification.
+        "coverage_method": RECONCILE_COVERAGE_METHOD,
+        "fr_not_checkable": all_not_checkable,
+        "not_checkable_count": len(all_not_checkable),
     }
 
     # Persist reconciliation artifact and log event
@@ -277,6 +334,9 @@ def handle_reconcile_mode(
             "total_frs": total_frs,
             "mismatch_count": len(all_mismatches),
             "mismatches": all_mismatches,
+            "coverage_method": RECONCILE_COVERAGE_METHOD,
+            "fr_not_checkable": all_not_checkable,
+            "not_checkable_count": len(all_not_checkable),
         }
         writer.write_yaml(reconciliation_path, reconciliation_data)
 

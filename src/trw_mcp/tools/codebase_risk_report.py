@@ -47,20 +47,26 @@ class FileRiskScorePayload(BaseModel):
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    target_path: str
+    # Constraints + field set mirror the trw-distill source; parity-checked by
+    # scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05). test_signal_confidence
+    # was added to the source by PRD-DIST-2095 FR03 — without it here, extra="forbid"
+    # rejected every current risk-report sidecar as `sidecar_malformed`. Counts are required
+    # to match the source (a source-produced sidecar always carries them).
+    target_path: str = Field(min_length=1)
     target_exists_in_map: bool
-    composite_score: float
-    fanin_score: float
-    fanout_score: float
-    untested_score: float
-    undocumented_score: float
-    size_score: float
-    churn_score: float = 0.0
-    fanin_count: int = 0
-    fanout_count: int = 0
-    test_edge_count: int = 0
-    doc_edge_count: int = 0
-    line_count: int = 0
+    composite_score: float = Field(ge=0.0, le=1.0)
+    fanin_score: float = Field(ge=0.0, le=1.0)
+    fanout_score: float = Field(ge=0.0, le=1.0)
+    untested_score: float = Field(ge=0.0, le=1.0)
+    undocumented_score: float = Field(ge=0.0, le=1.0)
+    size_score: float = Field(ge=0.0, le=1.0)
+    churn_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    fanin_count: int = Field(ge=0)
+    fanout_count: int = Field(ge=0)
+    test_edge_count: int = Field(ge=0)
+    doc_edge_count: int = Field(ge=0)
+    line_count: int = Field(ge=0)
+    test_signal_confidence: Literal["high", "low"] = "low"
 
 
 class CodebaseRiskReportResult(BaseModel):

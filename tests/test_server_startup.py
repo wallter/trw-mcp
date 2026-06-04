@@ -78,10 +78,8 @@ class TestModuleImports:
             knowledge,
             learning,
             orchestration,
-            report,
             requirements,
             review,
-            usage,
         )
 
         assert all(
@@ -93,10 +91,8 @@ class TestModuleImports:
                 knowledge,
                 learning,
                 orchestration,
-                report,
                 requirements,
                 review,
-                usage,
             )
         )
 
@@ -160,6 +156,28 @@ class TestMcpInstance:
         tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         assert {"trw_review"} <= tool_names
+
+    async def test_mcp_registers_ceremony_feedback_tools(self) -> None:
+        """FIX-051: the ceremony de-escalation kill-switch tools must be wired
+        into the *production* server, not just conftest's test factory.
+
+        These are the human-in-the-loop ceremony-tier status / approve / revert
+        tools (PRD-CORE-069-FR06/FR08). Prior to FIX-051 they were registered
+        only in ``tests/conftest.py``, so in prod they were dead and phantom in
+        the inventory. This asserts against the real ``trw_mcp.server._app.mcp``
+        instance that ``_register_tools()`` populates at import.
+        """
+        from trw_mcp.server._app import mcp
+
+        tools = await mcp._list_tools()
+        tool_names = {t.name for t in tools}
+        expected = {
+            "trw_ceremony_status",
+            "trw_ceremony_approve",
+            "trw_ceremony_revert",
+        }
+        missing = expected - tool_names
+        assert not missing, f"Ceremony-feedback tools not wired into prod server: {missing}"
 
 
 # ── .mcp.json command resolution ─────────────────────────────────────

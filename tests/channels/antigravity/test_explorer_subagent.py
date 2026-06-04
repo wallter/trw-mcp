@@ -8,9 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -164,8 +162,8 @@ def test_idempotent_skip_on_same_sha(tmp_path: Path) -> None:
 def test_no_mutation_tools(tmp_path: Path) -> None:
     """FR10: write_file, edit_file, trw_deliver must not appear in tools list."""
     from trw_mcp.channels.antigravity._explorer_subagent import (
-        _MUTATION_TOOLS,
         _AGENT_TOOLS,
+        _MUTATION_TOOLS,
     )
 
     for mut in _MUTATION_TOOLS:
@@ -240,7 +238,7 @@ def test_no_unsubstituted_template_vars(tmp_path: Path) -> None:
 
     agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
     content = agent_path.read_text()
-    assert "{{ " not in content, f"Unsubstituted template vars found"
+    assert "{{ " not in content, "Unsubstituted template vars found"
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +268,24 @@ def test_sidecar_absent_writes_placeholder_subagent(tmp_path: Path) -> None:
     # Placeholder table present.
     assert "<path>" in content
     assert "{{ " not in content
+
+
+# ---------------------------------------------------------------------------
+# FR21 — trw-explorer.md cross-reference to trw-distill-explorer
+# ---------------------------------------------------------------------------
+
+
+def test_trw_explorer_description_cross_reference(tmp_path: Path) -> None:
+    """FR21: trw-explorer.md description mentions trw-distill-explorer (cross-reference).
+
+    The description must direct users toward @trw-distill-explorer for
+    risk-scored exploration. Verified against the template in _antigravity_cli.py.
+    """
+    from trw_mcp.bootstrap._antigravity_cli import _ANTIGRAVITY_AGENT_TEMPLATES
+
+    trw_explorer_content = _ANTIGRAVITY_AGENT_TEMPLATES.get("trw-explorer.md", "")
+    assert trw_explorer_content, "trw-explorer.md template not found in _ANTIGRAVITY_AGENT_TEMPLATES"
+    assert "trw-distill-explorer" in trw_explorer_content, (
+        "FR21: trw-explorer.md description must cross-reference @trw-distill-explorer. "
+        f"Got description: {trw_explorer_content[:300]}"
+    )

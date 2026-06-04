@@ -43,10 +43,19 @@ class TrustIncrementResult(TypedDict, total=False):
 
 
 class TelemetryStepResult(StepResultBase):
-    """Return shape of ``_step_telemetry()``."""
+    """Return shape of ``_step_telemetry()``.
+
+    ``build_passed`` / ``coverage_delta`` are surfaced so the downstream
+    ``ceremony_feedback`` step can record real secondary signals (FIX-052):
+    they are derived from ``compute_ceremony_score`` (build gate) and
+    ``build-status.yaml`` (coverage), the same sources the telemetry step
+    already reads.
+    """
 
     events: int
     ceremony_score: int
+    build_passed: bool
+    coverage_delta: float
 
 
 class TierSweepStepResult(TypedDict):

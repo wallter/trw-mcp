@@ -12,6 +12,7 @@ under the 350 effective-LOC ceiling.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -129,6 +130,13 @@ def _dump_run_yaml_atomic(run_yaml_path: Path, data: dict[str, Any]) -> None:
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
+    finally:
+        # Parity with FileStateWriter (the pattern this mirrors): if os.fdopen
+        # raised it did NOT take ownership of the raw fd from mkstemp, so it
+        # would leak. Close it here; on the success path the with-block already
+        # closed it, so suppress the resulting EBADF.
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 def _iso_utc_now() -> str:

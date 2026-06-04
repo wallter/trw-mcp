@@ -100,6 +100,7 @@ def _register_tools() -> None:
     )
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
+    from trw_mcp.tools.ceremony_feedback import register_ceremony_feedback_tools
     from trw_mcp.tools.channel_render import register_channel_render_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.code_index import register_code_index_tools
@@ -121,6 +122,9 @@ def _register_tools() -> None:
 
     register_build_tools(mcp)
     register_ceremony_tools(mcp)
+    # PRD-CORE-069-FR06/FR08 (FIX-051): human-in-the-loop ceremony de-escalation
+    # — operator status / approve / revert kill-switch tools.
+    register_ceremony_feedback_tools(mcp)
     register_checkpoint_tools(mcp)
     register_learning_tools(mcp)
     register_meta_tune_tools(mcp)
@@ -161,6 +165,11 @@ def _register_tools() -> None:
     from trw_mcp.tools.channel_stats import register_channel_stats_tools
 
     register_channel_stats_tools(mcp)
+
+    # PRD-FIX-COMPOUNDING-6 FR02: unified compounding-pipeline health probe tool
+    from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
+
+    register_pipeline_health_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

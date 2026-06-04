@@ -29,6 +29,17 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Honest-labeling reason attached to every pattern-scan-only analysis result.
+# This module performs ONLY a TODO/FIXME/HACK/XXX marker scan of the diff; it
+# does NOT spawn the multi-reviewer roles or invoke cross-model review. The
+# flag lets downstream consumers (deliver gate, eval scoring) distinguish a
+# limited marker scan from a substantive code-quality review.
+# trw:intentional pattern-scan is deliberately limited; the flag is the honest fix.
+PATTERN_SCAN_LIMITED_REASON: str = (
+    "pattern-scan only: no cross-model reviewer findings; "
+    "verdict reflects TODO/FIXME markers, not code-quality analysis"
+)
+
 
 def _run_multi_reviewer_analysis(
     diff: str,
@@ -40,17 +51,25 @@ def _run_multi_reviewer_analysis(
     basic structural analysis only. The actual multi-agent spawning
     is handled client-side by the /trw-review-pr skill.
 
+    Because this path runs ONLY a TODO/FIXME/HACK/XXX marker scan (never
+    the multi-reviewer roles or cross-model review), the returned result is
+    always flagged ``auto_analysis_limited=True`` with ``limited_reason`` so
+    that the artifact cannot pose as a substantive review.
+
     Args:
         diff: The git diff text to analyze.
         config: TRWConfig instance with review_* fields.
 
     Returns:
-        Dict with reviewer_roles_run, findings, and errors.
+        Dict with reviewer_roles_run, findings, errors, and the
+        ``auto_analysis_limited`` / ``limited_reason`` honesty labels.
     """
     result: MultiReviewerAnalysisResult = {
         "reviewer_roles_run": list(_helpers.REVIEWER_ROLES),
         "reviewer_errors": [],
         "findings": [],
+        "auto_analysis_limited": True,
+        "limited_reason": PATTERN_SCAN_LIMITED_REASON,
     }
 
     if not diff:

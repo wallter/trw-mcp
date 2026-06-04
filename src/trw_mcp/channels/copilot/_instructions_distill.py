@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -157,7 +156,7 @@ class CopilotInstructionsDistillRenderer:
     def render(
         self,
         repo_root: Path,
-        sidecar_data: dict[str, Any] | None,
+        sidecar_data: dict[str, object] | None,
         sidecar_sha: str | None,
         *,
         target_file: Path | None = None,
@@ -196,7 +195,7 @@ class CopilotInstructionsDistillRenderer:
                 channel_id=channel_id,
                 outcome="skipped_lock",
             )
-            _emit_event(channel_id, "channel_conflict", None, "skipped_lock")
+            _emit_event(channel_id, "channel_lock_skip", None, "skipped_lock")
             return InstructionSegmentResult(channel_id=channel_id, status="skipped_lock")
 
         try:
@@ -210,13 +209,13 @@ class CopilotInstructionsDistillRenderer:
                 dry_run=dry_run,
             )
         except Exception as exc:
-            log.debug(
+            log.warning(
                 "copilot_instructions_distill_error",
                 channel_id=channel_id,
                 error=str(exc),
                 outcome="error",
             )
-            _emit_event(channel_id, "channel_conflict", None, "error")
+            _emit_event(channel_id, "channel_error", None, "error")
             return InstructionSegmentResult(channel_id=channel_id, status="error", error=str(exc))
         finally:
             try:
@@ -229,7 +228,7 @@ class CopilotInstructionsDistillRenderer:
         *,
         entry: ChannelEntry,
         repo_root: Path,
-        sidecar_data: dict[str, Any] | None,
+        sidecar_data: dict[str, object] | None,
         sidecar_sha: str | None,
         resolved_target: Path,
         force: bool,
@@ -324,7 +323,7 @@ class CopilotInstructionsDistillRenderer:
 
     def _render_with_tier_down(
         self,
-        sidecar_data: dict[str, Any],
+        sidecar_data: dict[str, object],
         *,
         ts: str,
     ) -> tuple[str, str]:

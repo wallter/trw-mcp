@@ -86,9 +86,11 @@ class TestTrwLearnDedup:
 
         result = tool_fn(summary=summary, detail=detail)
 
-        assert result["status"] == "skipped"
-        assert result["learning_id"] is not None
-        assert result["duplicate_of"] == "L-existing99"
+        # PRD-CORE-042: byte-identical content now MERGES (not skips) via the
+        # embedding-independent exact-content path, so tags/evidence/impact of
+        # the re-learn still fold into the survivor.
+        assert result["status"] == "merged"
+        assert result["merged_into"] == "L-existing99"
         assert float(result["similarity"]) >= 0.95
 
     def test_trw_learn_normal_store_when_dedup_disabled(

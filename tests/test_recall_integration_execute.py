@@ -148,7 +148,9 @@ def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
     config = get_config()
-    ranked_entries = [_make_entry("L-001"), _make_entry("L-002")]
+    # Distinct summaries so the dedup pass (F-DEDUP-001) keeps both entries —
+    # this test verifies propensity logging, not dedup collapse.
+    ranked_entries = [_make_entry("L-001", summary="alpha finding"), _make_entry("L-002", summary="beta finding")]
 
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
@@ -164,6 +166,9 @@ def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
             query="auth",
             trw_dir=trw_dir,
             config=config,
+            # Small cap keeps the recall in non-compact mode (F-003 auto-compacts
+            # broad recalls) so surface/propensity logging runs for this test.
+            max_results=5,
             _rank_by_utility=lambda matches, *_args, **_kwargs: matches,
         )
 

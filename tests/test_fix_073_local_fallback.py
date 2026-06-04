@@ -53,7 +53,9 @@ class TestOrchestrationServiceScaffold:
         )
 
         run_path = Path(result["run_path"])
-        run_yaml = json.loads((run_path / "meta" / "run.yaml").read_text())
+        from trw_mcp.state.persistence import FileStateReader
+
+        run_yaml = FileStateReader().read_yaml(run_path / "meta" / "run.yaml")
 
         assert run_yaml["task"] == "test-task"
         assert run_yaml["status"] == "active"

@@ -149,3 +149,44 @@ class TestT2Render:
             channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
         )
         assert content1 == content2
+
+    def test_t2_no_sidecar_has_fallback(self) -> None:
+        """T2 without sidecar includes fallback message."""
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=None)
+        assert "No sidecar" in content or "trw-distill" in content
+
+    def test_t2_empty_risk_files_list(self) -> None:
+        """T2 with empty risk_files shows 'No risk file data' message."""
+        sidecar_no_risk: dict = {
+            "risk_files": [],
+            "conventions": [],
+            "caution_directories": [],
+        }
+        content = render_snapshot(
+            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_risk
+        )
+        assert "No risk file data" in content or "risk" in content.lower()
+
+    def test_t2_empty_conventions_list(self) -> None:
+        """T2 with empty conventions shows 'No convention data' message."""
+        sidecar_no_conv: dict = {
+            "risk_files": [{"file_path": "x.py", "risk_score": 0.5}],
+            "conventions": [],
+            "caution_directories": ["src/"],
+        }
+        content = render_snapshot(
+            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_conv
+        )
+        assert "No convention" in content or "x.py" in content
+
+    def test_t2_empty_caution_dirs(self) -> None:
+        """T2 with empty caution_directories shows 'No caution directory data' message."""
+        sidecar_no_dirs: dict = {
+            "risk_files": [],
+            "conventions": ["Use structlog"],
+            "caution_directories": [],
+        }
+        content = render_snapshot(
+            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_dirs
+        )
+        assert "No caution directory" in content or "structlog" in content

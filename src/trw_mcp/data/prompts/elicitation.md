@@ -303,4 +303,4 @@ Re-read the output format section above and confirm all required fields are pres
 ---
 
 *Requirements Elicitation Prompts v1.0.0*
-*AARE-F Framework v1.1.0 Implementation*
+*AARE-F Framework Implementation*

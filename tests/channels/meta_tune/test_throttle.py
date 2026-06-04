@@ -8,8 +8,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.channels._manifest_models import (
     CLIENT_THROTTLE_THRESHOLDS,
     COPILOT_THROTTLE_MIN_N,
@@ -21,7 +19,6 @@ from trw_mcp.channels.meta_tune._throttle import (
     apply_throttle,
     evaluate_throttle,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -267,3 +264,96 @@ def test_apply_throttle_emits_telemetry_event(tmp_path: Path) -> None:
         events = [json.loads(line) for line in tel_root.read_text().splitlines() if line.strip()]
         types = [e["event_type"] for e in events]
         assert "throttle_applied" in types
+
+
+# ---------------------------------------------------------------------------
+# HIGH-2 behavioral test: T4-default channel recovers to T4 after throttle clear
+# ---------------------------------------------------------------------------
+
+
+def test_apply_throttle_t4_default_recovers_to_t4_after_clear(tmp_path: Path) -> None:
+    """HIGH-2 fix: a channel with tier_default=T4 throttled down to T3 must
+    recover to T4 on throttle clear.  The old _TIER_LADDER=["T0","T1","T2","T3"]
+    caused T4 to be unknown → always resolved to "T3" (index len-1).
+    """
+    # Start at T3 (throttled down from T4)
+    manifest_path = _make_manifest(tmp_path, channel_id="ch-t4", client="claude-code", tier="T3")
+
+    # Inject tier_default=T4 by rewriting the manifest with T4 as the default.
+    # We write a manifest where current tier IS T3 and default IS T4.
+    from ruamel.yaml import YAML
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    data = {
+        "format_version": "manifest/v1",
+        "generated_by": "test",
+        "generated_at": "",
+        "channels": [
+            {
+                "id": "ch-t4",
+                "client": "claude-code",
+                "surface": "instruction_file_segment",
+                "telemetry_tag": "test",
+                "tier_default": "T3",  # current throttled tier
+            }
+        ],
+    }
+    with manifest_path.open("w") as fh:
+        yaml.dump(data, fh)
+
+    # Simulate throttle-clear decision with T4 as the channel's natural ceiling
+    # We test _tier_up directly to confirm T4 is reachable.
+    from trw_mcp.channels.meta_tune._throttle import _TIER_LADDER, _tier_up
+
+    # HIGH-2: _TIER_LADDER must contain T4
+    assert "T4" in _TIER_LADDER, f"T4 missing from _TIER_LADDER: {_TIER_LADDER}"
+
+    # _tier_up(T3, T4) must return T4 (one step up from T3, bounded by T4)
+    recovered = _tier_up("T3", "T4")
+    assert recovered == "T4", (
+        f"Expected T4 recovery from T3 with default T4, got {recovered!r}. "
+        f"_TIER_LADDER={_TIER_LADDER}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# HIGH-5 behavioral test: apply_throttle persists and validates via model_copy
+# ---------------------------------------------------------------------------
+
+
+def test_apply_throttle_pydantic_validation_preserved(tmp_path: Path) -> None:
+    """HIGH-5 fix: apply_throttle must use model_copy(update=...) instead of
+    __dict__ mutation so Pydantic v2 validation runs.  The persisted manifest
+    must reflect the new tier AND the entry must be a valid ChannelEntry
+    (not a raw dict or a bypassed-validation object).
+    """
+    manifest_path = _make_manifest(tmp_path, tier="T2")
+
+    decision = ThrottleDecision(
+        channel_id="ch-01",
+        client="claude-code",
+        verdict=ThrottleVerdict.THROTTLE_DOWN,
+        adjusted_rate=0.01,
+        threshold=0.25,
+        n_events=50,
+        min_n=30,
+        reason="test",
+    )
+    result = apply_throttle("ch-01", decision, manifest_path)
+    assert result is True
+
+    # The persisted manifest must reflect the new tier
+    from trw_mcp.channels._manifest_loader import load
+    from trw_mcp.channels._manifest_models import ChannelEntry
+    updated = load(manifest_path)
+    ch = next(e for e in updated.channels if e.id == "ch-01")
+
+    # Must be T1 (one step down from T2)
+    assert ch.tier_default == "T1", f"Expected T1 after throttle-down from T2, got {ch.tier_default!r}"
+
+    # Must still be a valid ChannelEntry instance (Pydantic validation passed)
+    assert isinstance(ch, ChannelEntry), f"Expected ChannelEntry, got {type(ch)}"
+
+    # Confirm no __dict__ bypass: model_copy produces a new model with correct
+    # field values visible through the normal Pydantic attribute access
+    assert ch.model_fields_set is not None  # Pydantic v2 attribute present on proper model

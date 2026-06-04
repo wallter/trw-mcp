@@ -51,6 +51,8 @@ class AutoMaintenanceDict(TypedDict, total=False):
     embeddings_advisory: str
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
+    embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01: background backfill on low coverage
+    embeddings_coverage_ratio: float  # PRD-FIX-COMPOUNDING-3-FR02: vector coverage ratio (0.0-1.0)
     wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
     wal_checkpoint_deferred: dict[str, object]
     auto_upgrade_check_deferred: dict[str, object]
@@ -62,6 +64,7 @@ class DeliveryGatesDict(TypedDict, total=False):
     All keys are optional — only populated when a gate or advisory fires.
     """
 
+    review_block: str
     review_warning: str
     review_advisory: str
     review_scope_block: str
@@ -75,6 +78,10 @@ class DeliveryGatesDict(TypedDict, total=False):
     warning: str
     complexity_drift_warning: str
     instruction_parity_warning: str
+    # PRD-CORE-184-FR03: task-type-aware deliver gate mode.
+    delivery_blocked: str
+    missing_gate: str
+    blocked_task_type: str
 
 
 class ComplianceArtifactsDict(TypedDict, total=False):

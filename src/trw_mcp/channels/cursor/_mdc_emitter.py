@@ -385,7 +385,7 @@ class MdcEmitter:
             lock = ChannelLock(lock_path)
             lock.__enter__()
         except ChannelLockSkip:
-            self._emit_event(channel_id, entry.client, "channel_conflict", outcome="skipped_lock")
+            self._emit_event(channel_id, entry.client, "channel_lock_skip", outcome="skipped_lock")
             return {"status": "skipped_lock", "channel_id": channel_id}
 
         try:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.channels.claude_code._cc02_segment import (
     CC02_MARKER_END,
     CC02_MARKER_START,
@@ -13,6 +11,7 @@ from trw_mcp.channels.claude_code._cc02_segment import (
     build_cc02_channel_entry,
     install_cc02_segment,
     render_cc02_segment,
+    update_cc02_segment,
 )
 
 _SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
@@ -135,3 +134,50 @@ class TestBuildEntry:
     def test_entry_client_claude_code(self) -> None:
         entry = build_cc02_channel_entry()
         assert entry.client == "claude-code"
+
+
+class TestRenderT2Segment:
+    """Tests for the T2/T3 render path (lines 138-166)."""
+
+    def test_t2_with_sidecar_includes_risk_files(self) -> None:
+        content = render_cc02_segment(sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
+        assert "src/a.py" in content or "Top risk" in content
+
+    def test_t2_without_sidecar_has_fallback(self) -> None:
+        content = render_cc02_segment(sha=_SHA, tier="T2", sidecar=None)
+        assert "No distill sidecar" in content or "trw-distill" in content
+
+    def test_t2_includes_metadata_comment(self) -> None:
+        content = render_cc02_segment(sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR, commits_since=5)
+        assert "Generated:" in content
+        assert "Commits-since: 5" in content
+
+    def test_t2_with_no_conventions_in_sidecar(self) -> None:
+        sidecar_no_conv = {
+            "high_churn_directories": ["src/trw_mcp/state/"],
+            "do_not_remove_markers": [],
+            "conventions": [],
+            "risk_files": [{"file_path": "src/a.py", "risk_score": 0.9}],
+        }
+        content = render_cc02_segment(sha=_SHA, tier="T2", sidecar=sidecar_no_conv)
+        # Should not crash and should include at least the metadata comment
+        assert "Generated:" in content
+
+    def test_t3_uses_t2_render(self) -> None:
+        """T3 tier maps to T2 content (covers the else branch in render_cc02_segment)."""
+        t2_content = render_cc02_segment(sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
+        t3_content = render_cc02_segment(sha=_SHA, tier="T3", sidecar=_SAMPLE_SIDECAR)
+        assert t2_content == t3_content
+
+
+class TestUpdateCc02Segment:
+    """Tests for update_cc02_segment (delegates to install_cc02_segment)."""
+
+    def test_update_returns_result(self, tmp_path: Path) -> None:
+        result = update_cc02_segment(repo_root=tmp_path, sha=_SHA, dry_run=True)
+        assert result.status in ("dry_run", "written", "skipped", "error")
+
+    def test_update_dry_run_returns_would_write(self, tmp_path: Path) -> None:
+        result = update_cc02_segment(repo_root=tmp_path, sha=_SHA, dry_run=True)
+        assert result.status == "dry_run"
+        assert result.would_write is not None

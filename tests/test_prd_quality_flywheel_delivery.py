@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -140,10 +141,23 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
     assert analytics["aggregate"]["sprint_first_pass_compliance_rate"] == pytest.approx(0.5)
 
 
-def test_deliver_persists_audit_pattern_promotion_candidates(
+def test_deliver_does_not_persist_dead_promotion_candidate_keys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F19 honest-removal contract.
+
+    The deferred-delivery path used to mirror the consolidation step's
+    ``audit_pattern_promotions`` into dedicated ``audit_pattern_promotions`` /
+    ``promotion_candidates`` run.yaml keys tagged ``promotion_path=metadata_only``
+    / ``meta_tune_integration=tool_unavailable``. Nothing ever read those keys
+    back (CORE-093 removed CLAUDE.md learning promotion; no trw_meta_tune() tool
+    ships) and the arrays bloated run.yaml, so the no-op persistence was removed.
+
+    This test pins the honest post-removal behavior: delivery still launches the
+    deferred batch and records the consolidation *status* under
+    ``deferred_results``, but the dead top-level promotion keys are NOT written.
+    """
     tools = make_ceremony_server(monkeypatch, tmp_path)
     writer = FileStateWriter()
     reader = FileStateReader()
@@ -166,7 +180,28 @@ def test_deliver_persists_audit_pattern_promotion_candidates(
             "prd_scope": ["PRD-QUAL-056"],
         },
     )
-    (meta_dir / "events.jsonl").write_text("", encoding="utf-8")
+    # PRD-DIST-1865 hardened the deliver build gate (2026-05-17): an empty
+    # events.jsonl is now treated as "no build evidence" and blocks delivery
+    # *before* the deferred batch (which produces the promotion candidates) is
+    # ever launched. Record a passing build_check_complete + a work event so the
+    # gate is satisfied and delivery proceeds to the deferred-promotion path that
+    # this test exercises.
+    (meta_dir / "events.jsonl").write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in (
+                {"event": "session_start"},
+                {"event": "implementation", "summary": "wired promotion path"},
+                {
+                    "event": "build_check_complete",
+                    "tests_passed": True,
+                    "static_checks_clean": True,
+                },
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda: run_dir)
@@ -177,6 +212,8 @@ def test_deliver_persists_audit_pattern_promotion_candidates(
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
 
     noop = {"status": "skipped"}
+    # Even when the (mocked) consolidation step surfaces promotion candidates,
+    # production must no longer mirror them into dead run.yaml keys.
     promotion_candidates = [
         {
             "category": "impl_gap",
@@ -184,11 +221,6 @@ def test_deliver_persists_audit_pattern_promotion_candidates(
             "pattern_summary": "Integration wiring missing in remediation 2",
             "prd_count": 3,
             "prd_ids": ["PRD-CORE-104", "PRD-CORE-125", "PRD-QUAL-056"],
-            "sample_summaries": [
-                "Integration wiring missing in remediation 2",
-                "Integration wiring missing in remediation 3",
-                "Integration wiring missing in remediation 1",
-            ],
             "synthesized_summary": "Recurring impl gap pattern: Integration wiring missing in remediation 2.",
             "prevention_strategy": "Verify the production call path and integration wiring before closing remediation.",
             "nudge_line": "Recurring impl gap: Integration wiring missing in remediation 2",
@@ -232,10 +264,10 @@ def test_deliver_persists_audit_pattern_promotion_candidates(
         _ds._deferred_thread = None
 
     run_data = reader.read_yaml(meta_dir / "run.yaml")
+    # The generic deferred-results audit record still carries the consolidation
+    # step's full return value (including whatever it surfaced).
+    assert run_data["deferred_results"]["consolidation"]["status"] == "no_clusters"
     assert run_data["deferred_results"]["consolidation"]["audit_pattern_promotions"] == promotion_candidates
-    assert run_data["promotion_candidates"]["audit_pattern_promotions"] == promotion_candidates
-    assert run_data["promotion_candidates"]["source"] == "consolidation"
-    assert run_data["promotion_candidates"]["promotion_path"] == "metadata_only"
-    assert run_data["promotion_candidates"]["delivery_surface"] == "run.yaml"
-    assert run_data["promotion_candidates"]["claude_md_sync_integration"] == "not_applicable_prd_core_093"
-    assert run_data["promotion_candidates"]["meta_tune_integration"] == "tool_unavailable"
+    # F19: the dead, never-consumed promotion mirror keys must NOT be persisted.
+    assert "promotion_candidates" not in run_data
+    assert "audit_pattern_promotions" not in run_data

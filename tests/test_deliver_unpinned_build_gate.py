@@ -73,3 +73,36 @@ def test_deliver_allows_unpinned_session_with_build_check(tmp_path: Path) -> Non
 
     assert "build_gate_warning" not in result
     assert result["checkpoint"]["reason"] == "no_active_run"
+
+
+def test_deliver_override_surfaces_truthfulness_gate_bypass(tmp_path: Path) -> None:
+    """allow_unverified bypass of the build gate must be UNMISSABLE (A-P1-02).
+
+    Pre-fix the bypass was only quietly stored in ``build_gate_override`` — an
+    operator watching the log/event stream could not tell a legitimate
+    acceptable-failure deliver from a one-word reason. The fix adds a prominent
+    result key + a build_gate_override_used WARNING.
+    """
+    import structlog
+
+    project = tmp_path / "project"
+    trw_dir = project / ".trw"
+    _write_ceremony_state(trw_dir, None)  # no passing build -> build_gate_warning fires
+    deliver_fn = _make_deliver_fn()
+    reason = "acceptable failure: known-flaky integration test, tracked in ISSUE-123"
+
+    with (
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+        structlog.testing.capture_logs() as logs,
+    ):
+        result = deliver_fn(allow_unverified=True, unverified_reason=reason, skip_reflect=True)
+
+    # Override allowed (no hard block) but surfaced prominently in the result...
+    assert "build_gate_block" not in result
+    assert result.get("truthfulness_gate_bypassed") == reason
+    # ...and logged at WARNING for the operator log stream.
+    overrides = [e for e in logs if e.get("event") == "build_gate_override_used"]
+    assert overrides, f"expected a build_gate_override_used warning; got {logs}"
+    assert overrides[0]["log_level"] == "warning"

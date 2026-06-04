@@ -61,7 +61,9 @@ class BeforeYouEditHintPayload(BaseModel):
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    target_path: str
+    # Constraints mirror the trw-distill source; parity-checked by
+    # scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05).
+    target_path: str = Field(min_length=1)
     target_exists_in_map: bool
     importers: list[str] = Field(default_factory=list)
     inferred_tests: list[str] = Field(default_factory=list)

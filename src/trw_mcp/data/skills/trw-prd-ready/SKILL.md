@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` to determine the entry point:
 ```
  ┌───────────┐     ┌─────────┐     ┌─────────┐     ┌────────┐     ┌───────────┐
  │ PREFLIGHT │ ──▶ │ CREATE  │ ──▶ │  GROOM  │ ──▶ │ REVIEW │ ──▶ │ EXEC PLAN │
- │ (if new)  │     │ (if new)│     │ (≥0.85) │     │(READY) │     │ (output)  │
+ │ (if new)  │     │ (if new)│     │(≥85 ts) │     │(READY) │     │ (output)  │
  └───────────┘     └─────────┘     └────┬────┘     └───┬────┘     └───────────┘
                                         │              │
                                         │   NEEDS WORK │
@@ -87,13 +87,13 @@ If the user is unavailable and evidence is strong enough, proceed with explicit 
 ### Phase 2: GROOM
 
 **Entry**: PRD file exists. May be skeleton, draft, or partially groomed.
-**Skip if**: `trw_prd_validate` returns score >= 0.85.
+**Skip if**: `trw_prd_validate` returns `total_score >= 85` (APPROVED tier). Do NOT use `completeness_score` (a deprecated 0-1 float) — the authoritative gate is the 0-100 `total_score` field.
 
 Delegate to a **trw-prd-groomer** helper for focused grooming work:
 
 1. Resolve PRD path (from Phase 1 output or `$ARGUMENTS`).
 2. Read PRD and call `trw_prd_validate(prd_path)` for baseline score.
-3. If score >= 0.85, skip to Phase 3.
+3. If `total_score >= 85` (APPROVED tier), skip to Phase 3.
 4. Research phase:
    - Call `trw_recall` with keywords from the PRD Background section
    - Use Grep/Glob to find relevant codebase patterns, interfaces, seams, data structures, and test conventions
@@ -105,7 +105,7 @@ Delegate to a **trw-prd-groomer** helper for focused grooming work:
 6. Validation loop (max 3 iterations):
    a. Write updated PRD
    b. Call `trw_prd_validate(prd_path)`
-   c. If >= 0.85, exit with success
+   c. If `total_score >= 85` (APPROVED tier), exit with success
    d. If < 5% improvement after iteration, exit (convergence)
    e. Parse failures and draft fixes
 
@@ -114,18 +114,18 @@ Delegate to a **trw-prd-groomer** helper for focused grooming work:
 - NEVER remove existing content — additive only
 - ALWAYS use EARS patterns for functional requirements
 - ALWAYS include confidence scores
-- If 0.85 requires inventing ungrounded content, document gaps in Open Questions
+- If reaching `total_score >= 85` requires inventing ungrounded content, document gaps in Open Questions
 
-**Exit**: Score >= 0.85 OR convergence reached. Report:
+**Exit**: `total_score >= 85` (APPROVED tier) OR convergence reached. Report:
 > "Groomed {PRD-ID} to {score}. Proceeding to review..."
 
-**Gate failure**: If score < 0.70 after 3 iterations, STOP. Report what's blocking and suggest the user provide more context. Do NOT proceed to review.
+**Gate failure**: If `total_score < 65` (below REVIEW tier) after 3 iterations, STOP. Report what's blocking and suggest the user provide more context. Do NOT proceed to review.
 
 ---
 
 ### Phase 3: REVIEW
 
-**Entry**: PRD score >= 0.85 from Phase 2.
+**Entry**: PRD `total_score >= 85` (APPROVED tier) from Phase 2.
 
 Delegate to a **trw-requirement-reviewer** helper for independent review:
 
@@ -258,7 +258,7 @@ Call `trw_learn(summary="PRD ready pipeline: {PRD-ID} — {score}", tags=["prd-w
 
 - **MCP tool failure** (`[Errno 2]`): The MCP server may have died. Report to user: "MCP server unavailable — run `/mcp` to reconnect, then retry `/trw-prd-ready`."
 - **PRD create fails**: Check if PRD ID already exists. Report and suggest using the existing PRD ID.
-- **Groom convergence at < 0.70**: Stop and report. The feature description likely needs more detail from the user.
+- **Groom convergence at `total_score < 65`** (below REVIEW tier): Stop and report. The feature description likely needs more detail from the user.
 - **Review returns BLOCK**: Stop and report blocking issues. These require human decisions.
 - **Exec plan hits unverifiable files**: Flag in Known Risks section rather than fabricating.
 

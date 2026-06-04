@@ -53,6 +53,7 @@ from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,
     step_clear_score,
+    step_knowledge_sync,
     unpack_gate_result,
 )
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
@@ -66,6 +67,41 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger(__name__)
 
 _events = FileEventLogger(FileStateWriter())
+
+# F24 (legibility): advisory delivery-gate warning keys. These are SOFT gates —
+# surfaced on the deliver result but never blocking — so historically a
+# "warned-but-delivered" run was byte-identical (success=True, no warning
+# signal) to a fully-clean one. We aggregate the subset of these keys actually
+# present on the result into warning_count / warnings_present / warnings so
+# downstream eval / false-completion scoring can separate clean vs warned
+# delivers. Blocking keys (review_block, *_scope_block, build_gate_*,
+# delivery_blocked, truthfulness_gate_bypassed) are deliberately EXCLUDED —
+# they already drive success=False or their own audit trail and are not
+# "advisory warnings on an otherwise-successful deliver".
+_ADVISORY_WARNING_KEYS: tuple[str, ...] = (
+    "review_warning",
+    "review_advisory",
+    "integration_review_warning",
+    "checkpoint_blocker_warning",
+    "untracked_warning",
+    "complexity_drift_warning",
+    "instruction_parity_warning",
+    "warning",
+)
+
+
+def _aggregate_advisory_warnings(results: DeliverResultDict) -> None:
+    """Populate warning_count / warnings_present / warnings on the result.
+
+    Scans ``results`` for the advisory-warning keys in
+    :data:`_ADVISORY_WARNING_KEYS` that are present and non-empty, and records
+    an aggregate count, a boolean flag, and the sorted list of present keys.
+    Pure legibility — does not touch ``success`` or any blocking behavior.
+    """
+    present = sorted(key for key in _ADVISORY_WARNING_KEYS if results.get(key))
+    results["warnings"] = present
+    results["warning_count"] = len(present)
+    results["warnings_present"] = bool(present)
 
 
 def __getattr__(name: str) -> object:
@@ -152,7 +188,13 @@ from trw_mcp.tools._ceremony_session_start_steps import (
     step_auto_recall_orchestrated as step_auto_recall_orchestrated,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
+    step_graph_health as step_graph_health,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_phase_auto_recall as step_phase_auto_recall,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
+    step_pipeline_health_advisory as step_pipeline_health_advisory,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_recall_learnings as step_recall_learnings,
@@ -162,6 +204,12 @@ from trw_mcp.tools._ceremony_session_start_steps import (
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_surface_stamp as step_surface_stamp,
+)
+from trw_mcp.tools._session_start_trim import (
+    find_intentional_marker as find_intentional_marker,
+)
+from trw_mcp.tools._session_start_trim import (
+    trim_session_start_payload as trim_session_start_payload,
 )
 
 # ── Tool registration ─────────────────────────────────────────────────
@@ -175,6 +223,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
     def trw_session_start(
         ctx: Context | None = None,
         query: str = "",
+        verbose: bool = False,
     ) -> SessionStartResultDict:
         """Load prior learnings + any active run so you start with full context.
 
@@ -191,15 +240,25 @@ def register_ceremony_tools(server: FastMCP) -> None:
         - query: optional focus string. When set, performs a focused recall on your
           topic AND a baseline high-impact recall, then merges + dedupes. Empty
           string or "*" uses default wildcard behavior.
+        - verbose: when False (default) returns a COMPACT payload — the learnings
+          list is capped to the top-K most relevant (with a ``learnings_omitted``
+          "N more" indicator) and the low-signal diagnostic sub-blocks
+          (embed_health/assertion_health/sync_health/step_durations_ms) are folded
+          into a one-line ``health_summary`` to cut token cost. Run/pin recovery,
+          errors, framework_reminder, and degraded advisories are always preserved.
+          Set verbose=True for the full diagnostic payload (legacy behavior).
 
         Output: SessionStartResultDict with fields
-        {learnings: list, learnings_count: int, run: RunStatusDict,
-         auto_recalled?: list, embed_health: dict, assertion_health?: dict,
-         framework_reminder: str, errors: list, success: bool}.
+        {learnings: list, learnings_count: int, learnings_omitted?: int,
+         run: RunStatusDict, auto_recalled?: list, health_summary?: str (compact),
+         embed_health?: dict (verbose), assertion_health?: dict (verbose),
+         framework_reminder: str, errors: list, success: bool, compact: bool,
+         payload_token_estimate: int}.
 
         Example:
             trw_session_start(query="sqlite extension macos")
-            → {"learnings": [...], "learnings_count": 8,
+            → {"learnings": [...], "learnings_count": 8, "compact": true,
+               "health_summary": "embed=ok; start=42ms (verbose=True for ...)",
                "run": {"active_run": "/path/...", "phase": "IMPLEMENT"}, ...}
 
         See Also: trw_init, trw_recall
@@ -209,6 +268,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
             step_increment_session_counter,
             step_log_session_event,
             step_sanitize_and_maintain,
+            step_sync_health,
             step_telemetry_startup,
         )
 
@@ -319,6 +379,16 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results["embed_health"] = step_embed_health()
         _record_step("embed_health", _embed_health_started)
 
+        # PRD-FIX-COMPOUNDING-1 FR02: surface backend sync-push health so a
+        # silently-stalled push (config disabled / backend unreachable) is
+        # visible on the first session rather than after weeks. Fail-open.
+        _sync_health_started = time.monotonic()
+        try:
+            results["sync_health"] = step_sync_health(resolve_trw_dir(), config)
+        except Exception:  # justified: fail-open, sync health must not block session start
+            logger.debug("sync_health_failed", exc_info=True)
+        _record_step("sync_health", _sync_health_started)
+
         _assertion_health_started = time.monotonic()
         try:
             ah = step_assertion_health(resolve_trw_dir())
@@ -328,12 +398,41 @@ def register_ceremony_tools(server: FastMCP) -> None:
             logger.debug("assertion_health_failed", exc_info=True)
         _record_step("assertion_health", _assertion_health_started)
 
+        # PRD-FIX-COMPOUNDING-2 FR04: graph-empty advisory. Surfaces the wiring
+        # gap (0 edges / many memories) so operators notice before more
+        # un-graphed learnings accumulate. Fail-open inside step_graph_health.
+        try:
+            gh = step_graph_health(resolve_trw_dir())
+            if gh is not None:
+                results["graph_health"] = gh
+        except Exception:  # justified: fail-open, graph health must not block session start
+            logger.debug("graph_health_failed", exc_info=True)
+
+        # PRD-FIX-COMPOUNDING-6 FR03: unified compounding-pipeline health surface.
+        # Injects pipeline_health_advisory (compact single-line string) when any
+        # of the five pipeline signals is degraded. Absent on healthy sessions
+        # (PRD-INFRA-068 lesson). Fail-open: never blocks session_start.
+        _pipeline_health_started = time.monotonic()
+        try:
+            step_pipeline_health_advisory(resolve_trw_dir(), cast("dict[str, object]", results))
+        except Exception:  # justified: fail-open, pipeline health must not block session start
+            logger.debug("pipeline_health_advisory_failed", exc_info=True)
+        _record_step("pipeline_health", _pipeline_health_started)
+
         _finalize_started = time.monotonic()
         # PRD-FIX-084: total elapsed time for the entire session_start call.
         # Captured BEFORE finalize so logs see the post-step total.
         _record_step("finalize", _finalize_started)
         _record_step("total", _step_started_at)
         finalize_session_start(results, config, step_durations_ms, errors)
+
+        # PRD-IMPROVE-MCP-04 FR1: trim the payload to compact-by-default. Caps
+        # the learnings list to top-K, folds the diagnostic sub-blocks into a
+        # one-line health_summary, and records payload_token_estimate so the
+        # token-cost reduction is measurable. verbose=True is a pass-through.
+        # Fail-open inside trim_session_start_payload: never drops run/error
+        # fields, so resume correctness is preserved.
+        results = trim_session_start_payload(results, verbose=verbose)
 
         # PRD-FIX-085 FR02: reset HOT_PATH ContextVar before returning. Always
         # runs even if step bodies raised, because each step uses its own
@@ -451,6 +550,59 @@ def register_ceremony_tools(server: FastMCP) -> None:
             results["success"] = False
             return results
 
+        # Block delivery when the review verdict is 'block' with critical findings
+        # on a STANDARD/COMPREHENSIVE run. This is the primary truthfulness gate:
+        # a block review must actually block (CONSTITUTION §1). The sanctioned
+        # escape hatch is allow_unverified + a concrete unverified_reason
+        # (Deliver Gate Path 3) — honored exactly like the build/integration gates.
+        review_block = gate_result.get("review_block")
+        if review_block and not (allow_unverified and unverified_reason.strip()):
+            errors.append(str(review_block))
+            results["errors"] = errors
+            results["success"] = False
+            logger.warning(
+                "deliver_review_block",
+                run=str(resolved_run),
+            )
+            return results
+        if review_block:
+            # Override taken — make the bypass of the truthfulness gate UNMISSABLE,
+            # mirroring the build-gate override audit trail (A-P1-02).
+            reason = unverified_reason.strip()
+            results["truthfulness_gate_bypassed"] = reason
+            logger.warning(
+                "review_block_override_used",
+                reason=reason,
+                review_block=str(review_block),
+                run=str(resolved_run),
+            )
+            if resolved_run is not None and (resolved_run / "meta").exists():
+                _events.log_event(
+                    resolved_run / "meta" / "events.jsonl",
+                    "delivery_gate_overridden",
+                    {"reason": reason, "review_block": str(review_block)},
+                )
+
+        # PRD-CORE-184-FR03: task-type-aware deliver gate. When the configured
+        # deliver_gate_mode + the run's task_type promote the advisory build
+        # gate to a structural block, treat the missing build check as a hard
+        # gate (still overridable via allow_unverified + unverified_reason).
+        # When the mode is advisory (default) ``delivery_blocked`` is never set,
+        # so this is a pure no-op for existing deployments (zero regression).
+        delivery_blocked = gate_result.get("delivery_blocked")
+        if delivery_blocked and not (allow_unverified and unverified_reason.strip()):
+            results["delivery_blocked"] = str(delivery_blocked)
+            results["missing_gate"] = str(gate_result.get("missing_gate", "build_check"))
+            errors.append(str(delivery_blocked))
+            results["errors"] = errors
+            results["success"] = False
+            logger.warning(
+                "deliver_gate_mode_blocked",
+                task_type=str(gate_result.get("blocked_task_type", "unknown")),
+                run=str(resolved_run),
+            )
+            return results
+
         # PRD-DIST-1865 / iter-29 Track-A: do not let "must call deliver"
         # override truthfulness.  A run with work events but no successful
         # trw_build_check can still be delivered through an explicit
@@ -470,6 +622,25 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 results["success"] = False
                 return results
             results["build_gate_override"] = reason
+            # A-P1-02: the truthfulness gate (CONSTITUTION §1.a) was bypassed via
+            # allow_unverified. Previously this was only stored in a result key —
+            # invisible to an operator watching the log/event stream, and
+            # indistinguishable from a legitimate acceptable-failure deliver.
+            # Make the bypass UNMISSABLE: a WARNING, a prominent result key, and
+            # (when a run exists) a delivery_gate_overridden event for audit.
+            results["truthfulness_gate_bypassed"] = reason
+            logger.warning(
+                "build_gate_override_used",
+                reason=reason,
+                build_gate_warning=str(build_gate_warning),
+                run=str(resolved_run),
+            )
+            if resolved_run is not None and (resolved_run / "meta").exists():
+                _events.log_event(
+                    resolved_run / "meta" / "events.jsonl",
+                    "delivery_gate_overridden",
+                    {"reason": reason, "build_gate_warning": str(build_gate_warning)},
+                )
 
         # -- CRITICAL PATH (synchronous) --
         # These 3 steps must complete before returning — they produce the
@@ -525,6 +696,11 @@ def register_ceremony_tools(server: FastMCP) -> None:
         if resolved_run is not None:
             step_clear_score(resolved_run, results)
 
+        # Step 3d: PRD-FIX-COMPOUNDING-2 FR03 — auto-trigger knowledge-graph
+        # topic sync when the entry count meets the threshold. Fail-open: a sync
+        # failure records knowledge_sync.status="failed" but never fails deliver.
+        step_knowledge_sync(trw_dir, results)
+
         # -- DEFERRED PATH (background thread) --
         # Housekeeping, analytics, publishing, and telemetry — these don't
         # affect the next session's startup and can run after we return.
@@ -543,6 +719,11 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results["success"] = len(errors) == 0
         results["critical_steps_completed"] = critical_step_count - len(errors)
         results["deferred_steps"] = 11  # launched in background
+
+        # F24 (legibility): aggregate advisory warnings so a warned-but-delivered
+        # run is distinguishable from a fully-clean one. Pure diagnostic — does
+        # not affect success (which is still ``len(errors) == 0`` above).
+        _aggregate_advisory_warnings(results)
 
         # Mark deliver in ceremony state (PRD-CORE-124 FR-deliver)
         try:

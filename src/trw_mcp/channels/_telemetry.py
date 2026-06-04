@@ -5,7 +5,7 @@ Implements the canonical channel-event/v1 telemetry writer with:
 - 10 MB file rotation with single backup (FR09)
 - 50,000-line cap with 25,000-line prune (FR09)
 - Canonical record_id format validation (FR11 / SYS-02 fix)
-- 20 canonical event_type values (FR10)
+- 23 canonical event_type values (FR10 + HIGH-1 fix: channel_lock_skip, channel_error, manifest_recovered)
 
 PRD-DIST-2400 FR08, FR09, FR10, FR11.
 """
@@ -35,6 +35,7 @@ __all__ = [
     "VALID_EVENT_TYPES",
     "append_channel_event",
     "prune_channel_events",
+    "validate_event_type",
     "validate_record_id",
 ]
 
@@ -52,16 +53,19 @@ CHANNEL_EVENT_V1_REQUIRED: tuple[str, ...] = (
     "event_type",
 )
 
-# Canonical 20 event_type values from master plan §6.2
+# Canonical event_type values from master plan §6.2 + system events.
+# The 20 channel-level events from §6.2 plus 1 system recovery event (FR15):
+#   manifest_recovered — emitted by _manifest_loader.auto_recreate_empty() on SYS-04 recovery.
 VALID_EVENT_TYPES: frozenset[str] = frozenset(
     {
+        # --- 20 canonical channel events (master plan §6.2) ---
         "push_write",
         "push_ephemeral",
         "pull_tool_call",
         "push_stale",
         "quota_exceeded",
         "tier_down",
-        "channel_conflict",
+        "channel_conflict",      # write-conflict only (human edit detected)
         "snapshot_written",
         "snapshot_stale",
         "explorer_invoked",
@@ -75,8 +79,45 @@ VALID_EVENT_TYPES: frozenset[str] = frozenset(
         "subagent_outcome",
         "throttle_applied",
         "throttle_cleared",
+        # --- Distinct renderer skip/error events (HIGH-1 fix) ---
+        # channel_conflict is now reserved for write-conflict (human edit detected).
+        # Lock-skip and internal errors get their own event types so meta-tune
+        # signal and operator observability remain unambiguous.
+        "channel_lock_skip",     # another writer holds the lock
+        "channel_error",         # internal error during render
+        # --- System recovery events (FR15 / SYS-04) ---
+        "manifest_recovered",
     }
 )
+
+# ---------------------------------------------------------------------------
+# validate_event_type (HIGH-6 observable-fail-open resolution)
+#
+# FR10 says unknown event_type "raises ValueError at call site"; NFR06 says
+# telemetry must be fail-open and never break a tool call.  Resolution:
+# - append_channel_event() remains fail-open (NFR06 wins).
+# - Unknown event_types are logged at WARNING (not DEBUG) so typos are visible.
+# - validate_event_type() is a public helper callers CAN use at authoring time
+#   (e.g. in tests or during channel registration) to get an early ValueError.
+# ---------------------------------------------------------------------------
+
+
+def validate_event_type(event_type: str) -> None:
+    """Raise ValueError if *event_type* is not in VALID_EVENT_TYPES.
+
+    Callers that want an early authoring-time check (e.g., tests, channel
+    registration) should call this.  ``append_channel_event`` itself remains
+    fail-open per NFR06 — see module docstring for the spec tension rationale.
+
+    Raises:
+        ValueError: if *event_type* is not a canonical event type.
+    """
+    if event_type not in VALID_EVENT_TYPES:
+        raise ValueError(
+            f"event_type {event_type!r} is not in VALID_EVENT_TYPES. "
+            f"Valid values: {sorted(VALID_EVENT_TYPES)}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Rotation / prune limits (FR09)
@@ -202,6 +243,14 @@ def _write_channel_event(
 ) -> None:
     """Inner writer — may raise; caller wraps with fail-open try/except."""
     if event_type not in VALID_EVENT_TYPES:
+        # HIGH-6: log at WARNING (not DEBUG) so typos are visible in production.
+        # The outer fail-open wrapper catches this raise; telemetry is still never
+        # propagated to tool callers (NFR06 wins over FR10 raises-at-call-site).
+        log.warning(
+            "channel_telemetry_unknown_event_type",
+            event_type=event_type,
+            outcome="unknown_event_type_dropped",
+        )
         raise ValueError(f"event_type {event_type!r} is not in VALID_EVENT_TYPES")
 
     # Validate record_ids format if provided (warn but do NOT drop event)

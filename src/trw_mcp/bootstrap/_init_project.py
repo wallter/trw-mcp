@@ -334,6 +334,18 @@ def init_project(
         except Exception as _exc:  # justified: fail-open, distill channels are additive
             result.setdefault("warnings", []).append(f"claude-code distill channels skipped: {_exc}")
 
+        # 7a-1. Install .claude/loop.md — TRW-ceremony-aware /loop customization.
+        # Uses _DATA_DIR / "claude_code" / "loop.md" as source so the file is
+        # bundled with the package and distributed to all claude-code installs.
+        _loop_src = _DATA_DIR / "claude_code" / "loop.md"
+        _copy_file(
+            _loop_src,
+            target_dir / ".claude" / "loop.md",
+            force,
+            result,
+            on_progress,
+        )
+
     # 7b. OpenCode artifacts (FR15: multi-IDE support)
     if "opencode" in ide_targets:
         _install_opencode_artifacts(target_dir, force=force, result=result)

@@ -47,9 +47,11 @@ class BeforeYouEditBatchPayload(BaseModel):
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    total_files: int
-    files_in_map: int
-    total_hotspot_warnings: int
+    # Constraints mirror the trw-distill source; parity-checked by
+    # scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05).
+    total_files: int = Field(ge=0)
+    files_in_map: int = Field(ge=0)
+    total_hotspot_warnings: int = Field(ge=0)
     hints: list[BeforeYouEditHintPayload] = Field(default_factory=list)
 
 

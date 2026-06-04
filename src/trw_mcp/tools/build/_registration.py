@@ -45,6 +45,7 @@ from trw_mcp.tools.build._core import (
     cache_build_status,
     persist_build_progress_state,
 )
+from trw_mcp.tools.build._failure_attribution import attribute_failures
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -249,6 +250,15 @@ def register_build_tools(server: FastMCP) -> None:
             "cache_path": str(cache_path),
             "q_learning_deferred": q_learning_deferred,
         }
+
+        # PRD-IMPROVE-MCP-02 FR1: triage each reported failure as
+        # likely-yours vs pre-existing on this working tree, so the agent
+        # skips git archaeology. Fail-open inside ``attribute_failures``;
+        # only runs when failures were reported.
+        attribution = attribute_failures(effective_failures)
+        if attribution is not None:
+            result["failure_attribution"] = attribution
+            result["summary"] = attribution["summary"]
 
         # Coverage threshold enforcement (sprint-finish anti-regression)
         _finalize_build_result(result, min_coverage)

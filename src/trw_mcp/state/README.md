@@ -71,8 +71,6 @@
 | `phase.py` | — | Primary | Phase tracking and transitions |
 | `auto_upgrade.py` | — | Primary | Schema auto-migration |
 | `dry_check.py` | — | Primary | DRY violation scanning |
-| `usage_profiler.py` | — | Primary | Tool usage profiling for progressive disclosure |
-| `progressive_middleware.py` | — | Primary | Progressive disclosure middleware state |
 | `receipts.py` | — | Primary | Recall receipt tracking |
 | `llm_helpers.py` | — | Primary | LLM client facade |
 | `otel_wrapper.py` | — | Primary | OpenTelemetry integration |

@@ -199,6 +199,90 @@ def test_no_correlation_when_push_too_old(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# P1-22 — empty file_path guard
+# ---------------------------------------------------------------------------
+
+
+def test_empty_file_path_returns_false(tmp_path: Path) -> None:
+    """Empty file_path returns False without crashing (P1-22, R-02)."""
+    from trw_mcp.channels.copilot._posttool_correlate import correlate_posttool_event
+
+    log_path = tmp_path / "channel-events.jsonl"
+    now_ts = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    push_event = {
+        "schema_version": "channel-event/v1",
+        "channel_id": "copilot-instructions-distill",
+        "client": "copilot",
+        "ts": now_ts,
+        "event_type": "push_write",
+        "extra": {"file_path": "some/file.py"},
+    }
+    log_path.write_text(json.dumps(push_event) + "\n", encoding="utf-8")
+
+    result = correlate_posttool_event(
+        file_path="",
+        tool_name="edit",
+        events_log=log_path,
+    )
+    assert result is False
+
+
+def test_correlation_via_record_id(tmp_path: Path) -> None:
+    """Push event matched via record_ids field (not extra.file_path)."""
+    from trw_mcp.channels.copilot._posttool_correlate import correlate_posttool_event
+
+    log_path = tmp_path / "channel-events.jsonl"
+    now_ts = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    file_path = "trw-mcp/src/trw_mcp/state/ceremony.py"
+
+    # Push event without extra.file_path — uses record_ids instead
+    push_event = {
+        "schema_version": "channel-event/v1",
+        "channel_id": "copilot-instructions-distill",
+        "client": "copilot",
+        "ts": now_ts,
+        "event_type": "push_write",
+        "record_ids": [f"push:{file_path}@abc123"],
+    }
+    log_path.write_text(json.dumps(push_event) + "\n", encoding="utf-8")
+
+    result = correlate_posttool_event(
+        file_path=file_path,
+        tool_name="edit",
+        events_log=log_path,
+        window_seconds=3600,
+    )
+    assert result is True
+
+
+def test_push_ephemeral_events_also_matched(tmp_path: Path) -> None:
+    """push_ephemeral events also count as push events for correlation."""
+    from trw_mcp.channels.copilot._posttool_correlate import correlate_posttool_event
+
+    log_path = tmp_path / "channel-events.jsonl"
+    now_ts = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    file_path = "backend/api.py"
+
+    push_event = {
+        "schema_version": "channel-event/v1",
+        "channel_id": "copilot-instructions-distill",
+        "client": "copilot",
+        "ts": now_ts,
+        "event_type": "push_ephemeral",
+        "extra": {"file_path": file_path},
+    }
+    log_path.write_text(json.dumps(push_event) + "\n", encoding="utf-8")
+
+    result = correlate_posttool_event(
+        file_path=file_path,
+        tool_name="read",
+        events_log=log_path,
+        window_seconds=3600,
+    )
+    assert result is True
+
+
+# ---------------------------------------------------------------------------
 # FR16 / P1-13 — hooks.json extension preserves existing entries
 # ---------------------------------------------------------------------------
 

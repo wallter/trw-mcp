@@ -98,6 +98,7 @@ def test_http_proxy_transport_passes_configured_handshake_timeout(monkeypatch: p
         {
             "mcp_transport": "streamable-http",
             "mcp_proxy_handshake_timeout_seconds": 2.5,
+            "mcp_proxy_request_timeout_seconds": 90.0,
         }
     )
 
@@ -106,6 +107,8 @@ def test_http_proxy_transport_passes_configured_handshake_timeout(monkeypatch: p
     assert captured == {
         "url": "http://127.0.0.1:8100/mcp",
         "handshake_timeout_seconds": 2.5,
+        # PRD-FIX-106: the per-call request timeout is now forwarded too.
+        "request_timeout_seconds": 90.0,
     }
 
 

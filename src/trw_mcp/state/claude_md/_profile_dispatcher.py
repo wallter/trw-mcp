@@ -84,7 +84,7 @@ def dispatch_for_profile(
     del reader, llm  # currently unused at dispatcher scope
     # Late-imports keep ``_profile_dispatcher`` importable before ``_sync`` is
     # fully initialised (legacy tests patch ``_sync.*`` module attributes).
-    import trw_mcp.state.claude_md as _pkg
+    from trw_mcp.state import _paths
     from trw_mcp.state.analytics import update_analytics_sync
     from trw_mcp.state.claude_md._sync import (
         _build_sync_result,
@@ -96,8 +96,13 @@ def dispatch_for_profile(
         recall_learnings,
     )
 
-    trw_dir = _pkg.resolve_trw_dir()
-    project_root = _pkg.resolve_project_root()
+    # PRD: resolve the write target via LATE lookup through ``_paths`` so the
+    # functions are read at call time, not bound at import. This makes the sync
+    # honour ``monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root")``
+    # and any runtime ``chdir`` — and removes the import-time-binding fragility
+    # that previously let tests pollute the real repo CLAUDE.md.
+    trw_dir = _paths.resolve_trw_dir()
+    project_root = _paths.resolve_project_root()
 
     # PRD-CORE-093 FR05: Hash excludes learning content — only package version
     # determines whether CLAUDE.md needs re-rendering. This keeps the prompt

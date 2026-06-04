@@ -10,12 +10,16 @@ from pydantic import BaseModel, ConfigDict
 from trw_mcp.models.config import ClientProfile, ModelTier
 from trw_mcp.models.run import ComplexityClass, ComplexitySignals
 from trw_mcp.models.task_profile_types import (
+    _TASK_TYPE_NUDGE_DEFAULTS,
     CeremonyDepth,
     NudgePolicy,
+    RecallPolicy,
     TaskArchetype,
     TaskProfile,
     TaskProfileOverrides,
+    TaskType,
     TraceDepth,
+    task_type_recall_policy,
 )
 from trw_mcp.scoring import classify_complexity, get_ceremony_depth_contract
 
@@ -29,6 +33,9 @@ class _TaskProfileFingerprint(BaseModel):
     model_tier: str
     complexity_class: str
     task_archetype: str
+    task_type: str
+    recall_policy: str
+    nudge_pool_weights: tuple[int, int, int, int]
     ceremony_depth: str
     mandatory_phases: tuple[str, ...]
     exposed_tool_preset: str
@@ -138,18 +145,29 @@ def resolve_task_profile(
     complexity_class: ComplexityClass | str | None = None,
     complexity_signals: ComplexitySignals | None = None,
     task_archetype: TaskArchetype = "unknown",
+    task_type: TaskType = "unknown",
     config_overrides: TaskProfileOverrides | None = None,
 ) -> TaskProfile:
-    """Resolve client profile + task complexity into a first-class TaskProfile."""
+    """Resolve client profile + task complexity into a first-class TaskProfile.
+
+    PRD-CORE-184: ``task_type`` (the runtime behavioral regime) drives the
+    per-task-type nudge pool weights and the recall-policy hint. ``unknown``
+    keeps the historical default weights — zero behavior change.
+    """
     tier, complexity_rationale = _resolve_complexity(complexity_class, complexity_signals)
     contract = get_ceremony_depth_contract(tier)
     mandatory_phases = tuple(contract.mandatory_phases)
     rationale = _extend_rationale(client_profile, mandatory_phases, complexity_rationale)
+    nudge_pool_weights = _TASK_TYPE_NUDGE_DEFAULTS.get(task_type, (40, 30, 20, 10))
+    recall_policy: RecallPolicy = task_type_recall_policy(task_type)
     fingerprint = _TaskProfileFingerprint(
         profile_id=client_profile.client_id,
         model_tier=model_tier or client_profile.default_model_tier,
         complexity_class=tier.value,
         task_archetype=task_archetype,
+        task_type=task_type,
+        recall_policy=recall_policy,
+        nudge_pool_weights=nudge_pool_weights,
         ceremony_depth=_resolve_ceremony_depth(client_profile, tier, contract.ceremony_depth),
         mandatory_phases=mandatory_phases,
         exposed_tool_preset=client_profile.tool_exposure_mode,

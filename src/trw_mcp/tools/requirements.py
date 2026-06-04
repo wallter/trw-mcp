@@ -1,6 +1,6 @@
 """TRW AARE-F requirements tools --- prd_create, prd_validate.
 
-These 2 tools codify the AARE-F Framework v1.1.0 requirements engineering
+These 2 tools codify the AARE-F Framework requirements engineering
 process as executable MCP tools.
 
 Template processing helpers live in ``_prd_template_helpers.py`` and are
@@ -352,14 +352,25 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         - prd_path: path to the PRD markdown file (required).
 
         Output: ValidateResultDict with fields
-        {total_score: int (0-100), tier: str, grade: str,
-         gate_pass: bool, ambiguity_rate: float, completeness: float,
-         traceability_coverage: float, suggestions: list[str]}.
+        {total_score: float (0-100), quality_tier: str, grade: str,
+         valid: bool, ambiguity_rate: float, completeness_score: float,
+         traceability_coverage: float,
+         improvement_suggestions: list[ImprovementSuggestionDict],
+         failures: list[ValidationFailureDict], dimensions: list[DimensionScoreDict],
+         path: str, sections_found: list[str], sections_expected: list[str],
+         smell_findings: list[dict], ears_classifications: list[dict],
+         readability: dict[str, float], section_scores: list[SectionScoreDict],
+         effective_risk_level: str, risk_scaled: bool,
+         status_drift_warnings: list[str], integrity_warnings: list[str],
+         cache: dict}.
+
+        quality_tier values: "skeleton" | "draft" | "review" | "approved"
+        (QualityTier enum; no "PRODUCTION" tier exists).
 
         Example:
             trw_prd_validate(prd_path="docs/requirements-aare-f/prds/PRD-QUAL-074.md")
-            → {"total_score": 87, "tier": "PRODUCTION", "grade": "A",
-               "gate_pass": true, "suggestions": []}
+            → {"total_score": 87, "quality_tier": "approved", "grade": "A",
+               "valid": true, "improvement_suggestions": []}
         """
         # prd_path has an empty default so FastMCP can inject ctx as the first
         # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.

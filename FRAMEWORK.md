@@ -340,6 +340,7 @@ PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD 
 - Infer the project's language, framework, build system, package manager, and test runner from files and config before choosing commands.
 - Non-trivial production behavior SHOULD have tests first or tests in the same commit, using the project's native test framework.
 - Production behavior changes without nearby tests or an explicit validation rationale SHOULD fail review, regardless of language.
+- Tests MUST verify behavior — assert on output values and observable effects — not mere existence (a symbol is present, `is not None`, `callable`, or a mock `assert_called`). A test that mocks the unit under test verifies the mock, not the code; coverage built on mock-only or existence-only tests is false confidence (it passes while the real path is dead — see VALIDATE blindness). Every requirement claimed done SHOULD have at least one test that exercises the real data path and asserts the produced value, and any "verified/implemented" claim SHOULD name a test that actually exists and passes.
 - Coverage, type-safety, lint, formatting, security, and build targets come from package/repo config; do not invent universal percentages or single-language gates.
 - Run the narrowest meaningful check first, then broaden before delivery when risk warrants it.
 - Record the exact command(s), result, and residual risk with `trw_build_check` after checks run.

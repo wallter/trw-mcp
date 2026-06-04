@@ -109,6 +109,8 @@ For each FR, answer three questions:
 
 Assign verdict per FR: PASS | PARTIAL | FAIL | MISSING. For every PARTIAL, re-read the acceptance criterion literally and challenge whether FAIL is more accurate.
 
+**Respect the `trw:intentional` marker.** Code carrying a `# trw:intentional <reason>` (or `// trw:intentional <reason>`) comment on or just above a line is a settled, deliberate decision — counterintuitive-by-design code that prior reviewers already litigated (e.g. a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values). Treat the marker as strong evidence the code is correct. Do NOT raise a finding against marked code on "this looks wrong / surprising" grounds. Raise a finding ONLY when you have concrete evidence the marker is itself wrong — e.g. the cited reason no longer holds, or the code does not actually do what the reason claims — and state that evidence explicitly in the finding. See [`docs/documentation/intentional-marker.md`](../../../../../docs/documentation/intentional-marker.md).
+
 ### Phase 4: Code Quality and Type Safety Audit (Wave 4)
 
 **Type safety (language-appropriate):** Explicit precise types throughout. No `Any`/`object`/`unknown`/`interface{}`/untyped generics. No bare containers. Type suppressions are findings unless justified. Cross-function/file types consistent.
@@ -190,6 +192,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "The type suppression is fine, the author knows what they're doing" | Type suppressions hide contract violations that surface at runtime | Silent type mismatches cause data corruption no test catches until production |
 | "This duplication is fine, it's only in two places" | Two places means two places to update and one to forget | Duplicated logic diverges silently — one copy gets fixed, the other doesn't |
 | "The error handling is good enough" | Silent exception swallowing is the #1 cause of "worked in testing, fails in production" | Swallowed errors produce silent data loss no monitoring catches |
+| "This code is clearly wrong even though it has a trw:intentional marker" | A `trw:intentional` marker records a settled, deliberate decision — your "this looks wrong" instinct is exactly the false positive the marker exists to prevent | Re-litigating marked decisions wastes cycles and risks "fixing" correct counterintuitive code (a fail-by-design scorer, a truthfulness gate); only override with concrete evidence the marker's reason is wrong |
 </rationalization-watchlist>
 
 <audit-angles>

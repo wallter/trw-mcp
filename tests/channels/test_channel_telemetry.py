@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -23,9 +22,9 @@ from trw_mcp.channels._telemetry import (
     VALID_EVENT_TYPES,
     append_channel_event,
     prune_channel_events,
+    validate_event_type,
     validate_record_id,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants (FR10)
@@ -47,11 +46,15 @@ def test_required_fields_tuple() -> None:
 
 
 def test_valid_event_types_count() -> None:
-    assert len(VALID_EVENT_TYPES) == 20
+    # 20 canonical channel events from master plan §6.2
+    # + 2 renderer-distinct events (channel_lock_skip, channel_error — HIGH-1 fix)
+    # + 1 system recovery event (manifest_recovered, FR15 / SYS-04)
+    assert len(VALID_EVENT_TYPES) == 23
 
 
 def test_valid_event_types_contains_canonical() -> None:
-    required = {
+    # The 20 channel-level events from master plan §6.2
+    channel_events = {
         "push_write", "push_ephemeral", "pull_tool_call", "push_stale",
         "quota_exceeded", "tier_down", "channel_conflict", "snapshot_written",
         "snapshot_stale", "explorer_invoked", "explorer_completed",
@@ -59,7 +62,18 @@ def test_valid_event_types_contains_canonical() -> None:
         "memory_index_near_cap", "mdc_tombstone", "mdc_conflict_skip",
         "subagent_outcome", "throttle_applied", "throttle_cleared",
     }
-    assert required == VALID_EVENT_TYPES
+    assert channel_events.issubset(VALID_EVENT_TYPES)
+
+
+def test_valid_event_types_contains_distinct_renderer_events() -> None:
+    # HIGH-1 fix: lock-skip and internal error get distinct event types
+    assert "channel_lock_skip" in VALID_EVENT_TYPES
+    assert "channel_error" in VALID_EVENT_TYPES
+
+
+def test_valid_event_types_contains_system_recovery_event() -> None:
+    # manifest_recovered is emitted on SYS-04 manifest auto-recovery (FR15)
+    assert "manifest_recovered" in VALID_EVENT_TYPES
 
 
 def test_max_events_bytes() -> None:
@@ -302,16 +316,45 @@ def test_append_channel_event_fail_open_on_json_error(
 
 
 def test_unknown_event_type_is_fail_open(tmp_path: Path) -> None:
-    """Unknown event_type is caught by fail-open wrapper — must not raise."""
+    """HIGH-6: NFR06 fail-open wins over FR10 raises-at-call-site.
+
+    Spec tension: FR10 says unknown event_type "raises ValueError at call site";
+    NFR06 says telemetry must never break a tool call.  Resolution:
+    - append_channel_event() remains fail-open — unknown types are silently
+      dropped (logged at WARNING, never propagated to callers).
+    - validate_event_type() is a public helper for authoring-time checks.
+    This test documents that the fail-open behavior is INTENTIONAL (NFR06 wins).
+    """
     log_path = tmp_path / "events.jsonl"
-    # append_channel_event wraps all exceptions; unknown type is caught
+    # append_channel_event wraps all exceptions including unknown event_type;
+    # must not raise even when event_type is invalid.
     append_channel_event(
         channel_id="ch",
         client="claude-code",
         event_type="not_a_real_event",
         log_path=log_path,
     )
-    # File may or may not exist; we just verify no exception
+    # Unknown event type → event is dropped (not written to JSONL)
+    # File should not exist or should be empty if no other events were appended
+    if log_path.exists():
+        lines = [l for l in log_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        unknown_lines = [l for l in lines if "not_a_real_event" in l]
+        assert not unknown_lines, "Unknown event_type must NOT be written to the JSONL file"
+
+
+def test_validate_event_type_accepts_canonical_type() -> None:
+    """HIGH-6: validate_event_type() is the authoring-time check helper."""
+    # Valid canonical type — must not raise
+    validate_event_type("push_write")
+    validate_event_type("manifest_recovered")
+    validate_event_type("channel_lock_skip")
+    validate_event_type("channel_error")
+
+
+def test_validate_event_type_raises_for_unknown_type() -> None:
+    """HIGH-6: validate_event_type() raises ValueError for unknown types."""
+    with pytest.raises(ValueError, match="not in VALID_EVENT_TYPES"):
+        validate_event_type("not_a_real_event_type")
 
 
 def test_event_v1_schema_required_fields_constant() -> None:

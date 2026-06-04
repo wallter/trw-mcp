@@ -566,4 +566,4 @@ Re-read the output format for your chosen resolution method and confirm all requ
 ---
 
 *Conflict Resolution Prompts v1.0.0*
-*AARE-F Framework v1.1.0 Implementation*
+*AARE-F Framework Implementation*

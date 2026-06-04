@@ -23,6 +23,7 @@ from trw_memory.models.memory import (
 )
 
 from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 _NAMESPACE = DEFAULT_NAMESPACE
@@ -34,18 +35,23 @@ _SourceType = Literal["human", "agent", "tool", "consolidated", "team_sync"]
 logger = structlog.get_logger(__name__)
 
 
-def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> dict[str, object]:
+def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> LearningEntryDict:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
 
     The returned dict matches the YAML-era learning entry format so callers
-    (FRAMEWORK.md, hooks, etc.) see no API change.
+    (FRAMEWORK.md, hooks, etc.) see no API change. The declared type is the
+    canonical :class:`LearningEntryDict` contract; the field set built here is
+    the single source of truth that ``LearningEntryDict`` mirrors. Recall
+    callers therefore receive a typed element shape instead of a bare
+    ``dict[str, object]``.
 
     Args:
         entry: Memory entry from SQLite.
         compact: When True, return only essential fields.
 
     Returns:
-        Dict with ``id``, ``summary``, ``tags``, ``impact``, ``status``, etc.
+        ``LearningEntryDict`` with ``id``, ``summary``, ``tags``, ``impact``,
+        ``status``, and (when not compact) the full extended field set.
     """
     tags = entry.tags[:COMPACT_TAGS_CAP] if compact else entry.tags
     base: dict[str, object] = {
@@ -56,7 +62,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
         "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
     }
     if compact:
-        return base
+        return cast("LearningEntryDict", base)
 
     base.update(
         {
@@ -69,6 +75,10 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
             "created": entry.created_at.date().isoformat() if entry.created_at else "",
             "updated": entry.updated_at.date().isoformat() if entry.updated_at else "",
             "access_count": entry.access_count,
+            # PRD-FIX-104: expose recall_count so feedback_decay_score can fire in entry_utility
+            "recall_count": entry.recall_count,
+            "helpful_count": entry.helpful_count,
+            "unhelpful_count": entry.unhelpful_count,
             "last_accessed_at": (entry.last_accessed_at.date().isoformat() if entry.last_accessed_at else None),
             "q_value": entry.q_value,
             "q_observations": entry.q_observations,
@@ -105,7 +115,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> di
 
     base["session_count"] = entry.session_count or 0
 
-    return base
+    return cast("LearningEntryDict", base)
 
 
 def _learning_to_memory_entry(

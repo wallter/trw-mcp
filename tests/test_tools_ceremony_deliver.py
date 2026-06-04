@@ -55,7 +55,14 @@ class TestDeliverPartialFailure:
             ),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         ):
-            result = tools["trw_deliver"].fn()
+            # Satisfy the PRD-DIST-1865 truthfulness gate so deliver proceeds
+            # past the build-check guard to the reflect/checkpoint steps this
+            # test actually exercises. Without the override the gate returns
+            # early (success=False, no reflect/checkpoint keys).
+            result = tools["trw_deliver"].fn(
+                allow_unverified=True,
+                unverified_reason="test fixture: no build_check recorded for this synthetic run",
+            )
 
         assert result["success"] is False
         assert result["reflect"]["status"] == "failed"
@@ -102,7 +109,14 @@ class TestDeliverPartialFailure:
             ),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         ):
-            result = tools["trw_deliver"].fn()
+            # Satisfy the PRD-DIST-1865 truthfulness gate so deliver proceeds
+            # past the build-check guard to the checkpoint/sync steps this test
+            # actually exercises. Without the override the gate returns early
+            # (success=False, no checkpoint/claude_md_sync keys).
+            result = tools["trw_deliver"].fn(
+                allow_unverified=True,
+                unverified_reason="test fixture: no build_check recorded for this synthetic run",
+            )
 
         assert result["success"] is False
         assert result["checkpoint"]["status"] == "failed"

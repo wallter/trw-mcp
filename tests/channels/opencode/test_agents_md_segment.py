@@ -6,7 +6,6 @@ PRD-DIST-2403 FR01-FR09.
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -222,7 +221,6 @@ def test_shared_agents_md_lock_prevents_concurrent_writes(tmp_path: Path) -> Non
     from trw_mcp.channels.opencode._agents_md_segment import (
         install_opencode_agents_md_distill_segment,
     )
-    from trw_mcp.channels.opencode._shared_lock import agents_md_lock
 
     agents_md = tmp_path / "AGENTS.md"
     agents_md.write_text("# Project\n\n<!-- trw:end -->\n", encoding="utf-8")
@@ -331,3 +329,206 @@ def test_build_opencode_agents_md_entry_canonical_fields() -> None:
     assert entry.markers.end == DISTILL_END
     assert entry.ttl_commits == 10
     assert entry.ttl_days == 7
+
+
+# ---------------------------------------------------------------------------
+# SidecarData type alias exported (NFR04)
+# ---------------------------------------------------------------------------
+
+
+def test_sidecar_data_type_alias_exported() -> None:
+    """NFR04: SidecarData type alias is exported from _agents_md_segment."""
+    from trw_mcp.channels.opencode._agents_md_segment import SidecarData
+
+    # Verify it is a generic alias for dict[str, Any]
+    assert SidecarData is not None
+
+
+# ---------------------------------------------------------------------------
+# Event type correctness (cross-wave lesson: no channel_conflict overloading)
+# ---------------------------------------------------------------------------
+
+
+def test_lock_skip_emits_channel_lock_skip_event(tmp_path: Path) -> None:
+    """Lock contention emits channel_lock_skip, not channel_conflict."""
+    from unittest.mock import MagicMock, patch
+
+    from trw_mcp.channels._lock import ChannelLockSkip
+    from trw_mcp.channels.opencode._agents_md_segment import (
+        install_opencode_agents_md_distill_segment,
+    )
+
+    emitted: list[str] = []
+
+    def fake_emit(**kwargs: object) -> None:
+        emitted.append(str(kwargs.get("event_type", "")))
+
+    with patch(
+        "trw_mcp.channels.opencode._agents_md_segment.agents_md_lock"
+    ) as mock_lock_fn:
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = MagicMock(side_effect=ChannelLockSkip("held"))
+        mock_lock_fn.return_value = mock_lock
+
+        with patch(
+            "trw_mcp.channels.opencode._agents_md_segment.append_channel_event",
+            side_effect=fake_emit,
+        ):
+            result = install_opencode_agents_md_distill_segment(
+                tmp_path, None, None
+            )
+
+    assert result.status == "skipped_lock"
+    assert "channel_lock_skip" in emitted, f"Expected channel_lock_skip in {emitted}"
+    assert "channel_conflict" not in emitted, "channel_conflict must not be used for lock skip"
+
+
+def test_error_emits_channel_error_event(tmp_path: Path) -> None:
+    """Render errors emit channel_error, not channel_conflict."""
+    from unittest.mock import MagicMock, patch
+
+    from trw_mcp.channels.opencode._agents_md_segment import (
+        install_opencode_agents_md_distill_segment,
+    )
+
+    emitted: list[str] = []
+
+    def fake_emit(**kwargs: object) -> None:
+        emitted.append(str(kwargs.get("event_type", "")))
+
+    with patch(
+        "trw_mcp.channels.opencode._agents_md_segment.agents_md_lock"
+    ) as mock_lock_fn:
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = MagicMock(return_value=None)
+        mock_lock.__exit__ = MagicMock(return_value=None)
+        mock_lock_fn.return_value = mock_lock
+
+        with patch(
+            "trw_mcp.channels.opencode._agents_md_segment._render_and_inject_under_lock",
+            side_effect=RuntimeError("simulated render error"),
+        ):
+            with patch(
+                "trw_mcp.channels.opencode._agents_md_segment.append_channel_event",
+                side_effect=fake_emit,
+            ):
+                result = install_opencode_agents_md_distill_segment(
+                    tmp_path, None, None
+                )
+
+    assert result.status == "error"
+    assert "channel_error" in emitted, f"Expected channel_error in {emitted}"
+    assert "channel_conflict" not in emitted, "channel_conflict must not be used for errors"
+
+
+# ---------------------------------------------------------------------------
+# OC-M1 — Ceremony-vs-distill real race test (PRD-DIST-2403 FR05)
+# ---------------------------------------------------------------------------
+
+
+def test_ceremony_vs_distill_concurrent_write_no_corruption(tmp_path: Path) -> None:
+    """OC-M1: generate_agents_md() and install_opencode_agents_md_distill_segment()
+    run concurrently — AGENTS.md must be well-formed after both complete.
+
+    Both ceremony and distill markers must be present and non-interleaved.
+    This test exercises the real ceremony-vs-distill race fixed by OC-B1.
+    """
+    from trw_mcp.bootstrap._opencode import generate_agents_md
+    from trw_mcp.channels.opencode._agents_md_segment import (
+        DISTILL_BEGIN,
+        DISTILL_END,
+        install_opencode_agents_md_distill_segment,
+    )
+
+    agents_md = tmp_path / "AGENTS.md"
+    # Seed file with ceremony section already present
+    agents_md.write_text(
+        "# Project\n\n"
+        "<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
+        "<!-- trw:start -->\n"
+        "Ceremony content.\n"
+        "<!-- trw:end -->\n",
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+
+    def run_ceremony() -> None:
+        try:
+            # force=False is the production path; force=True is an intentional clobber
+            generate_agents_md(tmp_path, "Updated ceremony section.", force=False)
+        except Exception as exc:
+            errors.append(f"ceremony: {exc}")
+
+    def run_distill() -> None:
+        try:
+            install_opencode_agents_md_distill_segment(
+                tmp_path, _make_sidecar(), "sha_race", force=True
+            )
+        except Exception as exc:
+            errors.append(f"distill: {exc}")
+
+    t1 = threading.Thread(target=run_ceremony)
+    t2 = threading.Thread(target=run_distill)
+    t1.start()
+    t2.start()
+    t1.join(timeout=10.0)
+    t2.join(timeout=10.0)
+
+    assert not errors, f"Thread errors: {errors}"
+    assert agents_md.exists()
+    final = agents_md.read_text(encoding="utf-8")
+
+    # Both ceremony and distill markers must be present and balanced
+    assert "<!-- trw:start -->" in final, "Ceremony start marker missing"
+    assert "<!-- trw:end -->" in final, "Ceremony end marker missing"
+    assert DISTILL_BEGIN in final, "Distill begin marker missing"
+    assert DISTILL_END in final, "Distill end marker missing"
+
+    # Markers must be balanced (no interleaving)
+    assert final.count("<!-- trw:start -->") == 1
+    assert final.count("<!-- trw:end -->") == 1
+    assert final.count(DISTILL_BEGIN) == 1
+    assert final.count(DISTILL_END) == 1
+
+    # Distill section must appear AFTER ceremony section
+    ceremony_end_pos = final.find("<!-- trw:end -->")
+    distill_begin_pos = final.find(DISTILL_BEGIN)
+    assert distill_begin_pos > ceremony_end_pos, (
+        f"Distill section at {distill_begin_pos} must come after ceremony end at {ceremony_end_pos}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# OC-M2 — Manifest validation fail-soft test
+# ---------------------------------------------------------------------------
+
+
+def test_install_opencode_distill_channels_fail_soft_on_bad_manifest(tmp_path: Path) -> None:
+    """OC-M2: install_opencode_distill_channels() returns error result (not raise)
+    when bootstrap_channel_manifest() raises ManifestValidationError.
+
+    A single invalid manifest entry must not abort the entire install.
+    """
+    from unittest.mock import patch
+
+    from trw_mcp.bootstrap._opencode_distill_channels import install_opencode_distill_channels
+    from trw_mcp.channels._manifest_loader import ManifestValidationError
+
+    # Patch bootstrap_channel_manifest to simulate a bad manifest entry
+    with patch(
+        "trw_mcp.bootstrap._opencode_distill_channels.bootstrap_channel_manifest",
+        side_effect=ManifestValidationError("invalid entry: missing required field 'id'"),
+    ):
+        # Must not raise — must return a dict with manifest error info
+        result = install_opencode_distill_channels(tmp_path)
+
+    assert isinstance(result, dict), "install_opencode_distill_channels must return a dict"
+    manifest_info = result.get("manifest")
+    assert manifest_info is not None, "Result must contain 'manifest' key"
+    assert isinstance(manifest_info, dict), f"manifest must be a dict, got {type(manifest_info)}"
+    assert manifest_info.get("status") == "error", (
+        f"Expected status='error', got: {manifest_info}"
+    )
+    assert "error" in manifest_info, "manifest result must contain 'error' key"
+    assert "invalid entry" in str(manifest_info["error"]).lower() or "missing" in str(manifest_info["error"]).lower()

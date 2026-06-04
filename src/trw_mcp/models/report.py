@@ -70,6 +70,9 @@ class RunReport(BaseModel):
     phase: str
     framework: str = ""
     run_type: str = "implementation"
+    # PRD-CORE-184-FR05: surface task_type so eval scripts can stratify by it
+    # without parsing events.jsonl.
+    task_type: str = "unknown"
     generated_at: str
     prd_scope: list[str] = Field(default_factory=list)
 

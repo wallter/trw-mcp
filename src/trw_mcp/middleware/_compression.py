@@ -36,6 +36,7 @@ SHALLOW_DICT_KEYS: frozenset[str] = frozenset(
         "stale_runs_closed",
         "embeddings_backfill",
         "embed_health",
+        "sync_health",
         "assertion_status",
     }
 )

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from trw_mcp.state._paths import find_active_run
+from trw_mcp.state._paths import find_active_run, find_run_via_mtime_scan
 from trw_mcp.tools.ceremony import _do_reflect, _get_run_status
 from trw_mcp.tools.checkpoint import _do_checkpoint
 from ._tools_ceremony_support import trw_project  # noqa: F401
@@ -27,13 +27,16 @@ class TestFindActiveRun:
         assert result is None
 
     def test_finds_run_directory(self, tmp_path: Path, run_dir: Path) -> None:
+        # PRD-FIX-085: find_active_run() is pin-only; the disk-scan discovery
+        # this asserts now lives in find_run_via_mtime_scan(). Use it to keep
+        # the original scan-behavior intent without weakening the assertion.
         from trw_mcp.models.config import TRWConfig
 
         cfg = TRWConfig()
         object.__setattr__(cfg, "runs_root", ".trw/runs")
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
-                result = find_active_run()
+                result = find_run_via_mtime_scan()
         assert result is not None
         assert "20260211T120000Z-test" in str(result)
 

@@ -60,6 +60,7 @@ Rate EVERY potential finding on a 0-100 confidence scale before reporting:
 4. **Drop -20** if the issue is in unchanged code (pre-existing, not introduced by this diff)
 5. **Drop -10** if a linter/type-checker would catch it (let tools handle tools' work)
 6. **Drop -10** if the fix is purely stylistic with no functional impact
+7. **Drop -40** if the code carries a `# trw:intentional <reason>` (or `// trw:intentional`) marker on or just above the flagged line — this is a settled, deliberate decision (e.g. a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values). Treat the marker as a strong signal the code is correct; report ONLY if you have concrete evidence the marker is wrong (e.g. the cited reason no longer holds), and say so explicitly. Do NOT re-litigate marked decisions on style or "this looks surprising" grounds. See [`docs/documentation/intentional-marker.md`](../../../../../docs/documentation/intentional-marker.md).
 </confidence-scoring>
 
 <two-pass-validation>

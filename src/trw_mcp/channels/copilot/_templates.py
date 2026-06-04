@@ -112,7 +112,7 @@ def render_c2_path_instructions(
             path = entry.get("file", entry.get("path", "unknown"))
             score = entry.get("risk_score", entry.get("score", 0.0))
             reason = entry.get("reason", entry.get("summary", ""))
-            score_str = f"{float(score):.2f}" if score else "N/A"  # type: ignore[arg-type]
+            score_str = f"{float(score):.2f}" if isinstance(score, (int, float)) else "N/A"
             reason_part = f" — {reason}" if reason else ""
             lines.append(f"- `{path}` (risk: {score_str}){reason_part}")
         lines.append("")

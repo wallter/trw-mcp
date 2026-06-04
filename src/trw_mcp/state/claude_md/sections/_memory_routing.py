@@ -16,10 +16,16 @@ from typing import NamedTuple
 
 import structlog
 
-# PRD-CORE-149-FR01: resolve mutable dependencies through the ``_static_sections``
-# facade so legacy ``monkeypatch.setattr(_static_sections, name, ...)`` patches
-# continue to work after decomposition.
+# PRD-CORE-149-FR01: resolve mutable dependencies (``get_config``, ``time``,
+# ``yaml``, ``FileStateReader``, ``MemoryConfig``, ``list_org_shared_entries``)
+# through the ``_static_sections`` facade so legacy ``monkeypatch.setattr(
+# _static_sections, name, ...)`` patches continue to work after decomposition.
 import trw_mcp.state.claude_md._static_sections as _facade
+
+# Resolve the project root via LATE lookup through ``_paths`` (read at call
+# time, not bound at import) so the renderer honours runtime monkeypatching of
+# ``trw_mcp.state._paths.resolve_project_root`` and never targets the real repo.
+from trw_mcp.state import _paths
 
 _logger = structlog.get_logger(__name__)
 
@@ -59,7 +65,7 @@ def _load_analytics_counts() -> tuple[int, int]:
     """
     logger = structlog.get_logger(__name__)
     config = _facade.get_config()
-    analytics_path = _facade.resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
+    analytics_path = _paths.resolve_project_root() / config.trw_dir / config.context_dir / "analytics.yaml"
     analytics_key = str(analytics_path)
     cached = _analytics_cache.get()
     if (

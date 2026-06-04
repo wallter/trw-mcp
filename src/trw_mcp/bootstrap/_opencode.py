@@ -15,6 +15,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.channels.opencode._shared_lock import ChannelLockSkip, agents_md_lock
 from trw_mcp.models.typed_dicts._opencode import (
     OpencodeConfig,
     OpencodeServerEntry,
@@ -382,6 +383,10 @@ def generate_agents_md(
     Uses same <!-- trw:start --> / <!-- trw:end --> markers as CLAUDE.md.
     If file exists, replaces only the section between markers.
     If not, creates new file with the section.
+
+    Acquires the shared ``.trw/channels/agents-md.lock`` (OC-B1 / PRD-DIST-2403 FR05)
+    so that this ceremony writer and the distill segment writer cannot race.
+    Fail-open: if the lock cannot be acquired, returns a skipped indication.
     """
     result: dict[str, list[str]] = {
         "created": [],
@@ -389,46 +394,62 @@ def generate_agents_md(
         "preserved": [],
         "errors": [],
     }
-    agents_md_path = target_dir / "AGENTS.md"
 
-    new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
+    # Acquire shared AGENTS.md lock (OC-B1 / PRD-DIST-2403 FR05)
+    try:
+        lock = agents_md_lock(target_dir)
+        lock.__enter__()
+    except ChannelLockSkip:
+        logger.debug("generate_agents_md_lock_skip", outcome="skipped_lock")
+        result["errors"].append("AGENTS.md write skipped: could not acquire agents-md lock")
+        return result
 
-    if agents_md_path.exists() and not force:
-        content = agents_md_path.read_text(encoding="utf-8")
-        start_idx = content.find(_TRW_START_MARKER)
-        end_idx = content.find(_TRW_END_MARKER)
+    try:
+        agents_md_path = target_dir / "AGENTS.md"
 
-        if start_idx != -1 and end_idx != -1:
-            # Replace existing TRW section, preserve surrounding content
-            end_pos = end_idx + len(_TRW_END_MARKER)
-            # Capture optional header line before trw:start
-            header_idx = content.rfind(_TRW_HEADER, 0, start_idx)
-            replace_start = header_idx if header_idx != -1 else start_idx
-            updated = content[:replace_start] + new_block + content[end_pos:]
-            try:
-                agents_md_path.write_text(updated, encoding="utf-8")
-                result["updated"].append(str(agents_md_path.name))
-            except OSError as exc:
-                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
-        elif start_idx == -1 and end_idx == -1:
-            # No TRW section yet — append it
-            if not content.endswith("\n"):
-                content += "\n"
-            content += "\n" + new_block
-            try:
-                agents_md_path.write_text(content, encoding="utf-8")
-                result["updated"].append(str(agents_md_path.name))
-            except OSError as exc:
-                result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+        new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
+
+        if agents_md_path.exists() and not force:
+            content = agents_md_path.read_text(encoding="utf-8")
+            start_idx = content.find(_TRW_START_MARKER)
+            end_idx = content.find(_TRW_END_MARKER)
+
+            if start_idx != -1 and end_idx != -1:
+                # Replace existing TRW section, preserve surrounding content
+                end_pos = end_idx + len(_TRW_END_MARKER)
+                # Capture optional header line before trw:start
+                header_idx = content.rfind(_TRW_HEADER, 0, start_idx)
+                replace_start = header_idx if header_idx != -1 else start_idx
+                updated = content[:replace_start] + new_block + content[end_pos:]
+                try:
+                    agents_md_path.write_text(updated, encoding="utf-8")
+                    result["updated"].append(str(agents_md_path.name))
+                except OSError as exc:
+                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+            elif start_idx == -1 and end_idx == -1:
+                # No TRW section yet — append it
+                if not content.endswith("\n"):
+                    content += "\n"
+                content += "\n" + new_block
+                try:
+                    agents_md_path.write_text(content, encoding="utf-8")
+                    result["updated"].append(str(agents_md_path.name))
+                except OSError as exc:
+                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+            else:
+                result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
         else:
-            result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
-    else:
-        # Create new file
+            # Create new file
+            try:
+                agents_md_path.write_text(new_block, encoding="utf-8")
+                result["created"].append(str(agents_md_path.name))
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {agents_md_path}: {exc}")
+    finally:
         try:
-            agents_md_path.write_text(new_block, encoding="utf-8")
-            result["created"].append(str(agents_md_path.name))
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {agents_md_path}: {exc}")
+            lock.__exit__(None, None, None)
+        except Exception:
+            pass
 
     logger.debug(
         "generate_agents_md",

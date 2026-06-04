@@ -15,6 +15,18 @@ from trw_mcp.state.persistence import FileStateReader
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    # The claude_md package binds resolve_project_root via a from-import at module
+    # load. A prior test file (e.g. orchestration) running with conftest's
+    # _isolate_trw_dir can leave claude_md.resolve_project_root pointing at a stale
+    # tmp_path closure, so trw_claude_md_sync writes CLAUDE.md to the wrong root.
+    # Pin it to this test's tmp_path so the sync target is deterministic.
+    try:
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.resolve_project_root",
+            lambda: tmp_path,
+        )
+    except AttributeError:
+        pass  # binding not present — nothing to pin
     return tmp_path
 
 
@@ -22,6 +34,7 @@ def _get_all_tools() -> dict[str, Any]:
     """Create server with all tools registered."""
     from fastmcp import FastMCP
 
+    from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
@@ -32,6 +45,7 @@ def _get_all_tools() -> dict[str, Any]:
     register_learning_tools(srv)
     register_requirements_tools(srv)
     register_ceremony_tools(srv)
+    register_build_tools(srv)
     return get_tools_sync(srv)
 
 
@@ -154,7 +168,18 @@ class TestSessionLifecycle:
         )
         assert cp_result["status"] == "checkpoint_created"
 
-        # Step 4: Deliver
+        # Step 4: Build check — deliver is hard-gated on a passing build check
+        # (CONSTITUTION §1 truthfulness rule). Record a passing check so the
+        # VALIDATE->DELIVER lifecycle completes.
+        build_result = tools["trw_build_check"].fn(
+            run_path=run_path,
+            tests_passed=True,
+            static_checks_clean=True,
+            scope="full",
+        )
+        assert build_result["tests_passed"] is True
+
+        # Step 5: Deliver
         deliver_result = tools["trw_deliver"].fn(
             run_path=run_path,
             skip_index_sync=True,

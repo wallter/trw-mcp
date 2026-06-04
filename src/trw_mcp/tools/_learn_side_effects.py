@@ -27,11 +27,22 @@ from trw_mcp.tools._learning_helpers import LearningParams, _validate_source_typ
 logger = structlog.get_logger(__name__)
 
 # Security audit 2026-04-18 H2: reject injection-shaped content at write time.
+#
+# PRD-IMPROVE-MCP-01 FR2: the original `rm\s+-rf\s+/` pattern false-positived on
+# descriptive engineering prose that merely *mentions* a destructive command on
+# a deeper path (e.g. "the fix cleans up rm -rf /tmp/<scratch>"). Narrowed so
+# only genuinely catastrophic bare-root forms are blocked, while a rooted path
+# with further components (a real, scoped path) passes:
+#   blocked:  "rm -rf /"   "rm -rf /etc"   "rm -rf /*"   "rm -rf / "
+#   allowed:  "rm -rf /tmp/foo"   "rm -rf /home/user/build"
+# The trailing `(?![\w./-])` rejects a SECOND path separator after an optional
+# single top-level component, so anything resolving below `/` is treated as
+# descriptive prose rather than an injection payload.
 _LEARN_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"ignore (?:all )?previous instructions", re.IGNORECASE),
     re.compile(r"<script\b", re.IGNORECASE),
     re.compile(r"javascript\s*:", re.IGNORECASE),
-    re.compile(r"rm\s+-rf\s+/", re.IGNORECASE),
+    re.compile(r"rm\s+-rf\s+/(?:\*|\w+)?(?![\w./-])", re.IGNORECASE),
     re.compile(r"<instructions>", re.IGNORECASE),
     re.compile(r"<system>", re.IGNORECASE),
     re.compile(r"\[INST\]", re.IGNORECASE),

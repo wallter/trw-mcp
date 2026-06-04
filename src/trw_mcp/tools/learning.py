@@ -73,6 +73,30 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
+def _coerce_tags(tags: list[str] | str | None) -> list[str] | None:
+    """Coerce a tags argument to ``list[str] | None`` (PRD-IMPROVE-MCP-01 FR1).
+
+    Agents frequently pass ``tags="a,b,c"`` (a comma- or whitespace-separated
+    string) instead of a JSON list. Rather than raising a Pydantic
+    ``list_type`` error, accept either shape:
+
+    - ``None`` → ``None`` (no tags).
+    - ``list`` → returned unchanged (each element coerced to ``str``).
+    - ``str`` → split on commas and/or whitespace, trimmed, empties dropped.
+      A blank/whitespace-only string yields ``None``.
+    """
+    if tags is None:
+        return None
+    if isinstance(tags, list):
+        return [str(t) for t in tags]
+    # String input: split on commas first, then whitespace within each part.
+    parts: list[str] = []
+    for chunk in tags.split(","):
+        parts.extend(chunk.split())
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return cleaned or None
+
+
 def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 
@@ -82,7 +106,7 @@ def register_learning_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
         summary: str = "",
         detail: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         evidence: list[str] | None = None,
         impact: float = 0.5,
         shard_id: str | None = None,
@@ -123,7 +147,8 @@ def register_learning_tools(server: FastMCP) -> None:
         - detail: full finding with context, symptoms, and why it matters.
 
         Recommended:
-        - tags: keywords for trw_recall filtering.
+        - tags: keywords for trw_recall filtering. Accepts a JSON list
+          (``["a","b"]``) OR a comma/whitespace-separated string (``"a,b c"``).
         - impact: 0.0-1.0; high values surface more often.
 
         Advanced (auto-detected if omitted):
@@ -147,13 +172,17 @@ def register_learning_tools(server: FastMCP) -> None:
             model_id = detect_model_id()
         call_ctx = _build_call_ctx(ctx)
 
+        # PRD-IMPROVE-MCP-01 FR1: accept a comma/whitespace-separated string for
+        # tags, not just a JSON list, before forwarding to the impl.
+        coerced_tags = _coerce_tags(tags)
+
         # Resolve from this module's namespace so test patches work
         return execute_learn(
             summary=summary,
             detail=detail,
             trw_dir=resolve_trw_dir(),
             config=get_config(),
-            tags=tags,
+            tags=coerced_tags,
             evidence=evidence,
             impact=impact,
             shard_id=shard_id,
@@ -400,6 +429,7 @@ def register_learning_tools(server: FastMCP) -> None:
         compact: bool | None = None,
         ultra_compact: bool = False,
         topic: str | None = None,
+        token_budget: int | None = None,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task.
 
@@ -436,6 +466,9 @@ def register_learning_tools(server: FastMCP) -> None:
                 with each learning reduced to ``{id, summary}``.
             topic: Optional topic slug from knowledge topology. When provided,
                 only returns learnings belonging to that topic cluster.
+            token_budget: Optional max token ceiling for the serialized result.
+                Must be > 0. When omitted, a sane default cap is applied so a
+                recall can never overflow the context window (anti-collapse guard).
 
         See Also: trw_learn
         """
@@ -456,6 +489,7 @@ def register_learning_tools(server: FastMCP) -> None:
             status=status,
             shard_id=shard_id,
             max_results=max_results,
+            token_budget=token_budget,
             deprioritized_ids=injected_ids,
             compact=compact,
             ultra_compact=ultra_compact,

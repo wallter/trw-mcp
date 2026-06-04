@@ -38,6 +38,31 @@ if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
 
+def _read_pre_compact_recovery() -> tuple[str, str]:
+    """Read caller-supplied directive + context-anchor from pre-compact state.
+
+    PRD-CORE-165 FR-01 recovery readback. Cheap and GUARDED for the session_start
+    hot path: a single existence check + small JSON read, performed only when an
+    active run already exists (the caller gates this) and the state file is
+    present. Never scans run dirs. Returns ``("", "")`` when absent/unreadable.
+    """
+    import json
+
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    try:
+        state_file = resolve_trw_dir() / "context" / "pre_compact_state.json"
+        if not state_file.exists():
+            return "", ""
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:  # justified: fail-open, recovery readback must not block session start
+        logger.debug("pre_compact_recovery_read_failed", exc_info=True)
+        return "", ""
+    if not isinstance(data, dict):
+        return "", ""
+    return str(data.get("directive", "")), str(data.get("context_anchor", ""))
+
+
 def _get_run_status(run_dir: Path) -> RunStatusDict:
     """Extract status summary from a run directory."""
     reader = FileStateReader()
@@ -57,6 +82,14 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
                 result["wave_status"] = wave_status
     except (StateError, OSError, ValueError):
         result["status"] = "error_reading"
+    # PRD-CORE-165 FR-01: surface persisted directive + context-anchor so the
+    # post-compaction session resumes exactly. Only runs because an active run
+    # exists here, and only emits keys when the state actually carries them.
+    directive, context_anchor = _read_pre_compact_recovery()
+    if directive:
+        result["directive"] = directive
+    if context_anchor:
+        result["context_anchor"] = context_anchor
     return result
 
 

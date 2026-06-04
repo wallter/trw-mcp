@@ -9,6 +9,7 @@ PRD-DIST-2400 §3 Shared Primitives / instruction_segment/_renderer.py.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -16,12 +17,12 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from trw_mcp.channels._conflict import RenderLog, detect_human_edit, write_atomic
+from trw_mcp.channels._conflict import RenderLog, detect_human_edit, reconcile, write_atomic
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 from trw_mcp.channels._manifest_models import ChannelEntry, HumanEditDetection
 from trw_mcp.channels._provenance import now_utc_iso8601, render_provenance_comment
 from trw_mcp.channels._quota import enforce_quota_with_tier_down
-from trw_mcp.channels._state import read_state, state_path_for, write_state
+from trw_mcp.channels._state import ChannelState, read_state, state_path_for, write_state
 from trw_mcp.channels._telemetry import append_channel_event
 from trw_mcp.channels._ttl import check_staleness
 
@@ -145,10 +146,12 @@ def render_instruction_segment(
             lock_path=str(lock_path),
             outcome="skipped_lock",
         )
+        # HIGH-1 fix: emit channel_lock_skip (not channel_conflict) — distinct
+        # event so lock contention does not corrupt the write-conflict signal.
         _emit(
             channel_id=channel_id,
             client=entry.client,
-            event_type="channel_conflict",
+            event_type="channel_lock_skip",
             tier=None,
             outcome="skipped_lock",
         )
@@ -169,16 +172,18 @@ def render_instruction_segment(
             dry_run=dry_run,
         )
     except Exception as exc:
-        log.debug(
+        log.warning(
             "instruction_segment_error",
             channel_id=channel_id,
             error=str(exc),
             outcome="error",
         )
+        # HIGH-1 fix: emit channel_error (not channel_conflict) — distinct
+        # event so internal errors do not corrupt the write-conflict signal.
         _emit(
             channel_id=channel_id,
             client=entry.client,
-            event_type="channel_conflict",
+            event_type="channel_error",
             tier=None,
             outcome="error",
         )
@@ -215,6 +220,10 @@ def _render_under_lock(
     # ------------------------------------------------------------------
     state = read_state(state_file)
 
+    # Initialise render_log here (shared between reconcile at Step 5 and
+    # write_atomic at Step 10) so crash-recovery is always available.
+    render_log = RenderLog(channels_dir / "render-log.jsonl")
+
     # ------------------------------------------------------------------
     # Step 4: TTL check
     # ------------------------------------------------------------------
@@ -232,7 +241,7 @@ def _render_under_lock(
             log.debug(
                 "instruction_segment_ttl_stale",
                 channel_id=channel_id,
-                commits_since=ttl_result.commits_since,
+                ttl_commits_remaining=ttl_result.ttl_commits_remaining,
                 outcome="skipped_ttl",
             )
             _emit(
@@ -248,15 +257,20 @@ def _render_under_lock(
                 ttl_commits_remaining=0,
             )
         else:
-            ttl_commits_remaining = (
-                (entry.ttl_commits - ttl_result.commits_since)
-                if entry.ttl_commits is not None and ttl_result.commits_since is not None
-                else None
-            )
+            # MED-6: ttl_commits_remaining is now computed in check_staleness
+            ttl_commits_remaining = ttl_result.ttl_commits_remaining
 
     # ------------------------------------------------------------------
-    # Step 5: Human-edit / conflict detection
+    # Step 5: Human-edit / conflict detection (HIGH-3 fix: reconcile first)
     # ------------------------------------------------------------------
+    # Call reconcile() before detect_human_edit so a crash between log-append
+    # and os.rename does not permanently skip this channel (FR07 crash-recovery).
+    reconcile(
+        channel_id=channel_id,
+        target_path=target_file,
+        render_log=render_log,
+    )
+
     conflict_detected = False
     if not force:
         expected_sha = state.segment_interior_sha256 if state else None
@@ -356,7 +370,6 @@ def _render_under_lock(
             ttl_commits_remaining=ttl_commits_remaining,
         )
 
-    render_log = RenderLog(channels_dir / "render-log.jsonl")
     write_atomic(
         target_file,
         wrapped,
@@ -366,11 +379,7 @@ def _render_under_lock(
     )
 
     # Persist updated state
-    import hashlib
-
     seg_sha = hashlib.sha256(final_content.encode("utf-8")).hexdigest()
-    from trw_mcp.channels._state import ChannelState
-
     new_state = ChannelState(
         channel_id=channel_id,
         last_render_tier=tier_used,

@@ -132,6 +132,17 @@ class TestUtilityBasedPruneCandidatesEdgeCases:
         assert len(result) == 1
         assert result[0]["utility"] == 0.0
 
+    def test_obsolete_entry_with_missing_created_is_still_a_candidate(self) -> None:
+        """Regression: an obsolete/resolved straggler with no created date (e.g. a
+        YAML-migrated entry whose created_at was never backfilled) must still be
+        nominated for status-based cleanup. The old code raised ValueError on the
+        empty date and `continue`d PAST the status tier, so such dead entries were
+        immortal — never pruned."""
+        entries = [self._make_entry("L-undated", "", status="obsolete")]
+        result = utility_based_prune_candidates(entries)
+        assert len(result) == 1
+        assert result[0]["id"] == "L-undated"
+
     def test_tier3_requires_age_over_14_days(self) -> None:
         """Tier-3 prune candidates must be older than 14 days."""
         recent = (datetime.now(tz=timezone.utc).date() - timedelta(days=10)).isoformat()

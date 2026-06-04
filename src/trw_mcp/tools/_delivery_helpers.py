@@ -31,6 +31,15 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
+# PRD-CORE-184-FR03: task-type-aware deliver gate mode lives in a focused
+# sibling. Re-exported here so callers/tests have a single import point.
+from trw_mcp.tools._deliver_gate_mode import (
+    apply_deliver_gate_mode as _apply_deliver_gate_mode,
+)
+from trw_mcp.tools._deliver_gate_mode import (
+    resolve_deliver_gate_decision as resolve_deliver_gate_decision,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -153,8 +162,21 @@ def _check_complexity_drift(
 def _check_review_gate(
     run_path: Path,
     reader: FileStateReader,
-) -> tuple[str | None, str | None]:
-    """Check review gate and return (warning, advisory) if found."""
+) -> tuple[str | None, str | None, str | None]:
+    """Check review gate and return (block, warning, advisory) if found.
+
+    A ``review.yaml`` with ``verdict=block`` + critical findings is the deepest
+    truthfulness gate — it exists to catch false completions. For STANDARD /
+    COMPREHENSIVE runs that block verdict is promoted to a hard ``block`` so
+    ``trw_deliver`` actually refuses to ship (overridable via
+    ``allow_unverified`` — CONSTITUTION Deliver Gate Path 3). For MINIMAL /
+    light complexity the historical advisory ``warning`` is retained so trivial
+    work is not over-blocked.
+    """
+    # trw:intentional verdict=block on STANDARD+ runs must HARD-BLOCK deliver — a
+    # block review is the primary truthfulness gate; downgrading it to a warning
+    # (the pre-fix behavior) let critical-finding deliveries return success=True.
+    block: str | None = None
     warning: str | None = None
     advisory: str | None = None
 
@@ -165,10 +187,22 @@ def _check_review_gate(
             rv_verdict = str(review_data.get("verdict", ""))
             rv_critical = int(str(review_data.get("critical_count", 0)))
             if rv_verdict == "block" and rv_critical > 0:
-                warning = (
-                    f"Review has {rv_critical} critical findings. "
-                    f"Delivery proceeding but review issues should be addressed."
-                )
+                complexity_class = _read_complexity_class(run_path, reader)
+                if complexity_class in ("STANDARD", "COMPREHENSIVE"):
+                    block = (
+                        f"Review verdict is 'block' with {rv_critical} critical finding(s) "
+                        f"(complexity: {complexity_class}). Delivery blocked. Fix the critical "
+                        "review findings before delivering, or — only for a documented "
+                        "acceptable failure — retry with allow_unverified=true and a concrete "
+                        "unverified_reason."
+                    )
+                else:
+                    # MINIMAL/light complexity: keep the historical soft warning so
+                    # trivial work is not over-blocked.
+                    warning = (
+                        f"Review has {rv_critical} critical findings. "
+                        f"Delivery proceeding but review issues should be addressed."
+                    )
         except Exception:  # justified: fail-open, review gate check must not block delivery
             logger.warning("maintenance_review_gate_failed", exc_info=True)
     else:
@@ -184,7 +218,7 @@ def _check_review_gate(
         else:
             advisory = "No trw_review was run before delivery. Consider running trw_review for quality assurance."
 
-    return warning, advisory
+    return block, warning, advisory
 
 
 def _check_integration_review_gate(
@@ -325,7 +359,16 @@ def _check_build_and_work_events(
 
     try:
         if not events:
-            return None, None
+            # A-P1-07: empty/truncated events.jsonl = NO build evidence. Treat it
+            # like "events present but no passing build" (symmetry) so the delivery
+            # gate requires evidence — the allow_unverified override still applies,
+            # so this is not a hard lockout. Pre-fix this returned (None, None), so a
+            # pinned run with an empty events.jsonl slipped the build gate silently.
+            return (
+                "No events found before delivery — cannot verify a build check was passed. "
+                "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check().",
+                None,
+            )
 
         # Build gate (RC-003 + RC-006)
         def _truthy(value: object) -> bool:
@@ -361,10 +404,17 @@ def _check_build_and_work_events(
                 "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check()."
             )
 
-        # Premature delivery guard
+        # Premature delivery guard.
+        # NOTE: "session_start" is the ceremony bootstrap event actually emitted
+        # by step_log_session_event (EventType.SESSION_START). It MUST be excluded
+        # here — every run logs it, so without this entry work_events is always
+        # non-empty and the premature-delivery guard can never fire. (The legacy
+        # "trw_session_start_complete" name below is never emitted; retained as a
+        # harmless alias rather than removed.)
         _CEREMONY_ONLY_EVENTS: frozenset[str] = frozenset(
             {
                 "run_init",
+                "session_start",
                 "checkpoint",
                 "reflection_complete",
                 "trw_reflect_complete",
@@ -474,7 +524,8 @@ def check_delivery_gates(
     """Check review/build gates and premature delivery guard.
 
     Returns a dict with any warnings/advisories found:
-      - review_warning: critical review findings present
+      - review_block: verdict=block + critical findings on STANDARD/COMPREHENSIVE (hard block)
+      - review_warning: critical review findings present (MINIMAL/light, soft)
       - review_advisory: no review was run
       - review_scope_block: >5 files modified without review (R-01, hard block)
       - checkpoint_blocker_warning: last checkpoint mentions 'blocker' (R-07, soft gate)
@@ -493,9 +544,13 @@ def check_delivery_gates(
     events = _read_run_events(run_path, reader)
     run_data = _read_run_yaml(run_path, reader)
 
-    # Review gate (PRD-QUAL-022)
-    review_warning, review_advisory = _check_review_gate(run_path, reader)
-    if review_warning:
+    # Review gate (PRD-QUAL-022). A verdict=block + critical findings on a
+    # STANDARD/COMPREHENSIVE run is a HARD block (the primary truthfulness gate),
+    # surfaced as review_block; MINIMAL/light complexity keeps the soft warning.
+    review_block, review_warning, review_advisory = _check_review_gate(run_path, reader)
+    if review_block:
+        result["review_block"] = review_block
+    elif review_warning:
         result["review_warning"] = review_warning
     elif review_advisory:
         result["review_advisory"] = review_advisory
@@ -528,6 +583,13 @@ def check_delivery_gates(
         result["build_gate_warning"] = build_warning
     if premature_warning:
         result["warning"] = premature_warning
+
+    # PRD-CORE-184-FR03: task-type-aware deliver gate mode. Promote the
+    # advisory build_gate_warning to a structural block when the configured
+    # mode + the run's task_type require it. Fail-open on any error so the
+    # gate never wedges delivery.
+    if build_warning:
+        _apply_deliver_gate_mode(result, run_data)
 
     # Complexity drift detection (R-02 + R-05, uses shared events + run_data)
     drift_warning = _check_complexity_drift(run_data, events)

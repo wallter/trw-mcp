@@ -247,12 +247,27 @@ class TestCeremonyHelpersBuildGateCompat:
 
 
 class TestPhaseModuleArchitecture:
-    def test_phase_module_has_no_ceremony_nudge_sync(self) -> None:
-        """PRD-CORE-098: phase tracking should not depend on ceremony nudge state."""
+    def test_phase_module_syncs_ceremony_phase_not_nudge_engine(self) -> None:
+        """F13: phase tracking mirrors the phase into CeremonyState.phase.
+
+        Historical note: PRD-CORE-098 (2026-03-31) deleted the entire nudge
+        subsystem and added a guard here asserting ``phase.py`` referenced
+        neither ``ceremony_nudge`` nor ``set_ceremony_phase``. That subsystem
+        was subsequently REBUILT (PRD-CORE-144/146, PRD-QUAL-058), so the old
+        guard encoded a since-reverted decision. F13 requires the opposite:
+        ``update_run_phase`` MUST call ``set_ceremony_phase`` so
+        ``CeremonyState.phase`` tracks the real phase (otherwise it is stuck
+        at the constant ``"early"`` default and phase-aware nudge dedup is
+        dead). The lasting invariant is the narrower one below: phase tracking
+        must NOT pull in the heavyweight ``ceremony_nudge`` facade — it uses
+        only the light ``_ceremony_progress_state.set_ceremony_phase`` writer.
+        """
         import inspect
 
         import trw_mcp.state.phase as phase_module
 
         source = inspect.getsource(phase_module)
-        assert "ceremony_nudge" not in source
-        assert "set_ceremony_phase" not in source
+        # Must use the dedicated state writer (F13 fix), not import the
+        # heavyweight nudge facade.
+        assert "set_ceremony_phase" in source
+        assert "from trw_mcp.state.ceremony_nudge import" not in source

@@ -96,6 +96,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         config_overrides: dict[str, str] | None = None,
         prd_scope: list[str] | None = None,
         run_type: str = "implementation",
+        task_type: str | None = None,
         task_root: str | None = None,
         wave_manifest: list[dict[str, object]] | None = None,
         complexity_signals: dict[str, object] | None = None,
@@ -224,12 +225,26 @@ def register_orchestration_tools(server: FastMCP) -> None:
             complexity_override_val = override
             phase_reqs_val = get_phase_requirements(tier)
 
+        # PRD-CORE-184-FR02: heuristic task-type detection (no LLM call — that
+        # would re-introduce the iter-6 classification-as-priming harm). The
+        # result drives the deliver-gate mode, nudge weights, and recall policy.
+        from trw_mcp.tools._task_type_detection import detect_task_type
+
+        detection = detect_task_type(
+            task_name=task_name,
+            run_type=run_type,
+            prd_scope=prd_scope,
+            task_type=task_type,
+        )
+        resolved_task_type = detection.task_type
+
         task_profile_tier = complexity_class_val or ComplexityClass.STANDARD
         task_profile = resolve_task_profile(
             client_profile=config.client_profile,
             model_tier=config.client_profile.default_model_tier,
             complexity_class=task_profile_tier,
             complexity_signals=parsed_signals,
+            task_type=resolved_task_type,
         )
 
         resolved_artifacts = [str(p) for p in (artifacts or [])]
@@ -244,6 +259,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
             variables=variables,
             prd_scope=prd_scope or [],
             run_type=run_type,
+            task_type=resolved_task_type,
+            recall_policy=task_profile.recall_policy,
             complexity_class=complexity_class_val,
             complexity_signals=parsed_signals,
             complexity_override=complexity_override_val,
@@ -297,6 +314,22 @@ def register_orchestration_tools(server: FastMCP) -> None:
             {"task": task_name, "framework": config.framework_version},
         )
 
+        # PRD-CORE-184-FR05: observability — emit a task_type_detected event so
+        # eval campaigns can stratify by task type without parsing run.yaml.
+        try:
+            _events.log_event(
+                events_jsonl_path,
+                "task_type_detected",
+                {
+                    "task_type": resolved_task_type,
+                    "detection_method": detection.detection_method,
+                    "rationale": detection.rationale,
+                    "recall_policy": task_profile.recall_policy,
+                },
+            )
+        except Exception:  # justified: fail-open, observability event must not block init
+            logger.debug("task_type_detected_event_skipped", exc_info=True)
+
         # PRD-QUAL-050-FR03: always record a session_start boundary here;
         # a later explicit trw_session_start supersedes it.
         try:
@@ -333,6 +366,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "trw_dir": str(trw_dir),
             "status": "initialized",
             "phase": initial_phase.value,
+            "task_type": resolved_task_type,
         }
 
         if complexity_class_val is not None:
@@ -394,9 +428,27 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "status": str(state_data.get("status", "unknown")),
             "confidence": str(state_data.get("confidence", "unknown")),
             "framework": str(state_data.get("framework", "unknown")),
+            # PRD-CORE-184-FR05: surface task_type in the run summary block.
+            "task_type": str(state_data.get("task_type", "unknown")),
             "event_count": len(events),
             "reflection": _compute_reflection_metrics(events),
         }
+
+        # PRD-CORE-184-FR04: surface effective per-task-type nudge pool weights
+        # so operators (and eval stratification) can observe the active policy.
+        task_profile_data = state_data.get("task_profile")
+        if isinstance(task_profile_data, dict):
+            weights = task_profile_data.get("nudge_pool_weights")
+            if isinstance(weights, (list, tuple)) and len(weights) == 4:
+                result["nudge_pool_weights"] = {
+                    "workflow": int(weights[0]),
+                    "learnings": int(weights[1]),
+                    "ceremony": int(weights[2]),
+                    "context": int(weights[3]),
+                }
+            recall_policy = task_profile_data.get("recall_policy")
+            if recall_policy:
+                result["recall_policy"] = str(recall_policy)
         result["phase_durations"] = _phase_duration_summary(events, result["phase"])
 
         if wave_data:

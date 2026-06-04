@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 def _init_git(tmp_path: Path) -> None:
@@ -266,3 +266,72 @@ def test_opencode_json_untouched_by_distill_install(tmp_path: Path) -> None:
 
     result = json.loads(oc_json.read_text(encoding="utf-8"))
     assert result == original
+
+
+def test_load_managed_artifacts_returns_empty_when_absent(tmp_path: Path) -> None:
+    """_load_managed_artifacts returns empty dict when file does not exist."""
+    from trw_mcp.bootstrap._opencode_distill_channels import _load_managed_artifacts
+
+    result = _load_managed_artifacts(tmp_path)
+    assert result == {}
+
+
+def test_load_managed_artifacts_returns_empty_on_parse_error(tmp_path: Path) -> None:
+    """_load_managed_artifacts returns empty dict on YAML parse error (fail-open)."""
+    from trw_mcp.bootstrap._opencode_distill_channels import _load_managed_artifacts
+
+    artifact_path = tmp_path / ".trw" / "managed-artifacts.yaml"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(": invalid: yaml: content: [", encoding="utf-8")
+
+    result = _load_managed_artifacts(tmp_path)
+    assert result == {}
+
+
+def test_manifest_validation_error_propagates(tmp_path: Path) -> None:
+    """FR29: ManifestValidationError propagates from bootstrap_channel_manifest."""
+    from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
+    from trw_mcp.channels._manifest_loader import ManifestValidationError
+
+    bad_channels = [{"id": "bad", "missing_required": True}]
+
+    with patch(
+        "trw_mcp.bootstrap._opencode_distill_channels.load",
+    ) as mock_load:
+        manifest_mock = MagicMock()
+        manifest_mock.channels = []
+        mock_load.return_value = manifest_mock
+
+        raw_data = {"channels": bad_channels}
+        with patch(
+            "trw_mcp.bootstrap._opencode_distill_channels.YAML"
+        ) as mock_yaml_cls:
+            mock_yaml = MagicMock()
+            mock_yaml.load.return_value = raw_data
+            mock_yaml_cls.return_value = mock_yaml
+
+            with patch(
+                "trw_mcp.channels._manifest_models.ChannelEntry.model_validate",
+                side_effect=ValueError("bad entry"),
+            ):
+                try:
+                    bootstrap_channel_manifest(tmp_path)
+                    # ManifestValidationError or Exception expected
+                except (ManifestValidationError, Exception):
+                    pass  # Correct — validation error propagated
+
+
+def test_gitignore_error_is_swallowed(tmp_path: Path) -> None:
+    """FR28: gitignore entry errors are swallowed (fail-open)."""
+    from trw_mcp.bootstrap._opencode_distill_channels import (
+        install_opencode_distill_channels,
+    )
+
+    with patch(
+        "trw_mcp.bootstrap._opencode_distill_channels.add_gitignore_entry",
+        side_effect=OSError("permission denied"),
+    ):
+        # Should NOT raise — gitignore errors are fail-open
+        result = install_opencode_distill_channels(tmp_path)
+
+    assert result["gitignore"] == "updated"

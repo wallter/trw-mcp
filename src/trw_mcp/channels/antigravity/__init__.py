@@ -2,11 +2,21 @@
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Four channels consuming PRD-DIST-2400 substrate:
-- ag-01-antigravity-md-distill        (instruction_file_segment, T1 default)
-- ag-02-distill-explorer-subagent     (subagent_file, T1 default per audit P1-15)
-- ag-03-before-edit-hook              (hook_script, status: active — empirically confirmed 2026-05-28)
-- ag-04-tool-return-enrichment        (mcp_tool_return, T1)
+Three channels consuming PRD-DIST-2400 substrate:
+- ag-01-antigravity-md-distill        (instruction_file_segment, T1 default, status: active)
+- ag-02-distill-explorer-subagent     (subagent_file, T1 default per audit P1-15, status: active)
+- ag-03-before-edit-hook              (hook_script, status: aspirational — installer + hooks.json
+                                       registration correct, but agy v1.0.2-1.0.3 routes file edits
+                                       through Step_CodeAction / tool_confirmation_manager which
+                                       bypasses the jsonhook PreToolUse path; hook does NOT fire.
+                                       Live-verified 2026-05-29. Re-evaluate when agy fixes its
+                                       edit routing. See manifest activation_gate.)
+
+AG-04 tool-return enrichment is delivered by the shared enrich_response /
+_tool_return_tiers substrate path (client_tier resolved from TRW_CLIENT_PROFILE
+env var). There is no per-client AG-04 builder; the generic __tool_call__ channel
+carries the ``client`` field so meta-tune can segment by client. See
+channels/_tool_return_tiers.py.
 
 PRD-DIST-2404.
 """
@@ -55,15 +65,6 @@ from trw_mcp.channels.antigravity._explorer_subagent import (
 from trw_mcp.channels.antigravity._explorer_subagent import (
     generate_distill_explorer_agent as generate_distill_explorer_agent,
 )
-from trw_mcp.channels.antigravity._tool_return_enrichment import (
-    AG04_CHANNEL_ID as AG04_CHANNEL_ID,
-)
-from trw_mcp.channels.antigravity._tool_return_enrichment import (
-    get_default_tier_for_antigravity as get_default_tier_for_antigravity,
-)
-from trw_mcp.channels.antigravity._tool_return_enrichment import (
-    should_emit_enrichment as should_emit_enrichment,
-)
 
 __all__ = [
     "AG01_CHANNEL_ID",
@@ -72,15 +73,12 @@ __all__ = [
     "AG02_CHANNEL_ID",
     "AG03_CHANNEL_ID",
     "AG03_HOOKS_PATH",
-    "AG04_CHANNEL_ID",
     "HOOK_SCRIPT_CONTENT",
     "AgentWriteResult",
     "SegmentRenderResult",
     "build_ag01_channel_entry",
     "generate_distill_explorer_agent",
     "generate_hook_script",
-    "get_default_tier_for_antigravity",
     "install_before_edit_hook",
     "render_antigravity_distill_segment",
-    "should_emit_enrichment",
 ]

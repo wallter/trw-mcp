@@ -6,12 +6,9 @@ import json
 import time
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.channels.claude_code._hook_helpers import (
     _CEREMONY_MODE_FIELD,
     DEFAULT_SKIP_EXTENSIONS,
-    CC03_HINTS_DIR,
     format_t0_beacon,
     format_t1_hint,
     format_t2_hint,
@@ -237,3 +234,96 @@ class TestPruneHintFiles:
         """Pruning a non-existent directory returns 0 without error."""
         removed = prune_hint_files(tmp_path / "nonexistent")
         assert removed == 0
+
+    def test_prune_skips_on_stat_error(self, tmp_path: Path) -> None:
+        """Pruning handles OSError during file iteration gracefully (fail-open)."""
+        import os
+        from unittest.mock import patch
+
+        hints_dir = tmp_path / "hints"
+        hints_dir.mkdir()
+        f = hints_dir / "old.json"
+        f.write_text('{"ts": "old"}', encoding="utf-8")
+
+        # Patch os.stat so hint_file.stat() raises OSError inside prune loop
+        original_stat = os.stat
+
+        def _patched_stat(path: object, **kwargs: object) -> object:
+            if str(path).endswith("old.json"):
+                raise OSError("stat failed")
+            return original_stat(path, **kwargs)  # type: ignore[arg-type]
+
+        with patch("os.stat", side_effect=_patched_stat):
+            removed = prune_hint_files(hints_dir, ttl_seconds=0)
+        # Stat failed → file not removed (graceful skip)
+        assert removed == 0
+
+
+class TestReadCc03ConfigChannelsNesting:
+    """Tests for the channels.cc03 nested config path (coverage lines 92-113)."""
+
+    def test_channels_cc03_nesting_enables_hook(self, tmp_path: Path) -> None:
+        """Covers channels.cc03_hook_enabled nested in channels block."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "channels:\n  cc03_hook_enabled: true\n",
+            encoding="utf-8",
+        )
+        config = read_cc03_config(tmp_path)
+        assert config["cc03_hook_enabled"] is True
+
+    def test_channels_cc03_subkey_enabled(self, tmp_path: Path) -> None:
+        """Covers channels.cc03.enabled nested config (cc03 sub-dict)."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "channels:\n  cc03:\n    enabled: true\n    debounce_seconds: 60\n",
+            encoding="utf-8",
+        )
+        config = read_cc03_config(tmp_path)
+        assert config["cc03_hook_enabled"] is True
+        assert config["debounce_seconds"] == 60
+
+    def test_channels_cc03_custom_skip_extensions(self, tmp_path: Path) -> None:
+        """Covers custom skip_extensions list in channels.cc03 config."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "channels:\n  cc03:\n    skip_extensions:\n      - .py\n      - .ts\n",
+            encoding="utf-8",
+        )
+        config = read_cc03_config(tmp_path)
+        assert ".py" in config["skip_extensions"]
+        assert ".ts" in config["skip_extensions"]
+
+    def test_channels_cc03_t0_silent(self, tmp_path: Path) -> None:
+        """Covers cc03_t0_silent config field."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "channels:\n  cc03:\n    t0_silent: true\n",
+            encoding="utf-8",
+        )
+        config = read_cc03_config(tmp_path)
+        assert config["cc03_t0_silent"] is True
+
+    def test_non_dict_yaml_returns_defaults(self, tmp_path: Path) -> None:
+        """Covers line 97: when config.yaml contains non-dict YAML (e.g. a list)."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("- item1\n- item2\n", encoding="utf-8")
+        config = read_cc03_config(tmp_path)
+        assert config["cc03_hook_enabled"] is False
+
+    def test_channels_without_cc03_subkey(self, tmp_path: Path) -> None:
+        """Covers line 113: channels block without cc03 sub-dict (cc03_cfg is None/non-dict)."""
+        config_file = tmp_path / ".trw" / "config.yaml"
+        config_file.parent.mkdir(parents=True)
+        # channels block present but no cc03 sub-key — hits the else branch at line 113
+        config_file.write_text(
+            "channels:\n  cc03_hook_enabled: true\n",
+            encoding="utf-8",
+        )
+        config = read_cc03_config(tmp_path)
+        assert config["cc03_hook_enabled"] is True

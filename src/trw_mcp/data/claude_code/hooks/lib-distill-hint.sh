@@ -59,16 +59,105 @@ _read_trw_config_field() {
 }
 
 # ---------------------------------------------------------------------------
+# Nested YAML field reader (POSIX sh, no jq/yq required)
+# ---------------------------------------------------------------------------
+
+_read_trw_nested_config_field() {
+    # Usage: _read_trw_nested_config_field <parent_key> <child_key> <default>
+    # Reads a scalar value nested one level under a YAML block key.
+    # e.g. _read_trw_nested_config_field "channels" "cc03_hook_enabled" "false"
+    # matches:
+    #   channels:
+    #     cc03_hook_enabled: true
+    # Uses awk: enters parent block on "^parent_key:", exits on next top-level key.
+    # Dependency-free (no jq/yq); optional jq used if available.
+    _parent="$1"
+    _child="$2"
+    _default="${3:-}"
+    _config="${TRW_PROJECT_DIR:-$(pwd)}/.trw/config.yaml"
+    if [ ! -f "$_config" ]; then
+        printf '%s' "$_default"
+        return
+    fi
+    # Optional: use jq when available for robustness (handles multi-line + comments)
+    if command -v jq >/dev/null 2>&1; then
+        # jq can't parse YAML, so we still fall through to awk
+        :
+    fi
+    _val=$(awk -v parent="${_parent}:" -v child="${_child}:" '
+        /^[^ \t]/ { in_block = ($0 ~ "^" parent) }
+        in_block && /^[ \t]/ {
+            if ($0 ~ child) {
+                sub(/^[^:]*:[[:space:]]*/, "")
+                gsub(/["\x27]/, "")
+                print
+                exit
+            }
+        }
+    ' "$_config" 2>/dev/null) || true
+    if [ -n "$_val" ]; then
+        printf '%s' "$_val"
+    else
+        printf '%s' "$_default"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # CC-03 opt-in gate (FR09)
 # ---------------------------------------------------------------------------
 
 _get_cc03_enabled() {
     # Returns 0 (true) if CC-03 hook is enabled, 1 (false) otherwise.
-    # Checks: top-level cc03_hook_enabled, then channels.cc03_hook_enabled
-    _enabled=$(_read_trw_config_field "cc03_hook_enabled" "false")
-    case "$_enabled" in
-        true|True|yes|1) return 0 ;;
-    esac
+    #
+    # Precedence (matches Python _hook_helpers.py + documented config path):
+    #   1. Top-level cc03_hook_enabled: true|false  (highest priority override)
+    #   2. channels.cc03_hook_enabled: true|false   (canonical documented path)
+    #   3. channels.cc03.enabled: true|false         (alternative nested path)
+    #
+    # Operators enabling via the documented path (.trw/config.yaml
+    # channels.cc03_hook_enabled=true) are correctly handled here.
+    _config="${TRW_PROJECT_DIR:-$(pwd)}/.trw/config.yaml"
+
+    # Check 1: top-level cc03_hook_enabled (overrides all)
+    _top=$(_read_trw_config_field "cc03_hook_enabled" "")
+    if [ -n "$_top" ]; then
+        case "$_top" in
+            true|True|yes|1) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
+    # Check 2: channels.cc03_hook_enabled (canonical documented path)
+    _nested=$(_read_trw_nested_config_field "channels" "cc03_hook_enabled" "")
+    if [ -n "$_nested" ]; then
+        case "$_nested" in
+            true|True|yes|1) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
+    # Check 3: channels.cc03.enabled (alternative nested path)
+    # Handled by checking for a "cc03:" sub-block under "channels:" — use awk
+    if [ -f "$_config" ]; then
+        _cc03_enabled=$(awk '
+            /^channels:/ { in_channels=1; next }
+            in_channels && /^[ \t]+cc03:/ { in_cc03=1; next }
+            in_cc03 && /^[ \t]+enabled:/ {
+                sub(/^[^:]*:[[:space:]]*/, "")
+                gsub(/["\x27]/, "")
+                print
+                exit
+            }
+            /^[^ \t]/ && !/^channels:/ { in_channels=0; in_cc03=0 }
+        ' "$_config" 2>/dev/null) || true
+        if [ -n "$_cc03_enabled" ]; then
+            case "$_cc03_enabled" in
+                true|True|yes|1) return 0 ;;
+                *) return 1 ;;
+            esac
+        fi
+    fi
+
     return 1
 }
 

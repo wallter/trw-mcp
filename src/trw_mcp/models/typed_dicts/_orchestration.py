@@ -123,6 +123,11 @@ class TrwStatusDict(TypedDict, total=False):
     status: str
     confidence: str
     framework: str
+    # PRD-CORE-184-FR05: task-type regime surfaced for observability.
+    task_type: str
+    # PRD-CORE-184-FR04/FR06: effective task-type nudge weights + recall hint.
+    nudge_pool_weights: dict[str, int]
+    recall_policy: str
     event_count: int
     reflection: StatusReflectionDict
     phase_durations: dict[str, object]

@@ -13,7 +13,7 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->47<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->43<!-- /inv --> tools, <!-- inv:skills -->25<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What It Does
@@ -74,24 +74,24 @@ embeddings_enabled: false          # Enable vector search (requires [vectors] ex
 learning_max_entries: 5000         # Max learnings before auto-pruning
 build_check_enabled: true          # Run pytest+mypy on trw_build_check
 observation_masking: true          # Reduce verbosity in long sessions
-progressive_disclosure: false      # Show tools progressively
 ceremony_mode: "full"              # "full", "light", or "off"
 ```
 
-## MCP Tools (24)
+## MCP Tools (<!-- inv:tools -->43<!-- /inv -->)
 
-24 tools covering the full AI coding assistant memory lifecycle. See [tool reference docs](https://trwframework.com/docs) for detailed parameter documentation.
+<!-- inv:tools -->43<!-- /inv --> tools covering the full AI coding assistant memory lifecycle. See [tool reference docs](https://trwframework.com/docs) for detailed parameter documentation.
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
-| **Session** | `session_start`, `init`, `status`, `checkpoint`, `pre_compact_checkpoint`, `progressive_expand` | Run lifecycle and progress tracking |
-| **Learning** | `learn`, `learn_update`, `recall`, `knowledge_sync`, `claude_md_sync` | Knowledge capture and retrieval |
-| **Quality** | `build_check`, `review`, `trust_level`, `quality_dashboard`, `deliver` | Verification and delivery |
-| **Requirements** | `prd_create`, `prd_validate` | [Spec-driven development](https://trwframework.com/docs) with AARE-F PRDs |
+| **Session** | `session_start`, `init`, `status`, `checkpoint`, `pre_compact_checkpoint`, `heartbeat`, `adopt_run` | Run lifecycle, progress tracking, and pin/liveness management |
+| **Learning** | `learn`, `learn_update`, `recall`, `knowledge_sync`, `claude_md_sync`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
+| **Quality** | `build_check`, `review`, `deliver` | Verification and delivery |
+| **Requirements** | `prd_create`, `prd_validate`, `prd_diff` | [Spec-driven development](https://trwframework.com/docs) with AARE-F PRDs |
 | **Ceremony** | `ceremony_status`, `ceremony_approve`, `ceremony_revert` | Workflow compliance |
-| **Reporting** | `run_report`, `analytics_report`, `usage_report` | Metrics and cost tracking |
+| **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `codebase_risk_report`, `entity_risk_map` | Repo-aware search, symbol lookup, and risk signals |
+| **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
-## Skills (24)
+## Skills (<!-- inv:skills -->25<!-- /inv -->)
 
 Slash-command workflows — zero tokens until triggered. Full skill reference at [trwframework.com/docs](https://trwframework.com/docs).
 
@@ -103,7 +103,7 @@ Slash-command workflows — zero tokens until triggered. Full skill reference at
 
 **Framework**: `/trw-framework-check` · `/trw-project-health` · `/trw-memory-audit` · `/trw-memory-optimize`
 
-## Agents (18)
+## Agents (<!-- inv:agents -->12<!-- /inv -->)
 
 Specialized sub-agents for Agent Teams — parallel execution with coordinated handoffs:
 

@@ -85,20 +85,6 @@ class TestOrchestration:
         result = ckpt_fn(message="Research complete")
         assert result is not None
 
-    def test_trust_level(self, tmp_project: Path) -> None:
-        """9.1: Query trust level."""
-        server = make_test_server("usage")
-        fn = extract_tool_fn(server, "trw_trust_level")
-        result = fn()
-        assert result is not None
-
-    def test_progressive_expand_ceremony(self, tmp_project: Path) -> None:
-        """9.3: Expand valid capability group."""
-        server = make_test_server("usage")
-        fn = extract_tool_fn(server, "trw_progressive_expand")
-        result = fn(group="ceremony")
-        assert result is not None
-
 
 # ── 3. Learning/Memory Tools ────────────────────────────────────────────────
 
@@ -303,37 +289,6 @@ class TestReviewTool:
             mode="manual",
             findings=[{"severity": "P2", "file": "test.py", "line": 1, "message": "test finding"}],
         )
-        assert result is not None
-
-
-# ── 8. Reporting Tools ──────────────────────────────────────────────────────
-
-
-class TestReportingTools:
-    """E2E 8.1-8.3: run_report, analytics_report, usage_report."""
-
-    def test_run_report(self, tmp_project: Path) -> None:
-        """8.1: Run report."""
-        server = make_test_server("orchestration", "report")
-        init_fn = extract_tool_fn(server, "trw_init")
-        report_fn = extract_tool_fn(server, "trw_run_report")
-
-        init_fn(task_name="report-test")
-        result = report_fn()
-        assert result is not None
-
-    def test_analytics_report(self, tmp_project: Path) -> None:
-        """8.2: Analytics report."""
-        server = make_test_server("report")
-        fn = extract_tool_fn(server, "trw_analytics_report")
-        result = fn()
-        assert result is not None
-
-    def test_usage_report(self, tmp_project: Path) -> None:
-        """8.3: Usage report."""
-        server = make_test_server("usage")
-        fn = extract_tool_fn(server, "trw_usage_report")
-        result = fn(period="all")
         assert result is not None
 
 

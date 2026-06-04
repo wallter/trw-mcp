@@ -33,21 +33,30 @@ _TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
 
 
 class RiskOrderingComparisonPayload(BaseModel):
-    """Field-by-field mirror of trw-distill RiskOrderingComparison (c741)."""
+    """Field-by-field mirror of trw-distill RiskOrderingComparison (c741).
+
+    The wire contract is parity-checked against the trw_distill source by
+    ``scripts/check-schema-mirror-parity.py`` (PRD-INFRA-134 FR-05); the validation
+    constraints below MUST match the source model's. ``only_in_*`` stay ``list[str]``
+    (the source uses ``tuple[str, ...]``): both render identically in JSON Schema, and
+    ``list`` is required here because this payload is loaded from JSON via
+    ``model_validate`` under ``strict=True`` — strict mode will NOT coerce a JSON array
+    into a ``tuple``, so changing these to ``tuple`` would break sidecar loading.
+    """
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    label_a: str
-    label_b: str
-    n_a: int
-    n_b: int
-    n_intersection: int
-    n_union: int
-    jaccard: float
-    kendall_tau_b: float | None = None
+    label_a: str = Field(min_length=1)
+    label_b: str = Field(min_length=1)
+    n_a: int = Field(ge=0)
+    n_b: int = Field(ge=0)
+    n_intersection: int = Field(ge=0)
+    n_union: int = Field(ge=0)
+    jaccard: float = Field(ge=0.0, le=1.0)
+    kendall_tau_b: float | None = Field(default=None, ge=-1.0, le=1.0)
     only_in_a: list[str] = Field(default_factory=list)
     only_in_b: list[str] = Field(default_factory=list)
-    overlap_status: Literal["identical", "disjoint", "overlap", "insufficient"]
+    overlap_status: Literal["identical", "disjoint", "overlap", "insufficient"] = "overlap"
 
 
 class OrderingCompareResult(BaseModel):

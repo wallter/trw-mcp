@@ -10,6 +10,10 @@ Six channels consuming PRD-DIST-2400 substrate:
 - opencode-tool-return-enrichment   (mcp_tool_return, T2 default per P1-11)
 - opencode-explorer-agent           (subagent_file, FULL_REWRITE)
 
+T2 tool-return payload construction uses the shared substrate
+``channels/_tool_return_tiers.py::enrich_response()`` called directly
+from the three distill tool files — no per-client builder in this package.
+
 PRD-DIST-2403.
 """
 
@@ -31,9 +35,6 @@ from trw_mcp.channels.opencode._shared_lock import (
     agents_md_lock as agents_md_lock,
 )
 from trw_mcp.channels.opencode._tool_return_enrichment import (
-    build_t2_payload as build_t2_payload,
-)
-from trw_mcp.channels.opencode._tool_return_enrichment import (
     get_default_tier_for_opencode as get_default_tier_for_opencode,
 )
 from trw_mcp.channels.opencode._tool_return_enrichment import (
@@ -45,7 +46,6 @@ from trw_mcp.channels.opencode._tool_return_enrichment import (
 
 __all__ = [
     "agents_md_lock",
-    "build_t2_payload",
     "filter_proprietary_paths",
     "get_default_tier_for_opencode",
     "install_custom_commands",

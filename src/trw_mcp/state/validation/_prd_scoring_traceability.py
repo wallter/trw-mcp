@@ -159,14 +159,114 @@ def _count_populated_trace_fields(trace_data: object) -> int:
     return populated_fields
 
 
+# Headings whose backtick file references count as traceability evidence for
+# compact FIX PRDs (PRD-FIX-103-FR02).
+_FIX_EVIDENCE_HEADINGS: tuple[str, ...] = ("Root Cause", "Fix Verification")
+
+# Cap on the partial credit awarded to the matrix dimension when only
+# evidence.sources / Root-Cause file refs are present (PRD-FIX-103-FR02).
+# Kept well below 1.0 so a real, populated Traceability Matrix always scores
+# strictly higher than the sources-only fallback.
+_EVIDENCE_FALLBACK_MAX: float = 0.5
+
+
+def _traceability_frontmatter_empty(frontmatter: dict[str, object]) -> bool:
+    """Return True when no ``traceability.{implements,depends_on,enables}`` is set."""
+    return _count_populated_trace_fields(frontmatter.get("traceability", {})) == 0
+
+
+def _score_evidence_source_fallback(frontmatter: dict[str, object], content: str) -> float:
+    """Partial traceability credit from evidence.sources + Root-Cause file refs.
+
+    PRD-FIX-103-FR02: FIX/compact PRDs often record grounding under
+    ``evidence.sources`` (or a prose Root Cause / Fix Verification section with
+    backtick-wrapped file paths) rather than the ``traceability.*``
+    frontmatter, which left ``field_ratio`` (and the whole dimension) at 0.
+    This awards bounded partial credit so the dimension is not a false-zero.
+
+    Scoped to the FIX variant only (the false-negative class this addresses)
+    so feature/infrastructure PRDs — which intentionally use the full
+    Traceability Matrix + frontmatter contract — are unaffected (FR03
+    no-regression). Returns 0.0 when ``traceability.*`` is already populated.
+    """
+    from trw_mcp.state.validation.template_variants import get_variant_for_category
+
+    if get_variant_for_category(str(frontmatter.get("category", "") or "")) != "fix":
+        return 0.0
+    if not _traceability_frontmatter_empty(frontmatter):
+        return 0.0
+
+    source_count = 0
+    sources = frontmatter.get("sources")
+    if not isinstance(sources, list) or not sources:
+        evidence = frontmatter.get("evidence")
+        if isinstance(evidence, dict):
+            nested = evidence.get("sources")
+            sources = nested if isinstance(nested, list) else []
+    if isinstance(sources, list):
+        source_count = len([s for s in sources if s])
+
+    fix_ref_count = 0
+    for heading in _FIX_EVIDENCE_HEADINGS:
+        marker = f"### {heading}"
+        idx = content.find(marker)
+        if idx == -1:
+            idx = content.find(f"## {heading}")
+            # also tolerate a numbered "## N. Root Cause" heading
+            if idx == -1:
+                section_match = re.search(
+                    rf"^##\s+(?:\d+\.\s+)?{re.escape(heading)}.*$",
+                    content,
+                    re.MULTILINE,
+                )
+                idx = section_match.start() if section_match else -1
+        if idx == -1:
+            continue
+        tail = content[idx:]
+        next_heading = re.search(r"^##\s+", tail[3:], re.MULTILINE)
+        body = tail[: next_heading.start() + 3] if next_heading else tail
+        if _has_impl_reference(body):
+            fix_ref_count += 1
+
+    if source_count == 0 and fix_ref_count == 0:
+        return 0.0
+
+    # >=2 sources OR a file-referencing Root Cause earns the full partial cap;
+    # a single weak signal earns half of it.
+    strong = source_count >= 2 or fix_ref_count >= 1
+    return _EVIDENCE_FALLBACK_MAX if strong else _EVIDENCE_FALLBACK_MAX * 0.5
+
+
+def _evidence_fallback_from_content(content: str) -> float:
+    """Compute the FR02 evidence-source fallback by parsing frontmatter from content.
+
+    ``_score_traceability_matrix`` only receives ``content`` (not the parsed
+    frontmatter), but ``content`` includes the YAML frontmatter block, so the
+    frontmatter is re-parsed here to look up ``sources`` / ``evidence.sources``
+    (PRD-FIX-103-FR02). Fail-open: any parse error yields no credit.
+    """
+    try:
+        from trw_mcp.state.prd_utils import parse_frontmatter
+
+        frontmatter = parse_frontmatter(content)
+    except Exception:  # justified: scoring is fail-open — a parse error must not raise
+        return 0.0
+    return _score_evidence_source_fallback(frontmatter, content)
+
+
 def _score_traceability_matrix(content: str) -> tuple[float, float]:
-    """Return matrix-score and proof-score for the traceability matrix."""
+    """Return matrix-score and proof-score for the traceability matrix.
+
+    When no usable Traceability Matrix is present, falls back to bounded
+    partial credit derived from ``evidence.sources`` / Root-Cause file refs so
+    compact FIX PRDs are not scored a false zero (PRD-FIX-103-FR02).
+    """
     if "Traceability Matrix" not in content:
-        return 0.0, 0.0
+        return _evidence_fallback_from_content(content), 0.0
     traceability_rows = _extract_traceability_matrix_rows(content)
     fr_refs = sorted(traceability_rows)
     if not fr_refs:
-        return 0.0, 0.0
+        return _evidence_fallback_from_content(content), 0.0
     rows_with_impl = sum(1 for row in traceability_rows.values() if _has_impl_reference(row))
     rows_with_test = sum(1 for row in traceability_rows.values() if _has_test_reference(row))
     rows_with_both = sum(

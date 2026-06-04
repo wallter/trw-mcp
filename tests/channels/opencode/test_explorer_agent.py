@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 
 def test_explorer_agent_content_is_valid_yaml_frontmatter() -> None:
@@ -136,3 +137,14 @@ def test_install_explorer_agent_no_existing_sha_overwrites(tmp_path: Path) -> No
     result = install_explorer_agent(tmp_path, existing_sha256=None)
     assert result["status"] == "written"
     assert "old content" not in target.read_text(encoding="utf-8")
+
+
+def test_install_explorer_agent_write_error_returns_error_status(tmp_path: Path) -> None:
+    """FR20: OSError during write returns error status (fail-open)."""
+    from trw_mcp.channels.opencode._explorer_agent import install_explorer_agent
+
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        result = install_explorer_agent(tmp_path)
+
+    assert result["status"] == "error"
+    assert "error" in result

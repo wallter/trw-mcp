@@ -1,6 +1,6 @@
 ---
 # PRD Metadata (LLM-Parseable)
-# Research basis: AARE-F Framework v1.1.0
+# Research basis: AARE-F Framework
 # AARE-F Components: C1 (Traceability), C2 (Governance), C7 (Req-as-Code)
 # Findings: F2 (LLM-parseable), F3 (confidence), F7 (metrics), F19 (traceability), F24 (implementation completeness)
 
@@ -11,8 +11,14 @@ prd:
   status: draft  # draft | review | approved | implemented | deprecated
   priority: P1   # P0 (critical) | P1 (high) | P2 (medium) | P3 (low)
 
-# AARE-F Component mapping (which framework components this PRD addresses)
-aaref_components: []  # C1, C2, C3, C4, C5, C6, C7, C8, C9, C10
+# Functionality truthfulness (FPI #7 / AARE-F §6.2): status=implemented REQUIRES
+# functionality_level=live AND stubs: []. Use stub/partial (with stubs listed)
+# until every path is real — never claim implemented over a stub.
+functionality_level: planned  # planned | stub | partial | live
+stubs: []                     # every not-yet-real path, while functionality_level != live
+
+# AARE-F Component mapping (deprecated — kept for back-compat; not consumed by any tool)
+aaref_components: []
 
 # Evidence and confidence (AARE-F Finding F3: confidence expectations for AI systems)
 evidence:
@@ -122,10 +128,15 @@ quality_gates:
 
 **Assertions** (optional):
 <!-- Machine-verifiable assertions for this FR. Only add for convention/structure FRs. -->
+<!-- Existence checks (prove a symbol/file is present): -->
 <!-- - `grep_present: "pattern" in "target/glob/**/*.py"` -->
 <!-- - `grep_absent: "anti_pattern" in "target/**/*.py"` -->
 <!-- - `glob_exists: "path/to/expected/file.py"` -->
 <!-- - `glob_absent: "path/to/removed/file.py"` -->
+<!-- Behavioral / wiring checks (verify the output VALUE, not just the symbol): -->
+<!-- - `asserts_value: "result.estimate == 0.42 in tests/test_x.py::test_wiring"` -->
+<!-- - `output_contains: "0.42" in "stdout of pytest -k test_wiring"` -->
+<!-- A1 (existence != wiring): for `status: implemented` FRs prefer behavioral assertions that verify the value, not just the symbol — a grep_present proves a symbol exists but not that the computed value reaches the output. -->
 
 ### PRD-{CAT}-{SEQ}-FR02: {Requirement Title}
 ...
@@ -475,6 +486,6 @@ Before submitting this PRD for review, verify:
 
 ---
 
-*Template version: 2.3 (AARE-F v1.1.0 Enhanced — implementation-readiness hardening)*
-*Research basis: AARE-F Framework v1.1.0*
+*Template version: 2.3 (AARE-F Enhanced — implementation-readiness hardening)*
+*Research basis: AARE-F Framework*
 *Prompts: docs/requirements-aare-f/prompts/prd-creation.md*

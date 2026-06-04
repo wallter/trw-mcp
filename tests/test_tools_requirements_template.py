@@ -156,6 +156,42 @@ class TestTemplateSubstitution:
         assert "{Brief context" in result or "{Clear statement" in result
 
 
+class TestInlineTemplateParity:
+    """PRD-QUAL-092 FR02: the inline fallback template carries FPI #7 fields."""
+
+    def test_inline_template_has_functionality_level_and_stubs(self) -> None:
+        from trw_mcp.resources.templates import _INLINE_PRD_TEMPLATE
+
+        assert "functionality_level:" in _INLINE_PRD_TEMPLATE
+        assert "stubs:" in _INLINE_PRD_TEMPLATE
+        # FPI #7 guidance comment parity with the canonical template.
+        assert "FPI #7" in _INLINE_PRD_TEMPLATE
+
+    def test_inline_fallback_body_has_functionality_level(self) -> None:
+        """When the bundled template file is absent, get_prd_template returns the
+        inline body and that body contains functionality_level: and stubs:.
+        """
+        import unittest.mock
+
+        from fastmcp import FastMCP
+
+        from tests.conftest import get_resources_sync
+        from trw_mcp.resources.templates import register_template_resources
+
+        server = FastMCP("test")
+        register_template_resources(server)
+
+        resources = get_resources_sync(server)
+        prd_resource = resources["trw://templates/prd"]
+
+        # Force the fallback path: bundled prd_template.md "missing".
+        with unittest.mock.patch.object(Path, "exists", return_value=False):
+            body = prd_resource.fn()
+
+        assert "functionality_level:" in body
+        assert "stubs:" in body
+
+
 class TestModelFields:
     """Tests for new PRDFrontmatter fields."""
 

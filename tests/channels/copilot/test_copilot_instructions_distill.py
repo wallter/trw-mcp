@@ -16,11 +16,9 @@ Covers:
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,8 +41,9 @@ def _make_sidecar(
     return {"conventions": conventions, "hotspots": hotspots}
 
 
-def _make_renderer() -> "CopilotInstructionsDistillRenderer":
+def _make_renderer() -> CopilotInstructionsDistillRenderer:
     from trw_mcp.channels.copilot._instructions_distill import CopilotInstructionsDistillRenderer
+
     return CopilotInstructionsDistillRenderer()
 
 
@@ -61,11 +60,7 @@ def test_marker_replace_distinct_from_ceremony(tmp_path: Path) -> None:
     github_dir = tmp_path / ".github"
     github_dir.mkdir()
     instructions = github_dir / "copilot-instructions.md"
-    ceremony_content = (
-        "<!-- trw:copilot:start -->\n"
-        "# TRW Ceremony\n"
-        "<!-- trw:copilot:end -->\n"
-    )
+    ceremony_content = "<!-- trw:copilot:start -->\n# TRW Ceremony\n<!-- trw:copilot:end -->\n"
     instructions.write_text(ceremony_content, encoding="utf-8")
 
     renderer = _make_renderer()
@@ -102,9 +97,9 @@ def test_marker_replace_distinct_from_ceremony(tmp_path: Path) -> None:
 def test_t1_write_under_budget(tmp_path: Path) -> None:
     """Valid sidecar produces T1 segment with <= 250 token estimate."""
     from trw_mcp.channels.copilot._instructions_distill import (
+        BUDGET_TOKENS,
         DISTILL_BEGIN,
         DISTILL_END,
-        BUDGET_TOKENS,
         _count_tokens_estimate,
     )
 
@@ -150,10 +145,7 @@ def test_tier_down_ladder(tmp_path: Path) -> None:
     verbose_reason = "x" * 400
     sidecar = {
         "conventions": [verbose_reason, verbose_reason, verbose_reason, verbose_reason],
-        "hotspots": [
-            {"file": "a/b.py", "risk_score": 0.9, "reason": verbose_reason}
-            for _ in range(5)
-        ],
+        "hotspots": [{"file": "a/b.py", "risk_score": 0.9, "reason": verbose_reason} for _ in range(5)],
     }
 
     renderer = _make_renderer()
@@ -177,13 +169,13 @@ def test_tier_down_ladder(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("size", range(0, 50))
+@pytest.mark.parametrize("size", range(50))
 def test_token_cap_property(size: int, tmp_path: Path) -> None:
     """All inputs produce <= 250-token segments between distill markers."""
     from trw_mcp.channels.copilot._instructions_distill import (
+        BUDGET_TOKENS,
         DISTILL_BEGIN,
         DISTILL_END,
-        BUDGET_TOKENS,
         _count_tokens_estimate,
     )
 
@@ -196,8 +188,7 @@ def test_token_cap_property(size: int, tmp_path: Path) -> None:
     sidecar: dict[str, object] = {
         "conventions": [word] * (size + 1),
         "hotspots": [
-            {"file": f"path/file_{i}.py", "risk_score": 0.5 + i * 0.01, "reason": word}
-            for i in range(size + 1)
+            {"file": f"path/file_{i}.py", "risk_score": 0.5 + i * 0.01, "reason": word} for i in range(size + 1)
         ],
     }
 
@@ -228,13 +219,10 @@ def test_token_cap_property(size: int, tmp_path: Path) -> None:
 
 def test_t0_beacon_not_pruned_on_ttl_expiry(tmp_path: Path) -> None:
     """TTL exceeded renders T0 beacon (TIER_DOWN), not a delete (FULL_PRUNE)."""
+    from trw_mcp.channels._state import ChannelState, state_path_for, write_state
     from trw_mcp.channels.copilot._instructions_distill import (
         DISTILL_BEGIN,
-        DISTILL_END,
-        build_copilot_instructions_distill_entry,
     )
-    from trw_mcp.channels._state import ChannelState, state_path_for, write_state
-    from trw_mcp.channels._provenance import now_utc_iso8601
 
     github_dir = tmp_path / ".github"
     github_dir.mkdir()
@@ -280,7 +268,6 @@ def test_t0_beacon_not_pruned_on_ttl_expiry(tmp_path: Path) -> None:
 
 def test_idempotency_same_sha(tmp_path: Path) -> None:
     """Second render with same SHA returns skipped_conflict; file byte-identical."""
-    from trw_mcp.channels.copilot._instructions_distill import DISTILL_BEGIN
 
     github_dir = tmp_path / ".github"
     github_dir.mkdir()
@@ -318,6 +305,7 @@ def test_idempotency_same_sha(tmp_path: Path) -> None:
 def test_quota_proximity_warning_fires(tmp_path: Path) -> None:
     """Large existing content triggers quota_proximity warning log."""
     import structlog.testing
+
     from trw_mcp.channels.copilot._instructions_distill import QUOTA_PROXIMITY_BYTES
 
     github_dir = tmp_path / ".github"
@@ -342,8 +330,7 @@ def test_quota_proximity_warning_fires(tmp_path: Path) -> None:
     # Warning logged via structlog
     warning_events = [e for e in cap if e.get("log_level") == "warning"]
     assert any(
-        "quota_proximity" in str(e.get("event", "")).lower() or
-        "quota" in str(e.get("event", "")).lower()
+        "quota_proximity" in str(e.get("event", "")).lower() or "quota" in str(e.get("event", "")).lower()
         for e in warning_events
     ), f"Expected quota_proximity warning in: {warning_events}"
 
@@ -455,3 +442,117 @@ def test_sidecar_absent_produces_t0_beacon(tmp_path: Path) -> None:
     # Beacon contains regenerate command
     assert "trw-distill" in content
     assert "self-improve" in content
+
+
+# ---------------------------------------------------------------------------
+# Substrate-consistency: event types use channel_lock_skip / channel_error
+# ---------------------------------------------------------------------------
+
+
+def test_lock_skip_uses_correct_event_type(tmp_path: Path) -> None:
+    """Lock-skip emits channel_lock_skip event (not channel_conflict)."""
+    from trw_mcp.channels._lock import ChannelLock
+    from trw_mcp.channels._telemetry import VALID_EVENT_TYPES
+
+    assert "channel_lock_skip" in VALID_EVENT_TYPES
+    assert "channel_error" in VALID_EVENT_TYPES
+
+    lock_path = tmp_path / ".trw" / "channels" / "copilot-instructions-distill.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    github_dir = tmp_path / ".github"
+    github_dir.mkdir()
+    instructions = github_dir / "copilot-instructions.md"
+
+    import threading
+
+    bg_lock = ChannelLock(lock_path)
+    acquired_event = threading.Event()
+    release_event = threading.Event()
+
+    def _hold() -> None:
+        bg_lock.__enter__()
+        acquired_event.set()
+        release_event.wait(timeout=5.0)
+        bg_lock.__exit__(None, None, None)
+
+    t = threading.Thread(target=_hold, daemon=True)
+    t.start()
+    acquired_event.wait(timeout=2.0)
+    try:
+        renderer = _make_renderer()
+        result = renderer.render(
+            tmp_path,
+            _make_sidecar(),
+            sidecar_sha="lock-skip",
+            target_file=instructions,
+        )
+        assert result.status == "skipped_lock"
+    finally:
+        release_event.set()
+        t.join(timeout=2.0)
+
+
+def test_render_under_lock_exception_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Internal exception during render returns status=error (fail-open)."""
+    renderer = _make_renderer()
+
+    # Monkeypatch read_state to raise an unexpected exception
+    monkeypatch.setattr(
+        "trw_mcp.channels.copilot._instructions_distill.read_state",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("injected error")),
+    )
+
+    github_dir = tmp_path / ".github"
+    github_dir.mkdir()
+    instructions = github_dir / "copilot-instructions.md"
+
+    result = renderer.render(
+        tmp_path,
+        _make_sidecar(),
+        sidecar_sha="err-sha",
+        target_file=instructions,
+    )
+
+    assert result.status == "error"
+    assert result.error is not None
+
+
+def test_dry_run_returns_would_write(tmp_path: Path) -> None:
+    """dry_run=True returns would_write content without writing file."""
+    from trw_mcp.channels.copilot._instructions_distill import DISTILL_BEGIN
+
+    github_dir = tmp_path / ".github"
+    github_dir.mkdir()
+    instructions = github_dir / "copilot-instructions.md"
+
+    renderer = _make_renderer()
+    result = renderer.render(
+        tmp_path,
+        _make_sidecar(),
+        sidecar_sha="dry-sha",
+        target_file=instructions,
+        dry_run=True,
+    )
+
+    assert result.status == "dry_run"
+    assert result.would_write is not None
+    assert DISTILL_BEGIN in result.would_write
+    # File should NOT exist (dry_run)
+    assert not instructions.exists()
+
+
+@pytest.fixture(autouse=True)
+def _structlog_defaults_for_capture() -> object:
+    """File-scoped: reset structlog to defaults so ``capture_logs()`` sees WARN.
+
+    A prior test's ``configure_logging()`` (server import / init_project) installs
+    a filtering wrapper that drops WARN before ``capture_logs``'s processor, so
+    these warning-assertion tests fail only in full-suite ordering. Save+restore
+    (file-scoped, never a global reset — avoids the alphabetical-leak hazard).
+    """
+    import structlog
+
+    _saved = structlog.get_config()
+    structlog.reset_defaults()
+    yield
+    structlog.configure(**_saved)

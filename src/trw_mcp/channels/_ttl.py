@@ -31,14 +31,23 @@ __all__ = [
 
 
 class CheckResult(BaseModel):
-    """Result of a TTL staleness check."""
+    """Result of a TTL staleness check.
+
+    Field semantics (MED-6 fix — aligned with PRD-DIST-2400 FR14):
+    - ``ttl_commits_remaining``: budget commits left before stale
+      (None when ttl_commits is not configured or ttl_unknown).
+    - ``ttl_days_remaining``: budget days left before stale
+      (None when ttl_days is not configured or last_render_ts absent).
+    Both fields carry a non-negative remaining budget, matching the FR14 spec.
+    The renderer uses ttl_commits_remaining directly in InstructionSegmentResult.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     is_stale: bool
     ttl_unknown: bool = False
-    commits_since: int | None = None
-    days_since: float | None = None
+    ttl_commits_remaining: int | None = None
+    ttl_days_remaining: float | None = None
 
 
 def _git_commits_since(sha: str, *, repo_root: Path | None) -> int | None:
@@ -118,7 +127,7 @@ def check_staleness(
             the current working directory when None.
 
     Returns:
-        CheckResult with is_stale, ttl_unknown, commits_since, days_since.
+        CheckResult with is_stale, ttl_unknown, ttl_commits_remaining, ttl_days_remaining.
 
     SYS-03 contract:
         If last_sidecar_sha is None → ttl_unknown=True (never rendered).
@@ -131,8 +140,8 @@ def check_staleness(
         return CheckResult(is_stale=False, ttl_unknown=True)
 
     is_stale = False
-    commits_since: int | None = None
-    days_since: float | None = None
+    ttl_commits_remaining: int | None = None
+    ttl_days_remaining: float | None = None
 
     # ---- commit-based TTL ----
     if entry.ttl_commits is not None:
@@ -140,7 +149,7 @@ def check_staleness(
         if count is None:
             # SYS-03: detached HEAD / error → ttl_unknown, never stale
             return CheckResult(is_stale=False, ttl_unknown=True)
-        commits_since = count
+        ttl_commits_remaining = entry.ttl_commits - count
         if count > entry.ttl_commits:
             is_stale = True
 
@@ -150,7 +159,8 @@ def check_staleness(
             last_dt = datetime.fromisoformat(last_render_ts.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
             delta = now - last_dt
-            days_since = delta.total_seconds() / 86400.0
+            days_elapsed = delta.total_seconds() / 86400.0
+            ttl_days_remaining = entry.ttl_days - days_elapsed
             if delta.days > entry.ttl_days:
                 is_stale = True
         except (ValueError, TypeError) as exc:
@@ -164,6 +174,6 @@ def check_staleness(
     return CheckResult(
         is_stale=is_stale,
         ttl_unknown=False,
-        commits_since=commits_since,
-        days_since=days_since,
+        ttl_commits_remaining=ttl_commits_remaining,
+        ttl_days_remaining=ttl_days_remaining,
     )

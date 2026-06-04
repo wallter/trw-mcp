@@ -62,6 +62,10 @@ class TestSkipUpdatesAccessCount:
         )
 
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
+        # Isolate the embedding-based SKIP path (sim >= 0.95) — suppress the
+        # embedding-independent exact-content MERGE path so this contract test
+        # still exercises skip. (Exact-content merge is covered separately.)
+        monkeypatch.setattr("trw_mcp.state.dedup._check_exact_content_duplicate", lambda *a, **k: None)
 
         server = FastMCP("test")
         register_learning_tools(server)
@@ -105,6 +109,10 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-key-test")
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
+        # These contract tests assert the embedding-path return dicts (recorded /
+        # skipped / merged). Suppress the embedding-independent exact-content
+        # MERGE path so byte-identical content still exercises the skip branch.
+        monkeypatch.setattr("trw_mcp.state.dedup._check_exact_content_duplicate", lambda *a, **k: None)
 
         server = FastMCP("test")
         register_learning_tools(server)

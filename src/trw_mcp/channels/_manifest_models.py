@@ -98,6 +98,21 @@ class MarkersConfig(BaseModel):
 
 
 class ProvenanceConfig(BaseModel):
+    """Provenance rendering configuration.
+
+    HIGH-4 design note: `enabled` and `detection` are defined here per the
+    original PRD §2 spec (`generated_by`/`regenerate`/`channel_id` were
+    later renamed during implementation).  Currently, neither field is read
+    by the renderer — provenance is always rendered (not gated on `enabled`),
+    and human-edit detection is driven by `ChannelEntry.human_edit_detection`
+    directly (not by `provenance.detection`).
+
+    This is a facade field cluster.  It is kept for forward compatibility so
+    manifests that set `provenance: {enabled: false}` are valid YAML and do
+    not cause schema errors.  A future PR that gates provenance rendering on
+    `enabled` should add a test asserting `enabled=False` skips the comment.
+    """
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     enabled: bool = True
@@ -210,26 +225,63 @@ class ChannelEntry(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Marker registry — canonical marker strings (SYS-05 collision check)
+#
+# BLOCKER-2 design decision: The registry is keyed by generic name strings
+# (e.g., "trw_distill_start"), NOT by channel-ID tuples as PRD §7 originally
+# proposed.  PRD §7 specified dict[str, tuple[str,str]] keyed by channel-ID;
+# the evolved implementation uses dict[str, str] keyed by marker-name because:
+# 1. No current consumer (check_marker_collisions, channel-doctor, client
+#    adapters) requires channel-ID attribution from the registry.
+# 2. The simpler structure avoids module-import-time uniqueness asserts for
+#    channel IDs (which are dynamic, not static constants).
+# 3. The MED-7 ceremony-marker fix (CEREMONY_MARKER_KEYS + DISTILL_MARKER_KEYS)
+#    already resolves the real collision-detection bug without needing channel-ID
+#    attribution.
+# If channel-ID attribution becomes necessary for a future consumer, migrate to
+# dict[str, dict[str, str]] keyed by channel-ID at that time.
 # ---------------------------------------------------------------------------
 
 MARKER_REGISTRY: dict[str, str] = {
+    # Generic TRW ceremony markers
     "trw_start_generic": "<!-- trw:start -->",
     "trw_end_generic": "<!-- trw:end -->",
+    # Distill segment markers (used by instruction_file_segment / agents_md_segment)
     "trw_distill_start": "<!-- trw:distill:start -->",
     "trw_distill_end": "<!-- trw:distill:end -->",
+    # Memory markers (Claude Code MEMORY.md)
     "trw_memory_start": "<!-- trw:memory:start -->",
     "trw_memory_end": "<!-- trw:memory:end -->",
+    # Cursor MDC segment markers
     "trw_cursor_mdc_start": "<!-- trw:cursor:mdc:start -->",
     "trw_cursor_mdc_end": "<!-- trw:cursor:mdc:end -->",
+    # Codex AGENTS.md segment markers
     "trw_codex_start": "<!-- trw:codex:start -->",
     "trw_codex_end": "<!-- trw:codex:end -->",
+    # Copilot instructions segment markers
     "trw_copilot_start": "<!-- trw:copilot:start -->",
     "trw_copilot_end": "<!-- trw:copilot:end -->",
+    # .gitignore managed section sentinels (non-HTML markers)
     "trw_mdc_gitignore_begin": "# TRW:MDC:BEGIN",
     "trw_mdc_gitignore_end": "# TRW:MDC:END",
-    "trw_provenance_start": "<!-- TRW:PROVENANCE",
-    "trw_provenance_end": "-->",
+    # NOTE: Provenance block markers ("<!-- TRW:PROVENANCE" / "-->") are intentionally
+    # excluded.  "TRW:PROVENANCE" is a content annotation, not a segment boundary, and
+    # "-->" (plain HTML comment close) is too common to use as a collision-check marker.
 }
+
+# Keys in MARKER_REGISTRY that belong to the generic TRW ceremony layer.
+# These markers appear in ALL properly bootstrapped CLAUDE.md / AGENTS.md files
+# and must NOT be treated as distill-channel marker collisions (MED-7 fix).
+# check_marker_collisions() uses DISTILL_MARKER_KEYS to scope its scan to
+# distill-channel markers only.
+CEREMONY_MARKER_KEYS: frozenset[str] = frozenset(
+    {
+        "trw_start_generic",
+        "trw_end_generic",
+    }
+)
+
+# Distill-channel marker keys: the full registry minus the ceremony-layer entries.
+DISTILL_MARKER_KEYS: frozenset[str] = frozenset(MARKER_REGISTRY) - CEREMONY_MARKER_KEYS
 
 # ---------------------------------------------------------------------------
 # Cross-client meta-tune contract constants (FR22-FR24)

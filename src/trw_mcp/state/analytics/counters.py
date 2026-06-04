@@ -8,13 +8,15 @@ and event analysis (repeated operations, success patterns, tool sequences).
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import structlog
 
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter, lock_for_rmw
 
 logger = structlog.get_logger(__name__)
 
@@ -188,6 +190,27 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
     return analytics_path, data
 
 
+@contextmanager
+def _locked_analytics(trw_dir: Path) -> Generator[tuple[Path, dict[str, object]], None, None]:
+    """Read analytics.yaml under an advisory R-M-W lock, yielding (path, data).
+
+    The dev repo runs several MCP clients (Claude Code, Codex, opencode) against
+    one shared server, so concurrent trw_session_start / trw_learn calls would
+    otherwise race the read-modify-write and silently lose counter increments
+    (last-write-wins drops a session/learning from the tally). Mirrors the
+    lock_for_rmw guard already on update_learning_index. The caller's mutate +
+    write_yaml run inside the ``with`` while the lock is held; write_yaml itself
+    is an atomic rename, so the combination is a serialized, crash-safe RMW.
+    """
+    cfg: TRWConfig = get_config()
+    context_dir = trw_dir / cfg.context_dir
+    FileStateWriter().ensure_dir(context_dir)
+    analytics_path = context_dir / "analytics.yaml"
+    with lock_for_rmw(analytics_path):
+        _, data = _read_analytics(trw_dir)
+        yield analytics_path, data
+
+
 def increment_session_start_counter(trw_dir: Path) -> None:
     """Increment sessions_tracked when a session starts (FIX-050-FR06).
 
@@ -198,10 +221,10 @@ def increment_session_start_counter(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to .trw directory.
     """
-    analytics_path, data = _read_analytics(trw_dir)
-    tracked = _ac._safe_int(data, "sessions_tracked") + 1
-    data["sessions_tracked"] = tracked
-    FileStateWriter().write_yaml(analytics_path, data)
+    with _locked_analytics(trw_dir) as (analytics_path, data):
+        tracked = _ac._safe_int(data, "sessions_tracked") + 1
+        data["sessions_tracked"] = tracked
+        FileStateWriter().write_yaml(analytics_path, data)
     logger.debug("session_start_counter_incremented", sessions_tracked=tracked)
 
 
@@ -229,9 +252,9 @@ def update_analytics(trw_dir: Path, new_learnings_count: int) -> None:
         trw_dir: Path to .trw directory.
         new_learnings_count: Number of new learnings produced.
     """
-    analytics_path, data = _read_analytics(trw_dir)
-    _, total_learnings = _update_core_counters(data, new_learnings_count)
-    FileStateWriter().write_yaml(analytics_path, data)
+    with _locked_analytics(trw_dir) as (analytics_path, data):
+        _, total_learnings = _update_core_counters(data, new_learnings_count)
+        FileStateWriter().write_yaml(analytics_path, data)
     logger.debug("analytics_updated", new_learnings=new_learnings_count, total=total_learnings)
 
 
@@ -241,9 +264,9 @@ def update_analytics_sync(trw_dir: Path) -> None:
     Args:
         trw_dir: Path to .trw directory.
     """
-    analytics_path, data = _read_analytics(trw_dir)
-    data["claude_md_syncs"] = _ac._safe_int(data, "claude_md_syncs") + 1
-    FileStateWriter().write_yaml(analytics_path, data)
+    with _locked_analytics(trw_dir) as (analytics_path, data):
+        data["claude_md_syncs"] = _ac._safe_int(data, "claude_md_syncs") + 1
+        FileStateWriter().write_yaml(analytics_path, data)
 
 
 def update_analytics_extended(
@@ -264,25 +287,9 @@ def update_analytics_extended(
         is_reflection: Whether this call is from a reflection event.
         is_success: Whether this is a successful outcome.
     """
-    analytics_path, data = _read_analytics(trw_dir)
-
-    # Core counters (shared with update_analytics)
-    _update_core_counters(data, new_learnings_count)
-
-    # FR02: Reflection tracking
-    if is_reflection:
-        data["reflections_completed"] = _ac._safe_int(data, "reflections_completed") + 1
-
-    # FR02: Success rate tracking
-    total_outcomes = _ac._safe_int(data, "total_outcomes") + 1
-    successes = _ac._safe_int(data, "successful_outcomes")
-    if is_success:
-        successes += 1
-    data["total_outcomes"] = total_outcomes
-    data["successful_outcomes"] = successes
-    data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
-
-    # FR03: Q-learning activations (scan entries for q_observations > 0)
+    # FR03: Q-learning activations (scan entries for q_observations > 0).
+    # Read-only scan of the learning store — computed BEFORE the analytics lock
+    # so it doesn't extend the RMW critical section (it does not depend on data).
     q_activations = 0
     high_impact = 0
     try:
@@ -304,7 +311,25 @@ def update_analytics_extended(
                     q_activations += 1
                 if _ac._safe_float(_entry_raw, "impact", 0.5) >= 0.7:
                     high_impact += 1
-    data["q_learning_activations"] = q_activations
-    data["high_impact_learnings"] = high_impact
 
-    FileStateWriter().write_yaml(analytics_path, data)
+    with _locked_analytics(trw_dir) as (analytics_path, data):
+        # Core counters (shared with update_analytics)
+        _update_core_counters(data, new_learnings_count)
+
+        # FR02: Reflection tracking
+        if is_reflection:
+            data["reflections_completed"] = _ac._safe_int(data, "reflections_completed") + 1
+
+        # FR02: Success rate tracking
+        total_outcomes = _ac._safe_int(data, "total_outcomes") + 1
+        successes = _ac._safe_int(data, "successful_outcomes")
+        if is_success:
+            successes += 1
+        data["total_outcomes"] = total_outcomes
+        data["successful_outcomes"] = successes
+        data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
+
+        data["q_learning_activations"] = q_activations
+        data["high_impact_learnings"] = high_impact
+
+        FileStateWriter().write_yaml(analytics_path, data)

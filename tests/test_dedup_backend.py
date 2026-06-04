@@ -186,6 +186,9 @@ class TestCheckDuplicateFastPathIntegration:
         with (
             patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
             patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
+            # Isolate the YAML-fallback embedding path: suppress the
+            # embedding-independent exact-content check (covered separately).
+            patch("trw_mcp.state.dedup._check_exact_content_duplicate", return_value=None),
         ):
             result = check_duplicate(summary, detail, entries_dir, reader, config=config)
 

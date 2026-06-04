@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
+
 from trw_mcp.models.config._defaults import (
     DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
     DEFAULT_MUTATION_TIMEOUT_SECS,
@@ -53,6 +55,18 @@ class _BuildFields:
     build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
+    # PRD-CORE-184-FR03: task-type-aware deliver gate mode.
+    #   advisory     — warn but allow delivery (current behavior; zero regression)
+    #   block_coding — block missing-build-check delivery ONLY for coding/rca/eval
+    #                  task types; advisory for docs/research/planning/unknown
+    #   block_all    — block for every task type that expects a build artifact
+    #                  (excludes docs/research/planning)
+    # Default is ``advisory`` so existing deployments see NO behavior change.
+    # The ``override_reason`` (allow_unverified) path always remains open.
+    deliver_gate_mode: Literal["advisory", "block_coding", "block_all"] = "advisory"
+    # Optional per-task-type override map, e.g. {"eval": "advisory"}. Empty by
+    # default; values must be one of the three modes above.
+    deliver_gate_task_type_overrides: dict[str, str] = Field(default_factory=dict)
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None

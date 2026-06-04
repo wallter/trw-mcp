@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,6 +12,24 @@ import pytest
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+
+def _drain_q_learning_worker(timeout: float = 5.0) -> None:
+    """Wait for the deferred Q-learning bg worker to finish (PRD-FIX-088 FR01).
+
+    ``trw_build_check`` now dispatches ``process_outcome_for_event`` to a
+    single-flight background thread (``trw_mcp.tools._q_learning_state``),
+    so a test must join that worker before asserting on side effects.
+    """
+    import trw_mcp.tools._q_learning_state as _qls
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _qls._q_lock:
+            t = _qls._q_thread
+        if t is None or not t.is_alive():
+            return
+        time.sleep(0.02)
 
 
 class TestBuildCheckQLearningWiring:
@@ -52,13 +71,14 @@ class TestBuildCheckQLearningWiring:
 
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
-            lambda event_type: called_events.append(event_type) or [],
+            lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
         )
 
         tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
         assert tool_fn is not None, "trw_build_check tool not found"
 
         tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
+        _drain_q_learning_worker()
 
         assert "build_passed" in called_events, (
             "trw_build_check did not call process_outcome_for_event('build_passed') — "
@@ -71,13 +91,14 @@ class TestBuildCheckQLearningWiring:
 
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
-            lambda event_type: called_events.append(event_type) or [],
+            lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
         )
 
         tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
         assert tool_fn is not None, "trw_build_check tool not found"
 
         tool_fn(tests_passed=False, test_count=50, failure_count=5, coverage_pct=60.0, scope="full")
+        _drain_q_learning_worker()
 
         assert "build_failed" in called_events, (
             "trw_build_check did not call process_outcome_for_event('build_failed') — "
@@ -92,7 +113,7 @@ class TestBuildCheckQLearningWiring:
 
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
-            lambda event_type: called_events.append(event_type) or [],
+            lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
         )
 
         tool_fn = self._get_tool_fn(tmp_path, monkeypatch=monkeypatch)
@@ -106,6 +127,7 @@ class TestBuildCheckQLearningWiring:
             coverage_pct=95.0,
             scope="full",
         )
+        _drain_q_learning_worker()
 
         assert result["static_checks_clean"] is False
         assert result["mypy_clean"] is True
@@ -116,7 +138,7 @@ class TestBuildCheckQLearningWiring:
     ) -> None:
         """Q-learning errors must be swallowed — never block build check results."""
 
-        def exploding_process(event_type: str) -> list[str]:
+        def exploding_process(event_type: str, event_data: object = None, **_kw: object) -> list[str]:
             raise RuntimeError("Q-learning exploded!")
 
         monkeypatch.setattr("trw_mcp.scoring.process_outcome_for_event", exploding_process)
@@ -125,6 +147,7 @@ class TestBuildCheckQLearningWiring:
         assert tool_fn is not None, "trw_build_check tool not found"
 
         result = tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
+        _drain_q_learning_worker()
         assert result["tests_passed"] is True
 
 
@@ -165,7 +188,7 @@ class TestBuildCheckMypyOnlyScope:
         monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
-            lambda event_type: called_events.append(event_type) or [],
+            lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
         )
 
         server = __import__("fastmcp", fromlist=["FastMCP"]).FastMCP("test")
@@ -174,6 +197,7 @@ class TestBuildCheckMypyOnlyScope:
         assert "trw_build_check" in tools
         tool_fn = tools["trw_build_check"].fn
         tool_fn(tests_passed=True, mypy_clean=True, scope="mypy")
+        _drain_q_learning_worker()
 
         assert "build_passed" in called_events, "scope='mypy' fires 'build_passed' event in current implementation"
 
@@ -249,6 +273,7 @@ class TestBuildCheckMypyOnlyScope:
         tool_fn = tools["trw_build_check"].fn
         result = tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
         assert result["tests_passed"] is True
+        _drain_q_learning_worker()
 
         stored = reader.read_yaml(entry_path)
         q_obs = int(str(stored.get("q_observations", 0)))
@@ -272,7 +297,7 @@ class TestBuildCheckMypyOnlyScope:
         monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
-            lambda event_type: called_events.append(event_type) or [],
+            lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
         )
 
         server = __import__("fastmcp", fromlist=["FastMCP"]).FastMCP("test")
@@ -280,6 +305,7 @@ class TestBuildCheckMypyOnlyScope:
         tool_fn = get_tools_sync(server)["trw_build_check"].fn
 
         result = tool_fn(tests_passed=True, mypy_clean=True, scope="mypy")
+        _drain_q_learning_worker()
 
         assert result["tests_passed"] is True
         assert "build_passed" in called_events

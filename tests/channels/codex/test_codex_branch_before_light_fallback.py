@@ -15,8 +15,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 
 def _make_sidecar() -> dict[str, Any]:
     return {

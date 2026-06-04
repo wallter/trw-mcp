@@ -4,14 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-try:
-    from ruamel.yaml import YAML as RuamelYAML
-    _HAS_RUAMEL = True
-except ImportError:
-    _HAS_RUAMEL = False
-
 try:
     import yaml as _yaml_module  # type: ignore[import-untyped]
     _HAS_PYYAML = True
@@ -26,7 +18,7 @@ from trw_mcp.channels.claude_code._explorer_subagent import (
 )
 
 
-def _parse_frontmatter(content: str) -> dict:
+def _parse_frontmatter(content: str) -> dict:  # type: ignore[type-arg]
     """Parse YAML frontmatter from a markdown file with --- delimiters."""
     lines = content.split("\n")
     if not lines[0].strip() == "---":
@@ -39,12 +31,16 @@ def _parse_frontmatter(content: str) -> dict:
     if end == -1:
         return {}
     fm_text = "\n".join(lines[1:end])
-    if _HAS_RUAMEL:
+    try:
         from ruamel.yaml import YAML
+
         y = YAML(typ="safe")
         import io
+
         return y.load(io.StringIO(fm_text)) or {}
-    elif _HAS_PYYAML:
+    except ImportError:
+        pass
+    if _HAS_PYYAML:
         return _yaml_module.safe_load(fm_text) or {}
     # Minimal manual parse for CI environments without yaml
     result = {}
@@ -158,3 +154,58 @@ class TestInstallCc05Subagent:
         repo.mkdir()
         install_cc05_subagent(repo)
         assert (repo / ".claude" / "agents").is_dir()
+
+    def test_install_when_content_differs_returns_true(self, tmp_path: Path) -> None:
+        """If existing content differs, returns True (updated)."""
+        install_cc05_subagent(tmp_path)
+        target = tmp_path / EXPLORER_AGENT_RELPATH
+        # Modify the file to simulate an old version
+        target.write_text("old content\n", encoding="utf-8")
+        result = install_cc05_subagent(tmp_path)
+        assert result is True
+
+    def test_quota_warning_emitted_when_oversized(self, tmp_path: Path) -> None:
+        """Covers quota warning log path (line 152) when content exceeds EXPLORER_QUOTA_BYTES."""
+        from unittest.mock import patch
+
+        from trw_mcp.channels.claude_code._explorer_subagent import (
+            EXPLORER_QUOTA_BYTES,
+            install_cc05_subagent,
+        )
+
+        # Patch get_explorer_agent_content to return an oversized string
+        oversized = "x" * (EXPLORER_QUOTA_BYTES + 100)
+        with patch(
+            "trw_mcp.channels.claude_code._explorer_subagent.get_explorer_agent_content",
+            return_value=oversized,
+        ):
+            # Should NOT raise even when over quota — just warn
+            result = install_cc05_subagent(tmp_path)
+            assert result is True  # was written (no existing file)
+
+    def test_install_when_read_raises_oserror(self, tmp_path: Path) -> None:
+        """Covers lines 165-166: OSError on reading existing file → overwrites gracefully."""
+        from unittest.mock import patch
+
+        from trw_mcp.channels.claude_code._explorer_subagent import (
+            install_cc05_subagent,
+        )
+
+        # First install to ensure the target exists
+        install_cc05_subagent(tmp_path)
+
+        # Simulate the target.exists() returning True and target.read_text() raising OSError
+        # by patching Path.read_text on the module's Path class
+        original_exists = Path.exists
+
+        def _patched_read_text(path_self: Path, *args: object, **kwargs: object) -> str:
+            if path_self.name == "trw-distill-explorer.md":
+                raise OSError("read failed")
+            # Fallback for other paths — but read_text is normally not called in this test
+            raise RuntimeError("unexpected call to read_text")
+
+        with patch.object(Path, "read_text", _patched_read_text):
+            # Should write (not crash) when read fails
+            result = install_cc05_subagent(tmp_path)
+        # Either True (wrote) or False (content check skipped) — must not raise
+        assert isinstance(result, bool)

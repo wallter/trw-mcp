@@ -18,7 +18,7 @@
 #   6. Python import fails AND no learnings match
 #
 # Hook latency budget: ≤ 3000ms registered timeout (NFR06).
-# Python subprocess: ≤ 2500ms; fallback to T0 beacon on timeout (FR30).
+# Python subprocess: ≤ 2500ms (timeout 2.5); fallback to T0 beacon on timeout (FR30).
 
 set -e
 trap 'exit 0' EXIT
@@ -96,13 +96,13 @@ _py=$(_get_python_path 2>/dev/null) || {
 }
 
 # --- Call compute_before_edit_hint via Python subprocess (FR30) ---
-# Timeout of 2500ms; fall back to T0 beacon on failure/timeout.
+# Timeout of 2500ms (timeout 2.5); fall back to T0 beacon on failure/timeout.
 _hints_dir="${_repo}/.trw/context/cc03-hints"
 mkdir -p "$_hints_dir" 2>/dev/null || true
 
 _hint_output=$(
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
-    timeout 2 "$_py" -c "
+    timeout 2.5 "$_py" -c "
 import sys, json
 try:
     from trw_mcp.tools.before_edit_hint import compute_before_edit_hint

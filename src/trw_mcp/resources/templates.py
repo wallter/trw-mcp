@@ -21,7 +21,7 @@ def register_template_resources(server: FastMCP) -> None:
     def get_prd_template() -> str:
         """AARE-F PRD template — YAML frontmatter + 12 sections with quality checklist.
 
-        Returns the full AARE-F v1.1.0 compliant PRD template ready for
+        Returns the full AARE-F-compliant PRD template ready for
         filling in. Includes confidence scores, traceability matrix,
         and quality checklist.
         """
@@ -50,6 +50,12 @@ prd:
   version: "1.0"
   status: draft
   priority: P1
+
+# Functionality truthfulness (FPI #7 / AARE-F §6.2): status=implemented REQUIRES
+# functionality_level=live AND stubs: []. Use stub/partial (with stubs listed)
+# until every path is real — never claim implemented over a stub.
+functionality_level: planned  # planned | stub | partial | live
+stubs: []                     # every not-yet-real path, while functionality_level != live
 
 aaref_components: []
 

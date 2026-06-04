@@ -1,4 +1,4 @@
-"""MCP tool return TypedDicts (session_start, recall, learn, checkpoint, deliver, usage)."""
+"""MCP tool return TypedDicts (session_start, recall, learn, checkpoint, deliver)."""
 
 from __future__ import annotations
 
@@ -7,90 +7,6 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
-
-# ---------------------------------------------------------------------------
-# trw_usage_report shapes
-# ---------------------------------------------------------------------------
-
-
-class UsageModelEntryDict(TypedDict):
-    """Per-model aggregation bucket in ``trw_usage_report`` ``by_model`` dict."""
-
-    calls: int
-    input_tokens: int
-    output_tokens: int
-    cost_estimate_usd: float
-
-
-class UsageCallerEntryDict(TypedDict):
-    """Per-caller aggregation bucket in ``trw_usage_report`` ``by_caller`` dict."""
-
-    calls: int
-    input_tokens: int
-    output_tokens: int
-
-
-class UsageGroupEntryDict(TypedDict):
-    """Per-bucket aggregation entry in ``trw_usage_report`` ``grouped_by`` dict."""
-
-    calls: int
-    input_tokens: int
-    output_tokens: int
-    cost_estimate_usd: float
-
-
-class RunCostLedgerEntryDict(TypedDict):
-    """Per-run Agent Trace cost ledger entry."""
-
-    calls: int
-    input_tokens: int
-    output_tokens: int
-    estimated_cost_usd: float
-    model: str
-    provider: str
-    models: list[str]
-    providers: list[str]
-
-
-class UsageReportResult(TypedDict, total=False):
-    """Return shape of ``trw_usage_report`` MCP tool.
-
-    Always-present keys: ``period``, ``log_path``, ``total_calls``,
-    ``total_input_tokens``, ``total_output_tokens``, ``total_cost_estimate_usd``,
-    ``by_model``, ``by_caller``.
-
-    Optional keys present when ``group_by != "none"``:
-    ``group_by``, ``grouped_by``.
-
-    Also present on the empty-log early-exit path: ``message``.
-    """
-
-    period: str
-    log_path: str
-    message: str
-    total_calls: int
-    total_input_tokens: int
-    total_output_tokens: int
-    total_cost_estimate_usd: float
-    by_model: dict[str, UsageModelEntryDict]
-    by_caller: dict[str, UsageCallerEntryDict]
-    cost_ledger: dict[str, RunCostLedgerEntryDict]
-    # populated when group_by != "none"
-    group_by: str
-    grouped_by: dict[str, UsageGroupEntryDict]
-
-
-# ---------------------------------------------------------------------------
-# trw_progressive_expand shape
-# ---------------------------------------------------------------------------
-
-
-class ProgressiveExpandResult(TypedDict):
-    """Return shape of ``trw_progressive_expand`` MCP tool."""
-
-    group: str
-    expanded_tools: list[str]
-    already_expanded: list[str]
 
 
 class RecallContextDict(TypedDict, total=False):
@@ -116,12 +32,16 @@ class RecallResultDict(TypedDict, total=False):
     compact: bool
     max_results: int
     topic_filter_ignored: bool
+    # Non-empty when topic_filter_ignored=True — explains why the filter was a no-op.
+    topic_filter_warning: str
     count: int
     ceremony_hint: str
     # Token budget fields (PRD-CORE-123 Phase 2)
     tokens_used: int
     tokens_budget: int | None
     tokens_truncated: bool
+    # Post-rank near-duplicate dedup (F-DEDUP-001): count of entries collapsed.
+    duplicates_collapsed: int
 
 
 class RunStatusDict(TypedDict, total=False):
@@ -133,6 +53,10 @@ class RunStatusDict(TypedDict, total=False):
     task_name: str
     owner_session_id: str | None
     wave_status: dict[str, object] | None
+    # PRD-CORE-165 FR-01: caller-supplied recovery context surfaced from the
+    # pre-compact state so the post-compaction session resumes exactly.
+    directive: str
+    context_anchor: str
 
 
 class SessionStartResultDict(TypedDict, total=False):
@@ -159,8 +83,19 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_recall_count: int
     # Embed health advisory (PRD-FIX-053)
     embed_health: dict[str, object]
+    # Sync-push health advisory (PRD-FIX-COMPOUNDING-1) — degraded when the
+    # backend push has stalled (consecutive_failures >= threshold or stale push)
+    sync_health: dict[str, object]
     # Assertion health summary (PRD-CORE-086 FR07) — omitted when no assertions
     assertion_health: dict[str, int]
+    # Knowledge-graph health advisory (PRD-FIX-COMPOUNDING-2 FR04) — present
+    # only when the graph is empty AND there are >10 memories.
+    graph_health: dict[str, object]
+    # Unified compounding-pipeline health advisory (PRD-FIX-COMPOUNDING-6 FR03).
+    # Compact single-line string injected ONLY when any of the five pipeline
+    # signals is degraded (PRD-INFRA-068 lesson: absent on healthy sessions
+    # to avoid focus-distraction). Use trw_pipeline_health() for the full report.
+    pipeline_health_advisory: str
     # Auto-maintenance results merged in from AutoMaintenanceDict
     update_advisory: str
     auto_upgrade: dict[str, object]
@@ -169,6 +104,7 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade_check_deferred: dict[str, object]
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
+    embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01
     wal_checkpoint_deferred: dict[str, object]
     auto_recall_deferred: dict[str, object]
     ceremony_status_deferred: dict[str, object]
@@ -193,6 +129,19 @@ class SessionStartResultDict(TypedDict, total=False):
     # regressions of the "step accidentally O(corpus)" class are visible
     # from a single log line via the ``session_start_ok`` event payload.
     step_durations_ms: dict[str, float]
+    # PRD-IMPROVE-MCP-04 FR1: payload trimming (compact-by-default).
+    # ``compact`` is True when the trimmed payload was returned (verbose=False),
+    # False when the full payload was returned (verbose=True). ``health_summary``
+    # is the one-line collapse of the diagnostic sub-blocks (embed/assertion/
+    # sync health + total latency) present ONLY in compact mode.
+    # ``learnings_omitted`` is the "N more" indicator — how many top-K-capped
+    # learnings were dropped from the returned list (0 when nothing was capped).
+    # ``payload_token_estimate`` is an approximate (~4 chars/token) size estimate
+    # so the token-cost reduction is measurable from the response itself.
+    compact: bool
+    health_summary: str
+    learnings_omitted: int
+    payload_token_estimate: int
 
 
 class QLearningDeferredDict(TypedDict):
@@ -217,6 +166,45 @@ class QLearningHealthDict(TypedDict):
     error_count: int
     last_error: str | None
     worker_alive: bool
+
+
+class FailureAttributionItemDict(TypedDict):
+    """Per-failure triage tag (PRD-IMPROVE-MCP-02 FR1).
+
+    A fast, best-effort signal — NOT proof. ``classification`` is
+    ``likely_introduced`` when the failure's test file (or an
+    obviously-related source file) appears in the current working-tree
+    diff, ``likely_pre_existing`` when nothing in the diff touches it,
+    and ``unknown`` when git was unavailable or the failure string could
+    not be parsed.
+    """
+
+    failure: str
+    test_file: str | None
+    classification: Literal["likely_introduced", "likely_pre_existing", "unknown"]
+    reason: str
+
+
+class FailureAttributionDict(TypedDict):
+    """Aggregate failure-attribution triage block (PRD-IMPROVE-MCP-02 FR1).
+
+    Surfaced on ``BuildCheckResultDict.failure_attribution`` and mirrored
+    into the summary line so an agent instantly sees "N failures: X likely
+    yours, Y pre-existing on this tree" without git archaeology.
+
+    HONEST LIMITS: heuristic file-to-test mapping (test path stem ->
+    candidate source). It can mis-tag a failure whose root cause lives in
+    an untouched dependency of a touched file, or vice-versa. Fail-open:
+    any git/parse error degrades the whole block to ``unknown`` and never
+    raises into ``trw_build_check``.
+    """
+
+    likely_introduced: int
+    likely_pre_existing: int
+    unknown: int
+    changed_files_count: int
+    per_failure: list[FailureAttributionItemDict]
+    summary: str
 
 
 class BuildCheckResultDict(TypedDict, total=False):
@@ -252,34 +240,8 @@ class BuildCheckResultDict(TypedDict, total=False):
     q_learning_error: str
     q_learning_error_count: int
     step_durations_ms: dict[str, float]
-
-
-class RunReportResultDict(TypedDict, total=False):
-    """Return shape of ``trw_run_report`` MCP tool.
-
-    All keys optional via ``total=False``; the success path populates the
-    ``RunReport`` model fields, the error path populates ``error`` + ``status``.
-    """
-
-    # Success path (RunReport.model_dump())
-    run_id: str
-    task: str
-    status: str
-    phase: str
-    framework: str
-    run_type: str
-    generated_at: str
-    prd_scope: list[str]
-    duration: dict[str, object]
-    phase_timeline: list[dict[str, object]]
-    event_summary: dict[str, object]
-    checkpoint_count: int
-    learning_summary: dict[str, object]
-    build: dict[str, object] | None
-    reversion_rate: float
-    session_metrics: dict[str, object]
-    # Error path
-    error: str
+    failure_attribution: FailureAttributionDict
+    summary: str
 
 
 class LearnResultDict(TypedDict, total=False):
@@ -345,6 +307,7 @@ class DeliverResultDict(TypedDict, total=False):
     timestamp: str
     run_path: str | None
     # Gate warnings (merged from DeliveryGatesDict)
+    review_block: str
     review_warning: str
     review_advisory: str
     review_scope_block: str
@@ -354,9 +317,21 @@ class DeliverResultDict(TypedDict, total=False):
     build_gate_warning: str
     build_gate_block: str
     build_gate_override: str
+    truthfulness_gate_bypassed: str
+    # PRD-CORE-184-FR03: task-type-aware deliver gate mode block.
+    delivery_blocked: str
+    missing_gate: str
     checkpoint_blocker_warning: str
     complexity_drift_warning: str
+    instruction_parity_warning: str
     warning: str
+    # F24 (legibility): aggregate of the advisory (soft, non-blocking) warning
+    # keys present on a SUCCESSFUL deliver. Lets eval / false-completion scoring
+    # distinguish a clean deliver (warning_count=0, warnings_present=False) from
+    # a warned-but-delivered one. Does NOT reflect blocking gates.
+    warning_count: int
+    warnings_present: bool
+    warnings: list[str]
     # Compliance artifacts (merged from ComplianceArtifactsDict)
     compliance_artifacts_copied: list[str]
     compliance_dir: str
@@ -372,6 +347,9 @@ class DeliverResultDict(TypedDict, total=False):
     deferred_steps: int
     # PRD-CORE-125 FR05: Self-reflection message about learnings
     learning_reflection: str
+    # PRD-FIX-COMPOUNDING-2 FR03: knowledge-graph topic-sync result. Populated
+    # post-deliver (fail-open); below threshold reports threshold_met=False.
+    knowledge_sync: dict[str, object]
     # PRD-INFRA-067 (C2): Integrity-on-delivery probe result
     # Shape: {"ok": bool, "detail": str, "db_path": str, "checked_at": str}
     db_integrity: dict[str, object]
@@ -442,3 +420,7 @@ class PreCompactResultDict(TypedDict, total=False):
     failing_tests: list[str]
     reason: str
     error: str
+    # PRD-CORE-165 FR-01: caller-supplied directive + context-anchor persisted
+    # into the pre-compact state (echoed back on the success path when set).
+    directive: str
+    context_anchor: str

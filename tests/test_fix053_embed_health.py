@@ -17,14 +17,17 @@ class TestEmbedHealthAdvisory:
 
     def test_advisory_when_enabled_but_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings_enabled=True but embedder=None → advisory with install hint."""
-        from trw_mcp.state import memory_adapter
+        from trw_mcp.state import _memory_connection, memory_adapter
 
         # Patch the delegated implementation to return the expected result directly,
         # since the real impl reads config from _memory_connection, not memory_adapter.
+        # ``memory_adapter.check_embeddings_status`` re-exports the
+        # ``_memory_recovery`` wrapper, which calls
+        # ``_memory_connection.check_embeddings_status`` as its impl.
         monkeypatch.setattr(
-            memory_adapter,
-            "_check_embeddings_status_impl",
-            lambda: {
+            _memory_connection,
+            "check_embeddings_status",
+            lambda **_kw: {
                 "enabled": True,
                 "available": False,
                 "advisory": "Embeddings enabled but sqlite-vec unavailable. pip install trw-memory[embeddings]",
@@ -42,12 +45,12 @@ class TestEmbedHealthAdvisory:
 
     def test_no_advisory_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings working normally → available=True, empty advisory."""
-        from trw_mcp.state import memory_adapter
+        from trw_mcp.state import _memory_connection, memory_adapter
 
         monkeypatch.setattr(
-            memory_adapter,
-            "_check_embeddings_status_impl",
-            lambda: {"enabled": True, "available": True, "advisory": ""},
+            _memory_connection,
+            "check_embeddings_status",
+            lambda **_kw: {"enabled": True, "available": True, "advisory": ""},
         )
 
         result = memory_adapter.check_embeddings_status()
@@ -58,12 +61,12 @@ class TestEmbedHealthAdvisory:
 
     def test_disabled_embeddings_no_advisory(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """embeddings_enabled=False → enabled=False, no advisory."""
-        from trw_mcp.state import memory_adapter
+        from trw_mcp.state import _memory_connection, memory_adapter
 
         monkeypatch.setattr(
-            memory_adapter,
-            "_check_embeddings_status_impl",
-            lambda: {"enabled": False, "available": False, "advisory": ""},
+            _memory_connection,
+            "check_embeddings_status",
+            lambda **_kw: {"enabled": False, "available": False, "advisory": ""},
         )
 
         result = memory_adapter.check_embeddings_status()

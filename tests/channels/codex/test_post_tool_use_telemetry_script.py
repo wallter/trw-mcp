@@ -11,10 +11,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # FR07 — No {{ }} template tokens in installed script
@@ -298,6 +296,22 @@ def test_hook_script_content_has_main() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Coverage: generate_hook_script raises ValueError when {{ }} detected
+# ---------------------------------------------------------------------------
+
+
+def test_generate_hook_script_raises_on_template_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """generate_hook_script raises ValueError if {{ }} tokens found in content."""
+    import trw_mcp.channels.codex._post_tool_use_telemetry as mod
+
+    # Monkeypatch HOOK_SCRIPT_CONTENT to contain template tokens
+    monkeypatch.setattr(mod, "HOOK_SCRIPT_CONTENT", "some {{ broken }} template")
+
+    with pytest.raises(ValueError, match="unsubstituted"):
+        mod.generate_hook_script()
+
+
+# ---------------------------------------------------------------------------
 # FR10 — turn_id confirmed field name (offline binary analysis, 2026-05-28)
 # ---------------------------------------------------------------------------
 
@@ -450,8 +464,9 @@ def test_manifest_channel_status_is_active() -> None:
     the channel is functional now. OPENAI_API_KEY is only needed for the optional
     Phase 3 live smoke test, not for the channel itself to function.
     """
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     manifest_path = (
         Path(__file__).parent.parent.parent.parent

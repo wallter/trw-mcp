@@ -8,8 +8,9 @@ Language-agnostic: the tool accepts results from any build/test system.
 No subprocess execution — agents run their own tools and report back.
 
 Internal modules:
-  _core        — caching utilities
-  _registration — MCP tool registration (result reporter API)
+  _core                 — caching utilities
+  _failure_attribution  — heuristic "mine vs pre-existing" failure triage (FR1)
+  _registration         — MCP tool registration (result reporter API)
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ from __future__ import annotations
 from trw_mcp.tools.build._core import (
     cache_build_status,
 )
+from trw_mcp.tools.build._failure_attribution import attribute_failures
 from trw_mcp.tools.build._registration import register_build_tools
 
 __all__ = [
+    "attribute_failures",
     "cache_build_status",
     "register_build_tools",
 ]

@@ -37,6 +37,20 @@ from trw_mcp.state.surface_tracking import log_surface_event
 
 logger = structlog.get_logger(__name__)
 
+# F-001: prefetch a bounded multiple of max_results from the DB so the backend
+# caps BEFORE the full active corpus is deserialized. The post-fetch re-rank +
+# dedup still truncate to the real max_results, so a generous multiple keeps
+# ranking quality while bounding deserialization cost.
+PREFETCH_MULTIPLIER = 5
+
+# F-002: sane default output ceiling (tokens) applied when the caller does not
+# pass token_budget, so a single recall can never overflow the context window.
+DEFAULT_RECALL_TOKEN_BUDGET = 8000
+
+# F-003: auto-enable compact mode when the result would exceed this many entries,
+# so broad recalls don't load full detail fields for every entry.
+COMPACT_AUTO_THRESHOLD = 10
+
 if TYPE_CHECKING:
     from trw_mcp.state._paths import TRWCallContext
 
@@ -108,11 +122,22 @@ def execute_recall(
         raise ValueError(f"token_budget must be positive, got {token_budget}")
 
     reader = FileStateReader()
+    # Track whether the caller explicitly asked for a large result set before we
+    # resolve the default cap, so the common default recall keeps full detail.
+    caller_max_results = max_results
     if max_results is None:
         max_results = config.recall_max_results
     is_wildcard = query.strip() in ("*", "")
     query_tokens = [] if is_wildcard else query.lower().split()
-    use_compact = ultra_compact or (compact if compact is not None else is_wildcard)
+    # F-003: auto-enable compact for wildcard queries AND when the caller
+    # EXPLICITLY requests a broad result set (cap > COMPACT_AUTO_THRESHOLD, or
+    # 0 == unlimited). The implicit default cap is left in full mode so a typical
+    # single-result recall still returns detail.
+    _explicit_broad = caller_max_results is not None and (
+        caller_max_results == 0 or caller_max_results > COMPACT_AUTO_THRESHOLD
+    )
+    _auto_compact = is_wildcard or _explicit_broad
+    use_compact = ultra_compact or (compact if compact is not None else _auto_compact)
 
     # Build recall context for contextual boosting (PRD-CORE-102)
     recall_context: RecallContext | None = None
@@ -121,21 +146,28 @@ def execute_recall(
     except Exception:  # justified: fail-open, recall context enrichment must not block recall
         logger.debug("recall_context_build_failed", exc_info=True)
 
-    # Search entries via SQLite adapter
+    # Search entries via SQLite adapter.
+    # F-001: cap the DB fetch at a bounded multiple of max_results so the backend
+    # truncates BEFORE deserializing the whole active corpus. max_results == 0
+    # means unlimited, so keep the fetch unbounded in that case.
+    fetch_limit = max_results * PREFETCH_MULTIPLIER if max_results > 0 else 0
+    # F-003: pass compact through so the backend skips loading the (up to
+    # 2000-char) detail field at deserialization rather than stripping it later.
     matching_learnings = recall_fn(
         trw_dir,
         query=query,
         tags=tags,
         min_impact=min_impact,
         status=status,
-        max_results=0,
-        compact=False,
+        max_results=fetch_limit,
+        compact=use_compact,
     )
 
     # Topic-scoped pre-filter (PRD-CORE-021-FR07)
-    topic_filter_ignored = False
+    topic_filter_warning = ""
     if topic is not None:
-        topic_filter_ignored = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
+        topic_filter_warning = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
+    topic_filter_ignored = bool(topic_filter_warning)
 
     # Update access tracking for recalled IDs
     matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
@@ -170,11 +202,19 @@ def execute_recall(
         deferred = [entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids]
         ranked_learnings = prioritized + deferred
 
+    # F-DEDUP-001: collapse near-duplicate entries on the ranked candidate set
+    # BEFORE token budgeting and the max_results cap, so N near-identical copies
+    # of one finding can't crowd out distinct findings in the top-K.
+    ranked_learnings, duplicates_collapsed = _dedup_ranked_learnings(trw_dir, ranked_learnings)
+
     from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
 
+    # F-002: apply a sane default token ceiling when the caller gives no budget,
+    # so a recall result can never overflow the context window.
+    effective_budget = token_budget if token_budget is not None else DEFAULT_RECALL_TOKEN_BUDGET
     ranked_learnings, tokens_used, tokens_truncated = _apply_recall_token_budget(
         ranked_learnings,
-        token_budget,
+        effective_budget,
         apply_token_budget=apply_token_budget,
         estimate_entry_tokens=estimate_entry_tokens,
     )
@@ -226,13 +266,41 @@ def execute_recall(
         "total_available": total_available,
         "compact": use_compact,
         "max_results": max_results,
-        "topic_filter_ignored": topic_filter_ignored if topic is not None else False,
+        "topic_filter_ignored": topic_filter_ignored,
+        "topic_filter_warning": topic_filter_warning,
         "tokens_used": tokens_used,
-        "tokens_budget": token_budget,
+        "tokens_budget": effective_budget,
         "tokens_truncated": tokens_truncated,
+        "duplicates_collapsed": duplicates_collapsed,
     }
 
     return recall_result
+
+
+def _dedup_ranked_learnings(
+    trw_dir: Path,
+    ranked_learnings: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], int]:
+    """Collapse near-duplicate recall entries (F-DEDUP-001).
+
+    Exact-content collapse always runs; a cosine pass runs additionally when the
+    backend exposes stored embeddings. Both fail open — a backend error never
+    blocks recall, the entries are returned unchanged.
+    """
+    from trw_mcp.tools._recall_dedup import dedup_ranked_learnings
+
+    embeddings_fn: Callable[[list[str]], dict[str, list[float]]] | None = None
+    try:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        backend = get_backend(trw_dir)
+        get_stored = getattr(backend, "get_stored_embeddings", None)
+        if callable(get_stored):
+            embeddings_fn = get_stored
+    except Exception:  # justified: fail-open, embedding access must not block recall
+        logger.debug("recall_dedup_backend_unavailable", exc_info=True)
+
+    return dedup_ranked_learnings(ranked_learnings, embeddings_fn=embeddings_fn)
 
 
 def _apply_recall_token_budget(
@@ -307,8 +375,14 @@ def _apply_topic_filter(
     config: TRWConfig,
     topic: str,
     matching_learnings: list[dict[str, object]],
-) -> bool:
-    """Apply topic-scoped pre-filter. Mutates list in place. Returns True if ignored."""
+) -> str:
+    """Apply topic-scoped pre-filter. Mutates list in place.
+
+    Returns an empty string when the filter applied normally, or a non-empty
+    warning message when the filter was silently ignored (clusters file missing,
+    slug absent, or parse error).  The caller should surface the warning so
+    callers are not silently handed unfiltered results.
+    """
     clusters_path = trw_dir / config.knowledge_output_dir / "clusters.json"
     try:
         if clusters_path.exists():
@@ -316,11 +390,33 @@ def _apply_topic_filter(
             if topic in clusters_data:
                 allowed_ids = set(clusters_data[topic])
                 matching_learnings[:] = [e for e in matching_learnings if str(e.get("id", "")) in allowed_ids]
-                return False
-            return True
-        return True
-    except (json.JSONDecodeError, OSError):
-        return True
+                return ""
+            warning = f"topic_filter ignored: slug '{topic}' not found in clusters.json — returning unfiltered results"
+            logger.warning(
+                "topic_filter_ignored",
+                topic=topic,
+                reason="slug_absent",
+                clusters_path=str(clusters_path),
+            )
+            return warning
+        warning = f"topic_filter ignored: clusters.json missing at '{clusters_path}' — returning unfiltered results"
+        logger.warning(
+            "topic_filter_ignored",
+            topic=topic,
+            reason="clusters_missing",
+            clusters_path=str(clusters_path),
+        )
+        return warning
+    except (json.JSONDecodeError, OSError) as exc:
+        warning = f"topic_filter ignored: could not read clusters.json ('{exc}') — returning unfiltered results"
+        logger.warning(
+            "topic_filter_ignored",
+            topic=topic,
+            reason="read_error",
+            clusters_path=str(clusters_path),
+            exc_info=True,
+        )
+        return warning
 
 
 def _track_recall(matched_ids: list[str], query: str) -> None:

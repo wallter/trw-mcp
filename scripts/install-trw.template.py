@@ -2083,8 +2083,19 @@ def _resolve_proprietary_license(
     try:
         return _fetch_proprietary_license(backend_url, platform_api_key), True
     except RuntimeError as exc:
+        detail = str(exc)
+        # Distinguish a permanent denial (plan/scope/key) from a transient
+        # network blip so the operator knows whether re-running will help.
+        if "denied" in detail:
+            hint = (
+                " This is a permanent denial (org plan, key scope, or unknown "
+                "key) — see proprietary-distribution.md §8, fix the cause, then "
+                "re-run."
+            )
+        else:
+            hint = " Re-run with --with-proprietary once the backend is reachable."
         ui.step_warn(
-            f"Auto-license fetch failed: {exc}. "
+            f"Auto-license fetch failed: {detail}.{hint} "
             "Continuing with public install only."
         )
         return "", False
@@ -2313,7 +2324,29 @@ def phase_install_proprietary(
     # install phases resolve their write root).
     events_root = Path(target_dir) if target_dir else Path.cwd()
     _emit_install_completed_event(events_root, installed_meta, failed_packages)
+    _print_distill_repo_intel_hint(ui, installed)
     return installed
+
+
+def _print_distill_repo_intel_hint(ui: "UI", installed: list[str]) -> None:
+    """Print a short next-steps hint when trw-distill installed successfully.
+
+    trw-distill is the repo-intelligence package; the bare wheel works for
+    the LLM-free commands (scan/map/dead-code-scan) out of the box, but full
+    map fidelity needs the [ast]/[lsp] extras and cold-start synthesis
+    (run/bootstrap) needs a local LLM. Surfacing this here saves the operator
+    a trip to the runbook. Pure stdout — no network, no disk writes.
+    """
+    if not any(entry.split(" ", 1)[0] == "trw-distill" for entry in installed):
+        return
+    ui.info("trw-distill installed — repo intelligence is ready:")
+    ui.info("  trw-distill map  --repo .   # codebase map (LLM-free)")
+    ui.info("  trw-distill scan --repo .   # git-history mining (LLM-free)")
+    ui.info("  Full map fidelity (Tree-sitter + jedi):")
+    ui.info('    python -m pip install "tree-sitter>=0.24" "tree-sitter-python>=0.21" \\')
+    ui.info('        "tree-sitter-typescript>=0.21" "jedi>=0.19"')
+    ui.info("  Cold-start synthesis (trw-distill run/bootstrap) needs a local LLM (Ollama).")
+    ui.info("  See docs/deployment/proprietary-distribution.md §4.5.")
 
 
 def _emit_install_completed_event(

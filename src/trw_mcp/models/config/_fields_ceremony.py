@@ -40,7 +40,7 @@ class _CeremonyFields:
     agents_md_learning_min_impact: float = 0.7
 
     framework_version: str = "v25_TRW"
-    aaref_version: str = "v2.0.0"
+    aaref_version: str = "v3.0.0"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -124,7 +124,6 @@ class _CeremonyFields:
     security_check_enabled: bool = True
     compact_instructions_template: str = ""
     pause_after_compaction: bool = False
-    progressive_disclosure: bool = False
 
     ceremony_alert_threshold: int = 40
     ceremony_alert_consecutive: int = 3

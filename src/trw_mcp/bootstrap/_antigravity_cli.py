@@ -202,7 +202,8 @@ _ANTIGRAVITY_AGENT_TEMPLATES: dict[str, str] = {
 name: trw-explorer
 description: >
   Read-only codebase explorer for gathering evidence before edits.
-  Fast search and targeted reads over broad scans.
+  For lightweight code search and file reading. For risk-scored
+  exploration with distill intelligence, use @trw-distill-explorer.
 tools:
   - read_file
   - read_many_files

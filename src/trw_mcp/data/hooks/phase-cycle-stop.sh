@@ -74,20 +74,82 @@ esac
 # Evaluate phase exit criteria — POSIX-only parsing (grep/sed/awk, no jq)
 # -----------------------------------------------------------------------
 
+# F3 fix: minimum PRD quality SCORE to clear the PLAN->IMPLEMENT gate.
+# 60 == REVIEW tier (config.validation_draft_threshold). Calling
+# trw_prd_validate is NOT enough — the PRD must actually score >= this.
+# Override with TRW_MIN_PRD_SCORE (clamped to a sane 0..100 integer).
+_min_prd_score="${TRW_MIN_PRD_SCORE:-60}"
+_min_prd_score=$(printf '%d' "$_min_prd_score" 2>/dev/null) || _min_prd_score=60
+
+# _latest_prd_score: print the total_score of the most-recently-validated PRD
+# from .trw/cache/prd-validation.yaml, or empty string if unavailable.
+# The cache is a YAML map keyed by content hash; new entries are appended on
+# write, so the LAST `total_score:` line is the freshest validation. Parsed
+# with a stdlib-only python3 (no PyYAML dependency); fails silent -> empty.
+_latest_prd_score() {
+  _lps_cache="$_project_root/.trw/cache/prd-validation.yaml"
+  [ -f "$_lps_cache" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$_lps_cache" <<'PY' 2>/dev/null || true
+import sys
+from pathlib import Path
+
+try:
+    text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+except OSError:
+    sys.exit(0)
+
+# Entry subfields are indented two spaces; the last such total_score line is
+# the most recently appended PRD validation result.
+last = ""
+for line in text.splitlines():
+    if line.startswith("  total_score:") and not line.startswith("   "):
+        last = line.split(":", 1)[1].strip().strip("'\"")
+
+if not last:
+    sys.exit(0)
+try:
+    print(f"{float(last):.4f}")
+except ValueError:
+    sys.exit(0)
+PY
+}
+
 # Returns 0 if criteria are met for the given phase, 1 if unmet.
 _phase_criteria_met() {
   _pcm_phase="$1"
   _pcm_events="$2"
   _pcm_build_status="$_project_root/.trw/context/build-status.yaml"
+  _pcs_low_prd_score=""
 
   case "$_pcm_phase" in
     plan)
-      # RESEARCH/PLAN: at least one trw_prd_validate or plan_updated event
-      if has_event "$_pcm_events" "trw_prd_validate_complete" \
-         || has_event "$_pcm_events" "plan_updated" \
-         || grep -q '"tool_name"[[:space:]]*:[[:space:]]*"trw_prd_validate"' "$_pcm_events" 2>/dev/null; then
+      # RESEARCH/PLAN: a trw_prd_validate/plan_updated event AND, when the PRD
+      # validation cache is readable, a SCORE >= _min_prd_score (F3 fix —
+      # presence of the call is not proof the PRD is sprint-ready).
+      _pcm_validated=0
+      if has_event "$_pcm_events" "plan_updated"; then
+        # plan_updated has no PRD score to gate on — accept on presence.
         return 0
       fi
+      if has_event "$_pcm_events" "trw_prd_validate_complete" \
+         || grep -q '"tool_name"[[:space:]]*:[[:space:]]*"trw_prd_validate"' "$_pcm_events" 2>/dev/null; then
+        _pcm_validated=1
+      fi
+      [ "$_pcm_validated" = "1" ] || return 1
+      # Validation event present — now require the recorded score to clear the gate.
+      _pcm_score=$(_latest_prd_score)
+      if [ -z "$_pcm_score" ]; then
+        # Cache unreadable / python3 absent — fall back to call-presence
+        # (safe default: do not block on missing telemetry).
+        return 0
+      fi
+      # Compare as integers (floor) to stay POSIX — awk does the float compare.
+      if awk -v s="$_pcm_score" -v m="$_min_prd_score" 'BEGIN { exit !(s + 0 >= m + 0) }'; then
+        return 0
+      fi
+      # Score below threshold — record it so the block message can surface it.
+      _pcs_low_prd_score="$_pcm_score"
       return 1
       ;;
     implement)
@@ -172,7 +234,11 @@ _extract_failure_summary() {
       _pcs_new_failure="IMPLEMENT: no file_modified event"
       ;;
     plan)
-      _pcs_new_failure="PLAN: no validation or plan event"
+      if [ -n "$_pcs_low_prd_score" ]; then
+        _pcs_new_failure="PLAN: PRD quality score ${_pcs_low_prd_score} below required ${_min_prd_score} (REVIEW tier)"
+      else
+        _pcs_new_failure="PLAN: no validation or plan event"
+      fi
       ;;
     *)
       _pcs_new_failure="Phase ${_efs_phase}: exit criteria unmet"
@@ -420,7 +486,11 @@ fi
 
 case "$_current_phase" in
   plan)
-    _block_hint="Run trw_prd_validate() to confirm the plan."
+    if [ -n "$_pcs_low_prd_score" ]; then
+      _block_hint="PRD quality score ${_pcs_low_prd_score} is below the required ${_min_prd_score} (REVIEW tier). Groom the PRD and re-run trw_prd_validate() until it scores >= ${_min_prd_score}."
+    else
+      _block_hint="Run trw_prd_validate() to confirm the plan."
+    fi
     ;;
   implement)
     _block_hint="No file_modified event. Ensure implementation writes are complete."

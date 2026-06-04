@@ -96,6 +96,17 @@ class TestIdempotency:
             ".cursor/hooks.json",
             ".cursor/cli.json",
             "AGENTS.md",
+            # Distill-channel artifacts re-rendered from bundled templates on
+            # every Claude Code install (CC-03 / CC-05 — see
+            # bootstrap/_claude_code_distill_channels.py).
+            ".claude/agents/trw-distill-explorer.md",
+            ".claude/hooks/pre-tool-distill-hint.sh",
+            ".claude/hooks/lib-distill-hint.sh",
+            # CC loop.md — TRW-ceremony-aware /loop customization. Written on
+            # first claude-code profile detection (settings.json presence triggers
+            # claude-code in ide_targets on the second init-project run, so loop.md
+            # may appear in "created" on what the caller sees as the "second" run).
+            ".claude/loop.md",
         }
         unexpected = [c for c in file_creates if not any(e in c for e in expected_always_write)]
         assert len(unexpected) == 0, f"Unexpected creates: {unexpected}"
@@ -203,9 +214,11 @@ class TestHooks:
     EXPECTED_HOOKS = [
         "completion-gate.sh",
         "helper-idle.sh",
+        "instructions-loaded.sh",
         "lib-ide-adapter.sh",
         "lib-trw.sh",
         "phase-cycle-stop.sh",
+        "post-compact.sh",
         "post-tool-event.sh",
         "pre-compact.sh",
         "pre-tool-deliver-gate.sh",
@@ -247,7 +260,6 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
-        "email-template",
         "trw-audit",
         "trw-ceremony-guide",
         "trw-code-search",
@@ -276,7 +288,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 24 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 25 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -315,6 +327,65 @@ class TestSkills:
         skills_dir = fake_git_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
         assert deployed == self.EXPECTED_SKILLS
+
+    def test_email_template_skill_not_shipped(self, fake_git_repo: Path) -> None:
+        """Regression: the `email-template` skill must NOT ship to user projects.
+
+        `email-template` is a TRW-platform product feature (it scaffolds
+        branded transactional HTML emails for ``backend/templates/email/``),
+        not a framework engineering-memory capability. It was removed from
+        the installer's bundled skill set; this test guards against a
+        re-introduction.
+        """
+        init_project(fake_git_repo)
+        skills_dir = fake_git_repo / ".claude" / "skills"
+        deployed = {d.name for d in skills_dir.iterdir() if d.is_dir()}
+        assert "email-template" not in deployed, (
+            "email-template must not be bundled with the installer (non-TRW-framework skill)"
+        )
+
+    def test_bundled_source_excludes_email_template(self) -> None:
+        """The canonical bundled-skills source dir must not contain email-template.
+
+        Guards the source of truth the installer globs over
+        (``trw-mcp/src/trw_mcp/data/skills/``) and the Codex client variant
+        (``data/codex/skills/``), so a stray copy in either location is caught.
+        """
+        canonical = _DATA_DIR / "skills"
+        codex = _DATA_DIR / "codex" / "skills"
+        assert not (canonical / "email-template").exists(), (
+            "email-template leaked back into the canonical bundled skills dir"
+        )
+        assert not (codex / "email-template").exists(), (
+            "email-template leaked back into the codex bundled skills dir"
+        )
+
+    def test_every_shipped_skill_is_a_trw_framework_skill(self, fake_git_repo: Path) -> None:
+        """Allowlist guard: every shipped skill must be a TRW framework skill.
+
+        Catches ANY future stray non-framework skill (personal, experimental,
+        product-feature) leaking into what users receive. TRW framework skills
+        are namespaced ``trw-*``; the shipped set must match the curated
+        EXPECTED_SKILLS allowlist exactly.
+        """
+        init_project(fake_git_repo)
+        skills_dir = fake_git_repo / ".claude" / "skills"
+        deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
+
+        # Every shipped skill carries the framework `trw-` namespace.
+        non_framework = [name for name in deployed if not name.startswith("trw-")]
+        assert not non_framework, (
+            f"non-TRW-framework skills leaked into the installer bundle: {non_framework}"
+        )
+
+        # The shipped set matches the curated allowlist exactly — a new
+        # skill (stray or intentional) forces this assertion to be updated,
+        # surfacing the addition for review.
+        assert deployed == self.EXPECTED_SKILLS, (
+            "shipped skill set drifted from the TRW-framework allowlist; "
+            f"unexpected: {sorted(set(deployed) - set(self.EXPECTED_SKILLS))}, "
+            f"missing: {sorted(set(self.EXPECTED_SKILLS) - set(deployed))}"
+        )
 
 
 # ── Simplify Skill Content Tests ────────────────────────────────────────

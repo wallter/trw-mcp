@@ -190,6 +190,11 @@ class RunState(BaseModel):
     variables: dict[str, str] = Field(default_factory=dict)
     prd_scope: list[str] = Field(default_factory=list)
     run_type: str = "implementation"
+    # PRD-CORE-184: runtime task-type regime + retrieval-policy hint.
+    # Heuristically detected at trw_init (never via an LLM call). ``unknown``
+    # falls through to the conservative (advisory) policy.
+    task_type: str = "unknown"
+    recall_policy: str = "similarity"
     # PRD-CORE-060: Adaptive ceremony depth fields
     complexity_class: ComplexityClass | None = None
     complexity_signals: ComplexitySignals | None = None

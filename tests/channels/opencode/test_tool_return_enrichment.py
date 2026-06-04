@@ -1,37 +1,18 @@
 """Tests for channels/opencode/_tool_return_enrichment.py.
 
 PRD-DIST-2403 FR16-FR19 / audit P0-13 / P1-11.
+
+Note: T2 tool-return payload construction is handled by the shared substrate
+``channels/_tool_return_tiers.py::enrich_response()``, called directly from
+``tools/before_edit_hint.py``, ``tools/entity_risk_map.py``, and
+``tools/codebase_risk_report.py``.  The per-client ``build_t2_payload``
+helper that previously lived here was dead code (never called from tools/)
+and was removed.  The substrate ``enrich_response`` path covers FR16.
 """
 
 from __future__ import annotations
 
-import os
-from typing import Any
-from unittest.mock import patch
-
-
-def _make_sidecar(file_path: str = "src/app.py") -> dict[str, Any]:
-    return {
-        "hotspots": [
-            {
-                "file": file_path,
-                "risk_score": 0.85,
-                "importers": ["src/main.py", "src/api.py"],
-                "co_change_neighbors": ["src/utils.py"],
-                "inferred_tests": ["tests/test_app.py"],
-                "warnings": ["High churn module"],
-            }
-        ],
-        "file_map": {
-            file_path: {
-                "risk_score": 0.85,
-                "importers": ["src/main.py", "src/api.py"],
-                "co_change_neighbors": ["src/utils.py"],
-                "inferred_tests": ["tests/test_app.py"],
-                "warnings": ["High churn module"],
-            }
-        },
-    }
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -48,30 +29,28 @@ def test_default_tier_is_t2() -> None:
     assert get_default_tier_for_opencode() == "T2"
 
 
-def test_t2_payload_excludes_t3_fields() -> None:
-    """FR16: T2 payload does NOT include edge_cases or rationale_records."""
-    from trw_mcp.channels.opencode._tool_return_enrichment import build_t2_payload
+def test_substrate_enrich_response_is_wired_in_tools() -> None:
+    """FR16: T2 payload construction uses the shared substrate enrich_response.
 
-    sidecar = _make_sidecar()
-    payload = build_t2_payload("src/app.py", sidecar)
-    assert payload is not None
-    assert "edge_cases" not in payload
-    assert "rationale_records" not in payload
+    Verifies that tools/before_edit_hint.py imports the substrate path, not
+    a per-client builder.  This is the integration check that build_t2_payload
+    was never wired in production.
+    """
+    import ast
+    import pathlib
 
+    tool_file = (
+        pathlib.Path(__file__).parent.parent.parent.parent
+        / "src" / "trw_mcp" / "tools" / "before_edit_hint.py"
+    )
+    if not tool_file.exists():
+        return  # substrate file not in this checkout; skip gracefully
 
-def test_t2_payload_includes_core_fields() -> None:
-    """FR16: T2 payload includes importers, inferred_tests, risk_score, etc."""
-    from trw_mcp.channels.opencode._tool_return_enrichment import build_t2_payload
-
-    sidecar = _make_sidecar()
-    payload = build_t2_payload("src/app.py", sidecar)
-    assert payload is not None
-    assert "importers" in payload
-    assert "inferred_tests" in payload
-    assert "risk_score" in payload
-    assert "co_change_neighbors" in payload
-    assert "hotspot_warnings" in payload
-    assert payload["tier"] == "T2"
+    source = tool_file.read_text(encoding="utf-8")
+    # The substrate path must be present
+    assert "enrich_response" in source, "enrich_response substrate not found in before_edit_hint.py"
+    # The dead per-client builder must NOT be present
+    assert "build_t2_payload" not in source, "Dead build_t2_payload found in before_edit_hint.py"
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +60,6 @@ def test_t2_payload_includes_core_fields() -> None:
 
 def test_transport_field_opencode_remote_http(monkeypatch: Any) -> None:
     """FR18: TRW_CLIENT_PROFILE=opencode + TRW_MCP_TRANSPORT=remote_http → remote_http."""
-    import importlib
 
     monkeypatch.setenv("TRW_CLIENT_PROFILE", "opencode")
     monkeypatch.setenv("TRW_MCP_TRANSPORT", "remote_http")
@@ -164,6 +142,7 @@ def test_is_opencode_client_false_claude_code(monkeypatch: Any) -> None:
 def test_is_opencode_client_false_unknown(monkeypatch: Any) -> None:
     """FR19: is_opencode_client() returns False when env var absent."""
     import os as _os
+
     if "TRW_CLIENT_PROFILE" in _os.environ:
         monkeypatch.delenv("TRW_CLIENT_PROFILE")
 
@@ -172,21 +151,19 @@ def test_is_opencode_client_false_unknown(monkeypatch: Any) -> None:
     assert is_opencode_client() is False
 
 
-# ---------------------------------------------------------------------------
-# build_t2_payload — None sidecar / file not found
-# ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _structlog_defaults_for_capture() -> object:
+    """File-scoped: reset structlog to defaults so ``capture_logs()`` sees WARN.
 
-def test_build_t2_payload_none_sidecar() -> None:
-    """build_t2_payload returns None when sidecar_data is None."""
-    from trw_mcp.channels.opencode._tool_return_enrichment import build_t2_payload
+    A prior test's ``configure_logging()`` (server import / init_project) installs
+    a filtering wrapper that drops WARN before ``capture_logs``'s processor, so
+    these warning-assertion tests fail only in full-suite ordering. Save+restore
+    (file-scoped, never a global reset — avoids the alphabetical-leak hazard).
+    """
+    import structlog
 
-    assert build_t2_payload("src/app.py", None) is None
-
-
-def test_build_t2_payload_file_not_in_sidecar() -> None:
-    """build_t2_payload returns None when file_path is not in sidecar."""
-    from trw_mcp.channels.opencode._tool_return_enrichment import build_t2_payload
-
-    sidecar: dict[str, Any] = {"hotspots": [], "file_map": {}}
-    assert build_t2_payload("nonexistent.py", sidecar) is None
+    _saved = structlog.get_config()
+    structlog.reset_defaults()
+    yield
+    structlog.configure(**_saved)

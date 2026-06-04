@@ -123,14 +123,34 @@ def recall_learnings(
     max_results: int = 25,
     status: str | None = None,
 ) -> list[dict[str, object]]:
-    """Thin wrapper around memory_adapter.recall_learnings.
+    """Thin wrapper that resolves ``trw_dir`` and centralizes recall.
 
-    Resolves ``trw_dir`` automatically so callers in this module
-    don't need to pass it explicitly.
+    Resolves ``trw_dir`` automatically so callers in this module (and the
+    ``_learnings_collector`` tool) don't need to pass it explicitly. This is
+    the one intentional file-level DRY shim permitted by PRD-FIX-085 FR05 —
+    it adds ``trw_dir`` resolution, not parameter drift.
+
+    For the learning-injection path (``status="active"``) it delegates to
+    ``recall_factories.recall_for_learning_injection`` — the single named
+    factory for that intent (FR05) — so injection no longer assembles ad-hoc
+    recall parameters. Other ``status`` values (e.g. the unfiltered
+    ``_learnings_collector`` path) fall through to the adapter directly,
+    preserving their behaviour.
     """
+    trw_dir = _resolve_trw_dir()
+    if status == "active":
+        from trw_mcp.state.recall_factories import recall_for_learning_injection
+
+        return recall_for_learning_injection(
+            trw_dir,
+            query,
+            tags=tags,
+            min_impact=min_impact,
+            max_results=max_results,
+        )
+
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
 
-    trw_dir = _resolve_trw_dir()
     return adapter_recall(
         trw_dir,
         query=query,
@@ -182,7 +202,10 @@ def select_learnings_for_task(
     if tags:
         domain_tags.update(tags)
 
-    # Query recall with domain tags
+    # Query recall with domain tags via the module-level wrapper — the one
+    # file-level DRY shim blessed by PRD-FIX-085 FR05. With status="active" it
+    # routes through recall_for_learning_injection (the centralized factory),
+    # while keeping the patch-friendly seam tests rely on.
     results: list[dict[str, object]] = []
     try:
         all_tags = list(domain_tags) if domain_tags else None
@@ -200,7 +223,7 @@ def select_learnings_for_task(
         )
 
     if not results:
-        # Fallback: try query-only search without tag filter
+        # Fallback: query-only search without tag filter.
         try:
             results = recall_learnings(
                 query=task_description,

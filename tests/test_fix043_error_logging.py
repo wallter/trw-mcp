@@ -111,7 +111,7 @@ class TestMarkRunCompleteFailureLogsWarning:
     def test_mark_run_complete_failure_logs_warning(self, tmp_path: Path) -> None:
         """When write_yaml raises, a warning log with 'mark_run_complete_failed'
         is emitted and the function does not raise."""
-        from trw_mcp.tools.ceremony import _mark_run_complete
+        from trw_mcp.tools._ceremony_runtime_helpers import _mark_run_complete
 
         # Create the run directory with a valid run.yaml
         meta_dir = tmp_path / "run-001" / "meta"
@@ -122,10 +122,10 @@ class TestMarkRunCompleteFailureLogsWarning:
         # Patch the writer to raise on write_yaml
         with (
             patch(
-                "trw_mcp.tools.ceremony.FileStateWriter.write_yaml",
+                "trw_mcp.tools._ceremony_runtime_helpers.FileStateWriter.write_yaml",
                 side_effect=OSError("permission denied"),
             ),
-            patch("trw_mcp.tools.ceremony.logger.warning") as mock_warning,
+            patch("trw_mcp.tools._ceremony_runtime_helpers.logger.warning") as mock_warning,
         ):
             # Should NOT raise
             _mark_run_complete(tmp_path / "run-001")

@@ -70,6 +70,23 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     profile_weights = cfg.client_profile.ceremony_weights
     ceremony = compute_ceremony_score(events, trw_dir=trw_dir_for_score, weights=profile_weights)
     ceremony_score = int(str(ceremony.get("score", 0)))
+    # FIX-052: surface the build gate so the downstream ceremony_feedback
+    # step records a real ``build_passed`` instead of a constant False.
+    build_passed = bool(ceremony.get("build_passed", False))
+    # FIX-052: coverage signal for the ceremony_feedback step. build-status.yaml
+    # records the absolute coverage_pct of the last build_check; we forward it
+    # as coverage_delta (a positive coverage figure is a positive ceremony
+    # signal — there is no stored baseline to diff against here).
+    coverage_delta = 0.0
+    try:
+        _bs_path = trw_dir_for_score / cfg.context_dir / "build-status.yaml"
+        if _bs_path.exists():
+            _bs = FileStateReader().read_yaml(_bs_path)
+            _cov = _bs.get("coverage_pct") if isinstance(_bs, dict) else None
+            if _cov is not None:
+                coverage_delta = float(str(_cov))
+    except Exception:  # justified: fail-open -- coverage is best-effort enrichment
+        logger.debug("telemetry_coverage_read_failed", exc_info=True)
 
     tel_client.record_event(
         SessionEndEvent(
@@ -146,7 +163,13 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     except Exception:  # justified: fail-open, lock release cleanup
         logger.debug("session_summary_write_failed", exc_info=True)
 
-    return {"status": "success", "events": 2, "ceremony_score": ceremony_score}
+    return {
+        "status": "success",
+        "events": 2,
+        "ceremony_score": ceremony_score,
+        "build_passed": build_passed,
+        "coverage_delta": coverage_delta,
+    }
 
 
 def _step_batch_send() -> BatchSendResult:
@@ -157,30 +180,46 @@ def _step_batch_send() -> BatchSendResult:
 
 
 def _extract_ceremony_metrics(deliver_results: dict[str, object]) -> tuple[float, bool, float, int]:
-    """Extract ceremony score, build pass, coverage delta, and critical findings."""
-    # Ceremony score
-    ceremony_score_val = deliver_results.get("telemetry", {})
-    score = 0.0
-    if isinstance(ceremony_score_val, dict):
-        score = float(ceremony_score_val.get("ceremony_score", 0))
+    """Extract ceremony score, build pass, coverage delta, and critical findings.
 
-    # Build passed
+    FIX-052: the ceremony score, build gate, and coverage are read from the
+    ``telemetry`` deferred step (the only producer of a real, computed
+    ceremony score). Earlier the caller passed the PRE-deferred snapshot,
+    which never contained a ``telemetry`` key, so ``score`` was always 0.0
+    and the adaptive-ceremony feedback loop had no gradient. The
+    ``build_check`` key is kept as a fallback for any caller that does
+    populate it.
+    """
+    telemetry_data = deliver_results.get("telemetry", {})
     build_check_data = deliver_results.get("build_check", {})
+
+    # Ceremony score (real 0-100 value computed by the telemetry step).
+    score = 0.0
+    if isinstance(telemetry_data, dict):
+        score = float(telemetry_data.get("ceremony_score", 0))
+
+    # Build passed: prefer the telemetry step's build gate, fall back to a
+    # caller-supplied build_check result if present.
     build_passed = False
-    if isinstance(build_check_data, dict):
+    if isinstance(telemetry_data, dict) and "build_passed" in telemetry_data:
+        build_passed = bool(telemetry_data.get("build_passed", False))
+    elif isinstance(build_check_data, dict):
         build_passed = bool(build_check_data.get("build_passed", False)) or bool(
             build_check_data.get("tests_passed", False)
         )
 
-    # Coverage delta
+    # Coverage delta: prefer the telemetry step's value, fall back to build_check.
     coverage_delta = 0.0
-    if isinstance(build_check_data, dict):
+    raw_delta: object = None
+    if isinstance(telemetry_data, dict) and "coverage_delta" in telemetry_data:
+        raw_delta = telemetry_data.get("coverage_delta")
+    elif isinstance(build_check_data, dict):
         raw_delta = build_check_data.get("coverage_delta")
-        if raw_delta is not None:
-            try:
-                coverage_delta = float(str(raw_delta))
-            except (ValueError, TypeError):
-                coverage_delta = 0.0
+    if raw_delta is not None:
+        try:
+            coverage_delta = float(str(raw_delta))
+        except (ValueError, TypeError):
+            coverage_delta = 0.0
 
     # Critical findings
     review_data = deliver_results.get("review", {})

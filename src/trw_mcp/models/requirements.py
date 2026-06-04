@@ -1,7 +1,8 @@
 """Requirements models -- PRD, Requirement, Traceability.
 
 AARE-F compliant requirements engineering artifacts.
-PRDs follow the 12-section template from AARE-F-FRAMEWORK.md v1.1.0.
+PRDs follow the category-variant template from AARE-F-FRAMEWORK.md
+(feature=12 sections, infrastructure=9, fix=8, research=7).
 """
 
 from __future__ import annotations
@@ -314,6 +315,7 @@ class ValidationResultV2(BaseModel):
     ambiguity_rate: float = 0.0
     completeness_score: float = 0.0  # deprecated: use total_score (V2) as the authoritative quality metric
     traceability_coverage: float = 0.0
+    measured_traceability_coverage: float = 0.0  # PRD-QUAL-096: informational ratio (FRs with impl+test refs / total FRs); NOT a gate
     consistency_score: float = 0.0  # reserved — not enforced (consistency scorer not implemented)
 
     # V2 scoring

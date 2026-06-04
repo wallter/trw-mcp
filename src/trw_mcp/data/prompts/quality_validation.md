@@ -70,7 +70,7 @@ You are a requirements quality auditor applying AARE-F standards. Perform a comp
 audit_results:
   prd_id: "..."
   audit_date: "..."
-  auditor: "AI (AARE-F v1.1)"
+  auditor: "AI (AARE-F)"
 
   scores:
     structure_compliance: X/25
@@ -515,4 +515,4 @@ Re-read each audit section's scoring criteria above to confirm all checks were a
 ---
 
 *Quality Validation Prompts v1.0.0*
-*AARE-F Framework v1.1.0 Implementation*
+*AARE-F Framework Implementation*

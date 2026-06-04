@@ -11,7 +11,6 @@ import pytest
 
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 
-
 # ---------------------------------------------------------------------------
 # Basic acquire / release
 # ---------------------------------------------------------------------------
@@ -126,6 +125,53 @@ def test_channel_lock_skip_never_deadlocks(tmp_path: Path) -> None:
     assert skip_raised.is_set(), "ChannelLockSkip should have been raised"
     assert not t1.is_alive(), "Holder thread should have exited"
     assert not t2.is_alive(), "Attempt thread should have exited"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows advisory locking is a no-op — skip contention test",
+)
+def test_channel_lock_closes_fd_when_poll_sleep_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a BaseException (KeyboardInterrupt / asyncio.CancelledError)
+    interrupting the poll sleep must CLOSE the fd, not leak it. __exit__ is not
+    called when __enter__ raises, and the prior `except OSError` handler missed
+    BaseException, so the open fd leaked until process exit on every cancellation
+    while waiting on a contended lock.
+    """
+    lock_file = tmp_path / "ch.lock"
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def holder() -> None:
+        with ChannelLock(lock_file, timeout_ms=5000):
+            lock_acquired.set()
+            release_lock.wait(timeout=10.0)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    assert lock_acquired.wait(timeout=5.0)
+
+    # Replace only the _lock module's `time` so the contended poll sleep raises a
+    # BaseException — the holder thread uses Event.wait, so it is unaffected.
+    class _SleepBoom:
+        monotonic = staticmethod(time.monotonic)
+
+        @staticmethod
+        def sleep(_interval: float) -> None:
+            raise KeyboardInterrupt("simulated cancel during poll")
+
+    monkeypatch.setattr("trw_mcp.channels._lock.time", _SleepBoom)
+
+    waiter = ChannelLock(lock_file, timeout_ms=5000)
+    with pytest.raises(KeyboardInterrupt):
+        waiter.__enter__()
+    # The fd must have been closed by the BaseException guard, not leaked.
+    assert waiter._fd is None
+
+    release_lock.set()
+    t.join(timeout=5.0)
 
 
 # ---------------------------------------------------------------------------

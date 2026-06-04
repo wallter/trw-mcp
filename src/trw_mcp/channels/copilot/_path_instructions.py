@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -182,7 +181,7 @@ class CopilotPathInstructionsRenderer:
     def render(
         self,
         repo_root: Path,
-        sidecar_data: dict[str, Any] | None,
+        sidecar_data: dict[str, object] | None,
         sidecar_sha: str | None,
         *,
         target_file: Path | None = None,
@@ -218,7 +217,7 @@ class CopilotPathInstructionsRenderer:
                 channel_id=channel_id,
                 outcome="skipped_lock",
             )
-            _emit_event(channel_id, "channel_conflict", None, "skipped_lock")
+            _emit_event(channel_id, "channel_lock_skip", None, "skipped_lock")
             return InstructionSegmentResult(channel_id=channel_id, status="skipped_lock")
 
         try:
@@ -238,7 +237,7 @@ class CopilotPathInstructionsRenderer:
                 error=str(exc),
                 outcome="error",
             )
-            _emit_event(channel_id, "channel_conflict", None, "error")
+            _emit_event(channel_id, "channel_error", None, "error")
             return InstructionSegmentResult(channel_id=channel_id, status="error", error=str(exc))
         finally:
             try:
@@ -251,7 +250,7 @@ class CopilotPathInstructionsRenderer:
         *,
         entry: ChannelEntry,
         repo_root: Path,
-        sidecar_data: dict[str, Any] | None,
+        sidecar_data: dict[str, object] | None,
         sidecar_sha: str | None,
         resolved_target: Path,
         force: bool,
@@ -289,7 +288,8 @@ class CopilotPathInstructionsRenderer:
             )
 
         # Build content
-        hotspots_raw: list[Any] = sidecar_data.get("hotspots", [])
+        _spots = sidecar_data.get("hotspots")
+        hotspots_raw: list[object] = list(_spots) if isinstance(_spots, list) else []
         top_hotspots = hotspots_raw[: self.MAX_HOTSPOT_FILES]
 
         # Extract hotspot file paths for glob derivation

@@ -16,6 +16,7 @@ PRD-DIST-2402.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +141,9 @@ def _format_edge_case(edge_case: str | dict[str, Any]) -> str:
     return f"- {text}"
 
 
-def _content_for_tier_factory(sidecar_data: dict[str, Any] | None) -> Any:
+def _content_for_tier_factory(
+    sidecar_data: dict[str, Any] | None,
+) -> Callable[[str], str]:
     """Return a content_for_tier callback bound to *sidecar_data*.
 
     Args:
@@ -403,7 +406,7 @@ def _render_and_inject_under_lock(
     sidecar_data: dict[str, Any] | None,
     sidecar_sha: str | None,
     resolved_target: Path,
-    content_cb: Any,
+    content_cb: Callable[[str], str],
     force: bool,
     dry_run: bool,
 ) -> InstructionSegmentResult:

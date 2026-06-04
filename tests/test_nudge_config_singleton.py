@@ -9,19 +9,33 @@ Post-fix: get_config() singleton is reused across calls.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 
-def test_nudge_path_invokes_get_config_at_runtime() -> None:
+
+def test_nudge_path_invokes_get_config_at_runtime(
+    tmp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """At runtime, _try_learning_nudge_content calls get_config().
 
     Patches the get_config import inside the nudge function and asserts it
     was called when session_start runs. Distinguishes the FR03 fix from the
     separate _load_config_for_trw_dir helper (which intentionally uses
     model_validate for per-workspace configs).
+
+    Runs under an isolated TRW_PROJECT_ROOT so the real session_start side
+    effects (nudge-shown records, surface tracking, pin store, ceremony
+    progress) land in tmp_project instead of polluting the repo's live
+    ``.trw/`` — that leakage previously broke test_adaptive_ceremony_logic
+    when this file ran first in the same process (test-isolation gap).
     """
     from tests.conftest import extract_tool_fn, make_test_server
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
 
     fn = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")
 
@@ -53,7 +67,9 @@ def test_nudge_path_uses_get_config_import() -> None:
     """Source check: _try_learning_nudge_content must import get_config, not TRWConfig.model_validate."""
     from pathlib import Path
 
-    src = Path(__file__).resolve().parent.parent / "src/trw_mcp/tools/_ceremony_status.py"
+    # PRD-DIST-243 decomposition moved _try_learning_nudge_content out of
+    # _ceremony_status.py into the focused _ceremony_status_nudge.py sibling.
+    src = Path(__file__).resolve().parent.parent / "src/trw_mcp/tools/_ceremony_status_nudge.py"
     text = src.read_text(encoding="utf-8")
 
     # Find the function body for _try_learning_nudge_content.
