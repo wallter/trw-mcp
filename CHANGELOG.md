@@ -4,6 +4,24 @@ All notable changes to the TRW MCP server package.
 
 ## Unreleased
 
+## [0.54.0] - 2026-06-08
+
+### Fixed
+
+- **Installer works on a uv-managed CPython (python-build-standalone).** `install-trw.py`
+  previously assumed `python -m pip`; a uv-managed interpreter often ships without a usable
+  pip/ensurepip, so the install failed outright. A new backend resolver tries `python -m pip`
+  → bootstraps via `ensurepip` → falls back to `uv pip install`, with a dynamic override
+  (`TRW_INSTALL_BACKEND=auto|pip|uv`, `TRW_UV_BIN`). Every install site routes through it; pip
+  vs uv flags are translated (`--no-cache-dir`↔`--no-cache`; pip-only flags dropped under uv).
+- **`--with-proprietary` console scripts resolve under `--pip-target` / uv installs.** A
+  `--target` (or uv) install creates `<target>/bin/trw-distill` (+ `trw-loop`/`trw-swarm`)
+  with no PYTHONPATH setup, so the bare command raised `ModuleNotFoundError` or silently
+  imported a different on-PATH copy (e.g. an older `trw_distill`). The installer now rewrites
+  each installed proprietary CLI's `bin/<script>` as a PYTHONPATH wrapper (mirroring the
+  `bin/trw-mcp` wrapper), so the bare `trw-distill …` commands print as install remediation
+  run the correct target version.
+
 ### Removed
 
 - **5 zero-usage tools retired (tool count 48 → 43):** `trw_analytics_report`,
