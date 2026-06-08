@@ -21,6 +21,12 @@ All notable changes to the TRW MCP server package.
   each installed proprietary CLI's `bin/<script>` as a PYTHONPATH wrapper (mirroring the
   `bin/trw-mcp` wrapper), so the bare `trw-distill …` commands print as install remediation
   run the correct target version.
+- **Release version-currency gate now gives actionable, anti-bypass guidance.** When the
+  publish gate fails (the box is not running the version it is about to publish), both
+  `publish-release.sh` and `assert_version_status_compatible` now explicitly instruct the
+  correct fix — install the publishing version locally + sync `.trw/frameworks/VERSION.yaml`,
+  then re-run — and explicitly warn against skipping the gate or `aws s3 cp`-ing the bundle by
+  hand. The safeguard exists so a version the apparatus has never run can never be published.
 
 ### Removed
 
