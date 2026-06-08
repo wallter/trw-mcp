@@ -18,6 +18,11 @@ from tests._install_trw_pip_target_contract_support import _INSTALLER_PATHS, _lo
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
 def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch) -> None:
     module = _load_installer_module(installer_path)
+    # Pin the resolved install backend so resolve_install_backend does not emit a
+    # `python -m pip --version` probe into the captured subprocess calls. This
+    # contract asserts the install COMMAND; backend resolution is covered by
+    # test_install_backend_resolution.py.
+    module._INSTALL_BACKEND = ("pip", [sys.executable, "-B", "-m", "pip", "install"])
     ui = MagicMock()
     calls: list[dict[str, object]] = []
 
@@ -64,6 +69,7 @@ def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_alread
     installer_path: Path, monkeypatch
 ) -> None:
     module = _load_installer_module(installer_path)
+    module._INSTALL_BACKEND = ("pip", [sys.executable, "-B", "-m", "pip", "install"])
     ui = MagicMock()
     calls: list[list[str]] = []
 
@@ -101,6 +107,7 @@ def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtim
     installer_path: Path, monkeypatch
 ) -> None:
     module = _load_installer_module(installer_path)
+    module._INSTALL_BACKEND = ("pip", [sys.executable, "-B", "-m", "pip", "install"])
     ui = MagicMock()
     calls: list[list[str]] = []
 

@@ -2114,6 +2114,58 @@ PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
     "trw-swarm",
 )
 
+# Proprietary packages that ship a console-script entry point. Maps the
+# distribution name -> (console-script name, ``module.callable`` target).
+# Under a ``--target`` install (pip or uv) the backend-generated bin script
+# does ``from <module> import main`` with NO PYTHONPATH setup, so it raises
+# ModuleNotFoundError on a clean machine (or silently imports a different
+# copy of the module if one happens to be on the default sys.path). We
+# therefore re-write each as a PYTHONPATH wrapper mirroring the trw-mcp
+# wrapper generated in phase_install_packages. trw-harness ships no console
+# script, so it is intentionally absent.
+PROPRIETARY_CONSOLE_SCRIPTS: tuple[tuple[str, str, str], ...] = (
+    ("trw-distill", "trw-distill", "trw_distill.cli"),
+    ("trw-loop", "trw-loop", "trw_loop.cli"),
+    ("trw-swarm", "trw-swarm", "trw_swarm.cli"),
+)
+
+
+def _write_proprietary_console_wrappers(
+    python: str, target_dir: str, installed: list[str], ui: "UI"
+) -> list[Path]:
+    """Re-write ``<target>/bin/<script>`` as PYTHONPATH wrappers.
+
+    Only runs for ``--target`` installs (target_dir non-empty). For each
+    proprietary package that (a) installed successfully and (b) ships a
+    console script, replace the backend-generated bin script with a bash
+    wrapper that exports ``PYTHONPATH=<target>`` before exec-ing the CLI —
+    exactly the pattern phase_install_packages uses for ``bin/trw-mcp``.
+
+    Without this, the bare ``trw-distill``/``trw-loop``/``trw-swarm`` commands
+    that trw-mcp emits as remediation/regenerate hints fail to resolve the
+    module in a target-dir layout. Returns the wrapper paths written (for
+    observability + tests). Never raises through the caller.
+    """
+    if not target_dir:
+        return []
+    installed_names = {entry.split(" ", 1)[0] for entry in installed}
+    bin_dir = Path(target_dir) / "bin"
+    written: list[Path] = []
+    for package, script_name, module_target in PROPRIETARY_CONSOLE_SCRIPTS:
+        if package not in installed_names:
+            continue
+        wrapper = bin_dir / script_name
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(
+            f"#!/bin/bash\n"
+            f"export PYTHONPATH={target_dir}:$PYTHONPATH\n"
+            f'exec {python} -B -c "from {module_target} import main; main()" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        written.append(wrapper)
+        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {target_dir}")
+    return written
+
 
 def _fetch_proprietary_license(
     backend_url: str,
@@ -2453,6 +2505,10 @@ def phase_install_proprietary(
     # install phases resolve their write root).
     events_root = Path(target_dir) if target_dir else Path.cwd()
     _emit_install_completed_event(events_root, installed_meta, failed_packages)
+    # Re-write target-dir console scripts as PYTHONPATH wrappers so the bare
+    # trw-distill/trw-loop/trw-swarm commands resolve their module under
+    # --target (mirrors the bin/trw-mcp wrapper). No-op for non-target installs.
+    _write_proprietary_console_wrappers(python, target_dir, installed, ui)
     _print_distill_repo_intel_hint(ui, installed)
     return installed
 
