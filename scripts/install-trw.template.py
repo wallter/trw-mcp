@@ -782,6 +782,10 @@ def _build_pip_runtime_env(target_dir: str = "") -> dict[str, str]:
     env["PIP_CACHE_DIR"] = str(pip_cache_dir)
     env["XDG_CACHE_HOME"] = str(cache_root)
     env["TMPDIR"] = str(tmp_dir)
+    # uv backend parity: keep uv's cache inside the target tmpfs too (uv ignores
+    # the PIP_* vars). Harmless when the pip backend is used.
+    env["UV_CACHE_DIR"] = str(cache_root / "uv")
+    env["UV_NO_CACHE"] = "1"
     return env
 
 
@@ -883,30 +887,31 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     are written to that directory instead of site-packages.  This is used
     to redirect writes to a tmpfs mount (PRD-INFRA-058).
 
-    Tries: normal -> --user -> --break-system-packages.
+    Tries: normal -> --user -> --break-system-packages. The --user /
+    --break-system-packages escalations are pip-only (PEP 668 system Pythons);
+    the uv backend installs into --target directly and needs neither.
     """
-    base = [python, "-B", "-m", "pip", "install", "--upgrade", "--quiet"]
-    if target_dir:
-        # 2026-04-21: restore the original behavior where pip's dep resolver
-        # runs against PyPI for external deps (structlog, pydantic, etc).
-        # An earlier attempt to force --no-deps unconditionally broke the
-        # transitive deps — trw-mcp wouldn't import because structlog was
-        # never installed. The correct fix lives in phase_install_packages:
-        # call pip ONCE with BOTH bundled wheels + --find-links so the
-        # resolver can satisfy trw-memory locally while still fetching
-        # external deps from PyPI.
-        if package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package)):
-            base.append("--no-deps")
-        base += ["--target", target_dir]
+    kind = resolve_install_backend(python, ui)[0]
+    # 2026-04-21: keep pip's resolver fetching external deps (structlog,
+    # pydantic, ...) from PyPI; only force --no-deps for a bundled wheel whose
+    # runtime deps are already satisfied. The combined-wheel install in
+    # phase_install_packages handles the trw-memory<-trw-mcp internal dep.
+    no_deps = bool(
+        target_dir and package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package))
+    )
+    base = build_install_cmd(python, ui, [package], target_dir=target_dir, no_deps=no_deps)
 
-    if _run_quiet(base + [package]):
+    if _run_quiet(base):
         return True
 
-    if not target_dir and _run_quiet(base + ["--user", package]):
+    if kind != "pip":
+        return False
+
+    if not target_dir and _run_quiet(base + ["--user"]):
         ui.step_warn(f"Installed {label} with --user (PEP 668 managed environment)")
         return True
 
-    if _run_quiet(base + ["--break-system-packages", package]):
+    if _run_quiet(base + ["--break-system-packages"]):
         ui.step_warn(f"Installed {label} with --break-system-packages")
         return True
 
@@ -920,6 +925,126 @@ def validate_pip_target(target_dir: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_./-]+", target_dir):
         raise ValueError(f"Invalid --pip-target: {target_dir!r}")
     return target_dir
+
+
+# ── install backend resolution (pip vs uv) ───────────────────────────
+#
+# A uv-managed CPython (python-build-standalone, what `uv python install`
+# fetches) frequently ships WITHOUT a usable `pip`/`ensurepip`, so
+# `python -m pip install` fails with "No module named pip" and the
+# --user / --break-system-packages escalations — which all reuse
+# `-m pip` — fail too. We resolve a working install backend ONCE and
+# route every install through it:
+#   1. standard Python with pip            -> python -m pip
+#   2. pip missing but ensurepip present   -> bootstrap, then python -m pip
+#   3. uv-managed (no pip, uv on PATH)      -> uv pip install --python <python>
+# Dynamic override (handles both situations explicitly):
+#   TRW_INSTALL_BACKEND = auto | pip | uv   (default auto)
+#   TRW_UV_BIN          = /path/to/uv       (else found on PATH)
+
+_INSTALL_BACKEND: tuple[str, list[str]] | None = None
+
+
+def _python_has_pip(python: str) -> bool:
+    """True when ``python -m pip`` is importable + runnable."""
+    return _run_quiet([python, "-m", "pip", "--version"], timeout=30)
+
+
+def _find_uv() -> str:
+    """Locate the uv binary (TRW_UV_BIN override, else PATH)."""
+    return (os.environ.get("TRW_UV_BIN", "").strip() or shutil.which("uv") or "").strip()
+
+
+def resolve_install_backend(python: str, ui: UI) -> tuple[str, list[str]]:
+    """Resolve how to install packages for *python*. Returns ``(kind, prefix)``.
+
+    ``kind`` is ``"pip"`` or ``"uv"``; ``prefix`` is the argv up to and
+    including ``install``. Resolved once per run and cached. Exits with an
+    actionable message when no backend is usable.
+    """
+    global _INSTALL_BACKEND
+    if _INSTALL_BACKEND is not None:
+        return _INSTALL_BACKEND
+
+    requested = os.environ.get("TRW_INSTALL_BACKEND", "auto").strip().lower()
+    uv_bin = _find_uv()
+
+    def _uv_backend() -> tuple[str, list[str]]:
+        if not uv_bin:
+            ui.error("Install backend 'uv' requested but the 'uv' binary was not found.")
+            ui.error("  Install uv (https://astral.sh/uv) or set TRW_UV_BIN=/path/to/uv.")
+            sys.exit(1)
+        ui.step_warn(f"Using uv pip backend ({uv_bin}) for a uv-managed Python")
+        return ("uv", [uv_bin, "pip", "install", "--python", python])
+
+    def _pip_backend() -> tuple[str, list[str]]:
+        return ("pip", [python, "-B", "-m", "pip", "install"])
+
+    if requested == "uv":
+        _INSTALL_BACKEND = _uv_backend()
+    elif requested == "pip":
+        _INSTALL_BACKEND = _pip_backend()
+    elif _python_has_pip(python):
+        _INSTALL_BACKEND = _pip_backend()
+    else:
+        # pip absent — typical of uv-managed CPython. Try to bootstrap pip via
+        # ensurepip first (cheapest, keeps the standard path); else use uv.
+        ui.step_warn("`python -m pip` unavailable — attempting to bootstrap it via ensurepip")
+        if _run_quiet([python, "-m", "ensurepip", "--upgrade"], timeout=180) and _python_has_pip(python):
+            ui.step_warn("Bootstrapped pip via ensurepip")
+            _INSTALL_BACKEND = _pip_backend()
+        elif uv_bin:
+            _INSTALL_BACKEND = _uv_backend()
+        else:
+            ui.error("This Python has no pip, ensurepip could not bootstrap it, and 'uv' is not installed.")
+            ui.error("This is common for a uv-managed CPython. Fix one of:")
+            ui.error("  - install uv:   curl -LsSf https://astral.sh/uv/install.sh | sh   (auto-detected on re-run)")
+            ui.error("  - force a backend:   TRW_INSTALL_BACKEND=uv   (with uv on PATH or TRW_UV_BIN set)")
+            ui.error("  - run under a Python that has pip:   python3 -m venv .venv && . .venv/bin/activate")
+            sys.exit(1)
+    return _INSTALL_BACKEND
+
+
+def build_install_cmd(
+    python: str,
+    ui: UI,
+    packages: list[str],
+    *,
+    target_dir: str = "",
+    find_links: str = "",
+    no_deps: bool = False,
+    no_index: bool = False,
+    no_cache: bool = False,
+    upgrade: bool = True,
+    quiet: bool = True,
+    no_warn_script_location: bool = False,
+) -> list[str]:
+    """Build a backend-correct ``install`` command for *packages*.
+
+    Emits pip or uv-pip flags as appropriate (e.g. ``--no-cache-dir`` for pip
+    vs ``--no-cache`` for uv; pip-only flags are dropped under uv). ``--target``
+    is honored by both backends. Packages/wheel paths come last.
+    """
+    kind, prefix = resolve_install_backend(python, ui)
+    cmd = list(prefix)
+    if upgrade:
+        cmd.append("--upgrade")
+    if quiet:
+        cmd.append("--quiet")
+    if no_deps:
+        cmd.append("--no-deps")
+    if no_index:
+        cmd.append("--no-index")
+    if no_cache:
+        cmd.append("--no-cache-dir" if kind == "pip" else "--no-cache")
+    if no_warn_script_location and kind == "pip":
+        cmd.append("--no-warn-script-location")
+    if find_links:
+        cmd += ["--find-links", find_links]
+    if target_dir:
+        cmd += ["--target", target_dir]
+    cmd += list(packages)
+    return cmd
 
 
 # ── Run command with live progress ───────────────────────────────────
@@ -1722,13 +1847,13 @@ def phase_install_packages(
     # fail on PyPI; forcing --no-deps solved that but then skipped external
     # deps entirely, crashing trw-mcp on `import structlog` in the container.
     wheel_dir = memory_whl.parent
-    combined_cmd = [
-        python, "-B", "-m", "pip", "install", "--upgrade", "--quiet",
-        "--find-links", str(wheel_dir),
-    ]
-    if validated_target:
-        combined_cmd += ["--target", validated_target]
-    combined_cmd += [str(memory_whl), str(mcp_whl)]
+    combined_cmd = build_install_cmd(
+        python,
+        ui,
+        [str(memory_whl), str(mcp_whl)],
+        target_dir=validated_target,
+        find_links=str(wheel_dir),
+    )
 
     ui.start_spinner(f"Installing trw-memory + trw-mcp v{TRW_VERSION}...")
     result = subprocess.run(combined_cmd, capture_output=True, text=True, timeout=300)
@@ -1742,15 +1867,15 @@ def phase_install_packages(
         )
         if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
             ui.error("pip install failed for trw-memory")
-            ui.error("Try installing in a virtual environment:")
-            ui.error("  python3 -m venv .venv && source .venv/bin/activate")
-            ui.error("  python3 install-trw.py")
+            ui.error("Try a clean environment or force the uv backend:")
+            ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
+            ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
         if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
             ui.error("pip install failed for trw-mcp")
-            ui.error("Try installing in a virtual environment:")
-            ui.error("  python3 -m venv .venv && source .venv/bin/activate")
-            ui.error("  python3 install-trw.py")
+            ui.error("Try a clean environment or force the uv backend:")
+            ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
+            ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
     ui.stop_spinner(True, f"Installed trw-memory + trw-mcp v{TRW_VERSION}")
 
@@ -1770,11 +1895,15 @@ def phase_install_packages(
             for p in target_path.glob(pattern):
                 if p.is_dir():
                     shutil.rmtree(p, ignore_errors=True)
-    cmd = [python, "-B", "-m", "pip", "install", "--no-deps",
-           "--no-cache-dir", "--no-index"]
-    if validated_target:
-        cmd += ["--target", validated_target]
-    cmd.append(str(memory_whl))
+    cmd = build_install_cmd(
+        python,
+        ui,
+        [str(memory_whl)],
+        target_dir=validated_target,
+        no_deps=True,
+        no_cache=True,
+        no_index=True,
+    )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         ui.step_warn(f"trw-memory pin failed: {result.stderr[:200]}")
@@ -2197,14 +2326,15 @@ def _download_proprietary_wheel(
 
 
 def _install_proprietary_wheel(
-    python: str, wheel_path: Path, package: str, target_dir: str
+    python: str, wheel_path: Path, package: str, target_dir: str, ui: UI
 ) -> bool:
     """Install one proprietary wheel using the L-82faa67c rmtree pattern.
 
     Removes any pre-existing copy of the package from target_dir before
     reinstalling to prevent the silent PyPI downgrade documented in
     L-82faa67c. Uses --find-links so transitive dependencies still resolve
-    from PyPI (L-6f488d41 fix).
+    from PyPI (L-6f488d41 fix). Routes through the resolved install backend
+    so a uv-managed Python (no pip) works too.
     """
     pkg_module = package.replace("-", "_")
     if target_dir:
@@ -2214,17 +2344,16 @@ def _install_proprietary_wheel(
                 shutil.rmtree(stale, ignore_errors=True)
             elif stale.is_file():
                 stale.unlink(missing_ok=True)
-    cmd: list[str] = [
+    cmd = build_install_cmd(
         python,
-        "-m",
-        "pip",
-        "install",
-        "--find-links",
-        str(wheel_path.parent),
-        str(wheel_path),
-    ]
-    if target_dir:
-        cmd.extend(["--target", target_dir, "--no-warn-script-location"])
+        ui,
+        [str(wheel_path)],
+        target_dir=target_dir,
+        find_links=str(wheel_path.parent),
+        no_warn_script_location=True,
+        upgrade=False,
+        quiet=False,
+    )
     return _run_quiet(cmd, timeout=180)
 
 
@@ -2299,8 +2428,8 @@ def phase_install_proprietary(
         # package available so cross-dependent installs resolve correctly.
         for package, wheel, resolved_version, wheel_sha256 in downloaded:
             try:
-                ui.start_spinner(f"Installing {package} into venv...")
-                if _install_proprietary_wheel(python, wheel, package, target_dir):
+                ui.start_spinner(f"Installing {package}...")
+                if _install_proprietary_wheel(python, wheel, package, target_dir, ui):
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
                     installed_meta.append(
