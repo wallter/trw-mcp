@@ -86,12 +86,12 @@ class TestGetInstalledVersionEdge:
 class TestCompareVersionsEdge:
     """Extra edge cases for _compare_versions."""
 
-    def test_two_part_version_compared(self) -> None:
-        """Versions with fewer than 3 parts still compare as tuples."""
-        assert _compare_versions("1.0", "1.0.0") is True
+    def test_two_part_version_equal_to_three_part(self) -> None:
+        """'1.0' and '1.0.0' are the same version — zero-padded comparison."""
+        assert _compare_versions("1.0", "1.0.0") is False
 
     def test_two_part_version_same_prefix(self) -> None:
-        """Two-part current, three-part latest with same prefix."""
+        """Two-part current, three-part latest with patch bump -> newer."""
         assert _compare_versions("1.0", "1.0.1") is True
 
     def test_empty_string(self) -> None:
@@ -105,9 +105,13 @@ class TestCompareVersionsEdge:
 class TestIsCompatibleEdge:
     """Extra edge cases for _is_compatible."""
 
-    def test_two_part_version(self) -> None:
-        """Version with 2 parts only — tuple comparison still works."""
-        assert _is_compatible("1.0", "1.0.0") is False
+    def test_two_part_version_equals_three_part(self) -> None:
+        """'1.0' meets min_version '1.0.0' — zero-padded comparison makes them equal."""
+        assert _is_compatible("1.0", "1.0.0") is True
+
+    def test_two_part_version_below_min(self) -> None:
+        """'1.0' (padded 1.0.0) is below min_version '1.0.1'."""
+        assert _is_compatible("1.0", "1.0.1") is False
 
     def test_four_part_version_ignores_extra(self) -> None:
         """Only first 3 parts are compared."""

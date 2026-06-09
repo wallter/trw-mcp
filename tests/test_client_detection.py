@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from unittest.mock import patch
-
 import pytest
 
 from trw_mcp.tools._client_detection import (
@@ -14,7 +11,6 @@ from trw_mcp.tools._client_detection import (
     resolve_client_profile,
     resolve_tier_for_client,
 )
-
 
 # ---------------------------------------------------------------------------
 # resolve_client_profile

@@ -16,6 +16,7 @@ from ._reconciliation_support import (
     SAMPLE_DIFF_WITHOUT_MATCHES,
     SAMPLE_PRD,
     make_config,
+    run_dir,  # noqa: F401
 )
 from ._reconciliation_support import run_dir  # noqa: F401
 

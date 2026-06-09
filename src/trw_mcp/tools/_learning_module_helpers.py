@@ -28,10 +28,34 @@ __all__ = [
     "_SOLUTION_PATTERNS",
     "_annotate_injected_learnings",
     "_build_call_ctx",
+    "_coerce_tags",
     "_create_llm_client",
     "_is_solution_summary",
     "_read_injected_ids",
 ]
+
+
+def _coerce_tags(tags: list[str] | str | None) -> list[str] | None:
+    """Coerce a tags argument to ``list[str] | None`` (PRD-IMPROVE-MCP-01 FR1).
+
+    Agents frequently pass ``tags="a,b,c"`` (a comma- or whitespace-separated
+    string) instead of a JSON list. Rather than raising a Pydantic
+    ``list_type`` error, accept either shape:
+
+    - ``None`` -> ``None`` (no tags).
+    - ``list`` -> returned unchanged (each element coerced to ``str``).
+    - ``str`` -> split on commas and/or whitespace, trimmed, empties dropped.
+      A blank/whitespace-only string yields ``None``.
+    """
+    if tags is None:
+        return None
+    if isinstance(tags, list):
+        return [str(t) for t in tags]
+    parts: list[str] = []
+    for chunk in tags.split(","):
+        parts.extend(chunk.split())
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return cleaned or None
 
 
 # PRD-FIX-052-FR05: Solution-indicator patterns for auto-'pattern' tag suggestion.

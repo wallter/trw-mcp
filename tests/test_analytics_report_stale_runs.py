@@ -153,6 +153,35 @@ class TestStaleRunArchiveSummary:
         assert summary["checkpoints_count"] == 0
         assert summary["events_count"] == 0
 
+    def test_archive_summary_counts_survive_torn_events_line(self, tmp_path: Path) -> None:
+        """A torn events.jsonl line drops one record, not the whole count.
+
+        events_count / checkpoints_count are advisory archive metadata. Before
+        the resilient-reader swap, a strict ``read_jsonl`` raised ``StateError``
+        on the first malformed line, which the count helper caught by leaving
+        the count at 0 — so one torn concurrent append zeroed the archive tally.
+        The resilient reader skips just the torn row, so the intact events are
+        still counted (regression guard).
+        """
+        runs_root = tmp_path / ".trw" / "runs"
+        run_id = _make_run_id_hours_ago(72)
+        run_dir = _create_run(runs_root, "test-task", run_id)
+
+        # Three intact events plus a torn middle append.
+        _add_events(run_dir, count=3)
+        events_path = run_dir / "meta" / "events.jsonl"
+        with events_path.open("a", encoding="utf-8") as fh:
+            fh.write('{"ts": "2026-02-11T12:00:00Z", "event": "tor\n')  # truncated mid-object
+
+        p1, p2, p3 = _patch_config_and_root(tmp_path)
+        with p1, p2, p3:
+            result = auto_close_stale_runs(ttl_hours=48)
+
+        assert result["count"] == 1
+        summary = _reader.read_yaml(run_dir / "meta" / "summary.yaml")
+        # The torn line is dropped; the three intact events are still counted.
+        assert summary["events_count"] == 3
+
 
 class TestStaleRunNonActiveSkipped:
     """Runs that are not in 'active' status should never be closed."""

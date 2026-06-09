@@ -139,6 +139,26 @@ class SyncCoordinator:
         state = self._read_state()
         return self._int_field(state, "last_pull_seq")
 
+    def record_company_pull_seq(self, company_seq: int | None = None) -> None:
+        """Advance the INDEPENDENT company-tier pull cursor (PRD-INFRA-139 P1-B).
+
+        Company-tier rows page on a per-company sequence that is disjoint from the
+        org's ``last_pull_seq``; folding the two into one cursor permanently hid
+        company rows once the org cursor outgrew the small company sequence. This
+        cursor advances on its own high-water mark and never regresses.
+        """
+        state = self._read_state()
+        state["last_company_pull_seq"] = max(
+            self._int_field(state, "last_company_pull_seq"), company_seq or 0
+        )
+        state["version"] = 1
+        self._write_state(state)
+
+    def get_last_company_pull_seq(self) -> int:
+        """Read the independent company-tier pull cursor (PRD-INFRA-139 P1-B)."""
+        state = self._read_state()
+        return self._int_field(state, "last_company_pull_seq")
+
     def get_last_outcome_line(self) -> int:
         """Read the last successfully pushed local outcome line number."""
         state = self._read_state()

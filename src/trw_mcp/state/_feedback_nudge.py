@@ -140,7 +140,11 @@ def _read_state(trw_dir: Path) -> _State:
     try:
         with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        # UnicodeDecodeError (a ValueError, not OSError) fires on non-UTF-8
+        # bytes from a torn write; "unreadable" in the contract above includes
+        # an undecodable file, so degrade to empty rather than crash the
+        # nudge-fatigue counters on the tool-call path.
         return {}
     if not isinstance(data, dict):
         return {}

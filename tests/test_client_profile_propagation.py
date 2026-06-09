@@ -11,7 +11,6 @@ These are unit tests: no filesystem I/O.
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest

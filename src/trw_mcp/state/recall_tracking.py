@@ -13,9 +13,9 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import RecallStats
-from trw_mcp.state._helpers import rotate_jsonl
+from trw_mcp.state._helpers import read_jsonl_resilient, rotate_jsonl
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
@@ -100,8 +100,13 @@ def get_recall_stats(entries_dir: Path | None = None) -> RecallStats:
                 neutral_outcomes=0,
             )
 
-        reader = FileStateReader()
-        records = reader.read_jsonl(tracking_path)
+        # recall_tracking.jsonl is an append-only log written on every recall
+        # and outcome, often by concurrent agents. A torn concurrent append (a
+        # partial final line, or a row split mid multi-byte sequence) must drop
+        # only that one row, not collapse the whole calibration aggregate to the
+        # zeroed fallback via StateError. Use the resilient full-scan reader,
+        # matching the precedent for events.jsonl in agent_work_evidence.py.
+        records = read_jsonl_resilient(tracking_path)
 
         learning_ids: set[str] = set()
         positive = 0

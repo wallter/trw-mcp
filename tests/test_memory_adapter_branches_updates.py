@@ -15,6 +15,8 @@ from trw_mcp.state.memory_adapter import (
 )
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
 
 class TestRecallLearningsStatusParsing:
     def test_invalid_status_string_ignored(self, trw_dir: Path) -> None:

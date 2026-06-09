@@ -91,8 +91,17 @@ def check_for_update() -> dict[str, object]:
 
 
 def _parse_version(version: str) -> tuple[int, int, int]:
-    """Parse version string to semver tuple (3 parts), raise on failure."""
-    return tuple(int(x) for x in version.split(".")[:3])  # type: ignore[return-value]
+    """Parse version string to semver tuple (exactly 3 parts), raise on failure.
+
+    Pads with zeros when fewer than 3 components are present so that "0.53"
+    and "0.53.0" compare as equal.  Without padding, Python tuple comparison
+    makes ``(0, 53) < (0, 53, 0)`` which causes ``_is_compatible("0.53", "0.53.0")``
+    to incorrectly report incompatible and block a valid upgrade.
+    """
+    parts = version.split(".")[:3]
+    padded = parts + ["0"] * (3 - len(parts))
+    major, minor, patch = int(padded[0]), int(padded[1]), int(padded[2])
+    return major, minor, patch
 
 
 def _compare_versions(current: str, latest: str) -> bool:

@@ -88,6 +88,32 @@ def test_aggregate_recall_outcomes_selection_probability_monotonic(tmp_path: Pat
     assert 0.0 < high <= 1.0
 
 
+def test_aggregate_recall_outcomes_torn_line_preserves_valid_rows(tmp_path: Path) -> None:
+    """A torn concurrent append drops only its row, not the whole bandit signal.
+
+    Regression: the strict reader raised StateError on the first malformed line
+    and the broad fail-open returned {}, silently starving the backend IPS /
+    arm-update loop of every learning's recall feedback for that sync cycle. The
+    resilient reader keeps the valid rows.
+    """
+    from trw_mcp.sync.outcomes import _aggregate_recall_outcomes
+
+    logs = tmp_path / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    path = logs / "recall_tracking.jsonl"
+    good_a = json.dumps({"learning_id": "L-1", "outcome": None})
+    good_b = json.dumps({"learning_id": "L-1", "outcome": "positive"})
+    torn = '{"learning_id": "L-2", "outcome": "neg'  # partial interleaved append
+    path.write_text(f"{good_a}\n{torn}\n{good_b}\n", encoding="utf-8")
+
+    agg = _aggregate_recall_outcomes(tmp_path)
+
+    # Pre-fix this returned {}; now L-1's valid rows survive the torn L-2 row.
+    assert set(agg) == {"L-1"}
+    assert agg["L-1"]["recall_count"] == 1
+    assert agg["L-1"]["positive"] == 1
+
+
 def test_aggregate_recall_outcomes_missing_file_returns_empty(tmp_path: Path) -> None:
     from trw_mcp.sync.outcomes import _aggregate_recall_outcomes
 

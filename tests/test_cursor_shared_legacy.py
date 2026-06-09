@@ -68,6 +68,80 @@ def test_generate_cursor_hooks_malformed_json_overwrites(tmp_path: Path) -> None
     assert isinstance(data["hooks"], list)
 
 
+@pytest.mark.integration
+def test_generate_cursor_hooks_non_object_json_overwrites(tmp_path: Path) -> None:
+    """A hooks.json whose top level is a JSON array (not an object) no longer crashes.
+
+    Before the read_json_object seam, ``existing.get("hooks", [])`` raised
+    AttributeError on a list top level (only JSONDecodeError/KeyError were caught).
+    """
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "hooks.json").write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    result = generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert isinstance(data["hooks"], list)
+    assert any(h.get("description", "").startswith("TRW") for h in data["hooks"])
+    assert ".cursor/hooks.json" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_non_utf8_overwrites(tmp_path: Path) -> None:
+    """A non-UTF-8 hooks.json no longer raises UnicodeDecodeError; it is overwritten fresh."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    # 0x80 is an invalid UTF-8 start byte.
+    (cursor_dir / "hooks.json").write_bytes(b"\x80\x81\x82 not utf-8")
+
+    result = generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert isinstance(data["hooks"], list)
+    assert ".cursor/hooks.json" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_smart_merge_preserves_unrelated_top_level_keys(tmp_path: Path) -> None:
+    """Smart merge preserves user-authored top-level keys outside ``hooks``."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "hooks.json").write_text(
+        json.dumps({"version": 1, "hooks": [], "userField": "keep-me"}),
+        encoding="utf-8",
+    )
+
+    generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert data.get("userField") == "keep-me"
+    assert data.get("version") == 1
+    assert any(h.get("description", "").startswith("TRW") for h in data["hooks"])
+
+
+@pytest.mark.integration
+def test_generate_cursor_hooks_tolerates_non_list_hooks_value(tmp_path: Path) -> None:
+    """A ``hooks`` value that is not a list is treated as empty rather than crashing."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_hooks
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "hooks.json").write_text(json.dumps({"hooks": "oops-a-string"}), encoding="utf-8")
+
+    result = generate_cursor_hooks(tmp_path)
+
+    data = json.loads((cursor_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert isinstance(data["hooks"], list)
+    assert ".cursor/hooks.json" in result.get("updated", [])
+
+
 @pytest.mark.unit
 def test_get_trw_mcp_entry_cursor_uses_binary_when_on_path() -> None:
     """_get_trw_mcp_entry_cursor returns command='trw-mcp' when binary on PATH."""

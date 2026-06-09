@@ -67,6 +67,17 @@ _PATHOLOGICAL_LOCAL_WORK_MS = 10_000.0
 _SYNC_FAILURE_BACKOFF_CAP_SECONDS = 3_600.0
 
 
+def _is_company_entry(item: dict[str, Any], company_source: str) -> bool:
+    """True when a pulled learning is a company-tier row (PRD-INFRA-139 P1-B).
+
+    Company rows are tagged ``source=company_sync`` in their metadata so the
+    client can page them on the independent company cursor instead of folding
+    their disjoint per-company sync_seq into the org pull cursor.
+    """
+    meta = item.get("metadata")
+    return isinstance(meta, dict) and meta.get("source") == company_source
+
+
 def _target_report_status(report: dict[str, object]) -> str:
     """Return the normalized health status for one sync target report."""
 
@@ -341,12 +352,17 @@ class BackendSyncClient:
             pulled = 0
             merged = 0
             pull_seq = self._coordinator.get_last_pull_seq()
+            raw_company_pull_seq = self._coordinator.get_last_company_pull_seq()
+            company_pull_seq = (
+                int(raw_company_pull_seq) if isinstance(raw_company_pull_seq, (int, float)) else 0
+            )
             pull_result = await self._puller.pull_intel_state(
                 etag=self._cache.etag if self._config.intel_cache_enabled else None,
                 since_seq=pull_seq,
                 model_family=getattr(self._config, "model_family", ""),
                 trw_version=getattr(self._config, "framework_version", ""),
                 client_id=self._client_id,
+                since_company_seq=company_pull_seq,
             )
             if pull_result is None:
                 self._reset_poll_schedule()
@@ -376,6 +392,14 @@ class BackendSyncClient:
                 merged = self._puller.merge_team_learnings(pull_result.team_learnings)
             pulled = team_learning_count
 
+            # PRD-INFRA-139 P1-B: company-tier rows ride in team_learnings but page
+            # on their OWN per-company cursor (disjoint from the org sync_seq).
+            # Folding their sync_seq into the org pull cursor corrupted it (a large
+            # org cursor then permanently hid every small-seq company row). Advance
+            # the org cursor ONLY on the org's own rows; advance the company cursor
+            # from the server's advertised company high-water mark separately.
+            from trw_mcp.sync.pull import _COMPANY_SYNC_SOURCE
+
             next_pull_seq = max(
                 [
                     pull_seq,
@@ -383,9 +407,12 @@ class BackendSyncClient:
                         int(item.get("sync_seq", 0))
                         for item in (pull_result.team_learnings or [])
                         if isinstance(item, dict)
+                        and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
                     ],
                 ]
             )
+            next_company_pull_seq = max(company_pull_seq, pull_result.next_company_seq)
+            self._coordinator.record_company_pull_seq(next_company_pull_seq)
             self._apply_sync_hints(pull_result.sync_hints)
             logger.info(
                 "sync_cycle_completed",

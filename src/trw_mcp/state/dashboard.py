@@ -20,7 +20,7 @@ from trw_mcp.models.typed_dicts import (
     DegradationAlertResult,
     ReviewTrendResult,
 )
-from trw_mcp.state._helpers import safe_str
+from trw_mcp.state._helpers import read_jsonl_resilient, safe_str
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -304,16 +304,16 @@ def _load_analytics_yaml(context_dir: Path) -> dict[str, object]:
 
 
 def _load_session_events(context_dir: Path) -> list[dict[str, object]]:
-    """Load session-events.jsonl from context directory with fallback on error."""
-    reader = FileStateReader()
-    events_path = context_dir / "session-events.jsonl"
-    if not events_path.exists():
-        return []
-    try:
-        return reader.read_jsonl(events_path)
-    except (OSError, StateError):
-        logger.debug("session_events_load_failed", path=str(events_path), exc_info=True)
-        return []
+    """Load session-events.jsonl from the context dir, tolerating torn appends.
+
+    session-events.jsonl feeds only the advisory quality dashboard (ceremony /
+    coverage / review trends). It is an append-only log written by concurrent
+    delivery steps, so a single torn append must drop that one record rather
+    than wipe every trend datapoint. Uses the resilient per-line reader instead
+    of the strict ``FileStateReader.read_jsonl``, which returned ``[]`` for the
+    whole file on the first malformed line.
+    """
+    return read_jsonl_resilient(context_dir / "session-events.jsonl")
 
 
 def _filter_events_to_window(

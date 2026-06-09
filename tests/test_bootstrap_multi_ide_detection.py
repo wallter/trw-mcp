@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import structlog
 import tomllib
 
 import structlog
@@ -16,7 +17,7 @@ from ._bootstrap_test_support import patch_update_project_internals
 
 
 @pytest.fixture(autouse=True)
-def _restore_structlog_config() -> "object":
+def _restore_structlog_config() -> object:
     """init_project/update_project call configure_logging(), which globally
     reconfigures structlog and breaks structlog.testing.capture_logs() in
     later-running test files. Save and restore the config so the global

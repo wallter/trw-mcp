@@ -107,6 +107,38 @@ class TestTrwStatus:
         assert status["phase_durations"]["active_phase"] == "research"
         assert status["phase_durations"]["phase_seconds"]["research"] >= 0.0
 
+    def test_torn_events_line_does_not_abort_status(self, orch_tools: dict[str, Any]) -> None:
+        """A torn concurrent append in events.jsonl must not brick trw_status.
+
+        events.jsonl is an append-only log that trw_status reads only for
+        advisory analytics (event_count, reflection, phase_durations,
+        reversions); the authoritative run state lives in run.yaml. A single
+        torn append (two writers interleaving a partial record) must degrade to
+        "drop that one line", not raise StateError and abort the whole status
+        read — trw_status is invoked on every resume/compaction, so aborting it
+        blinds the agent to its own run. Mirrors the resilient-read fixes
+        already applied to the _do_reflect and collect_reflection_inputs seams
+        over this same log (regression guard).
+        """
+        init_result = orch_tools["trw_init"].fn(task_name="torn-status-task")
+        run_path = init_result["run_path"]
+
+        events_path = Path(run_path) / "meta" / "events.jsonl"
+        existing = events_path.read_text(encoding="utf-8")
+        # Append a torn line (valid JSON prefix, truncated mid-object) followed
+        # by an intact event. Before the fix the torn line raised StateError.
+        torn = '{"ts": "2026-02-11T12:01:00Z", "type": "phase_chan\n'
+        intact = '{"ts": "2026-02-11T12:02:00Z", "type": "checkpoint", "phase": "research"}\n'
+        events_path.write_text(existing + torn + intact, encoding="utf-8")
+
+        status = orch_tools["trw_status"].fn(run_path=run_path)
+
+        # Status still resolves; authoritative fields come from run.yaml.
+        assert status["task"] == "torn-status-task"
+        assert status["status"] == "active"
+        # The torn line is dropped, not fatal; intact events still counted.
+        assert status["event_count"] >= 1
+
 
 class TestTrwCheckpoint:
     """Tests for trw_checkpoint tool."""

@@ -34,7 +34,7 @@ __all__ = [
 # Schema
 # ---------------------------------------------------------------------------
 
-from typing import TypedDict  # noqa: E402
+from typing import TypedDict, cast  # noqa: E402
 
 
 class SurfaceEvent(TypedDict, total=False):
@@ -66,6 +66,7 @@ class SurfaceEvent(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 
+from trw_mcp.state._helpers import read_jsonl_tail  # noqa: E402
 from trw_mcp.state._helpers import rotate_jsonl as _rotate_jsonl  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -160,14 +161,10 @@ def read_surface_events(trw_dir: Path, max_events: int = 500) -> list[SurfaceEve
     returns an empty list on any error.
     """
     log_path = trw_dir / _LOG_DIR / _SURFACE_FILE
-    if not log_path.exists():
-        return []
-    try:
-        lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        events: list[SurfaceEvent] = [json.loads(line) for line in lines[-max_events:] if line.strip()]
-        return events
-    except Exception:  # justified: fail-open, read failure returns empty
-        return []
+    # read_jsonl_tail skips individual corrupt lines (e.g. a torn concurrent
+    # append) instead of discarding the whole tail, matching the per-line
+    # recovery used by _read_all_surface_events_for_session over the same log.
+    return cast("list[SurfaceEvent]", read_jsonl_tail(log_path, max_events))
 
 
 # ---------------------------------------------------------------------------
@@ -245,23 +242,34 @@ def _read_all_surface_events_for_session(
     if not log_path.exists():
         return []
     try:
-        lines = log_path.read_text(encoding="utf-8").split("\n")
-        if len(lines) > hard_cap_lines:
-            lines = lines[-hard_cap_lines:]
-        matched: list[SurfaceEvent] = []
-        for line in lines:
-            s = line.strip()
-            if not s:
-                continue
-            try:
-                ev: SurfaceEvent = json.loads(s)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if ev.get("session_id") == session_id:
-                matched.append(ev)
-        return matched
-    except Exception:  # justified: fail-open, read failure returns empty
+        raw = log_path.read_bytes()
+    except OSError:
         return []
+    # Split on the newline byte and decode each line individually, mirroring
+    # read_jsonl_tail over the same log: a single non-UTF-8 byte row (a torn
+    # append) is dropped on its own UnicodeDecodeError rather than failing a
+    # whole-file decode and discarding every valid event for the session.
+    byte_lines = raw.split(b"\n")
+    if len(byte_lines) > hard_cap_lines:
+        byte_lines = byte_lines[-hard_cap_lines:]
+    matched: list[SurfaceEvent] = []
+    for byte_line in byte_lines:
+        s = byte_line.strip()
+        if not s:
+            continue
+        try:
+            parsed = json.loads(s.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+        # Non-object lines (bare scalars/lists) have no .get; dropping them
+        # here keeps one stray line from raising into the caller. Mirrors
+        # read_jsonl_tail's isinstance(dict) guard.
+        if not isinstance(parsed, dict):
+            continue
+        ev = cast("SurfaceEvent", parsed)
+        if ev.get("session_id") == session_id:
+            matched.append(ev)
+    return matched
 
 
 class NudgeFatigueResult(TypedDict):

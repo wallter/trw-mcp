@@ -21,6 +21,7 @@ from pathlib import Path
 
 import structlog
 
+from ._file_ops import read_json_object
 from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
 from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
 from ._ide_targets import _update_antigravity_artifacts as _update_antigravity_artifacts
@@ -165,6 +166,19 @@ def _merge_settings_json(
     while adding missing env keys from the bundled template. All
     non-env top-level keys (hooks, permissions, etc.) from the existing
     file are preserved.
+
+    Robustness / leak discipline: both reads go through the structural-safe
+    :func:`read_json_object` seam, so a non-UTF-8, malformed, or non-object
+    ``settings.json`` on either side never raises (``UnicodeDecodeError`` is a
+    ``ValueError``, not an ``OSError``, and was previously uncaught) and never
+    leaks the file's bytes — diagnostics carry a reason *category* only.
+
+      - Bundled template invalid / non-object → the user's existing settings are
+        left untouched and a structural error is recorded. We never overwrite a
+        good user file from a broken bundled source.
+      - Existing settings unreadable / corrupt / non-object → fall back to the
+        module's long-standing recovery behavior (copy the valid bundled
+        template), with a content-free warning.
     """
     _log = structlog.get_logger(__name__)
     if not src.is_file():
@@ -176,35 +190,46 @@ def _merge_settings_json(
     if dry_run:
         result["updated"].append(f"would merge: {dest}")
         return
-    try:
-        bundled = json.loads(src.read_text(encoding="utf-8"))
-        existing = json.loads(dest.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        _log.warning("settings_json_merge_fallback", path=str(dest), reason=str(exc))
+
+    bundled = read_json_object(src, context="settings_merge_bundled")
+    if bundled is None:
+        # Bundled source is itself invalid/non-object: refuse to clobber the
+        # user's settings from a broken template. Structural reason only.
+        result["errors"].append(f"Skipped settings.json merge: bundled template invalid or non-object: {dest}")
+        return
+
+    existing = read_json_object(dest, context="settings_merge_existing")
+    if existing is None:
+        # Unreadable / corrupt / non-object existing file: recover by copying the
+        # (valid) bundled template, mirroring the prior fallback semantics.
+        _log.warning("settings_json_merge_fallback", path=str(dest), reason="unreadable_or_non_object")
         _update_or_report(src, dest, result, dry_run)
         return
 
-    # Merge env block: add missing keys, preserve existing values
+    # Merge env block: add missing keys, preserve existing values. Guard the
+    # nested types so a hand-edited non-object ``env``/``hooks`` is preserved
+    # rather than crashing the merge.
     bundled_env = bundled.get("env", {})
     existing_env = existing.get("env", {})
-    for key, value in bundled_env.items():
-        if key not in existing_env:
-            existing_env[key] = value
-    existing["env"] = existing_env
+    if isinstance(bundled_env, dict) and isinstance(existing_env, dict):
+        for key, value in bundled_env.items():
+            existing_env.setdefault(key, value)
+        existing["env"] = existing_env
 
     # Merge hooks: add missing hook event types, preserve existing
     bundled_hooks = bundled.get("hooks", {})
     existing_hooks = existing.get("hooks", {})
-    for hook_event, hook_list in bundled_hooks.items():
-        if hook_event not in existing_hooks:
-            existing_hooks[hook_event] = hook_list
-    existing["hooks"] = existing_hooks
+    if isinstance(bundled_hooks, dict) and isinstance(existing_hooks, dict):
+        for hook_event, hook_list in bundled_hooks.items():
+            existing_hooks.setdefault(hook_event, hook_list)
+        existing["hooks"] = existing_hooks
 
     try:
         dest.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
         result["updated"].append(str(dest))
-    except OSError as exc:
-        result["errors"].append(f"Failed to merge settings.json: {exc}")
+    except OSError:
+        # Structural reason only — never echo the raw exception text.
+        result["errors"].append(f"Failed to write merged settings.json: {dest}")
 
 
 def _update_hooks(
@@ -261,9 +286,7 @@ def _is_user_modified(
     PRD-FIX-068-FR05: Compares current on-disk SHA256 against the stored
     manifest hash.  Returns ``True`` when hashes differ (user modification).
     """
-    if not manifest_hashes or name not in manifest_hashes:
-        return False
-    if not dest.is_file():
+    if not manifest_hashes or name not in manifest_hashes or not dest.is_file():
         return False
     try:
         current_hash = hashlib.sha256(dest.read_bytes()).hexdigest()

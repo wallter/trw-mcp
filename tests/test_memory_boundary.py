@@ -51,25 +51,18 @@ def trw_dir(tmp_path: Path) -> Path:
 class TestStorageErrorPropagation:
     """P1-A: SQLiteBackend errors at the adapter boundary.
 
-    These tests document the desired contract: StorageError from the SQLite layer
-    should be caught by the adapter and returned as an error dict, not propagated
-    to tool callers.  Tests marked ``xfail`` reflect cases where the adapter
-    does not yet implement this protection — they serve as regression sentinels
-    so any future fix is immediately verified.
+    These tests enforce the boundary contract: a non-corruption StorageError from
+    the SQLite layer is caught by the adapter and translated into a stable result
+    shape — an error dict for ``store_learning()``, an empty list for
+    ``recall_learnings()`` — never propagated to tool callers.
 
     The adapter is the last defence before errors surface to MCP tool callers.
-    If StorageError leaks out, tools return an unhandled exception traceback
-    rather than an error dict, breaking the JSON-RPC response contract.
+    If StorageError leaked out, tools would return an unhandled exception
+    traceback rather than a structured result, breaking the JSON-RPC response
+    contract. (Previously xfail regression sentinels; unxfailed once the seam in
+    ``memory_adapter.store_learning``/``recall_learnings`` translated the error.)
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Boundary gap: store_learning() does not catch StorageError. "
-            "When fixed, the adapter must return an error dict, not propagate. "
-            "Remove xfail when memory_adapter.store_learning() has a try/except StorageError."
-        ),
-    )
     def test_store_learning_storage_error_returns_error_dict(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -98,19 +91,12 @@ class TestStorageErrorPropagation:
             failed = "error" in result or result.get("status") != "recorded"
             assert failed, f"Expected error or non-recorded status when StorageError raised, got: {result}"
         except StorageError:
-            # StorageError escaping the adapter is a boundary violation.
-            # Re-raise so xfail registers the expected failure mode.
+            # StorageError escaping the adapter is a boundary violation — let it
+            # propagate so this test hard-fails if the seam ever regresses.
             raise
         finally:
             monkeypatch.setattr(backend, "store", original_store)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Boundary gap: recall_learnings() does not catch StorageError from search(). "
-            "Remove xfail when the adapter wraps search() in a try/except StorageError."
-        ),
-    )
     def test_recall_learnings_storage_error_returns_empty_not_exception(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -129,14 +115,6 @@ class TestStorageErrorPropagation:
         # Adapter must return a list (possibly empty) or error dict — not raise
         assert isinstance(result, (list, dict)), f"Expected list or dict, got {type(result)}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Boundary gap: recall_learnings() does not catch StorageError from list_entries(). "
-            "Wildcard path must be protected just like the search path. "
-            "Remove xfail when the adapter wraps list_entries() in a try/except StorageError."
-        ),
-    )
     def test_recall_learnings_list_entries_error_returns_empty(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

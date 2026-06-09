@@ -17,6 +17,20 @@ logger = structlog.get_logger(__name__)
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
+# PRD-INFRA-139 FR06: the server tags company-tier learnings with
+# source=company_sync (in each entry's metadata) so the client can distinguish
+# them from team learnings while merging via the same path. Team learnings carry
+# no source tag and default to team_sync (existing behavior unchanged).
+_TEAM_SYNC_SOURCE = "team_sync"
+_COMPANY_SYNC_SOURCE = "company_sync"
+_KNOWN_SYNC_SOURCES = frozenset({_TEAM_SYNC_SOURCE, _COMPANY_SYNC_SOURCE})
+
+
+def _resolve_sync_source(metadata: dict[str, str]) -> str:
+    """Return the sync source tag from server metadata, defaulting to team_sync."""
+    raw = metadata.get("source", "")
+    return raw if raw in _KNOWN_SYNC_SOURCES else _TEAM_SYNC_SOURCE
+
 
 def _http_status_from_exception(exc: BaseException) -> int | None:
     """Extract an HTTP status code from httpx-style exceptions when present."""
@@ -35,6 +49,11 @@ class PullResult(BaseModel):
     team_learnings: list[dict[str, Any]] | None = None
     status_code: int = 0
     not_modified: bool = False
+    # PRD-INFRA-139 P1-B: company-tier rows page on an INDEPENDENT per-company
+    # cursor disjoint from the org's pull_seq. The server advertises the company
+    # high-water mark here; the client advances a SEPARATE company cursor from it
+    # (never folding it into the org pull_seq).
+    next_company_seq: int = 0
 
 
 def _validate_pull_payload(raw_data: object) -> tuple[dict[str, Any], str, dict[str, Any], list[dict[str, Any]]]:
@@ -83,6 +102,7 @@ class SyncPuller:
         model_family: str = "",
         trw_version: str = "",
         client_id: str | None = None,
+        since_company_seq: int = 0,
     ) -> PullResult | None:
         """GET /v1/intel/state. Returns a typed 304 result or None on real failure.
 
@@ -113,6 +133,7 @@ class SyncPuller:
 
             params: dict[str, Any] = {
                 "since_seq": since_seq,
+                "since_company_seq": since_company_seq,
                 "client_id": effective_client_id,
             }
             if model_family:
@@ -157,12 +178,15 @@ class SyncPuller:
                 team_learnings_count=len(team_learnings) if isinstance(team_learnings, list) else 0,
                 outcome="success",
             )
+            raw_company_seq = data.get("next_company_seq", 0)
+            next_company_seq = int(raw_company_seq) if isinstance(raw_company_seq, (int, float)) else 0
             return PullResult(
                 state=data,
                 etag=response_etag,
                 sync_hints=sync_hints,
                 team_learnings=team_learnings,
                 status_code=resp.status_code,
+                next_company_seq=next_company_seq,
             )
         except Exception as exc:  # justified: boundary, remote sync pull failures must not break local workflows
             logger.warning(
@@ -305,6 +329,12 @@ class SyncPuller:
             if pull_seq is not None:
                 metadata["team_sync_pull_seq"] = str(pull_seq)
 
+            # PRD-INFRA-139 FR06: the server tags company-tier learnings with
+            # source=company_sync in metadata; team learnings carry no source
+            # tag. Preserve the distinction locally while merging via the same
+            # path. Defaults to team_sync, so existing behavior is unchanged.
+            sync_source = _resolve_sync_source(metadata)
+
             return MemoryEntry(
                 id=local_id,
                 remote_id=str(raw_learning.get("source_learning_id", "")).strip() or None,
@@ -315,9 +345,9 @@ class SyncPuller:
                 status=MemoryStatus(str(raw_learning.get("status", "active"))),
                 type=MemoryType(str(raw_learning.get("type", "pattern"))),
                 vector_clock=self._coerce_vector_clock(raw_learning.get("vector_clock")),
-                source="team_sync",
-                source_identity="team_sync",
-                client_profile="team_sync",
+                source=sync_source,
+                source_identity=sync_source,
+                client_profile=sync_source,
                 metadata=metadata,
             )
         except Exception:  # justified: boundary, malformed remote payload must fail open for that entry
@@ -343,11 +373,13 @@ class SyncPuller:
             metadata.update({str(key): str(value) for key, value in remote_metadata.items()})
         if pull_seq is not None:
             metadata["team_sync_pull_seq"] = str(pull_seq)
+        # FR06: honor the server-provided source tag (company_sync vs team_sync).
+        sync_source = _resolve_sync_source(metadata)
         return entry.model_copy(
             update={
-                "source": "team_sync",
-                "source_identity": "team_sync",
-                "client_profile": "team_sync",
+                "source": sync_source,
+                "source_identity": sync_source,
+                "client_profile": sync_source,
                 "remote_id": source_learning_id,
                 "metadata": metadata,
             }

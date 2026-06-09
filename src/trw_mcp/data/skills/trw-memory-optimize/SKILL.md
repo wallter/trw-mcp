@@ -17,25 +17,25 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
 
 ### Step 1: Audit first
 
-Run `/trw-memory-audit` or the trw-maintain audit command to understand the current state:
+Run `/trw-memory-audit` or the `trw-distill maintain audit` command to understand the current state:
 
 ```bash
-trw-maintain audit --trw-dir .trw --no-llm
+trw-distill maintain audit --trw-dir .trw --no-llm
 ```
 
 ### Step 2: Build optimization plan
 
-Use `trw-maintain optimize` to build a structured plan:
+Use `trw-distill maintain optimize` to build a structured plan:
 
 ```bash
 # Dry-run: show what would change
-trw-maintain optimize --trw-dir .trw --no-impact
+trw-distill maintain optimize --trw-dir .trw --no-impact
 
 # With LLM-powered impact assessment (requires Ollama + gemma4)
-trw-maintain optimize --trw-dir .trw --model gemma4:e2b
+trw-distill maintain optimize --trw-dir .trw --model gemma4:e2b
 
 # Machine-readable plan
-trw-maintain optimize --trw-dir .trw --format json
+trw-distill maintain optimize --trw-dir .trw --format json
 ```
 
 The plan identifies:
@@ -55,7 +55,7 @@ Show the plan and ask for confirmation before proceeding. The user should review
 
 ```bash
 # Apply the optimization plan
-trw-maintain optimize --trw-dir .trw --apply
+trw-distill maintain optimize --trw-dir .trw --apply
 ```
 
 Or apply selectively using `trw_learn_update()` for individual entries.
@@ -66,7 +66,7 @@ Call `trw_instructions_sync()` to refresh the client instruction file (client in
 
 ### Step 6: Report
 
-Run `trw-maintain audit` again and compare before/after:
+Run `trw-distill maintain audit` again and compare before/after:
 - Active entries: before → after
 - Entries made obsolete
 - Tags normalized

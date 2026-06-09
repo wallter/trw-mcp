@@ -32,6 +32,7 @@ from typing import Protocol, cast
 import structlog
 import yaml
 
+from trw_mcp.telemetry._tool_call_emit import ToolCallEmitContext, emit_tool_call_event
 from trw_mcp.telemetry.constants import EventType, Status
 from trw_mcp.telemetry.event_base import ToolCallEvent
 from trw_mcp.telemetry.trace_context import build_tool_trace_fields, new_trace_event_id
@@ -432,96 +433,31 @@ def wrap_tool(
                 logger.debug("tool_call_event_suppressed", tool=recorded_name, reason=error_class or "")
             else:
                 end_ts = datetime.now(tz=timezone.utc)
-                session_id = ""
-                run_id: str | None = None
-                resolved_run_dir: Path | None = None
-                surface_snapshot_id = ""
-                if session_id_resolver is not None:
-                    try:
-                        session_id = session_id_resolver()
-                    except Exception:  # justified: fail-open, session_id lookup must not re-raise
-                        session_id = ""
-                else:
-                    session_id = _resolve_session_id(fn, *args, **kwargs)
-                if run_dir_resolver is not None:
-                    try:
-                        resolved_run_dir = run_dir_resolver()
-                    except Exception:  # justified: fail-open
-                        resolved_run_dir = None
-                else:
-                    resolved_run_dir = _resolve_run_dir(fn, *args, **kwargs)
-                run_id = resolved_run_dir.name if resolved_run_dir is not None else None
-                surface_snapshot_id = _resolve_surface_snapshot_id(resolved_run_dir)
-                try:
-                    event = build_tool_call_event(
-                        tool=recorded_name,
+                emit_tool_call_event(
+                    ToolCallEmitContext(
+                        recorded_name=recorded_name,
+                        fn=fn,
+                        args=args,
+                        kwargs=kwargs,
+                        start=start,
                         start_ts=start_ts,
                         end_ts=end_ts,
-                        session_id=session_id,
-                        run_id=run_id,
-                        surface_snapshot_id=surface_snapshot_id,
                         outcome=outcome,
                         error_class=error_class,
+                        session_id_resolver=session_id_resolver,
+                        run_dir_resolver=run_dir_resolver,
+                        fallback_dir_resolver=fallback_dir_resolver,
+                        security_consult=security_consult,
+                        bind_call_args=_bind_call_args,
+                        build_tool_call_event=build_tool_call_event,
+                        enqueue_to_pipeline=_enqueue_to_pipeline,
+                        pipeline_projection=_pipeline_projection,
+                        resolve_fallback_dir=_resolve_fallback_dir,
+                        resolve_run_dir=_resolve_run_dir,
+                        resolve_session_id=_resolve_session_id,
+                        resolve_surface_snapshot_id=_resolve_surface_snapshot_id,
                     )
-                    # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96
-                    # carry-forward a): fires AFTER event construction but
-                    # BEFORE unified emit so any security telemetry side-effect
-                    # lands in the same run directory. Fail-open — the helper
-                    # swallows exceptions internally.
-                    if security_consult is not None:
-                        try:
-                            security_consult(
-                                recorded_name,
-                                _bind_call_args(fn, *args, **kwargs),
-                                session_id,
-                                run_id,
-                            )
-                        except Exception:  # justified: fail-open, consult must not block emit
-                            logger.debug(
-                                "tool_call_security_consult_failed",
-                                tool=recorded_name,
-                                exc_info=True,
-                            )
-                    # FR-4 dispatch: emit to the unified events file under
-                    # the active run (or the fallback dir). Fail-open.
-                    try:
-                        from trw_mcp.telemetry.unified_events import emit as _emit_unified
-
-                        run_dir: Path | None = None
-                        fallback_dir: Path | None = None
-                        run_dir = resolved_run_dir
-                        if fallback_dir_resolver is not None:
-                            try:
-                                fallback_dir = fallback_dir_resolver()
-                            except Exception:  # justified: fail-open
-                                fallback_dir = None
-                        else:
-                            fallback_dir = _resolve_fallback_dir()
-                        _emit_unified(event, run_dir=run_dir, fallback_dir=fallback_dir)
-                    except Exception:  # justified: fail-open, emit path must not block tool
-                        logger.debug("tool_call_event_emit_failed", tool=recorded_name, exc_info=True)
-
-                    # F2: the unified events file is NOT read by any telemetry
-                    # sender (pipeline reads pipeline-events.jsonl, sender reads
-                    # tool-telemetry.jsonl), so wrap_tool emissions never reached
-                    # PostgreSQL. Also enqueue a flat projection to the telemetry
-                    # pipeline — the same path @log_tool_call uses — so backend
-                    # telemetry_events rows are written. Fail-open.
-                    try:
-                        _enqueue_to_pipeline(_pipeline_projection(event))
-                    except Exception:  # justified: fail-open, enqueue must not block tool
-                        logger.debug("tool_call_pipeline_enqueue_failed", tool=recorded_name, exc_info=True)
-
-                    logger.debug(
-                        "tool_call_event_constructed",
-                        tool=recorded_name,
-                        wall_ms=max(0, int((end_ts - start_ts).total_seconds() * 1000)),
-                        outcome=outcome,
-                        error_class=error_class or "",
-                        elapsed_monotonic=round(time.monotonic() - start, 6),
-                    )
-                except Exception:  # justified: fail-open, event construction must not leak
-                    logger.warning("tool_call_timing_failed", tool=recorded_name, exc_info=True)
+                )
 
     return _mark_tool_call_wrapped(wrapper)
 

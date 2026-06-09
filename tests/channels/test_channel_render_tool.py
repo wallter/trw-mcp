@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from trw_mcp.tools.channel_render import compute_channel_render
-
 
 # ---------------------------------------------------------------------------
 # Helpers

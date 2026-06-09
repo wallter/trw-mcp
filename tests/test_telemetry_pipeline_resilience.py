@@ -16,6 +16,8 @@ from tests._telemetry_pipeline_support import (
 )
 from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
 
+from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
+
 
 class TestRetryWithBackoff:
     """HTTP sends retry up to max_retries times with backoff before failing."""

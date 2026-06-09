@@ -178,3 +178,87 @@ class TestOpenCodeJsonMerge:
         assert config["model"] == "ollama/qwen3-coder-next"
         assert "other" in config["mcp"]
         assert "trw" in config["mcp"]
+
+
+class TestOpenCodeJsonReadHardening:
+    """Hardening of the FR16 smart-merge read seam (_read_existing_opencode_config).
+
+    The reader must fail closed and content-free: malformed/unreadable input
+    returns an error result and leaves the user's file untouched, never crashes,
+    and never leaks raw file bytes (e.g. secret markers) into the result.
+    """
+
+    def test_jsonc_with_comments_smart_merges_and_preserves_user_keys(self, tmp_path: Path) -> None:
+        # Valid JSONC (line + block comments) must still smart-merge TRW while
+        # preserving the user's model / permission / other-server keys.
+        (tmp_path / "opencode.json").write_text(
+            "{\n"
+            "  // user picked a local model\n"
+            '  "model": "ollama/qwen3-coder-next",\n'
+            "  /* keep my strict perms */\n"
+            '  "permission": { "bash": "never" },\n'
+            '  "mcp": { "other": { "type": "remote", "url": "http://x" } }\n'
+            "}\n"
+        )
+        result = generate_opencode_config(tmp_path)
+        assert "opencode.json" in result["updated"]
+        assert result["errors"] == []
+        config = json.loads((tmp_path / "opencode.json").read_text())
+        assert config["model"] == "ollama/qwen3-coder-next"
+        assert config["permission"]["bash"] == "never"
+        assert "other" in config["mcp"]
+        assert "trw" in config["mcp"]
+
+    def test_non_utf8_existing_config_errors_and_leaves_bytes_unchanged(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "opencode.json"
+        original = b'{"model": "\xff\xfe invalid utf-8"}'
+        config_path.write_bytes(original)
+
+        # Must not raise UnicodeDecodeError.
+        result = generate_opencode_config(tmp_path)
+
+        assert result["errors"] == ["Failed to read opencode.json: non_utf8"]
+        assert result["updated"] == []
+        assert result["created"] == []
+        # Original bytes are preserved — the merge path never overwrote them.
+        assert config_path.read_bytes() == original
+
+    def test_top_level_non_object_errors_and_does_not_overwrite(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "opencode.json"
+        original = "[1, 2, 3]\n"
+        config_path.write_text(original, encoding="utf-8")
+
+        result = generate_opencode_config(tmp_path)
+
+        assert result["errors"] == ["Failed to read opencode.json: non_object"]
+        assert result["updated"] == []
+        # User's (array) document is left untouched — not overwritten with a template.
+        assert config_path.read_text(encoding="utf-8") == original
+
+    def test_malformed_json_with_secret_marker_is_content_free(self, tmp_path: Path) -> None:
+        secret = "S3CRET-TOKEN-do-not-leak-9f2a"
+        config_path = tmp_path / "opencode.json"
+        # Unterminated object -> JSONDecodeError. The secret sits in the payload.
+        config_path.write_text(f'{{ "api_key": "{secret}" ', encoding="utf-8")
+
+        import structlog
+
+        with structlog.testing.capture_logs() as logs:
+            result = generate_opencode_config(tmp_path)
+
+        assert result["errors"] == ["Failed to read opencode.json: malformed_json"]
+        assert result["updated"] == []
+        # The secret must not leak into the result errors or any captured log event.
+        joined_errors = " ".join(result["errors"])
+        assert secret not in joined_errors
+        assert secret not in str(logs)
+
+    def test_unreadable_existing_config_errors_without_crash(self, tmp_path: Path) -> None:
+        # A directory at opencode.json makes read_bytes() raise OSError (IsADirectory).
+        (tmp_path / "opencode.json").mkdir()
+
+        result = generate_opencode_config(tmp_path)
+
+        assert result["errors"] == ["Failed to read opencode.json: unreadable"]
+        assert result["updated"] == []
+        assert result["created"] == []

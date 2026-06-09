@@ -10,6 +10,8 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_helpers import handle_auto_mode
 from ._review_helpers_support import run_dir  # noqa: F401
 
+from ._review_helpers_support import run_dir  # noqa: F401
+
 
 class TestHandleAutoMode:
     """handle_auto_mode: artifact writes and no-run behavior."""

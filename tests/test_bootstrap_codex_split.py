@@ -93,6 +93,68 @@ class TestCodexBootstrap:
             entry.get("description", "").startswith("TRW managed:") for entry in hooks["hooks"]["UserPromptSubmit"]
         )
 
+    def test_codex_hooks_non_utf8_existing_fails_closed(self, tmp_path: Path) -> None:
+        """A non-UTF-8 existing hooks.json must not crash and must be preserved.
+
+        ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError`` (a
+        ``ValueError``, not an ``OSError``), so the prior reader let it escape
+        uncaught. The hardened reader fails closed: structural error, file
+        bytes untouched so the user can recover their hooks.
+        """
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        hooks_path = codex_dir / "hooks.json"
+        original_bytes = b"\xff\xfe not valid utf-8 \x80\x81"
+        hooks_path.write_bytes(original_bytes)
+
+        result = generate_codex_hooks(tmp_path)
+
+        assert ".codex/hooks.json" not in result["created"]
+        assert ".codex/hooks.json" not in result.get("updated", [])
+        assert any(".codex/hooks.json" in err for err in result["errors"])
+        # File left byte-for-byte untouched (user hooks preserved for recovery).
+        assert hooks_path.read_bytes() == original_bytes
+
+    def test_codex_hooks_malformed_existing_fails_closed(self, tmp_path: Path) -> None:
+        """A malformed existing hooks.json fails closed without leaking content."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        hooks_path = codex_dir / "hooks.json"
+        secret = "SUPER_SECRET_TOKEN_should_not_leak"
+        hooks_path.write_text('{"hooks": ' + secret, encoding="utf-8")
+
+        result = generate_codex_hooks(tmp_path)
+
+        assert any(".codex/hooks.json" in err for err in result["errors"])
+        # Diagnostics are structural/content-free: the payload never leaks.
+        assert all(secret not in err for err in result["errors"])
+        assert hooks_path.read_text(encoding="utf-8") == '{"hooks": ' + secret
+
+    def test_codex_hooks_non_object_existing_fails_closed(self, tmp_path: Path) -> None:
+        """A top-level JSON array hooks.json fails closed and is preserved."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        hooks_path = codex_dir / "hooks.json"
+        hooks_path.write_text("[1, 2, 3]\n", encoding="utf-8")
+
+        result = generate_codex_hooks(tmp_path)
+
+        assert any(".codex/hooks.json" in err for err in result["errors"])
+        assert hooks_path.read_text(encoding="utf-8") == "[1, 2, 3]\n"
+
+    def test_codex_hooks_force_overwrites_corrupt_existing(self, tmp_path: Path) -> None:
+        """``force=True`` ignores the existing file and writes the TRW payload."""
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        hooks_path = codex_dir / "hooks.json"
+        hooks_path.write_bytes(b"\xff\xfe garbage")
+
+        result = generate_codex_hooks(tmp_path, force=True)
+
+        assert ".codex/hooks.json" in result["updated"]
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+        assert "Stop" in hooks["hooks"]
+
     def test_codex_agents_created(self, tmp_path: Path) -> None:
         result = generate_codex_agents(tmp_path)
         assert ".codex/agents/trw-explorer.toml" in result["created"]

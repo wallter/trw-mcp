@@ -11,6 +11,8 @@ from tests._test_cli_auth_support import _DeviceAuthHandler
 from trw_mcp.cli.auth import _post_json, device_auth_login
 from ._test_cli_auth_support import _reset_handler, mock_server  # noqa: F401
 
+from ._test_cli_auth_support import _reset_handler, mock_server  # noqa: F401
+
 
 class TestPostJson:
     def test_success(self, mock_server: str) -> None:

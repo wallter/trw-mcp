@@ -29,6 +29,7 @@ from trw_mcp.models.agent_work_evidence import (
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.run import RunState
 from trw_mcp.state import _paths
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.report import parse_run_events
 
@@ -50,7 +51,12 @@ def assemble_agent_work_evidence(
     run_data = state_reader.read_yaml(meta_path / "run.yaml")
     run_state = RunState.model_validate(run_data)
     events_path = meta_path / "events.jsonl"
-    events = state_reader.read_jsonl(events_path) if events_path.exists() else []
+    # Advisory read: events are a supplementary summary. A single torn concurrent
+    # append must not abort the whole evidence export, so use the resilient
+    # full-scan reader (drops corrupt lines) rather than the strict read_jsonl
+    # (raises StateError on the first malformed line). The structural backbone
+    # (run.yaml above) stays strict.
+    events = read_jsonl_resilient(events_path)
     event_summary_model, _, duration, _ = parse_run_events(events)
     warnings: list[str] = []
     verification = _assemble_verification(run_path, state_reader, warnings)
@@ -67,7 +73,7 @@ def assemble_agent_work_evidence(
         agent=AgentInfo(agent_id=run_state.owner_session_id or "unknown", role="implementer"),
         timestamps=EvidenceTimestamps(started_at=duration.start_ts or "", generated_at=generated_at),
         intent=run_state.objective,
-        plan_summary=f"checkpoint_count={_checkpoint_count(meta_path, state_reader)}; event_count={len(events)}",
+        plan_summary=f"checkpoint_count={_checkpoint_count(meta_path)}; event_count={len(events)}",
         changed_files=changed_files,
         verification=verification,
         review=_assemble_review(run_path, state_reader),
@@ -305,9 +311,10 @@ def _generated_at(events: list[dict[str, object]], verification: VerificationEvi
     return "unknown"
 
 
-def _checkpoint_count(meta_path: Path, reader: FileStateReader) -> int:
+def _checkpoint_count(meta_path: Path) -> int:
+    # Advisory count: resilient to a torn concurrent append (see events read above).
     checkpoints_path = meta_path / "checkpoints.jsonl"
-    return len(reader.read_jsonl(checkpoints_path)) if checkpoints_path.exists() else 0
+    return len(read_jsonl_resilient(checkpoints_path))
 
 
 def _infer_trw_dir(run_path: Path) -> Path:

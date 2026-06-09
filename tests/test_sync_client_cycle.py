@@ -54,6 +54,68 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_company_entries_do_not_advance_org_pull_cursor(tmp_path) -> None:
+    """PRD-INFRA-139 P1-B: company rows page on their OWN cursor, not the org's.
+
+    A company-tier entry (source=company_sync) rides in team_learnings with a
+    high per-company sync_seq. It must NOT be folded into the org pull_seq (that
+    is the disjoint-cursor bug that hid company rows); the org cursor advances
+    only on the org's own team rows, while the company cursor advances from the
+    server's advertised next_company_seq.
+    """
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(_make_config(), tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 4
+    client._coordinator.get_last_company_pull_seq.return_value = 1
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            team_learnings=[
+                {"source_learning_id": "team-1", "sync_seq": 6},
+                # Company row with a high per-company seq that must NOT poison org cursor.
+                {
+                    "source_learning_id": "co-1",
+                    "sync_seq": 999,
+                    "metadata": {"source": "company_sync", "company_seq": 999},
+                },
+            ],
+            sync_hints={},
+            status_code=200,
+            next_company_seq=3,
+        )
+    )
+    client._puller.merge_team_learnings.return_value = 2
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+
+    await client._run_one_cycle()
+
+    # The pull request carried the independent company cursor.
+    _, kwargs = client._puller.pull_intel_state.call_args
+    assert kwargs["since_company_seq"] == 1
+
+    # Org cursor advanced to the org row's seq (6), NOT the company seq (999).
+    client._coordinator.record_sync_success.assert_called_once_with(
+        pushed=0,
+        pulled=2,
+        push_seq=0,
+        pull_seq=6,
+        pull_completed=True,
+    )
+    # Company cursor advanced independently from the server's next_company_seq.
+    client._coordinator.record_company_pull_seq.assert_called_once_with(3)
+
+
+@pytest.mark.asyncio
 async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """Local scans/bookkeeping must not block foreground MCP requests."""
     from trw_mcp.sync import client as sync_client

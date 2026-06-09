@@ -14,6 +14,8 @@ from trw_mcp.state.memory_adapter import (
 )
 from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_edge_support import trw_dir  # noqa: F401
+
 
 class TestEmbedText:
     def test_returns_none_when_embedder_unavailable(self) -> None:

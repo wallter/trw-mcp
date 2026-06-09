@@ -23,20 +23,29 @@ from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._call_context import build_call_context as _build_call_context
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
     pin_active_run,
     resolve_project_root,
     resolve_run_path,
 )
 from trw_mcp.state.analytics._stale_runs import count_stale_runs
-from trw_mcp.state.artifact_scanner import scan_artifacts
-from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
-from trw_mcp.tools._orchestration_helpers import _deploy_frameworks, _deploy_templates, _get_bundled_file
+from trw_mcp.tools._orchestration_helpers import (
+    _deploy_frameworks,
+    _deploy_templates,
+    _get_bundled_file,
+    _log_init_events,
+    _scan_init_artifacts,
+)
 from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
     _compute_last_activity_ts,
     _compute_reflection_metrics,
+)
+from trw_mcp.tools._orchestration_lifecycle import (
+    _phase_duration_summary as _phase_duration_summary,
 )
 from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness,
@@ -46,35 +55,6 @@ from trw_mcp.tools._orchestration_phase import (
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-_events = FileEventLogger(FileStateWriter())
-
-
-def _phase_duration_summary(events: list[dict[str, object]], current_phase: str) -> dict[str, object]:
-    """Summarize phase transition timestamps and active phase duration."""
-    phase_entries: list[tuple[str, datetime]] = []
-    for event in events:
-        if event.get("event") != "phase_enter":
-            continue
-        phase = str(event.get("phase", ""))
-        ts_raw = str(event.get("ts", ""))
-        try:
-            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        phase_entries.append((phase, ts.astimezone(timezone.utc)))
-    phase_entries.sort(key=lambda item: item[1])
-    durations: dict[str, float] = {}
-    for index, (phase, started_at) in enumerate(phase_entries):
-        ended_at = phase_entries[index + 1][1] if index + 1 < len(phase_entries) else datetime.now(timezone.utc)
-        durations[phase] = round(max(0.0, (ended_at - started_at).total_seconds()), 3)
-    active_started_at = phase_entries[-1][1].isoformat() if phase_entries else ""
-    return {
-        "active_phase": current_phase,
-        "active_started_at": active_started_at,
-        "phase_seconds": durations or {current_phase: 0.0},
-        "transition_count": len(phase_entries),
-    }
 
 
 def __getattr__(name: str) -> object:
@@ -276,30 +256,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         # PRD-CORE-106: Scan artifacts for knowledge requirements
         if resolved_artifacts:
-            try:
-                kr = scan_artifacts(resolved_artifacts)
-                # Write scanned knowledge requirements alongside run.yaml
-                kr_data: dict[str, object] = {
-                    "learning_ids": sorted(kr.learning_ids),
-                    "domains": sorted(kr.domains),
-                    "checks": kr.checks,
-                    "research_notes": kr.research_notes,
-                    "prd_references": sorted(kr.prd_references),
-                    "phase_requirements": kr.phase_requirements,
-                }
-                writer.write_yaml(
-                    run_root / "meta" / "knowledge_requirements.yaml",
-                    kr_data,
-                )
-                logger.info(
-                    "artifact_scan_complete",
-                    run_id=run_id,
-                    artifact_count=len(resolved_artifacts),
-                    domains=len(kr.domains),
-                    learning_ids=len(kr.learning_ids),
-                )
-            except Exception:  # justified: fail-open, artifact scanning must not block run init
-                logger.warning("artifact_scan_failed", run_id=run_id, exc_info=True)
+            _scan_init_artifacts(writer, run_root, resolved_artifacts, run_id)
 
         # Pin this run as the active run for this process (RC-001 fix).
         # Prevents telemetry hijack when parallel instances share filesystem.
@@ -308,38 +265,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
         pin_active_run(run_root, context=_build_call_context(ctx))
 
         events_jsonl_path = run_root / "meta" / "events.jsonl"
-        _events.log_event(
+        _log_init_events(
             events_jsonl_path,
-            "run_init",
-            {"task": task_name, "framework": config.framework_version},
+            task_name=task_name,
+            framework_version=config.framework_version,
+            task_type=resolved_task_type,
+            detection_method=detection.detection_method,
+            rationale=detection.rationale,
+            recall_policy=task_profile.recall_policy,
         )
-
-        # PRD-CORE-184-FR05: observability — emit a task_type_detected event so
-        # eval campaigns can stratify by task type without parsing run.yaml.
-        try:
-            _events.log_event(
-                events_jsonl_path,
-                "task_type_detected",
-                {
-                    "task_type": resolved_task_type,
-                    "detection_method": detection.detection_method,
-                    "rationale": detection.rationale,
-                    "recall_policy": task_profile.recall_policy,
-                },
-            )
-        except Exception:  # justified: fail-open, observability event must not block init
-            logger.debug("task_type_detected_event_skipped", exc_info=True)
-
-        # PRD-QUAL-050-FR03: always record a session_start boundary here;
-        # a later explicit trw_session_start supersedes it.
-        try:
-            _events.log_event(
-                events_jsonl_path,
-                "session_start",
-                {"source": "trw_init", "run_detected": True, "query": "*"},
-            )
-        except Exception:  # justified: fail-open, session boundary must not block run init
-            logger.debug("init_session_start_event_skipped", exc_info=True)
 
         logger.info(
             "run_init_ok",
@@ -418,8 +352,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if wave_manifest_path.exists():
             wave_data = reader.read_yaml(wave_manifest_path)
 
+        # events.jsonl feeds only advisory analytics here (event_count,
+        # reflection, phase_durations, reversions); authoritative state is the
+        # run.yaml read above. A torn concurrent append must drop that one line,
+        # not StateError-abort status (invoked on every resume) — so use the
+        # resilient reader, matching the _do_reflect / collect_reflection_inputs
+        # seams over this same log, not strict FileStateReader.read_jsonl.
         events_path = meta_path / "events.jsonl"
-        events = reader.read_jsonl(events_path)
+        events = read_jsonl_resilient(events_path)
 
         result: TrwStatusDict = {
             "run_id": str(state_data.get("run_id", "unknown")),

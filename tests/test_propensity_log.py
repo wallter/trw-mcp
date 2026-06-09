@@ -276,18 +276,32 @@ class TestReadPropensityEntries:
         assert entries == []
 
     def test_handles_mixed_valid_invalid_lines(self, tmp_path: Path) -> None:
-        """Gracefully handles files with some invalid lines."""
+        """A corrupt line is skipped; valid entries around it are preserved.
+
+        Regression: the reader previously wrapped one list comprehension in a
+        single try/except, so a single torn line wiped every valid entry. The
+        per-line recovery in read_jsonl_tail keeps the good rows.
+        """
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         log_dir = trw_dir / "logs"
         log_dir.mkdir()
         valid_entry = json.dumps({"selected": "L-1", "timestamp": "2026-01-01T00:00:00+00:00"})
         (log_dir / "propensity.jsonl").write_text(f"{valid_entry}\nbad line\n")
-        # This may return empty or partial based on implementation
-        # The fail-open behavior returns [] on any parse error
         entries = read_propensity_entries(trw_dir)
-        # Either returns partial or empty - both are acceptable fail-open behaviors
-        assert isinstance(entries, list)
+        assert [e["selected"] for e in entries] == ["L-1"]
+
+    def test_corrupt_line_between_valid_entries_preserves_both(self, tmp_path: Path) -> None:
+        """A broken line wedged between two valid entries drops only the broken one."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_dir = trw_dir / "logs"
+        log_dir.mkdir()
+        a = json.dumps({"selected": "L-a", "timestamp": "2026-01-01T00:00:00+00:00"})
+        b = json.dumps({"selected": "L-b", "timestamp": "2026-01-02T00:00:00+00:00"})
+        (log_dir / "propensity.jsonl").write_text(f"{a}\n{{half written\n{b}\n")
+        entries = read_propensity_entries(trw_dir)
+        assert [e["selected"] for e in entries] == ["L-a", "L-b"]
 
 
 class TestPropensityEntrySchema:

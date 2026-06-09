@@ -82,12 +82,22 @@ def _log_terminal_recovery(db_path: Path, exc: CorruptDatabaseUnsalvageableError
     )
 
 
-def _schedule_post_recovery_backfill(trw_dir: Path) -> bool:
-    """Start a background embeddings backfill thread after recovery, if one is not already running.
+def _schedule_post_recovery_backfill(trw_dir: Path, reason: str = "post_recovery") -> bool:
+    """Start a background embeddings backfill thread, if one is not already running.
 
     PRD-FIX-COMPOUNDING-3-FR01: Called from get_backend() when backend.recovered==True
     and from _memory_recovery._recover_and_reset_backend(). Mirrors the
     _RECOVERY_THREAD guard pattern in _memory_recovery.py.
+
+    PRD-FIX-105-FR03: Also called from run_auto_maintenance() with
+    reason="low_coverage" when boot-time coverage is below threshold even though
+    this boot is not a fresh recovery — the single-flight ``_BACKFILL_LOCK`` guard
+    makes the trigger idempotent across both callers. Runs on a daemon thread so it
+    never blocks the ``trw_session_start`` hot path.
+
+    Args:
+        trw_dir: Path to the ``.trw`` directory.
+        reason: Structured-log tag for the trigger ("post_recovery" or "low_coverage").
 
     Returns:
         True if a new backfill thread was started, False if one was already running.
@@ -110,7 +120,7 @@ def _schedule_post_recovery_backfill(trw_dir: Path) -> bool:
             logger.warning(
                 "embeddings_backfill_already_running",
                 trw_dir=str(trw_dir),
-                reason="post_recovery",
+                reason=reason,
             )
             return False
         thread = threading.Thread(
@@ -124,7 +134,7 @@ def _schedule_post_recovery_backfill(trw_dir: Path) -> bool:
     logger.warning(
         "embeddings_backfill_scheduled",
         trw_dir=str(trw_dir),
-        reason="post_recovery",
+        reason=reason,
     )
     return True
 

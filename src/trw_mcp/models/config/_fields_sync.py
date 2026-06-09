@@ -43,6 +43,32 @@ class _SyncFields:
         description="Hours since last successful push before sync_health marks degraded.",
     )
 
+    # -- Pipeline-health enforcement gate (PRD-FIX-107 FR06) --
+    # "Enforce, don't suggest": the fail-closed gate that surfaces push
+    # staleness, an empty knowledge graph, or a localhost-only sync target so a
+    # silent compounding-pipeline outage can never recur. Env-overridable via
+    # TRW_PIPELINE_HEALTH_GATE_ENABLED / TRW_PIPELINE_HEALTH_GATE_FAILURE_THRESHOLD /
+    # TRW_PIPELINE_HEALTH_GATE_STALE_HOURS / TRW_PIPELINE_HEALTH_GATE_GRAPH_MIN_CORPUS.
+    pipeline_health_gate_enabled: bool = Field(
+        default=True,
+        description="Master kill switch for the FR06 fail-closed pipeline-health gate.",
+    )
+    pipeline_health_gate_failure_threshold: int = Field(
+        default=10,
+        ge=1,
+        description="Consecutive push failures before the FR06 gate fails closed.",
+    )
+    pipeline_health_gate_stale_hours: float = Field(
+        default=6.0,
+        ge=0.1,
+        description="Hours since last successful push before the FR06 gate fails closed.",
+    )
+    pipeline_health_gate_graph_min_corpus: int = Field(
+        default=10,
+        ge=1,
+        description="Minimum memories before an empty knowledge graph fails the FR06 gate.",
+    )
+
     # -- Pipeline-health bandit probe (PRD-FIX-105-FR02) --
     # The bandit_state.json file is written by the BACKEND meta-tune policy
     # (backend/services/bandit_policy.py), NOT by the MCP runtime. In a dev repo

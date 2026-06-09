@@ -7,7 +7,7 @@ import os
 import pytest
 
 from tests._ceremony_feedback_support import FeedbackEnv
-from tests._ceremony_feedback_support import feedback_env as feedback_env  # noqa: F401
+from tests._ceremony_feedback_support import feedback_env as feedback_env
 from trw_mcp.state.ceremony_feedback import (
     TaskClass,
     _derive_agent_id,

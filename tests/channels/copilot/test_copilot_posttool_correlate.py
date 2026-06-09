@@ -12,10 +12,8 @@ Covers:
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # P1-22 — graceful handling of empty / missing / malformed logs

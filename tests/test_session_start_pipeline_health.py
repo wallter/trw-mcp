@@ -10,7 +10,7 @@ without field collision.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 def _degraded_health_result(signals: list[str] | None = None) -> dict[str, object]:

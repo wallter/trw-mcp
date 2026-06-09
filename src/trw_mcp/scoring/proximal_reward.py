@@ -58,15 +58,75 @@ def detect_proximal_signals(
     return signals
 
 
+def _parse_event_line(
+    line: str,
+    *,
+    events_path: Path,
+    line_number: int,
+) -> dict[str, object] | None:
+    """Parse one JSONL line into an event dict, or ``None`` if unusable.
+
+    Implementation seam behind the fail-open :func:`read_recent_events`
+    Interface: a corrupt or non-object line is skipped (not raised) so it
+    cannot discard valid neighbours in the recent window. Skips emit a
+    structured ``proximal_reward.event_line_skipped`` event carrying only the
+    path, line number, and error class — never the line contents or parsed
+    payload — so corruption is observable without leaking event data.
+    """
+    if not line.strip():
+        return None
+    try:
+        parsed = json.loads(line)
+    except ValueError as exc:  # JSONDecodeError is a ValueError subclass
+        logger.warning(
+            "proximal_reward.event_line_skipped",
+            path=str(events_path),
+            line_number=line_number,
+            error_class=type(exc).__name__,
+        )
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "proximal_reward.event_line_skipped",
+            path=str(events_path),
+            line_number=line_number,
+            error_class="NonObjectJSON",
+        )
+        return None
+    return parsed
+
+
 def read_recent_events(events_path: Path, max_events: int = 200) -> list[dict[str, object]]:
-    """Read most recent events from events.jsonl. Fail-open."""
+    """Read most recent events from events.jsonl. Fail-open.
+
+    Interface contract: always returns a list and never raises. A missing file
+    or a file-level read/decode failure yields ``[]``; an individual malformed
+    JSONL line is skipped (see :func:`_parse_event_line`) without dropping the
+    valid records in the selected recent window.
+    """
     if not events_path.exists():
         return []
     try:
-        lines = events_path.read_text(encoding="utf-8").strip().split("\n")
-        return [json.loads(line) for line in lines[-max_events:] if line.strip()]
-    except Exception:  # justified: fail-open for resilience
+        raw = events_path.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:  # trw:intentional fail-open; UnicodeDecodeError is ValueError
+        logger.warning(
+            "proximal_reward.event_file_unreadable",
+            path=str(events_path),
+            error_class=type(exc).__name__,
+        )
         return []
+    lines = raw.strip().split("\n")
+    window = lines[-max_events:]
+    # Line numbers are 1-based against the post-strip line list, not the slice.
+    base = len(lines) - len(window)
+    events: list[dict[str, object]] = []
+    for offset, line in enumerate(window):
+        parsed = _parse_event_line(
+            line, events_path=events_path, line_number=base + offset + 1
+        )
+        if parsed is not None:
+            events.append(parsed)
+    return events
 
 
 __all__ = ["ProximalSignal", "detect_proximal_signals", "read_recent_events"]

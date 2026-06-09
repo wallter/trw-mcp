@@ -12,6 +12,11 @@ from trw_mcp.tools.checkpoint import _do_checkpoint
 from ._tools_ceremony_support import trw_project  # noqa: F401
 from ._tools_ceremony_support import run_dir  # noqa: F401
 
+from ._tools_ceremony_support import (
+    run_dir,  # noqa: F401
+    trw_project,  # noqa: F401
+)
+
 
 class TestFindActiveRun:
     """Helper function for locating active runs."""
@@ -98,6 +103,46 @@ class TestDoReflect:
         result = _do_reflect(trw_dir, run_dir)
         assert result["status"] == "success"
         assert result["events_analyzed"] == 2
+
+    def test_torn_line_does_not_abort_reflection(
+        self,
+        trw_project: Path,
+        run_dir: Path,
+    ) -> None:
+        """A single torn/corrupt line in events.jsonl must not erase all learnings.
+
+        Append-only events.jsonl can carry a torn concurrent append (two writers
+        interleaving a partial record). The delivery reflection seam must degrade
+        to "drop that one line", not abort the whole read and lose every
+        mechanically extracted learning. Mirrors the resilient reader already used
+        on this same log by ``agent_work_evidence`` (regression guard).
+        """
+        events_path = run_dir / "meta" / "events.jsonl"
+        valid_before = {
+            "ts": "2026-02-11T12:00:00Z",
+            "event": "build_error",
+            "data": {"msg": "compile failed"},
+        }
+        valid_after = {
+            "ts": "2026-02-11T12:02:00Z",
+            "event": "validation_failure",
+            "data": {"msg": "tests red"},
+        }
+        # Middle line is a torn append: valid JSON prefix, truncated mid-object.
+        events_path.write_text(
+            json.dumps(valid_before) + "\n" + '{"ts": "2026-02-11T12:01:00Z", "event": "tor\n' + json.dumps(valid_after) + "\n",
+            encoding="utf-8",
+        )
+        trw_dir = trw_project / ".trw"
+
+        # Before the fix this raised StateError, aborting delivery reflection.
+        result = _do_reflect(trw_dir, run_dir)
+
+        assert result["status"] == "success"
+        # Only the two intact lines survive; the torn line is dropped, not fatal.
+        assert result["events_analyzed"] == 2
+        # Both surviving lines are error events → mechanical learnings extracted.
+        assert result["learnings_produced"] >= 1
 
     def test_no_telemetry_noise_learnings_from_success_patterns(
         self,

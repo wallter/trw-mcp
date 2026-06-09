@@ -60,6 +60,24 @@ class TestDaysSinceAccessEdgeCases:
         result = _days_since_access(entry, today)
         assert result == 1
 
+    def test_datetime_string_with_time_component_parsed(self) -> None:
+        """Full datetime strings (ISO 8601 with T separator) are accepted.
+
+        Before the fix, date.fromisoformat('2026-02-28T12:00:00+00:00') raised
+        ValueError on Python 3.12. Now datetime.fromisoformat handles these.
+        """
+        today = date(2026, 3, 1)
+        entry: dict[str, object] = {"last_accessed_at": "2026-02-28T12:00:00+00:00"}
+        result = _days_since_access(entry, today)
+        assert result == 1
+
+    def test_datetime_string_utc_z_suffix_parsed(self) -> None:
+        """ISO 8601 UTC 'Z' suffix is normalised before parsing."""
+        today = date(2026, 3, 1)
+        entry: dict[str, object] = {"created": "2026-02-27T00:00:00Z"}
+        result = _days_since_access(entry, today)
+        assert result == 2
+
 
 class TestEntryUtilityEdgeCases:
     """Edge cases for _entry_utility composite scoring."""

@@ -72,11 +72,16 @@ def _search_intersect_keywords(
     tags: list[str] | None,
     mem_status: MemoryStatus | None,
     min_impact: float,
+    namespace: str | None = _NAMESPACE,
 ) -> list[MemoryEntry]:
     """Search for entries matching keyword tokens (union with match-count ranking).
 
     Entries matching more tokens rank higher.  Falls back gracefully when some
     tokens match nothing (unlike strict AND which returns empty on any miss).
+
+    ``namespace`` defaults to the project namespace; pass ``None`` to search all
+    namespaces in a backend (used to query the user-tier store, whose entries
+    live under ``user:<id>`` -- PRD-CORE-185 FR06).
     """
     entry_map: dict[str, MemoryEntry] = {}
     match_counts: dict[str, int] = {}
@@ -88,7 +93,7 @@ def _search_intersect_keywords(
             tags=tags,
             status=mem_status,
             min_importance=min_impact,
-            namespace=_NAMESPACE,
+            namespace=namespace,
         )
         for e in token_results:
             if e.id not in entry_map:
@@ -112,6 +117,7 @@ def _keyword_search(
     tags: list[str] | None = None,
     mem_status: MemoryStatus | None = None,
     min_impact: float = 0.0,
+    namespace: str | None = _NAMESPACE,
 ) -> list[MemoryEntry]:
     """Multi-token keyword search with learning-ID direct lookup.
 
@@ -119,6 +125,9 @@ def _keyword_search(
     ``backend.get()`` (O(1) primary-key lookup).  Remaining keyword tokens
     use intersection search (entry must match ALL keyword tokens).  The two
     result sets are unioned (IDs first, then keyword matches) and deduped.
+
+    ``namespace`` defaults to the project namespace; pass ``None`` to search all
+    namespaces in a backend (user-tier federation, PRD-CORE-185 FR06).
     """
     tokens = query.split()
     if len(tokens) <= 1:
@@ -136,7 +145,7 @@ def _keyword_search(
             tags=tags,
             status=mem_status,
             min_importance=min_impact,
-            namespace=_NAMESPACE,
+            namespace=namespace,
         )
 
     # Partition tokens into learning IDs and keyword terms
@@ -160,7 +169,7 @@ def _keyword_search(
                 tags=tags,
                 status=mem_status,
                 min_importance=min_impact,
-                namespace=_NAMESPACE,
+                namespace=namespace,
             )
         else:
             kw_entries = _search_intersect_keywords(
@@ -170,6 +179,7 @@ def _keyword_search(
                 tags,
                 mem_status,
                 min_impact,
+                namespace=namespace,
             )
 
     # Union: ID lookups first, then keyword results (deduped)
@@ -191,6 +201,7 @@ def _search_entries(
     mem_status: MemoryStatus | None = None,
     min_impact: float = 0.0,
     allow_cold_embedding_init: bool = True,
+    namespace: str | None = _NAMESPACE,
 ) -> list[MemoryEntry]:
     """Search entries using hybrid (keyword + vector RRF) or keyword fallback.
 
@@ -215,6 +226,7 @@ def _search_entries(
         tags=tags,
         mem_status=mem_status,
         min_impact=min_impact,
+        namespace=namespace,
     )
 
     # Try vector search when embedder is available. Route between cold-init

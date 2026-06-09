@@ -21,7 +21,6 @@ from trw_mcp.channels._conflict import (
 )
 from trw_mcp.channels._manifest_models import HumanEditDetection, MarkersConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -349,7 +348,7 @@ def test_write_atomic_creates_file(tmp_path: Path) -> None:
     assert target.exists()
     assert target.read_text(encoding="utf-8") == "hello world"
     assert entry.sha == _sha256("hello world")
-    assert entry.bytes_written == len("hello world".encode("utf-8"))
+    assert entry.bytes_written == len(b"hello world")
 
 
 def test_write_atomic_appends_to_log(tmp_path: Path) -> None:

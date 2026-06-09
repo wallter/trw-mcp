@@ -34,7 +34,7 @@ class TestHydrateFilesModified:
 
         state = CeremonyState()
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=run_dir):
             _hydrate_files_modified(state, trw)
 
         assert state.files_modified_since_checkpoint == 3
@@ -58,17 +58,17 @@ class TestHydrateFilesModified:
 
         state = CeremonyState(last_checkpoint_ts="2026-01-01T03:00:00Z")
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=run_dir):
             _hydrate_files_modified(state, trw)
 
         assert state.files_modified_since_checkpoint == 1
 
     def test_hydrate_files_modified_failopen_no_run(self, tmp_path: Path) -> None:
-        """No exception when find_active_run returns None (no active run)."""
+        """No exception when find_run_via_mtime_scan returns None (no active run)."""
         trw = _trw_dir(tmp_path)
         state = CeremonyState()
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=None):
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=None):
             _hydrate_files_modified(state, trw)
 
         assert state.files_modified_since_checkpoint == 0
@@ -81,10 +81,38 @@ class TestHydrateFilesModified:
 
         state = CeremonyState()
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=run_dir):
             _hydrate_files_modified(state, trw)
 
         assert state.files_modified_since_checkpoint == 0
+
+    def test_hydrate_files_modified_tolerates_torn_events_line(self, tmp_path: Path) -> None:
+        """A torn concurrent append drops one line, not the whole tally.
+
+        events.jsonl is an append-only advisory log here; the file-modified
+        count is best-effort. The strict ``read_jsonl`` raised ``StateError`` on
+        the first malformed line, which the fail-open wrapper swallowed by
+        leaving the count at 0 — so one torn append zeroed the whole tally. The
+        resilient reader skips just the torn row, so the intact file_modified
+        events are still counted (regression guard).
+        """
+        trw = _trw_dir(tmp_path)
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260501T000000Z-torn"
+        (run_dir / "meta").mkdir(parents=True)
+        events_path = run_dir / "meta" / "events.jsonl"
+
+        intact_a = json.dumps({"type": "file_modified", "ts": "2026-01-01T01:00:00Z", "path": "a.py"})
+        torn = '{"type": "file_modified", "ts": "2026-01-01T02:00:00Z", "path": "tor'  # truncated
+        intact_b = json.dumps({"type": "file_modified", "ts": "2026-01-01T03:00:00Z", "path": "b.py"})
+        events_path.write_text(intact_a + "\n" + torn + "\n" + intact_b + "\n", encoding="utf-8")
+
+        state = CeremonyState()
+
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=run_dir):
+            _hydrate_files_modified(state, trw)
+
+        # The torn middle line is dropped; both intact file_modified events count.
+        assert state.files_modified_since_checkpoint == 2
 
     def test_hydrate_files_modified_only_counts_file_modified_type(self, tmp_path: Path) -> None:
         """Events with other types are not counted."""
@@ -105,7 +133,7 @@ class TestHydrateFilesModified:
 
         state = CeremonyState()
 
-        with patch("trw_mcp.state._paths.find_active_run", return_value=run_dir):
+        with patch("trw_mcp.state._paths.find_run_via_mtime_scan", return_value=run_dir):
             _hydrate_files_modified(state, trw)
 
         assert state.files_modified_since_checkpoint == 0

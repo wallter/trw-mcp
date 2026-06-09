@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from trw_mcp.bootstrap._gemini import _GEMINI_AGENTS_DIR, generate_gemini_agents
+
 from ._gemini_test_support import fake_git_repo  # noqa: F401
 
 

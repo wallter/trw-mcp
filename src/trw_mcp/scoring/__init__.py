@@ -80,10 +80,10 @@ from trw_mcp.scoring._decay import (
 from trw_mcp.scoring._decay import (
     apply_impact_decay as apply_impact_decay,
 )
-from trw_mcp.scoring._decay import (
+from trw_mcp.scoring._distribution import (
     compute_impact_distribution as compute_impact_distribution,
 )
-from trw_mcp.scoring._decay import (
+from trw_mcp.scoring._distribution import (
     enforce_tier_distribution as enforce_tier_distribution,
 )
 from trw_mcp.scoring._recall import (

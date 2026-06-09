@@ -10,6 +10,8 @@ from trw_memory.models.memory import MemoryEntry
 from trw_mcp.state.memory_adapter import backfill_embeddings, get_backend, store_learning
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
 
 class TestBackfillEmbeddings:
     def test_no_embedder_returns_zeros(self, trw_dir: Path) -> None:

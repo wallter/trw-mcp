@@ -177,12 +177,17 @@ def test_decay_accepts_entry_iterator() -> None:
 
     Verifies FR06: compute_impact_distribution delegates I/O to _io_boundary.
     """
-    decay_src = _SCORING_DIR / "_decay.py"
-    content = decay_src.read_text(encoding="utf-8")
-    assert "iter_yaml_entry_files" not in content, "_decay.py still references iter_yaml_entry_files (FR06 violation)"
-    assert "FileStateReader" not in content, "_decay.py still references FileStateReader (FR06 violation)"
+    # The distribution analysis (which performs the entry load) was split out
+    # of _decay.py into the sibling _distribution.py; both must keep file I/O
+    # at the boundary (no iter_yaml_entry_files / FileStateReader references).
+    for module_name in ("_decay.py", "_distribution.py"):
+        content = (_SCORING_DIR / module_name).read_text(encoding="utf-8")
+        assert "iter_yaml_entry_files" not in content, (
+            f"{module_name} references iter_yaml_entry_files (FR06 violation)"
+        )
+        assert "FileStateReader" not in content, f"{module_name} references FileStateReader (FR06 violation)"
     # Verify _load_entries_from_dir is still accessible (re-exported from _io_boundary)
-    from trw_mcp.scoring._decay import _load_entries_from_dir
+    from trw_mcp.scoring._distribution import _load_entries_from_dir
 
     assert callable(_load_entries_from_dir)
 
@@ -192,15 +197,16 @@ def test_decay_accepts_entry_iterator() -> None:
 
 @pytest.mark.unit
 def test_scoring_no_direct_state_io_imports() -> None:
-    """The pure scoring modules (_correlation.py, _decay.py) have no state.persistence
-    or state.memory_adapter imports — all I/O goes through _io_boundary.py.
+    """The pure scoring modules (_correlation.py, _decay.py, _distribution.py)
+    have no state.persistence or state.memory_adapter imports — all I/O goes
+    through _io_boundary.py.
 
     _io_boundary.py is intentionally excluded as it IS the boundary module.
     _utils.py is excluded as it only imports safe_float/safe_int from state._helpers
     (pure helpers, not I/O primitives).
     """
     # Modules that must not have direct state I/O imports
-    io_violation_modules = ["_correlation.py", "_decay.py"]
+    io_violation_modules = ["_correlation.py", "_decay.py", "_distribution.py"]
     forbidden_patterns = [
         "from trw_mcp.state.persistence",
         "from trw_mcp.state.memory_adapter",

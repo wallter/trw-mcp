@@ -172,8 +172,9 @@ class TestRunStateResource:
         assert "No active run" in result
 
     def test_with_active_run(self, tmp_path: Path) -> None:
-        # Create a run directory
-        run_dir = tmp_path / "docs" / "test" / "runs" / "run-001" / "meta"
+        # Create a run directory under the canonical path: .trw/runs/<task>/<run_id>/meta/
+        # This mirrors the real production layout (config.runs_root = ".trw/runs").
+        run_dir = tmp_path / ".trw" / "runs" / "test" / "run-001" / "meta"
         run_dir.mkdir(parents=True)
         writer = FileStateWriter()
         writer.write_yaml(

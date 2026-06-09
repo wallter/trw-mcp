@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -601,21 +600,61 @@ def test_pipeline_health_probe_no_write(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# trw_pipeline_health MCP tool registration
+# trw_pipeline_health MCP tool publication seam
+#
+# Two distinct surfaces, kept explicit so a missing publication is caught:
+#
+#   * Registration inventory — every tool wired into the server, read via the
+#     private ``mcp._list_tools()``. This is the surface that fails if the
+#     ``register_pipeline_health_tools(mcp)`` call is dropped from
+#     ``server/_tools.py::_register_tools``. It bypasses the security
+#     middleware advertisement filter, so it reflects registration, not scope.
+#   * Public advertisement — ``mcp.list_tools()``, the surface MCP clients see
+#     after the security middleware's ``filter_advertised_tools`` runs.
+#     ``trw_pipeline_health`` is an operator/diagnostic tool intentionally kept
+#     OUT of the default agent-facing allowlist, so it is registered but not
+#     publicly advertised. Asserting against the public surface here would be a
+#     false negative — use the registration inventory instead.
 # ---------------------------------------------------------------------------
 
 
-def test_trw_pipeline_health_tool_registered(tmp_path: Path) -> None:
-    """trw_pipeline_health tool exists in the server tool registry."""
+async def test_trw_pipeline_health_tool_registered() -> None:
+    """trw_pipeline_health is wired into the *production* server registry.
+
+    Asserts against the real ``trw_mcp.server._app.mcp`` instance that
+    ``_register_tools()`` populates at import — not a conftest test factory.
+    Mirrors ``test_server_startup.test_mcp_registers_ceremony_feedback_tools``:
+    a registrar registered only in conftest would be dead/phantom in prod, so
+    this MUST fail (not silently pass) if the production wiring is dropped.
+    """
+    from trw_mcp.server._app import mcp
+
+    # ``_list_tools`` is the registration inventory — it bypasses the security
+    # middleware advertisement filter, so this verifies *registration*, not the
+    # narrower public allowlist (``trw_pipeline_health`` is deliberately not
+    # in the default public advertisement; see the seam note above).
+    tool_names = {t.name for t in await mcp._list_tools()}
+    assert "trw_pipeline_health" in tool_names, (
+        "trw_pipeline_health is not wired into the production server registry — "
+        "check register_pipeline_health_tools(mcp) in "
+        "server/_tools.py::_register_tools()"
+    )
+
+
+def test_trw_pipeline_health_registrar_publishes_tool() -> None:
+    """The pipeline_health registrar publishes the tool through the test factory.
+
+    Independent of production wiring, this proves ``register_pipeline_health_tools``
+    itself advertises ``trw_pipeline_health`` on a server. Catches a broken or
+    renamed registrar before it reaches the production path above.
+    """
     from tests.conftest import get_tools_sync, make_test_server
 
-    server = make_test_server("ceremony")
-    # The pipeline_health tool is registered separately — check server._tools directly
-    # via the public list_tools API
-    tools = get_tools_sync(server)
-    # The tool may be registered in ceremony or separately
-    # Check it's accessible
-    assert "trw_pipeline_health" in tools or True  # Will verify after registration wired in
+    tools = get_tools_sync(make_test_server("pipeline_health"))
+    assert "trw_pipeline_health" in tools, (
+        "register_pipeline_health_tools did not advertise trw_pipeline_health; "
+        f"got: {sorted(tools)}"
+    )
 
 
 def test_trw_pipeline_health_tool_returns_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

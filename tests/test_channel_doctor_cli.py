@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import pytest
 
 from trw_mcp.cli.channel_doctor import run_channel_doctor
-
 
 # ---------------------------------------------------------------------------
 # Helpers

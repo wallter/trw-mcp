@@ -24,7 +24,6 @@ from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
 
 from __future__ import annotations
 
-import io
 import json
 import threading
 import time
@@ -36,6 +35,12 @@ import structlog
 import trw_mcp.tools._deferred_state as _ds
 from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
 from trw_mcp.models.config import get_config
+from trw_mcp.tools import _deferred_locking as _dl
+from trw_mcp.tools._deferred_locking import (
+    _is_lock_record_stale as _is_lock_record_stale,
+    _peek_deferred_lock_holder as _peek_deferred_lock_holder,
+    _release_deferred_lock as _release_deferred_lock,
+)
 
 # Re-export step functions from sub-modules so test patches on
 # "trw_mcp.tools._deferred_delivery._step_foo" continue to work.
@@ -65,6 +70,24 @@ from trw_mcp.tools._deferred_steps_telemetry import (
 from trw_mcp.tools._helpers import _run_step
 
 logger = structlog.get_logger(__name__)
+
+
+def _try_acquire_deferred_lock(
+    trw_dir: Path,
+    *,
+    stale_threshold_seconds: float = 600.0,
+) -> object:
+    """Compatibility wrapper preserving the legacy ``_lock_ex_nb`` patch seam."""
+    helper_vars = vars(_dl)
+    original_lock = helper_vars["_lock_ex_nb"]
+    helper_vars["_lock_ex_nb"] = _lock_ex_nb
+    try:
+        return _dl._try_acquire_deferred_lock(
+            trw_dir,
+            stale_threshold_seconds=stale_threshold_seconds,
+        )
+    finally:
+        helper_vars["_lock_ex_nb"] = original_lock
 
 
 def _persist_session_metrics(
@@ -136,154 +159,6 @@ def _persist_deferred_results(
         logger.info("deferred_results_persisted", path=str(run_yaml_path))
     except Exception:  # justified: fail-open, deferred state persistence is best-effort
         logger.warning("deferred_results_persist_failed", exc_info=True)
-
-
-def _peek_deferred_lock_holder(lock_path: Path) -> dict[str, object] | None:
-    """Read the JSON pid+timestamp record written by the prior lock holder.
-
-    The lock file is rewritten on every successful acquisition; the most
-    recent record describes who currently believes it owns the lock. We
-    use this to decide whether an apparently-held lock is in fact stale
-    (process exited without releasing, or wedged past the batch budget).
-    Returns ``None`` if the file is empty or unparseable.
-    """
-    try:
-        raw = lock_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not raw:
-        return None
-    try:
-        # The file may contain multiple records appended over time; the
-        # last line is the most recent acquisition.
-        last_line = raw.splitlines()[-1]
-        parsed = json.loads(last_line)
-    except (json.JSONDecodeError, IndexError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _is_lock_record_stale(record: dict[str, object], max_age_seconds: float) -> bool:
-    """Decide whether a deferred-lock record is too old to still be live.
-
-    Two independent signals: (1) the recorded PID no longer exists on
-    this machine (cleanest evidence of crash), (2) the timestamp is older
-    than the per-batch budget plus a safety margin (the writer is wedged
-    beyond what we tolerate). Either signal returns True.
-    """
-    import os as _os
-
-    pid_field = record.get("pid")
-    if isinstance(pid_field, int):
-        try:
-            _os.kill(pid_field, 0)
-        except ProcessLookupError:
-            return True
-        except PermissionError:
-            # Different uid owns the PID — the slot is taken, treat as live.
-            pass
-
-    ts_field = record.get("ts")
-    if isinstance(ts_field, str):
-        try:
-            record_ts = datetime.fromisoformat(ts_field.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-        age = (datetime.now(timezone.utc) - record_ts).total_seconds()
-        if age > max_age_seconds:
-            return True
-    return False
-
-
-def _try_acquire_deferred_lock(
-    trw_dir: Path,
-    *,
-    stale_threshold_seconds: float = 600.0,
-) -> io.TextIOWrapper | None:
-    """Try to acquire the deferred-deliver file lock (non-blocking).
-
-    Returns the lock file handle on success, or ``None`` when another
-    deferred batch holds it AND that batch looks live. Caller MUST call
-    ``_release_deferred_lock(fd)`` when done.
-
-    Stale-lock recovery: if the apparent holder's PID is gone, or the
-    record's timestamp is older than ``stale_threshold_seconds``, we
-    forcibly take the lock (open with mode 'w' truncates the prior
-    contents, and acquiring ``LOCK_EX | LOCK_NB`` succeeds because the
-    OS-level flock was released when the prior process died). Default
-    is 600s, twice the default per-batch budget, so a live batch is
-    never preempted under normal operation.
-
-    Tests can drive stale recovery by writing a synthetic record with a
-    very old timestamp and asserting acquisition succeeds.
-    """
-    lock_path = trw_dir / "deliver-deferred.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = lock_path.open("a+", encoding="utf-8")
-    try:
-        _lock_ex_nb(fd.fileno())
-        # Write PID + timestamp as valid JSON so operators can inspect
-        import os as _os
-
-        fd.seek(0)
-        fd.truncate()
-        fd.write(json.dumps({"pid": _os.getpid(), "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
-        fd.flush()
-        return fd
-    except Exception:  # justified: cleanup, lock acquisition failure releases fd and returns None
-        fd.close()
-
-    # The OS-level flock is held by another process. Inspect the record
-    # to see whether that holder is still live; if not, reclaim the lock.
-    record = _peek_deferred_lock_holder(lock_path)
-    if record is not None and _is_lock_record_stale(record, stale_threshold_seconds):
-        logger.warning(
-            "deferred_lock_reclaimed_stale",
-            holder=record,
-            stale_threshold_seconds=stale_threshold_seconds,
-        )
-        fd2: io.TextIOWrapper | None = None
-        try:
-            fd2 = lock_path.open("a+", encoding="utf-8")
-            _lock_ex_nb(fd2.fileno())
-            import os as _os
-
-            fd2.seek(0)
-            fd2.truncate()
-            fd2.write(
-                json.dumps(
-                    {
-                        "pid": _os.getpid(),
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "reclaimed_from": record,
-                    }
-                )
-                + "\n"
-            )
-            fd2.flush()
-            return fd2
-        except Exception:  # justified: cleanup, stale-reclaim failure must not raise into the deliver path
-            logger.debug("deferred_lock_reclaim_failed", exc_info=True)
-            # Close the fd we opened — the OS-level flock raised after open()
-            # (the expected contested case), so without this every stale-lock
-            # reclaim race leaks one fd in the long-running MCP server.
-            if fd2 is not None:
-                fd2.close()
-    return None
-
-
-def _release_deferred_lock(fd: object) -> None:
-    """Release the deferred-deliver file lock."""
-    try:
-        import io as _io
-
-        if isinstance(fd, _io.TextIOWrapper):
-            _lock_un(fd.fileno())
-            fd.close()
-    except Exception:  # justified: fail-open, lock release cleanup
-        # justified: lock release is best-effort cleanup -- failing here
-        # only means the lock file persists until process exit.
-        logger.debug("lock_release_failed", exc_info=True)
 
 
 def _log_deferred_result(

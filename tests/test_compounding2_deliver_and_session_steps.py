@@ -139,6 +139,53 @@ class TestStepGraphHealthFR04:
         assert step_graph_health(trw_dir) is None
 
 
+class TestLogDeliverCompleteResilience:
+    """log_deliver_complete must honor its 'unreadable counts fall back' contract."""
+
+    def test_torn_events_line_does_not_abort_deliver_logging(self, tmp_path: Path) -> None:
+        """A torn events.jsonl append must not break deliver-completion logging.
+
+        log_deliver_complete reads run events.jsonl only to populate the
+        advisory ``events_logged`` field on the ``deliver_ok`` log line, and its
+        docstring already promises "missing/unreadable counts fall back to 0".
+        The strict FileStateReader.read_jsonl raised StateError on the first
+        torn line, so a single concurrent append could abort the entire
+        deliver-completion logging at the most important moment. The resilient
+        reader makes the code honor its stated contract: drop the torn line,
+        count the intact ones, never raise (regression guard).
+        """
+        import structlog
+
+        from trw_mcp.models.typed_dicts import DeliverResultDict
+        from trw_mcp.tools._ceremony_deliver_steps import log_deliver_complete
+
+        run_dir = tmp_path / "run"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        intact_a = '{"ts": "2026-02-11T12:00:00Z", "type": "session_start"}\n'
+        torn = '{"ts": "2026-02-11T12:01:00Z", "type": "phase_chan\n'
+        intact_b = '{"ts": "2026-02-11T12:02:00Z", "type": "checkpoint"}\n'
+        (meta / "events.jsonl").write_text(intact_a + torn + intact_b, encoding="utf-8")
+
+        results = cast("DeliverResultDict", {"run_path": str(run_dir), "critical_steps_completed": 1})
+
+        with structlog.testing.capture_logs() as logs:
+            # Before the fix this raised StateError instead of logging.
+            log_deliver_complete(
+                resolved_run=run_dir,
+                results=results,
+                errors=[],
+                deferred_status="completed",
+                critical_elapsed=0.1,
+            )
+
+        deliver_ok = [e for e in logs if e.get("event") == "deliver_ok"]
+        assert deliver_ok, "deliver_ok must still be emitted despite a torn events line"
+        # Torn line dropped; the two intact events are still counted.
+        assert deliver_ok[0]["events_logged"] == 2
+        assert any(e.get("event") == "trw_deliver_complete" for e in logs)
+
+
 def _config_with_threshold(threshold: int) -> object:
     """Return a TRWConfig with knowledge_sync_threshold overridden."""
     from trw_mcp.models.config import get_config

@@ -9,6 +9,7 @@ avoid circular dependencies. It only depends on models/ and persistence.
 
 from __future__ import annotations
 
+import json
 import warnings
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -117,6 +118,132 @@ def rotate_jsonl(path: Path, max_bytes: int = 10 * 1024 * 1024) -> None:
             path.rename(rotated)
     except OSError:
         pass  # fail-open: rotation failure doesn't block logging
+
+
+def read_jsonl_tail(path: Path, max_entries: int) -> list[dict[str, object]]:
+    """Read the last *max_entries* JSON objects from a JSONL log, skipping
+    corrupt lines.
+
+    Resilient by design: a single malformed line (e.g. a torn concurrent
+    append, where two writers interleave a partial record) is dropped rather
+    than discarding every valid record in the window. The previous idiom —
+    ``[json.loads(line) for line in lines[-N:]]`` wrapped in one ``try`` —
+    returned ``[]`` for the whole file when any line failed, silently wiping
+    the entire history that drives nudge-fatigue and propensity scoring.
+
+    Resilience extends to encoding, not just JSON syntax. The read decodes
+    each line individually rather than the whole file at once: a single
+    non-UTF-8 byte row (a torn append that splits a multi-byte sequence, or a
+    binary-garbage line) is dropped on its own ``UnicodeDecodeError`` instead
+    of failing the whole-file ``read_text`` and discarding every valid record
+    in the window. The bytes are split on the ``\\n`` separator before any
+    decode, so an undecodable row is contained to its own line.
+
+    This mirrors the per-line recovery already used by the full-scan session
+    reader (``surface_tracking._read_all_surface_events_for_session``), so the
+    tail and full-scan paths over the same log degrade identically. Non-object
+    lines (bare scalars/lists) are also dropped so callers can index records as
+    dicts without guarding. Fail-open: returns ``[]`` when the file is missing
+    or unreadable.
+
+    Args:
+        path: Path to the JSONL file.
+        max_entries: Maximum number of records to return from the tail.
+
+    Returns:
+        Parsed dict records from the last *max_entries* lines, newest last;
+        corrupt, undecodable, and non-object lines omitted.
+    """
+    if not path.exists():
+        return []
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        logger.debug("jsonl_tail_read_failed", path=str(path), exc_info=True)
+        return []
+    # Slice the tail window on the raw byte lines *before* decoding so an
+    # undecodable row outside the window is never touched and the whole-file
+    # decode is avoided. See _parse_jsonl_byte_lines for the per-line recovery.
+    return _parse_jsonl_byte_lines(raw.strip().split(b"\n")[-max_entries:], path, reader="tail")
+
+
+def read_jsonl_resilient(path: Path) -> list[dict[str, object]]:
+    """Full-scan JSONL read that skips corrupt, torn, and undecodable lines.
+
+    The resilient full-scan counterpart to :func:`read_jsonl_tail`: identical
+    per-line decode-and-skip discipline, but returns *every* valid record in
+    file order instead of only the tail window.
+
+    Contrast with :meth:`trw_mcp.state.persistence.FileStateReader.read_jsonl`,
+    which raises ``StateError`` on the first malformed line. That strictness is
+    correct for callers that treat any corruption as fatal (and is contract-
+    tested), but wrong for content-free advisory diagnostics over append-only
+    logs (e.g. ``events.jsonl``): there, a single torn concurrent append must
+    degrade to "drop that one line", not "abort the whole read". Use this
+    reader on the advisory path; keep ``read_jsonl`` on the strict path.
+
+    Fail-open: returns ``[]`` when the file is missing or unreadable.
+
+    Args:
+        path: Path to the JSONL file.
+
+    Returns:
+        Parsed dict records in file order; corrupt, undecodable, and
+        non-object lines omitted.
+    """
+    if not path.exists():
+        return []
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        logger.debug("jsonl_resilient_read_failed", path=str(path), exc_info=True)
+        return []
+    return _parse_jsonl_byte_lines(raw.split(b"\n"), path, reader="resilient")
+
+
+def _parse_jsonl_byte_lines(
+    byte_lines: list[bytes],
+    path: Path,
+    *,
+    reader: str,
+) -> list[dict[str, object]]:
+    """Decode and JSON-parse pre-split JSONL byte lines, skipping bad rows.
+
+    Shared core of :func:`read_jsonl_tail` and :func:`read_jsonl_resilient`.
+    Splitting on the newline byte before decoding contains a single non-UTF-8
+    byte row to its own line: it raises ``UnicodeDecodeError`` here and is
+    skipped, rather than aborting a whole-file decode and dropping every valid
+    record. Blank and non-object lines are dropped so callers can index records
+    as dicts without guarding.
+
+    Args:
+        byte_lines: Raw byte lines (already newline-split, possibly tail-sliced).
+        path: Source path, used only for skip-diagnostic logging.
+        reader: Name of the calling reader (``"tail"`` / ``"resilient"``),
+            emitted as a field on each ``jsonl_line_skipped`` event so skips
+            from the two readers stay distinguishable in logs.
+
+    Returns:
+        Parsed dict records in input order; corrupt rows omitted.
+    """
+    records: list[dict[str, object]] = []
+    for byte_line in byte_lines:
+        stripped = byte_line.strip()
+        if not stripped:
+            continue
+        try:
+            text = stripped.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.debug("jsonl_line_skipped", reader=reader, path=str(path), reason="decode")
+            continue
+        try:
+            rec = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            logger.debug("jsonl_line_skipped", reader=reader, path=str(path), reason="json")
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    return records
 
 
 def iter_yaml_entry_files(entries_dir: Path) -> Iterator[Path]:

@@ -50,10 +50,7 @@ class TestCheckIntegrationEdgeCases:
         (tmp_path / "tests").mkdir(parents=True)
 
         tool_file = tools_dir / "unreadable.py"
-        tool_file.write_text("def register_unreadable_tools(server):\n    pass\n")
-
-        with patch("builtins.open", side_effect=OSError("permission denied")):
-            pass
+        tool_file.write_text("def register_unreadable_tools(server):\n    return None\n")
 
         original_read_text = Path.read_text
 
@@ -126,3 +123,71 @@ class TestCheckIntegrationEdgeCases:
 
         result = check_integration(src_dir)
         assert "test_tools_widget.py" not in result["missing_tests"]
+
+
+class TestCheckIntegrationServerPackageTopology:
+    """Registration evidence lives in a ``server/`` package, not ``server.py``.
+
+    This locks in the fix for the false-positive regression where the check
+    assumed a single ``server.py`` module. Production trw-mcp wires tools in
+    ``server/_tools.py``; with the old logic every registered tool module was
+    reported as unregistered.
+    """
+
+    def test_tool_wired_in_server_package_is_registered(self, tmp_path: Path) -> None:
+        src_dir = tmp_path / "src" / "trw_mcp"
+        tools_dir = src_dir / "tools"
+        tools_dir.mkdir(parents=True)
+        (tmp_path / "src" / "tests").mkdir(parents=True, exist_ok=True)
+
+        (tools_dir / "widget.py").write_text(
+            "def register_widget_tools(server):\n    pass\n",
+            encoding="utf-8",
+        )
+        # No server.py — registration lives in the server/ package, matching
+        # the real trw-mcp topology (server/_tools.py::_register_tools).
+        server_pkg = src_dir / "server"
+        server_pkg.mkdir()
+        (server_pkg / "__init__.py").write_text("", encoding="utf-8")
+        (server_pkg / "_tools.py").write_text(
+            "from trw_mcp.tools.widget import register_widget_tools\n"
+            "register_widget_tools(mcp)\n",
+            encoding="utf-8",
+        )
+
+        result = check_integration(src_dir)
+        assert "widget" not in result["unregistered"]
+        assert result["all_registered"] is True
+
+    def test_no_server_module_or_package_flags_unregistered(self, tmp_path: Path) -> None:
+        # Neither server.py nor a server/ package: genuinely unwired → flagged.
+        src_dir = tmp_path / "src" / "trw_mcp"
+        tools_dir = src_dir / "tools"
+        tools_dir.mkdir(parents=True)
+        (tools_dir / "widget.py").write_text(
+            "def register_widget_tools(server):\n    pass\n",
+            encoding="utf-8",
+        )
+        result = check_integration(src_dir)
+        assert "widget" in result["unregistered"]
+        assert result["all_registered"] is False
+
+
+class TestCheckIntegrationRealTopology:
+    """Guard against false positives on the installed trw_mcp package itself."""
+
+    def test_installed_package_reports_no_unregistered_tools(self) -> None:
+        import trw_mcp
+
+        src_dir = Path(trw_mcp.__file__).resolve().parent
+        result = check_integration(src_dir)
+
+        # Every tool module wired in server/_tools.py must be seen as registered.
+        # Pre-fix, this returned all 23 tool modules as false positives because
+        # the check looked for a non-existent src/trw_mcp/server.py.
+        assert isinstance(result["tool_modules_scanned"], int)
+        assert result["tool_modules_scanned"] > 0, "expected at least one tool module"
+        assert result["unregistered"] == [], (
+            f"false-positive unregistered tool modules: {result['unregistered']}"
+        )
+        assert result["all_registered"] is True

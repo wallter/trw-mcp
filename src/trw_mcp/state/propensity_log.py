@@ -14,7 +14,7 @@ __all__ = ["PropensityEntry", "log_ranked_selections", "log_selection", "read_pr
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import structlog
 
@@ -54,6 +54,7 @@ class PropensityEntry(TypedDict, total=False):
     trw_version: str  # Framework version (e.g., "v24.4_TRW")
 
 
+from trw_mcp.state._helpers import read_jsonl_tail  # noqa: E402
 from trw_mcp.state._helpers import rotate_jsonl as _shared_rotate_jsonl  # noqa: E402
 
 
@@ -254,12 +255,7 @@ def read_propensity_entries(
         List of parsed PropensityEntry dicts, newest last.
     """
     log_path = trw_dir / _LOG_DIR / _PROPENSITY_FILE
-    if not log_path.exists():
-        return []
-    try:
-        lines = log_path.read_text(encoding="utf-8").strip().split("\n")
-        entries: list[PropensityEntry] = [json.loads(line) for line in lines[-max_entries:] if line.strip()]
-        return entries
-    except Exception:  # justified: fail-open, read failure returns empty
-        logger.debug("propensity_read_failed", path=str(log_path), exc_info=True)
-        return []
+    # read_jsonl_tail skips individual corrupt lines instead of discarding the
+    # entire tail, so one torn append cannot wipe the propensity history that
+    # drives Q-learning / outcome-correlation scoring.
+    return cast("list[PropensityEntry]", read_jsonl_tail(log_path, max_entries))

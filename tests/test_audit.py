@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+import structlog
+
 from trw_mcp.audit import (
     _audit_duplicates,
     _audit_index_consistency,
@@ -124,6 +127,33 @@ class TestAuditLearnings:
         assert bloat["verdict"] == "WARN"
 
 
+class TestIterEntries:
+    """Tests for _iter_entries observability of skipped malformed entries."""
+
+    def test_skips_malformed_entry_and_logs_safe_warning(self, tmp_path: Path) -> None:
+        from trw_mcp.audit import _iter_entries
+
+        project = _setup_project(tmp_path)
+        entries_dir = project / ".trw" / "learnings" / "entries"
+        _make_entry(entries_dir, summary="Valid entry")
+        # A file that fails safe-YAML parsing (unparseable content).
+        (entries_dir / "2026-02-21-broken-deadbee.yaml").write_text(
+            "this: is: not: valid: yaml: :::\n\t- broken", encoding="utf-8"
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            entries = _iter_entries(entries_dir)
+
+        # The one valid entry still loads; the malformed one is dropped.
+        assert len(entries) == 1
+        skips = [e for e in logs if e.get("event") == "audit_entry_read_skipped"]
+        assert skips, f"expected audit_entry_read_skipped warning; got {logs}"
+        event = skips[0]
+        assert event["log_level"] == "warning"
+        assert set(event) >= {"path", "error_class"}
+        assert "broken" in event["path"]
+
+
 class TestAuditDuplicates:
     """Tests for _audit_duplicates section function."""
 
@@ -211,6 +241,126 @@ class TestAuditRecallEffectiveness:
         config = TRWConfig()
         result = _audit_recall_effectiveness(project / ".trw", config)
         assert result["verdict"] == "SKIP"
+
+    def test_skips_corrupt_and_scalar_rows_keeps_valid_totals(self, tmp_path: Path) -> None:
+        """Malformed JSON and JSON-scalar rows are skipped; valid rows still count."""
+        project = _setup_project(tmp_path)
+        config = TRWConfig()
+        receipts_dir = project / ".trw" / "learnings" / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        log_path = receipts_dir / "recall_log.jsonl"
+
+        lines = [
+            json.dumps({"query": "pydantic", "matched_ids": ["L-1"]}),
+            "{not valid json at all",  # malformed JSON -> skipped
+            json.dumps("just a string"),  # valid JSON, non-object scalar -> skipped
+            json.dumps(42),  # valid JSON, non-object scalar -> skipped
+            "",  # blank line -> skipped (no warning)
+            json.dumps({"query": "nonexistent concept", "matched_ids": []}),
+        ]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+
+        result = _audit_recall_effectiveness(project / ".trw", config)
+        # Only the two well-formed object rows are counted.
+        assert result["total_queries"] == 2
+        assert result["wildcard_queries"] == 0
+        assert result["named_queries"] == 2
+        assert result["zero_match"] == 1
+        # miss_rate = 1/2 = 0.5 > 0.25 threshold
+        assert result["verdict"] == "WARN"
+
+    def test_missing_matched_ids_treated_as_zero_match(self, tmp_path: Path) -> None:
+        """matched_ids absent or non-list is treated as empty, never crashes."""
+        project = _setup_project(tmp_path)
+        config = TRWConfig()
+        receipts_dir = project / ".trw" / "learnings" / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        log_path = receipts_dir / "recall_log.jsonl"
+
+        lines = [
+            json.dumps({"query": "no matched key"}),  # absent -> empty
+            json.dumps({"query": "wrong type", "matched_ids": "L-1"}),  # str, not list -> empty
+            json.dumps({"query": "hit", "matched_ids": ["L-9"]}),
+        ]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+
+        result = _audit_recall_effectiveness(project / ".trw", config)
+        assert result["total_queries"] == 3
+        assert result["named_queries"] == 3
+        assert result["zero_match"] == 2
+
+    def test_corrupt_rows_log_no_sensitive_content(self, tmp_path: Path) -> None:
+        """Skip warnings carry only structural fields — no query text or matched_ids."""
+        project = _setup_project(tmp_path)
+        config = TRWConfig()
+        receipts_dir = project / ".trw" / "learnings" / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        log_path = receipts_dir / "recall_log.jsonl"
+
+        sentinel = "SENSITIVE-SECRET-QUERY-TEXT-9f3a"
+        sentinel_id = "L-SECRET-MATCH-7b21"
+        # Corrupt row embedding the sentinel inside otherwise-broken JSON.
+        corrupt = '{"query": "' + sentinel + '", "matched_ids": ["' + sentinel_id + '"]'
+        scalar = json.dumps(sentinel)
+        lines = [
+            json.dumps({"query": "valid", "matched_ids": ["L-1"]}),
+            corrupt,  # malformed JSON -> warning
+            scalar,  # non-object scalar -> warning
+        ]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+
+        with structlog.testing.capture_logs() as logs:
+            result = _audit_recall_effectiveness(project / ".trw", config)
+
+        assert result["total_queries"] == 1
+        skips = [e for e in logs if e.get("event") == "recall_receipt_parse_skipped"]
+        assert len(skips) == 2, f"expected two skip warnings; got {logs}"
+        for event in skips:
+            assert event["log_level"] == "warning"
+            assert set(event) >= {"path", "line_number", "error_class"}
+            # No raw record content may appear in any field value.
+            blob = json.dumps(event)
+            assert sentinel not in blob
+            assert sentinel_id not in blob
+            assert "matched_ids" not in {k for k in event if k != "event"}
+        # Line numbers are the true file positions (1-based), not post-strip indices.
+        assert {e["line_number"] for e in skips} == {2, 3}
+
+    def test_read_failure_logs_safe_warning_and_returns_skip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unreadable log stays fail-open SKIP and logs only path + error_class."""
+        project = _setup_project(tmp_path)
+        config = TRWConfig()
+        receipts_dir = project / ".trw" / "learnings" / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        log_path = receipts_dir / "recall_log.jsonl"
+        sentinel = "SENSITIVE-IN-FILE-CONTENT-42"
+        log_path.write_text(
+            json.dumps({"query": sentinel, "matched_ids": []}), encoding="utf-8"
+        )
+
+        real_read_text = Path.read_text
+
+        def _boom(self: Path, *args: object, **kwargs: object) -> str:
+            if self == log_path:
+                raise PermissionError("read denied")
+            return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "read_text", _boom)
+
+        with structlog.testing.capture_logs() as logs:
+            result = _audit_recall_effectiveness(project / ".trw", config)
+
+        assert result["verdict"] == "SKIP"
+        assert result["total_queries"] == 0
+        failures = [e for e in logs if e.get("event") == "recall_log_read_failed"]
+        assert failures, f"expected recall_log_read_failed warning; got {logs}"
+        event = failures[0]
+        assert event["log_level"] == "warning"
+        assert event["error_class"] == "PermissionError"
+        assert str(log_path) in event["path"]
+        assert sentinel not in json.dumps(event)
 
 
 class TestRunAudit:

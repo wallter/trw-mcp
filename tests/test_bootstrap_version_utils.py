@@ -13,6 +13,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 
+from ._bootstrap_test_support import fake_git_repo  # noqa: F401
+
 
 class TestDefaultConfig:
     """Test _default_config() matches TRWConfig defaults."""

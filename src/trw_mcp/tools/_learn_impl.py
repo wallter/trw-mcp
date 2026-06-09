@@ -89,6 +89,7 @@ def execute_learn(
     team_origin: str = "",
     protection_tier: str = "normal",
     session_id: str | None = None,
+    scope: str = "auto",  # PRD-CORE-185 FR07: write-tier override
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
@@ -207,10 +208,7 @@ def execute_learn(
     # PRD-CORE-110: Auto-generate nudge_line from summary if not provided
     from trw_mcp.tools._learning_helpers import truncate_nudge_line
 
-    if nudge_line:
-        nudge_line = truncate_nudge_line(nudge_line)
-    else:
-        nudge_line = truncate_nudge_line(summary)
+    nudge_line = truncate_nudge_line(nudge_line if nudge_line else summary)
 
     # PRD-FIX-052-FR05: Pattern tag auto-suggestion for solution summaries
     safe_tags = list(tags or [])
@@ -361,6 +359,7 @@ def execute_learn(
         "anchors": anchors,
         "anchor_validity": anchor_validity,
         "session_id": session_id,
+        "scope": scope,  # PRD-CORE-185 FR07: write-tier override
     }
     if _store_accepts_positional_trw_dir(store_fn):
         store_result = store_fn(trw_dir, **store_kwargs)

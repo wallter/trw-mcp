@@ -395,3 +395,47 @@ def test_recall_passes_prefetch_cap_to_backend(tmp_path: Path) -> None:
         )
 
     assert captured["max_results"] == 7 * PREFETCH_MULTIPLIER
+
+
+def test_tokens_used_reflects_post_max_results_cap(tmp_path: Path) -> None:
+    """tokens_used must match entries actually returned after max_results cap.
+
+    When the token budget allows more entries than max_results, the reported
+    tokens_used must equal the sum for the capped set — not the pre-cap set.
+    This prevents callers from seeing a tokens_used > sum(returned entries).
+    """
+    from trw_mcp.tools._recall_impl import execute_recall
+    from trw_memory.retrieval.token_budget import estimate_entry_tokens
+
+    config = _make_config()
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    (trw_dir / "context").mkdir()
+    # 10 small distinct entries that all fit within a large budget
+    entries = [_make_entry(f"L-{i}", impact=0.5, summary=f"distinct finding {i}") for i in range(10)]
+
+    with (
+        patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
+        patch("trw_mcp.tools._recall_impl.log_surface_event"),
+    ):
+        result = execute_recall(
+            query="test",
+            trw_dir=trw_dir,
+            config=config,
+            token_budget=100_000,  # large budget so budget does NOT truncate
+            max_results=3,  # but max_results caps output to 3
+            _adapter_recall=lambda *a, **kw: entries,
+            _adapter_update_access=lambda *a, **kw: None,
+            _search_patterns=lambda *a, **kw: [],
+            _rank_by_utility=lambda learnings, *a, **kw: learnings,
+            _collect_context=lambda *a, **kw: {},
+        )
+
+    returned = result["learnings"]
+    assert len(returned) == 3, "max_results=3 should limit output to 3 entries"
+    expected_tokens = sum(estimate_entry_tokens(e) for e in returned)
+    assert result["tokens_used"] == expected_tokens, (
+        f"tokens_used ({result['tokens_used']}) should equal sum of returned "
+        f"entries ({expected_tokens}), not pre-cap set"
+    )
+    assert result["tokens_truncated"] is False  # budget was large, no budget truncation

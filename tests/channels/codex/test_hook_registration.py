@@ -276,6 +276,29 @@ def test_merge_distill_hook_handles_non_dict_json(tmp_path: Path) -> None:
     assert result["written"] is True
 
 
+def test_merge_distill_hook_handles_non_utf8_json(tmp_path: Path) -> None:
+    """merge_distill_hook recovers from a non-UTF-8 hooks.json without crashing.
+
+    ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError`` (a
+    ``ValueError``, not an ``OSError``), so the prior reader let it escape
+    uncaught and crash bootstrap. The hardened reader routes through
+    ``read_json_object`` and starts fresh.
+    """
+    from trw_mcp.bootstrap._codex_distill_channels import merge_distill_hook_into_hooks_json
+
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    (codex_dir / "hooks.json").write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+
+    result = merge_distill_hook_into_hooks_json(tmp_path)
+
+    assert result["written"] is True
+    assert result["error"] is None
+    data = json.loads((codex_dir / "hooks.json").read_text(encoding="utf-8"))
+    commands = _distill_group_commands(_get_post_tool_groups(data))
+    assert any("trw_post_edit_telemetry" in c for c in commands)
+
+
 # ---------------------------------------------------------------------------
 # Coverage: install_codex_distill_channels error paths
 # ---------------------------------------------------------------------------
@@ -430,9 +453,9 @@ def test_install_rejects_home_directory() -> None:
     """FR13: install_codex_distill_channels raises ValueError for Path.home()."""
     from pathlib import Path
 
-    from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
-
     import pytest
+
+    from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
 
     with pytest.raises(ValueError, match="home directory"):
         install_codex_distill_channels(Path.home())

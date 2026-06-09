@@ -7,6 +7,8 @@ from pathlib import Path
 from trw_mcp.bootstrap import update_project
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
+
 
 class TestUpdatePrefixScopedCleanup:
     """Test that _remove_stale_artifacts only removes trw- prefixed items."""

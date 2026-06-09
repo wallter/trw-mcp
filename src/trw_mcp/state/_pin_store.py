@@ -143,6 +143,23 @@ def invalidate_pin_store_cache() -> None:
     _pin_store_cache_mtime_ns = None
 
 
+# --- Filesystem helpers ------------------------------------------------------
+
+
+def _safe_mtime_ns(path: Path) -> int | None:
+    """Return ``path.stat().st_mtime_ns`` or ``None`` on any OSError.
+
+    A concurrent deletion between the preceding open/json.load and this call
+    raises ``FileNotFoundError`` (a subclass of OSError).  The cache falls
+    back to ``None`` rather than crashing so that ``load_pin_store`` honors
+    its fail-open contract even under concurrent GC processes.
+    """
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 # --- PID liveness -----------------------------------------------------------
 
 
@@ -254,7 +271,12 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     try:
         with pins_path.open("r", encoding="utf-8") as fh:
             raw = json.load(fh)
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        # UnicodeDecodeError (a ValueError, not OSError) fires when pins.json
+        # holds non-UTF-8 bytes — a torn write or disk corruption. It must be
+        # caught alongside JSONDecodeError/OSError so the documented fail-open
+        # contract holds: load_pin_store sits on the hot session_start path and
+        # must never crash the caller on a corrupt store.
         _runtime_logger().warning(
             "pin_store_malformed_fallback",
             path=str(pins_path),
@@ -263,7 +285,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
         )
         _pin_store_cache = {}
         _pin_store_cache_ts = time.monotonic()
-        _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
+        _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
         return {}
 
     if not isinstance(raw, dict):
@@ -275,7 +297,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
         )
         _pin_store_cache = {}
         _pin_store_cache_ts = time.monotonic()
-        _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
+        _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
         return {}
 
     # The json module can only produce str keys for root dicts, but cast
@@ -284,7 +306,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     survivors = _apply_eviction_passes(typed)
     _pin_store_cache = survivors
     _pin_store_cache_ts = time.monotonic()
-    _pin_store_cache_mtime_ns = pins_path.stat().st_mtime_ns
+    _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
     return dict(survivors)
 
 
@@ -310,7 +332,10 @@ def prune_pin_store_orphans() -> int:
         try:
             with pins_path.open("r", encoding="utf-8") as fh:
                 raw = json.load(fh)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # See load_pin_store: non-UTF-8 bytes raise UnicodeDecodeError, which
+            # is a ValueError (not OSError) and would otherwise crash this
+            # fail-open prune path called from the boot sweep.
             _runtime_logger().warning(
                 "pin_store_prune_read_failed",
                 path=str(pins_path),
@@ -424,9 +449,10 @@ def _save_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
             # immediately after os.replace completes.  Without this,
             # a concurrent reader may serve stale state for up to 1
             # second, reintroducing the pin-collision race condition.
-            global _pin_store_cache, _pin_store_cache_ts
+            global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
             _pin_store_cache = None
             _pin_store_cache_ts = 0.0
+            _pin_store_cache_mtime_ns = None
         finally:
             _lock_un(lock_fd.fileno())
     finally:
@@ -441,9 +467,10 @@ def _load_pin_store_uncached() -> dict[str, dict[str, Any]]:
     want the authoritative current state, not a possibly-stale cached
     snapshot from another thread's pre-invalidation moment.
     """
-    global _pin_store_cache, _pin_store_cache_ts
+    global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
     _pin_store_cache = None
     _pin_store_cache_ts = 0.0
+    _pin_store_cache_mtime_ns = None
     return load_pin_store()
 
 

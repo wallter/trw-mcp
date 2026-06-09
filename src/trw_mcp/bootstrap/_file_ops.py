@@ -9,12 +9,13 @@ re-exported from ``_utils.py`` so existing import paths are preserved.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import stat
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -45,6 +46,150 @@ def _record_write(result: dict[str, list[str]], rel_path: str, *, existed: bool)
         result.setdefault("updated", []).append(rel_path)
     else:
         result.setdefault("created", []).append(rel_path)
+
+
+# ---------------------------------------------------------------------------
+# Structural-safe JSON config reader (shared bootstrap seam)
+# ---------------------------------------------------------------------------
+
+
+def read_json_object(path: Path, *, context: str) -> dict[str, object] | None:
+    """Read a JSON config file, returning its top-level object or ``None``.
+
+    A single deep seam for the bootstrap layer's many
+    ``json.loads(path.read_text(encoding="utf-8"))`` call sites. It collapses
+    five outcomes that otherwise crash — or are handled inconsistently — across
+    advisory/bootstrap config readers into one ``None`` return plus a
+    content-free diagnostic:
+
+      - **absent** — the file does not exist (the normal case; logged at debug).
+      - **unreadable** — ``OSError`` (permission, race, is-a-directory, ...).
+      - **non_utf8** — bytes are not valid UTF-8. ``read_text(encoding="utf-8")``
+        raises ``UnicodeDecodeError`` (a ``ValueError`` subclass, *not* an
+        ``OSError``), so the prior call sites let it escape uncaught.
+      - **malformed_json** — valid UTF-8 but not parseable as JSON.
+      - **non_object** — parseable JSON whose top level is an array or scalar;
+        callers that immediately ``.get(...)`` on it would otherwise raise
+        ``AttributeError``.
+
+    Diagnostics are deliberately structural: the log records the path and a
+    reason *category* only — never the raw file bytes, the JSON payload, the
+    decode offset, or ``errno`` text. A malformed config that happens to hold a
+    token or secret therefore never leaks into logs.
+
+    Returns the parsed mapping on success, else ``None``. The caller decides
+    whether ``None`` means "start fresh" or "skip and report".
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        logger.debug("bootstrap_json_absent", path=str(path), context=context)
+        return None
+    except OSError:
+        logger.warning("bootstrap_json_unreadable", path=str(path), reason="unreadable", context=context)
+        return None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("bootstrap_json_non_utf8", path=str(path), reason="non_utf8", context=context)
+        return None
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("bootstrap_json_malformed", path=str(path), reason="malformed_json", context=context)
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "bootstrap_json_non_object",
+            path=str(path),
+            reason="non_object",
+            json_kind=type(parsed).__name__,
+            context=context,
+        )
+        return None
+    return cast("dict[str, object]", parsed)
+
+
+def read_settings_for_merge(
+    path: Path,
+    *,
+    rel_path: str,
+    result: dict[str, list[str]],
+) -> dict[str, object] | None:
+    """Read a JSON *settings* file for an in-place ``mcpServers`` merge.
+
+    The shared seam behind the Gemini and Antigravity CLI settings readers,
+    which duplicated this read/backup/recover policy verbatim and — critically —
+    caught only ``OSError`` on the read. A non-UTF-8 ``settings.json`` therefore
+    escaped as an uncaught ``UnicodeDecodeError`` (a ``ValueError`` subclass,
+    *not* an ``OSError``) and crashed bootstrap.
+
+    Unlike :func:`read_json_object`, which collapses every failure to ``None``,
+    this seam owns the richer *settings-merge* policy: corrupt content is
+    preserved to a sibling ``.bak`` so the user can recover, and a content-free
+    recovery warning is recorded so the caller can rewrite a clean document.
+
+    Outcomes (diagnostics are structural — raw bytes are never logged, only
+    backed up to disk for the user):
+
+      - **absent / empty** → ``{}`` — caller merges into a fresh document.
+      - **unreadable** (``OSError``) → ``None``; a structural error is appended
+        to ``result["errors"]`` so the caller aborts rather than overwrite a
+        file it could not read.
+      - **non-UTF-8 / malformed JSON / non-object top level** → ``{}`` after
+        preserving the original bytes alongside as ``<name>.bak`` and appending
+        a recovery warning to ``result["warnings"]``.
+      - **valid object** → the parsed mapping.
+
+    A ``{}`` return means "proceed, merging into this (possibly empty) base";
+    ``None`` means "stop — an unrecoverable read error was already recorded".
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        result.setdefault("errors", []).append(f"Failed to read {rel_path}: {exc}")
+        return None
+
+    if not raw.strip():
+        return {}
+
+    def _backup_and_warn(reason: str) -> dict[str, object]:
+        backup = path.with_suffix(path.suffix + ".bak")
+        backup_note = f"backed up to {backup.name}"
+        try:
+            backup.write_bytes(raw)
+        except OSError:
+            # Backup is best-effort; never let a recovery write block the merge.
+            # Keep diagnostics structural/content-free and truthfully report that
+            # the recovery copy was unavailable rather than claiming it was made.
+            logger.warning("bootstrap_settings_backup_failed", path=str(path), backup_path=str(backup))
+            backup_note = f"backup to {backup.name} failed"
+        result.setdefault("warnings", []).append(
+            f"{rel_path} {reason}; {backup_note} and rewriting from scratch"
+        )
+        return {}
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return _backup_and_warn("was not valid UTF-8")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # ``exc.msg`` is a structural parser description (e.g. "Expecting value")
+        # and never echoes the file's payload, so it is safe to surface.
+        return _backup_and_warn(f"was not valid JSON ({exc.msg})")
+
+    if not isinstance(parsed, dict):
+        return _backup_and_warn("top-level was not a JSON object")
+
+    return cast("dict[str, object]", parsed)
 
 
 # ---------------------------------------------------------------------------

@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from trw_memory.exceptions import CanaryTamperError
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._ceremony_session_start_steps import step_recall_learnings
-from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 from trw_mcp.tools._recall_impl import execute_recall
-from trw_memory.exceptions import CanaryTamperError
+from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 
 
 def test_perform_session_recalls_degrades_on_canary_tamper(

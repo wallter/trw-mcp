@@ -29,6 +29,7 @@ from ._copilot_models import (
 from ._file_ops import (
     _new_result,
     _record_write,
+    read_json_object,
     smart_merge_marker_section,
     write_instruction_file_with_merge,
 )
@@ -388,13 +389,23 @@ def generate_copilot_hooks(
     existed = hooks_path.exists()
     try:
         if existed and not force:
-            raw_existing = json.loads(hooks_path.read_text(encoding="utf-8"))
+            raw_existing = read_json_object(hooks_path, context="copilot_hooks")
+            if raw_existing is None:
+                # Existing file is unreadable / non-UTF-8 / malformed / not a
+                # JSON object. Leave the user's file untouched and report a
+                # content-free diagnostic rather than crashing or silently
+                # clobbering it. ``force=True`` overwrites with a fresh payload.
+                result["errors"].append(
+                    f"Skipped {_COPILOT_HOOKS_PATH}: existing file is not a readable JSON object "
+                    "(left untouched; re-run with force=True to overwrite)"
+                )
+                return result
             payload = _merge_copilot_hooks(raw_existing)
         else:
             payload = _copilot_hooks_payload()
         hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         _record_write(result, _COPILOT_HOOKS_PATH, existed=existed)
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
 
     return result

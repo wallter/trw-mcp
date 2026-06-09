@@ -22,7 +22,7 @@ trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server t
 
 The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, CLAUDE.md auto-generation from high-impact learnings, and instruction-tool manifest validation that ensures agents only see tools they can actually call.
 
-**Dogfooding scale**: 336 PRDs, 90 sprints, 9,200+ tests, 90% coverage. This codebase was built by AI agents using TRW. *Scale proves the framework is usable at volume; whether it improves outcomes vs baseline is measured via the eval bench, not inferred from these counts.*
+**Dogfooding scale**: thousands of tests across hundreds of PRDs, dogfooded across the TRW monorepo (coverage gate enforced at 80%, 90% target for new code). This codebase was built by AI agents using TRW. *Scale proves the framework is usable at volume; whether it improves outcomes vs baseline is measured via the eval bench, not inferred from these counts.*
 
 ## Quick Start
 
@@ -99,7 +99,7 @@ Slash-command workflows — zero tokens until triggered. Full skill reference at
 
 **Requirements**: `/trw-prd-new` · `/trw-prd-ready` · `/trw-prd-groom` · `/trw-prd-review` · `/trw-exec-plan`
 
-**Quality**: `/trw-audit` · `/trw-review-pr` · `/trw-simplify` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
+**Quality**: `/trw-audit` · `/trw-self-review` · `/trw-simplify` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
 
 **Framework**: `/trw-framework-check` · `/trw-project-health` · `/trw-memory-audit` · `/trw-memory-optimize`
 
@@ -109,7 +109,7 @@ Specialized sub-agents for Agent Teams — parallel execution with coordinated h
 
 | Role | Agent | Purpose |
 |------|-------|---------|
-| **Core Team** | trw-lead, trw-implementer, trw-tester, trw-researcher, trw-reviewer, trw-adversarial-auditor | Orchestration, TDD, testing, research, review, spec-vs-code audit |
+| **Core Team** | trw-lead, trw-implementer, trw-tester, trw-researcher, trw-reviewer, trw-auditor, trw-adversarial-auditor | Orchestration, TDD, testing, research, review, audit, spec-vs-code audit |
 | **Requirements** | trw-prd-groomer, trw-requirement-writer, trw-requirement-reviewer | PRD lifecycle specialists |
 | **Quality** | trw-traceability-checker, trw-code-simplifier | Traceability and code health |
 
@@ -150,7 +150,7 @@ pytest tests/test_tools_learning.py -k "test_recall" -v
 ```
 src/trw_mcp/
   server/             # FastMCP entry point, middleware chain
-  bootstrap.py        # init-project: deploy TRW to target repos
+  bootstrap/          # init-project: deploy TRW to target repos
   models/             # Pydantic v2 models (config, run, learning, etc.)
   tools/              # MCP tool implementations
   state/              # State management (persistence, validation, analytics)

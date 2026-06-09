@@ -127,6 +127,8 @@ async def test_pull_sends_client_id_and_logs_structured_events() -> None:
         "etag": "etag-1",
         "sync_hints": {"polling_cap_seconds": 60},
         "team_learnings": [{"source_learning_id": "remote-1"}],
+        # PRD-INFRA-139 P1-B: server advertises the independent company cursor.
+        "next_company_seq": 12,
     }
     mock_client_cls = _build_async_httpx_mock(response)
 
@@ -139,14 +141,18 @@ async def test_pull_sends_client_id_and_logs_structured_events() -> None:
             since_seq=7,
             model_family="opus",
             trw_version="v1",
+            since_company_seq=4,
         )
 
     assert result is not None
+    # P1-B: the independent company cursor round-trips on request and response.
+    assert result.next_company_seq == 12
     mock_client = mock_client_cls.return_value.__aenter__.return_value
     _, kwargs = mock_client.get.call_args
     assert kwargs["headers"]["If-None-Match"] == '"cached-etag"'
     assert kwargs["params"] == {
         "since_seq": 7,
+        "since_company_seq": 4,
         "client_id": "sync-client-1",
         "model_family": "opus",
         "trw_version": "v1",
@@ -400,3 +406,46 @@ def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
     assert stored.importance == 0.9
     assert stored.metadata["team_sync_pull_seq"] == "9"
     assert DeltaTracker.get_dirty_entries(backend) == []
+
+
+def test_merge_company_sync_learnings_tagged_distinctly(tmp_path) -> None:
+    """PRD-INFRA-139 FR06: company-tier learnings tagged source=company_sync in
+    metadata are merged via the same team-learnings path but stored with the
+    company_sync source so they stay distinguishable from team learnings."""
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    from trw_mcp.sync.pull import SyncPuller
+
+    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
+    puller = SyncPuller(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        trw_dir=tmp_path,
+    )
+
+    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
+        merged = puller.merge_team_learnings(
+            [
+                {
+                    "source_learning_id": "company-1",
+                    "summary": "company-wide lesson",
+                    "detail": "portable detail",
+                    "impact": 0.9,
+                    "tags": ["sync"],
+                    "type": "pattern",
+                    "status": "active",
+                    "sync_seq": 3,
+                    "vector_clock": {},
+                    # Server tags company-tier learnings distinctly.
+                    "metadata": {"source": "company_sync"},
+                }
+            ]
+        )
+
+    assert merged == 1
+    stored = backend.get("team-sync-company-1")
+    assert stored is not None
+    assert stored.source == "company_sync"
+    assert stored.metadata["source"] == "company_sync"
+    assert stored.remote_id == "company-1"

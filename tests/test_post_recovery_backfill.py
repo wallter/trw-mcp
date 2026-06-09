@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 import structlog.testing
 
-
 # ---------------------------------------------------------------------------
 # FR01: get_backend() schedules backfill on recovery
 # ---------------------------------------------------------------------------

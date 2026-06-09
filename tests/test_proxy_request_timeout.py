@@ -102,7 +102,7 @@ async def test_run_stdio_proxy_threads_finite_timeout_into_session_and_call(
         def __init__(self, _read: object, _write: object, *, read_timeout_seconds: Any = None) -> None:
             captured["session_read_timeout_seconds"] = read_timeout_seconds
 
-        async def __aenter__(self) -> "_FakeSession":
+        async def __aenter__(self) -> _FakeSession:
             return self
 
         async def __aexit__(self, *_exc: object) -> None:

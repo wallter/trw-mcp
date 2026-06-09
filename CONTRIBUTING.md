@@ -120,7 +120,7 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 - Fixtures live in `tests/conftest.py`: `tmp_project`, `config`, `reader`, `writer`
 - Patch module-level imports at both source and consumer when needed
 - Use `reset_backend()` autouse fixture for SQLite singleton isolation
-- Coverage target: >=90% for new code
+- Coverage: 80% enforced (`fail_under`); 90% target for new code
 
 ## Questions?
 

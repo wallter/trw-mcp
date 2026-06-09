@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # FR16 — default tier is T2
 # ---------------------------------------------------------------------------
@@ -36,7 +35,6 @@ def test_substrate_enrich_response_is_wired_in_tools() -> None:
     a per-client builder.  This is the integration check that build_t2_payload
     was never wired in production.
     """
-    import ast
     import pathlib
 
     tool_file = (

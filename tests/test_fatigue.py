@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from trw_mcp.state.surface_tracking import (
@@ -158,6 +159,59 @@ class TestFatigueWarning:
         log_surface_event(trw_dir, learning_id="L-0", surface_type="nudge")
         result = check_nudge_fatigue(trw_dir)
         assert result["sessions_analyzed"] == 1
+
+
+class TestSessionScopedScanResilience:
+    """The session-scoped full-scan path (_read_all_surface_events_for_session)
+    must degrade per-line like read_jsonl_tail: one bad byte / non-object row
+    is dropped, not the whole scan."""
+
+    @staticmethod
+    def _write_log(trw_dir: Path, payload: bytes) -> None:
+        log_dir = trw_dir / "logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "surface_tracking.jsonl").write_bytes(payload)
+
+    def test_non_utf8_row_does_not_discard_session_scan(self, tmp_path: Path) -> None:
+        """A non-UTF-8 byte row between valid session events is skipped only."""
+        trw_dir = tmp_path / ".trw"
+        nudge = json.dumps(
+            {"session_id": "S", "learning_id": "L-0", "surface_type": "nudge"},
+        ).encode("utf-8")
+        recall = json.dumps(
+            {"session_id": "S", "learning_id": "L-0", "surface_type": "recall"},
+        ).encode("utf-8")
+        self._write_log(trw_dir, nudge + b"\n\xff\xfe torn append\n" + recall + b"\n")
+
+        rate, count, _ids = compute_recall_pull_rate(trw_dir, session_id="S")
+        # Both valid rows survived the bad byte row: L-0 nudged and recalled.
+        assert rate == 1.0
+        assert count == 1
+
+    def test_non_object_row_does_not_raise_session_scan(self, tmp_path: Path) -> None:
+        """A bare-scalar row no longer AttributeErrors into a wiped scan."""
+        trw_dir = tmp_path / ".trw"
+        nudge = json.dumps(
+            {"session_id": "S", "learning_id": "L-0", "surface_type": "nudge"},
+        ).encode("utf-8")
+        recall = json.dumps(
+            {"session_id": "S", "learning_id": "L-0", "surface_type": "recall"},
+        ).encode("utf-8")
+        # `42` parses as a valid int but has no .get — previously raised into
+        # the broad catch and discarded every event for the session.
+        self._write_log(trw_dir, nudge + b"\n42\n" + recall + b"\n")
+
+        rate, count, _ids = compute_recall_pull_rate(trw_dir, session_id="S")
+        assert rate == 1.0
+        assert count == 1
+
+    def test_all_undecodable_session_scan_returns_zero(self, tmp_path: Path) -> None:
+        """An entirely non-UTF-8 log fails open to the neutral (0.0, 0) result."""
+        trw_dir = tmp_path / ".trw"
+        self._write_log(trw_dir, b"\xff\xfe\n\xfc\xfd\n")
+        rate, count, _ids = compute_recall_pull_rate(trw_dir, session_id="S")
+        assert rate == 0.0
+        assert count == 0
 
 
 class TestFatigueInDeliverResponse:

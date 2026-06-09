@@ -132,7 +132,7 @@ class ToolsConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    tool_exposure_mode: str = "all"
+    tool_exposure_mode: str | None = None
     tool_exposure_list: list[str] = Field(default_factory=list)
     tool_descriptions_variant: str = "default"
     mcp_server_instructions_enabled: bool | None = None

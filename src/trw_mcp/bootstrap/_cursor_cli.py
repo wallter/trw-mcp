@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._cursor import HookHandlerEntry
+from ._file_ops import read_json_object
 
 logger = structlog.get_logger(__name__)
 
@@ -145,19 +146,49 @@ _CLI_HOOK_SCRIPTS: Final[tuple[str, ...]] = (
 # ---------------------------------------------------------------------------
 
 
-def _extract_cli_permissions(raw: object) -> tuple[list[str], list[str]]:
-    """Validate and extract allow/deny lists from a parsed cli.json dict.
+def _extract_cli_permissions(raw: dict[str, object]) -> tuple[list[str], list[str]]:
+    """Validate and extract allow/deny lists from a parsed cli.json object.
 
-    Raises TypeError for invalid structure (caught by the callers try/except).
+    ``raw`` is the structurally-validated top-level object returned by
+    :func:`read_json_object` (always a ``dict``; the non-object case is already
+    collapsed to ``None`` by the seam). This function owns the *inner* shape
+    policy: it raises ``TypeError`` when ``permissions`` — or its ``allow`` /
+    ``deny`` members — has the wrong type, so the caller treats the document as
+    corrupt and overwrites with TRW defaults. Without the list checks a
+    ``{"permissions": {"allow": "x"}}`` document would reach ``allow.append`` and
+    raise an uncaught ``AttributeError``.
+
+    Mutates ``raw`` in place via ``setdefault`` so the caller can write the
+    merged document straight back.
     """
-    if not isinstance(raw, dict):
-        raise TypeError("cli.json root must be a JSON object")
     perms = raw.setdefault("permissions", {})
     if not isinstance(perms, dict):
         raise TypeError("permissions must be a JSON object")
-    allow: list[str] = perms.setdefault("allow", [])
-    deny: list[str] = perms.setdefault("deny", [])
+    allow = perms.setdefault("allow", [])
+    deny = perms.setdefault("deny", [])
+    if not isinstance(allow, list) or not isinstance(deny, list):
+        raise TypeError("permissions.allow and permissions.deny must be JSON arrays")
     return allow, deny
+
+
+def _write_cli_json(cli_file: Path, payload: object, result: BootstrapFileResult) -> bool:
+    """Write the cli.json *payload*, returning ``True`` on success.
+
+    Never raises: an ``OSError`` (unwritable path, is-a-directory, permission)
+    is converted into a content-free structural error on ``result["errors"]``.
+    The upstream fail-open caller logs ``{exc}`` verbatim, so swallowing the
+    error here is what keeps a corrupt/locked ``.cursor/cli.json`` from leaking
+    a raw path / errno string into higher-level warnings.
+    """
+    try:
+        cli_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        logger.warning("cursor_cli_config_write_failed", path=str(cli_file), reason="unwritable")
+        result.setdefault("errors", []).append(
+            ".cursor/cli.json could not be written (unwritable path)."
+        )
+        return False
+    return True
 
 
 def generate_cursor_cli_config(
@@ -207,9 +238,18 @@ def generate_cursor_cli_config(
     }
 
     if cli_file.exists() and not force:
-        try:
-            raw = json.loads(cli_file.read_text(encoding="utf-8"))
-            allow, deny = _extract_cli_permissions(raw)
+        # Read through the shared structural seam: absent / unreadable (OSError) /
+        # non-UTF-8 / malformed / non-object all collapse to ``None`` with a
+        # content-free diagnostic, so no parser detail or raw byte ever escapes.
+        raw = read_json_object(cli_file, context="cursor_cli")
+        permissions: tuple[list[str], list[str]] | None = None
+        if raw is not None:
+            try:
+                permissions = _extract_cli_permissions(raw)
+            except (TypeError, ValueError):
+                permissions = None
+        if permissions is not None and raw is not None:
+            allow, deny = permissions
             # Add TRW allow-tokens not already in allow or deny
             for token in _DEFAULT_ALLOW:
                 if token not in allow and token not in deny:
@@ -218,21 +258,23 @@ def generate_cursor_cli_config(
             for token in _DEFAULT_DENY:
                 if token not in deny and token not in allow:
                     deny.append(token)
-            cli_file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
-            result["updated"].append(".cursor/cli.json")
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            if _write_cli_json(cli_file, raw, result):
+                result["updated"].append(".cursor/cli.json")
+        else:
+            # Unreadable / corrupt / wrong-shape: preserve existing behavior —
+            # overwrite with TRW defaults and surface a content-free advisory.
             logger.warning(
-                "cursor_cli_config_malformed",
+                "cursor_cli_config_overwritten",
                 path=str(cli_file),
-                action="overwrite",
+                reason="corrupt_or_unreadable",
             )
-            cli_file.write_text(json.dumps(default_config, indent=2) + "\n", encoding="utf-8")
-            result["updated"].append(".cursor/cli.json")
-            result.setdefault("info", []).append(
-                "WARNING: .cursor/cli.json was malformed — overwritten with TRW defaults."
-            )
-    else:
-        cli_file.write_text(json.dumps(default_config, indent=2) + "\n", encoding="utf-8")
+            if _write_cli_json(cli_file, default_config, result):
+                result["updated"].append(".cursor/cli.json")
+                result.setdefault("info", []).append(
+                    "WARNING: .cursor/cli.json was malformed or unreadable — "
+                    "overwritten with TRW defaults."
+                )
+    elif _write_cli_json(cli_file, default_config, result):
         result["created"].append(".cursor/cli.json")
 
     # Emit TTY/tmux reminder (PRD-CORE-137-FR08a)

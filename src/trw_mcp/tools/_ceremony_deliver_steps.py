@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 
 import structlog
 
-from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state._helpers import read_jsonl_resilient
 
 if TYPE_CHECKING:
     from trw_mcp.models.typed_dicts import DeliverResultDict, DeliveryGatesDict
@@ -45,6 +45,132 @@ _GATE_KEYS: tuple[str, ...] = (
     "checkpoint_blocker_warning",
     "complexity_drift_warning",
 )
+
+
+def evaluate_blocking_gates(
+    *,
+    gate_result: DeliveryGatesDict,
+    results: DeliverResultDict,
+    errors: list[str],
+    resolved_run: Path | None,
+    allow_unverified: bool,
+    unverified_reason: str,
+    events: object,
+) -> bool:
+    """Apply the deliver blocking-gate cascade. Return True to short-circuit.
+
+    Encapsulates the integration-review / review-scope / review-block /
+    task-type deliver-gate / build-gate cascade extracted from ``trw_deliver``
+    (BEHAVIOR-PRESERVING). Mutates ``results``/``errors`` in place exactly as
+    the inline cascade did. Returns ``True`` when delivery must stop (the
+    caller returns ``results`` immediately), ``False`` to proceed.
+
+    ``events`` is the module-level ``FileEventLogger`` (passed in so the
+    monkeypatched ``ceremony._events`` stays authoritative).
+    """
+    # Block delivery if integration review has blocking verdict
+    if gate_result.get("integration_review_block"):
+        errors.append(str(gate_result["integration_review_block"]))
+        results["errors"] = errors
+        results["success"] = False
+        return True
+
+    # Block delivery if >5 files modified without review (R-01)
+    if gate_result.get("review_scope_block"):
+        errors.append(str(gate_result["review_scope_block"]))
+        results["errors"] = errors
+        results["success"] = False
+        return True
+
+    # Block delivery when the review verdict is 'block' with critical findings
+    # on a STANDARD/COMPREHENSIVE run. This is the primary truthfulness gate:
+    # a block review must actually block (CONSTITUTION §1). The sanctioned
+    # escape hatch is allow_unverified + a concrete unverified_reason
+    # (Deliver Gate Path 3) — honored exactly like the build/integration gates.
+    review_block = gate_result.get("review_block")
+    if review_block and not (allow_unverified and unverified_reason.strip()):
+        errors.append(str(review_block))
+        results["errors"] = errors
+        results["success"] = False
+        logger.warning("deliver_review_block", run=str(resolved_run))
+        return True
+    if review_block:
+        # Override taken — make the bypass of the truthfulness gate UNMISSABLE,
+        # mirroring the build-gate override audit trail (A-P1-02).
+        reason = unverified_reason.strip()
+        results["truthfulness_gate_bypassed"] = reason
+        logger.warning(
+            "review_block_override_used",
+            reason=reason,
+            review_block=str(review_block),
+            run=str(resolved_run),
+        )
+        if resolved_run is not None and (resolved_run / "meta").exists():
+            events.log_event(  # type: ignore[attr-defined]
+                resolved_run / "meta" / "events.jsonl",
+                "delivery_gate_overridden",
+                {"reason": reason, "review_block": str(review_block)},
+            )
+
+    # PRD-CORE-184-FR03: task-type-aware deliver gate. When the configured
+    # deliver_gate_mode + the run's task_type promote the advisory build
+    # gate to a structural block, treat the missing build check as a hard
+    # gate (still overridable via allow_unverified + unverified_reason).
+    # When the mode is advisory (default) ``delivery_blocked`` is never set,
+    # so this is a pure no-op for existing deployments (zero regression).
+    delivery_blocked = gate_result.get("delivery_blocked")
+    if delivery_blocked and not (allow_unverified and unverified_reason.strip()):
+        results["delivery_blocked"] = str(delivery_blocked)
+        results["missing_gate"] = str(gate_result.get("missing_gate", "build_check"))
+        errors.append(str(delivery_blocked))
+        results["errors"] = errors
+        results["success"] = False
+        logger.warning(
+            "deliver_gate_mode_blocked",
+            task_type=str(gate_result.get("blocked_task_type", "unknown")),
+            run=str(resolved_run),
+        )
+        return True
+
+    # PRD-DIST-1865 / iter-29 Track-A: do not let "must call deliver"
+    # override truthfulness.  A run with work events but no successful
+    # trw_build_check can still be delivered through an explicit
+    # acceptable-failure override, but not silently.
+    build_gate_warning = gate_result.get("build_gate_warning")
+    if build_gate_warning:
+        reason = unverified_reason.strip()
+        if not allow_unverified or not reason:
+            block = (
+                f"Delivery blocked: {build_gate_warning} "
+                "If this is an acceptable failure, retry with "
+                "allow_unverified=true and a concrete unverified_reason."
+            )
+            results["build_gate_block"] = block
+            errors.append(block)
+            results["errors"] = errors
+            results["success"] = False
+            return True
+        results["build_gate_override"] = reason
+        # A-P1-02: the truthfulness gate (CONSTITUTION §1.a) was bypassed via
+        # allow_unverified. Previously this was only stored in a result key —
+        # invisible to an operator watching the log/event stream, and
+        # indistinguishable from a legitimate acceptable-failure deliver.
+        # Make the bypass UNMISSABLE: a WARNING, a prominent result key, and
+        # (when a run exists) a delivery_gate_overridden event for audit.
+        results["truthfulness_gate_bypassed"] = reason
+        logger.warning(
+            "build_gate_override_used",
+            reason=reason,
+            build_gate_warning=str(build_gate_warning),
+            run=str(resolved_run),
+        )
+        if resolved_run is not None and (resolved_run / "meta").exists():
+            events.log_event(  # type: ignore[attr-defined]
+                resolved_run / "meta" / "events.jsonl",
+                "delivery_gate_overridden",
+                {"reason": reason, "build_gate_warning": str(build_gate_warning)},
+            )
+    return False
 
 
 def unpack_gate_result(gate_result: DeliveryGatesDict, results: DeliverResultDict) -> None:
@@ -124,10 +250,14 @@ def log_deliver_complete(
     Reads events.jsonl from the run dir for the events_logged field when
     available; missing/unreadable counts fall back to 0.
     """
-    reader = FileStateReader()
     run_id = str(resolved_run.name) if resolved_run else ""
     events_jsonl = resolved_run / "meta" / "events.jsonl" if resolved_run else None
-    events_logged = len(reader.read_jsonl(events_jsonl)) if events_jsonl and events_jsonl.exists() else 0
+    # events.jsonl is read here only for the advisory events_logged count on the
+    # deliver_ok line. The strict reader raises StateError on a torn concurrent
+    # append, which would abort deliver-completion logging and break the
+    # docstring's "unreadable counts fall back to 0" contract; the resilient
+    # reader honors it by dropping the torn line (returns [] when missing).
+    events_logged = len(read_jsonl_resilient(events_jsonl)) if events_jsonl else 0
     if not errors:
         logger.info(
             "deliver_ok",

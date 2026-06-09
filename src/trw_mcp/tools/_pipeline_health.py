@@ -324,7 +324,7 @@ def probe_bandit_state(trw_dir: Path) -> SignalResult:
         advisory = ""
         if degraded:
             advisory = (
-                f"bandit_state degraded: last update {age_days:.1f} days ago "
+                f"bandit_state degraded: last refresh {age_days:.1f} days ago "
                 f"(threshold: {stale_days} days). The bandit_state.json file is "
                 "written by the backend meta-tune policy; if no backend bandit is "
                 "active here, set pipeline_health_bandit_probe_enabled=false."

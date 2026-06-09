@@ -278,23 +278,13 @@ class TestRecordOutcomeFailOpen:
 
 
 class TestGetRecallStatsReaderFailure:
-    """get_recall_stats returns zeroed defaults when reader raises."""
+    """get_recall_stats degrades gracefully on a corrupt tracking log."""
 
-    def test_corrupted_jsonl_returns_zeroed_stats(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """If FileStateReader.read_jsonl raises, stats are zeroed defaults."""
-        # Create the tracking file so existence check passes
+    def test_all_lines_corrupt_returns_zeroed_stats(self, trw_dir: Path) -> None:
+        """A log of only-corrupt lines yields zeroed stats (every row dropped)."""
         tracking_path = trw_dir / _TRACKING_FILE
         tracking_path.parent.mkdir(parents=True, exist_ok=True)
-        tracking_path.write_text("not valid json\n", encoding="utf-8")
-
-        # The real FileStateReader.read_jsonl raises StateError on bad JSON
-        # which is caught by the broad except Exception
-        mock_reader = MagicMock()
-        mock_reader.read_jsonl.side_effect = StateError("bad json")
-        monkeypatch.setattr(
-            "trw_mcp.state.recall_tracking.FileStateReader",
-            lambda: mock_reader,
-        )
+        tracking_path.write_text("not valid json\n{also bad\n", encoding="utf-8")
 
         stats = get_recall_stats()
         assert stats["total_recalls"] == 0
@@ -302,6 +292,47 @@ class TestGetRecallStatsReaderFailure:
         assert stats["positive_outcomes"] == 0
         assert stats["negative_outcomes"] == 0
         assert stats["neutral_outcomes"] == 0
+
+    def test_torn_line_preserves_valid_records(self, trw_dir: Path) -> None:
+        """A single torn concurrent append must drop only that row.
+
+        Regression: the strict reader raised StateError on the first malformed
+        line, and the broad ``except`` zeroed the ENTIRE aggregate — one torn
+        append silently wiped every valid recall/outcome record. The resilient
+        reader keeps the valid rows so calibration stats survive.
+        """
+        tracking_path = trw_dir / _TRACKING_FILE
+        tracking_path.parent.mkdir(parents=True, exist_ok=True)
+        good_a = json.dumps({"learning_id": "L-001", "outcome": None})
+        good_b = json.dumps({"learning_id": "L-001", "outcome": "positive"})
+        good_c = json.dumps({"learning_id": "L-002", "outcome": "negative"})
+        # Middle line is a torn append (a partial record interleaved by a
+        # concurrent writer) — valid JSON syntax does not parse to a dict break.
+        torn = '{"learning_id": "L-003", "outcome": "posi'
+        tracking_path.write_text(
+            f"{good_a}\n{good_b}\n{torn}\n{good_c}\n",
+            encoding="utf-8",
+        )
+
+        stats = get_recall_stats()
+        # 3 valid rows counted; the torn row dropped (not a total wipe to 0).
+        assert stats["total_recalls"] == 3
+        assert stats["unique_learnings"] == 2
+        assert stats["positive_outcomes"] == 1
+        assert stats["negative_outcomes"] == 1
+        assert stats["neutral_outcomes"] == 0
+
+    def test_non_utf8_row_dropped_not_fatal(self, trw_dir: Path) -> None:
+        """A non-UTF-8 byte row (torn multi-byte append) drops only that row."""
+        tracking_path = trw_dir / _TRACKING_FILE
+        tracking_path.parent.mkdir(parents=True, exist_ok=True)
+        good = json.dumps({"learning_id": "L-001", "outcome": "positive"}).encode("utf-8")
+        # 0xff is never valid UTF-8 — simulates a row split mid multi-byte seq.
+        tracking_path.write_bytes(good + b"\n" + b"\xff\xfe garbage\n")
+
+        stats = get_recall_stats()
+        assert stats["total_recalls"] == 1
+        assert stats["positive_outcomes"] == 1
 
 
 # ---------------------------------------------------------------------------

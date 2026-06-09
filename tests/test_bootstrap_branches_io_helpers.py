@@ -20,6 +20,7 @@ from trw_mcp.bootstrap import (
     _write_if_missing,
     update_project,
 )
+
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 

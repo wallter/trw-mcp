@@ -9,6 +9,7 @@ import structlog
 from structlog.testing import capture_logs
 
 from trw_mcp.sync.outcomes import (
+    _MAX_OUTCOME_LEARNING_IDS,
     load_pending_outcomes,
     write_synced_marker,
 )
@@ -176,3 +177,51 @@ def test_hash_changes_when_session_metrics_change(tmp_path: Path) -> None:
     second = load_pending_outcomes(tmp_path)
     assert len(second) == 1
     assert second[0].sync_hash != first[0].sync_hash
+
+
+def _yaml_with_exposure_ids(ids: list[str]) -> str:
+    """Build a run.yaml body with the given learning_exposure ids."""
+    lines = [
+        "session_metrics:",
+        "  status: success",
+        "  learning_exposure:",
+        "    ids:",
+    ]
+    lines.extend(f"      - {i}" for i in ids)
+    return "\n".join(lines) + "\n"
+
+
+def test_oversized_learning_ids_capped_to_backend_max(tmp_path: Path) -> None:
+    """A run with >50 exposure ids must yield a payload capped at exactly 50.
+
+    Regression for PRD-FIX-107: the backend OutcomeSync.learning_ids field is
+    Field(max_length=50) with extra="forbid", so an uncapped payload (observed
+    up to 544 ids) 422-rejects the ENTIRE outcome batch. The client must cap to
+    the backend limit, preserving the first 50 ids in recorded order.
+    """
+    assert _MAX_OUTCOME_LEARNING_IDS == 50
+    n = 120  # well above the 50 cap (real runs were seen at 544)
+    all_ids = [f"id-{i:03d}" for i in range(n)]
+    runs_root = tmp_path / "runs"
+    _mk_run(runs_root, "t1", "run-big", yaml_body=_yaml_with_exposure_ids(all_ids))
+
+    pending = load_pending_outcomes(tmp_path)
+    assert len(pending) == 1
+    learning_ids = pending[0].payload["learning_ids"]
+    assert isinstance(learning_ids, list)
+    # Exactly the cap, never more — this is what stops the 422 batch rejection.
+    assert len(learning_ids) == 50
+    assert len(learning_ids) <= _MAX_OUTCOME_LEARNING_IDS
+    # First 50 preserved in order (deterministic truncation).
+    assert learning_ids == all_ids[:50]
+
+
+def test_small_learning_ids_unchanged(tmp_path: Path) -> None:
+    """A run at/under the cap passes its ids through untouched."""
+    small_ids = ["A", "B", "C"]
+    runs_root = tmp_path / "runs"
+    _mk_run(runs_root, "t1", "run-small", yaml_body=_yaml_with_exposure_ids(small_ids))
+
+    pending = load_pending_outcomes(tmp_path)
+    assert len(pending) == 1
+    assert pending[0].payload["learning_ids"] == small_ids

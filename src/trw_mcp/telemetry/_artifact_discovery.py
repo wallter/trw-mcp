@@ -76,15 +76,32 @@ _SUB_CLAUDE_GLOBS: Final[tuple[str, ...]] = (
 
 
 def _hash_file(path: Path) -> tuple[str, int]:
-    """Return ``(sha256_hex, byte_count)`` for a single file."""
+    """Return ``(sha256_hex, byte_count)`` for a single file.
+
+    Fail-open on any read anomaly. The registry's invariant #3
+    (``artifact_registry`` module docstring) mandates that ``build`` must not
+    raise on a disk-state anomaly. A governing file can become unreadable
+    between the caller's ``is_file()`` gate and this open — a permission
+    change, a torn read, or a TOCTOU vanish while a concurrent agent rewrites
+    it (common in this monorepo). Without containment, the resulting
+    ``OSError`` propagates out of ``_discover_artifacts`` → ``build`` and, in
+    the session-start path, collapses the *entire* surface snapshot to ``""``,
+    discarding identity for every other artifact rather than skipping the one
+    bad file. Returning the same ``("", 0)`` sentinel as the non-file branch
+    contains the fault to a single record.
+    """
     if not path.is_file():
         return "", 0
     h = hashlib.new(_HASH_ALGO)
     size = 0
-    with path.open("rb") as fh:
-        while chunk := fh.read(65536):
-            h.update(chunk)
-            size += len(chunk)
+    try:
+        with path.open("rb") as fh:
+            while chunk := fh.read(65536):
+                h.update(chunk)
+                size += len(chunk)
+    except OSError as exc:  # justified: invariant #3, one unreadable file must not abort the walk
+        logger.warning("artifact_hash_read_failed", path=str(path), error=type(exc).__name__, detail=str(exc))
+        return "", 0
     return h.hexdigest(), size
 
 

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.state._helpers import read_jsonl_resilient
 
 logger = structlog.get_logger(__name__)
 
@@ -40,11 +40,10 @@ def _merge_session_events(
     """
     all_events = list(run_events)
     session_events_path = trw_dir / "context" / "session-events.jsonl"
-    if session_events_path.exists():
-        try:
-            reader = FileStateReader()
-            session_events = reader.read_jsonl(session_events_path)
-            all_events = list(session_events) + all_events
-        except Exception:  # justified: fail-open, session-events read is best-effort
-            logger.debug("session_events_merge_failed", path=str(session_events_path))
+    # Advisory append-only log: the resilient reader skips torn/undecodable
+    # lines per-row (and returns [] when missing/unreadable), so one bad
+    # concurrent append no longer drops the entire session-events merge.
+    session_events = read_jsonl_resilient(session_events_path)
+    if session_events:
+        all_events = list(session_events) + all_events
     return all_events

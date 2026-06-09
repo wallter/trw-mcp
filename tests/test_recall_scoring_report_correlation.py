@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from tests._recall_scoring_report_support import make_recall_tracking_log, patch_scoring_runs_root
 from trw_mcp.state.persistence import FileStateWriter
@@ -310,3 +312,165 @@ class TestCorrelateRecallsAdvancedPaths:
         result = correlate_recalls(trw_dir, 30)
         ids = [learning_id for learning_id, _ in result]
         assert "L-future" not in ids
+
+
+class TestCorrelateRecallsSkippedRowObservability:
+    """Cover structured observability for skipped/corrupt receipt rows.
+
+    The Interface still fails open (corrupt rows are skipped, valid receipts in
+    the same file/window survive), but the Implementation now emits structured
+    events so a broken receipt log is operator-visible -- without leaking raw
+    line contents, matched learning IDs, or receipt payloads.
+    """
+
+    def test_corrupt_row_skipped_emits_event_and_preserves_valid(
+        self, tmp_path: Path
+    ) -> None:
+        """A corrupt JSONL row is skipped (with an event) but valid receipts remain."""
+        from trw_mcp.scoring import correlate_recalls
+
+        now_ts = datetime.now(timezone.utc).isoformat()
+        trw_dir = tmp_path / ".trw"
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
+        # Line 1: corrupt (carries a would-be secret ID that must NOT leak).
+        # Line 2: a valid receipt in the same window.
+        log_path.write_text(
+            '{not valid json,, "matched_ids": ["L-corrupt-secret"]}\n'
+            + json.dumps({"ts": now_ts, "matched_ids": ["L-valid"]})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        ids = [learning_id for learning_id, _ in result]
+        assert "L-valid" in ids  # valid receipt not dropped by the corrupt neighbour
+
+        skipped = [e for e in logs if e["event"] == "correlate_recalls.receipt_line_skipped"]
+        assert len(skipped) == 1
+        evt = skipped[0]
+        assert str(evt["path"]).endswith("recall_tracking.jsonl")
+        assert evt["line_number"] == 1  # original line number, scanning in reverse
+        assert evt["error_class"]
+        # Locality without leakage: no raw line, IDs, or payload in the event.
+        assert "matched_ids" not in evt
+        assert all("L-corrupt-secret" not in str(v) for v in evt.values())
+        assert all("not valid json" not in str(v) for v in evt.values())
+
+    def test_non_object_json_row_skipped_emits_event_and_preserves_valid(
+        self, tmp_path: Path
+    ) -> None:
+        """A bare JSON array/scalar row is skipped gracefully (no AttributeError crash)."""
+        from trw_mcp.scoring import correlate_recalls
+
+        now_ts = datetime.now(timezone.utc).isoformat()
+        trw_dir = tmp_path / ".trw"
+        logs_dir = trw_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir / "recall_tracking.jsonl"
+        # Line 1: valid JSON but a non-object (would crash record.get pre-fix).
+        # Line 2: a valid receipt that must still be correlated.
+        log_path.write_text(
+            '["L-bare-list-secret"]\n'
+            + json.dumps({"ts": now_ts, "matched_ids": ["L-ok"]})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        assert "L-ok" in [learning_id for learning_id, _ in result]
+        skipped = [e for e in logs if e["event"] == "correlate_recalls.receipt_line_skipped"]
+        assert len(skipped) == 1
+        assert skipped[0]["error_class"] == "TypeError"
+        assert skipped[0]["line_number"] == 1
+        assert all("L-bare-list-secret" not in str(v) for v in skipped[0].values())
+
+    def test_invalid_iso_ts_emits_timestamp_invalid_event(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """An unparseable ISO ``ts`` emits a timestamp-invalid event tagged ``ts``."""
+        from trw_mcp.scoring import correlate_recalls
+
+        trw_dir = make_recall_tracking_log(
+            tmp_path,
+            writer,
+            [{"ts": "not-a-timestamp", "matched_ids": ["L-bad-ts"]}],
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        assert result == []
+        events = [e for e in logs if e["event"] == "correlate_recalls.receipt_timestamp_invalid"]
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["timestamp_field"] == "ts"
+        assert evt["error_class"] == "ValueError"
+        assert evt["line_number"] == 1
+        assert str(evt["path"]).endswith("recall_tracking.jsonl")
+        assert all("L-bad-ts" not in str(v) for v in evt.values())
+
+    def test_invalid_epoch_timestamp_emits_timestamp_invalid_event(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """An unparseable epoch ``timestamp`` emits an event tagged ``timestamp``."""
+        from trw_mcp.scoring import correlate_recalls
+
+        trw_dir = make_recall_tracking_log(
+            tmp_path,
+            writer,
+            [{"timestamp": "not-a-number", "matched_ids": ["L-bad-epoch"]}],
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        assert result == []
+        events = [e for e in logs if e["event"] == "correlate_recalls.receipt_timestamp_invalid"]
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["timestamp_field"] == "timestamp"
+        assert evt["error_class"]
+        assert all("L-bad-epoch" not in str(v) for v in evt.values())
+
+    def test_missing_timestamp_row_emits_no_observability_event(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """An outcome-only row (empty ts, no timestamp) is normal -> no skip event."""
+        from trw_mcp.scoring import correlate_recalls
+
+        trw_dir = make_recall_tracking_log(
+            tmp_path,
+            writer,
+            [{"ts": "", "matched_ids": ["L-empty"]}],
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        assert result == []
+        assert not [e for e in logs if str(e["event"]).startswith("correlate_recalls.receipt_")]
+
+    def test_valid_receipt_emits_no_skip_event(
+        self, tmp_path: Path, writer: FileStateWriter
+    ) -> None:
+        """A clean valid receipt produces results and no skipped-row events."""
+        from trw_mcp.scoring import correlate_recalls
+
+        now_ts = datetime.now(timezone.utc).isoformat()
+        trw_dir = make_recall_tracking_log(
+            tmp_path,
+            writer,
+            [{"ts": now_ts, "matched_ids": ["L-clean"]}],
+        )
+
+        with capture_logs() as logs:
+            result = correlate_recalls(trw_dir, 30)
+
+        assert [learning_id for learning_id, _ in result] == ["L-clean"]
+        assert not [e for e in logs if str(e["event"]).startswith("correlate_recalls.receipt_")]

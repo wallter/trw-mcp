@@ -44,6 +44,13 @@ WHEEL_SHA256 = "{{WHEEL_SHA256}}"
 MEMORY_WHEEL_SHA256 = "{{MEMORY_WHEEL_SHA256}}"
 MIN_PYTHON_VERSION = (3, 10)
 DOCS_BASE = "https://trwframework.com/docs"
+# Device-auth (RFC 8628) must hit the BACKEND API host, not the marketing /
+# frontend host. https://trwframework.com is the Amplify-hosted Next.js app; it
+# has no /v1 routes and no rewrite to the backend, so device-code requests there
+# 404 and device auth silently falls back to manual key paste. The backend lives
+# on its own subdomain (mirrors the trw-mcp CLI default in
+# server/_subcommands_lifecycle.py).
+API_BASE = "https://api.trwframework.com"
 
 # ── ANSI colors ──────────────────────────────────────────────────────
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -1639,6 +1646,82 @@ def _detect_project_ides(project_dir: str) -> list[str]:
     return _unique(detected)
 
 
+# ── User-scope (machine-local) tier detection + provisioning (PRD-CORE-185 FR09) ──
+
+
+def _user_scope_markers() -> list[Path]:
+    """Common home / XDG / agent-harness paths that hint a user-scope is sensible.
+
+    Probing these (``~/.claude``, ``~/.codex``, ``~/.config/*``, ``~/.trw``, the
+    XDG base dirs) is a purely-local, non-destructive heuristic: if an agent
+    harness already lives in the user's home, a machine-local user-space memory
+    tier is warranted. No network, no project data.
+    """
+    import os as _os
+
+    home = Path.home()
+    markers: list[Path] = [home / ".claude", home / ".codex", home / ".trw"]
+    xdg_config = _os.environ.get("XDG_CONFIG_HOME") or str(home / ".config")
+    xdg_data = _os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
+    markers.append(Path(xdg_config))
+    markers.append(Path(xdg_data))
+    return markers
+
+
+def _detect_user_scope() -> bool:
+    """Return True if a machine-local user-scope tier is warranted (FR09).
+
+    Heuristic + non-destructive: True when ``~/.claude`` / ``~/.codex`` /
+    ``~/.trw`` exists, or an XDG config/data dir has any contents (an agent
+    harness or prior TRW setup lives in home). On a bare box returns False so
+    the installer stays project-only with zero config.
+    """
+    for marker in _user_scope_markers():
+        try:
+            if marker.is_dir() and marker.name in (".claude", ".codex", ".trw"):
+                return True
+            if marker.is_dir() and any(marker.iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _provision_user_scope() -> bool:
+    """Non-destructively seed the user-scope store + ``~/.trw/config.yaml`` (FR09).
+
+    Only acts when :func:`_detect_user_scope` is truthy. Ensures the machine-
+    local memory dir parent exists and that the machine-defaults config carries
+    ``user_tier_enabled``. NEVER clobbers an existing ``~/.trw/config.yaml`` key
+    (merge/skip only) and NEVER touches project data. Returns True if a user
+    scope was provisioned, False on a bare box (no-op). No network.
+    """
+    if not _detect_user_scope():
+        return False
+
+    home = Path.home()
+    trw_home = home / ".trw"
+    # Machine-local memory store parent (resolve_user_memory_dir's ~/.trw fallback).
+    (trw_home / "memory").mkdir(parents=True, exist_ok=True)
+
+    config_path = trw_home / "config.yaml"
+    existing_keys: set[str] = set()
+    if config_path.is_file():
+        existing_keys = set(_parse_simple_yaml(config_path.read_text(encoding="utf-8")).keys())
+
+    # Seed only keys not already present (non-destructive merge/skip).
+    seed: dict[str, str] = {"user_tier_enabled": "true"}
+    additions = [f"{k}: {v}\n" for k, v in seed.items() if k not in existing_keys]
+    if not additions:
+        return True
+
+    header = "" if config_path.is_file() else "# TRW machine-defaults (PRD-CORE-185 user-space tier)\n"
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(header)
+        handle.writelines(additions)
+    return True
+
+
 def _prompt_ide_selection(
     detected_clis: list[str],
     detected_ides: list[str],
@@ -2675,6 +2758,17 @@ def phase_project_setup(
         telemetry_enabled,
         target_platforms=resolved_targets,
     )
+
+    # PRD-CORE-185 FR09: auto-detect whether a machine-local user-scope tier is
+    # warranted (home/XDG/harness markers) and, if so, provision the user-scope
+    # store + ``~/.trw/config.yaml`` machine layer NON-destructively. On a bare
+    # box this is a no-op and TRW stays project-only with zero config.
+    try:
+        if _provision_user_scope():
+            ui.step_ok("User-space memory tier provisioned (~/.trw machine layer)")
+    except OSError:  # justified: fail-open — provisioning must never break install
+        ui.step_warn("Skipped user-scope provisioning (filesystem error)")
+
     return resolved_targets
 
 
@@ -2827,7 +2921,7 @@ def _prompt_api_key(ui: UI) -> str:
     """
     # Try device auth flow first
     try:
-        result = _device_auth_login(DOCS_BASE.replace("/docs", ""), interactive=True)
+        result = _device_auth_login(API_BASE, interactive=True)
         if result and isinstance(result.get("api_key"), str) and result["api_key"]:
             key = str(result["api_key"])
             if validate_api_key(key):

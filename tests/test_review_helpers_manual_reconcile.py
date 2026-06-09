@@ -15,6 +15,8 @@ from trw_mcp.tools._review_helpers import (
 )
 from ._review_helpers_support import run_dir  # noqa: F401
 
+from ._review_helpers_support import run_dir  # noqa: F401
+
 
 class TestHandleManualMode:
     """handle_manual_mode: verdict computation, persistence, edge cases."""

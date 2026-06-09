@@ -13,6 +13,8 @@ from tests._telemetry_pipeline_support import (
 )
 from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
+from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
+
 
 class TestDisabledPipeline:
     """Tests for pipeline with _enabled=False."""

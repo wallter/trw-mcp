@@ -156,6 +156,37 @@ class TestAntigravityCliMcpConfigHardening:
         data = json.loads(settings.read_text(encoding="utf-8"))
         assert "trw" in data["mcpServers"]
 
+    def test_recovers_from_non_utf8_with_backup(self, tmp_path: Path) -> None:
+        """Non-UTF-8 settings must not crash (regression: UnicodeDecodeError)."""
+        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_bytes(b"\xff\xfe{\x00garbage")
+
+        result = generate_antigravity_mcp_config(tmp_path)  # must not raise
+        assert result["errors"] == []
+        assert any("backed up" in w for w in result.get("warnings", []))
+
+        backup = settings.with_suffix(settings.suffix + ".bak")
+        assert backup.exists()
+        assert backup.read_bytes() == b"\xff\xfe{\x00garbage"
+
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
+
+    def test_recovers_from_non_object_top_level(self, tmp_path: Path) -> None:
+        """A top-level JSON array is recovered + backed up, not propagated."""
+        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+        result = generate_antigravity_mcp_config(tmp_path)
+        assert result["errors"] == []
+        assert any("top-level was not a JSON object" in w for w in result.get("warnings", []))
+        assert settings.with_suffix(settings.suffix + ".bak").exists()
+
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
+
 
 @pytest.mark.unit
 class TestAntigravityCliInstructions:

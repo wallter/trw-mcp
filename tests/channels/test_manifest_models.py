@@ -14,7 +14,6 @@ from trw_mcp.channels._manifest_models import (
     ChannelEntry,
     ChannelStatus,
     ChannelSurface,
-    ChannelSurface,
     CleanupAction,
     CleanupConfig,
     CleanupTrigger,
@@ -23,7 +22,6 @@ from trw_mcp.channels._manifest_models import (
     ProvenanceConfig,
     WriteStrategy,
 )
-
 
 # ---------------------------------------------------------------------------
 # Enum values
@@ -65,7 +63,7 @@ def test_channel_surface_canonical_values_present() -> None:
 
 
 def test_channel_status_values() -> None:
-    assert set(s.value for s in ChannelStatus) == {
+    assert {s.value for s in ChannelStatus} == {
         "active", "aspirational", "deprecated", "disabled"
     }
 
@@ -80,7 +78,7 @@ def test_human_edit_detection_values() -> None:
 
 
 def test_cleanup_trigger_values() -> None:
-    assert set(e.value for e in CleanupTrigger) == {
+    assert {e.value for e in CleanupTrigger} == {
         "TTL_EXCEEDED", "QUOTA_EXCEEDED", "DISABLED", "NONE"
     }
 
@@ -90,7 +88,7 @@ def test_cleanup_action_values() -> None:
         "TIER_DOWN", "TIER_DOWN_TO_T0", "FULL_PRUNE",
         "CLEAR_SEGMENT", "SUPPRESS", "TOMBSTONE", "NONE"
     }
-    assert set(e.value for e in CleanupAction) == expected
+    assert {e.value for e in CleanupAction} == expected
 
 
 # ---------------------------------------------------------------------------

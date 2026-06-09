@@ -28,6 +28,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state.analytics import report as _report
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -169,14 +170,18 @@ def _get_last_activity_timestamp(run_dir: Path) -> datetime | None:
 
     Returns None if neither checkpoints nor heartbeat exist.
     """
-    reader = FileStateReader()
     latest: datetime | None = None
 
     # --- Checkpoint timestamps ---
     cp_path = run_dir / "meta" / "checkpoints.jsonl"
     if cp_path.exists():
         try:
-            records = reader.read_jsonl(cp_path)
+            # checkpoints.jsonl is advisory here: it only resets the staleness
+            # clock. A torn concurrent append must drop that one line, not erase
+            # every checkpoint timestamp — losing the most-recent checkpoint
+            # would make a live run look MORE stale and risk a premature
+            # auto-close. Resilient read keeps the surviving timestamps.
+            records = read_jsonl_resilient(cp_path)
             for record in records:
                 ts_str = str(record.get("ts", ""))
                 if ts_str:
@@ -211,28 +216,17 @@ def _write_archive_summary(
     closed_at: str,
 ) -> None:
     """Write a summary.yaml artifact when closing a stale run."""
-    reader = FileStateReader()
     writer = FileStateWriter()
 
     meta = run_dir / "meta"
 
-    # Count events
-    events_count = 0
-    events_path = meta / "events.jsonl"
-    if events_path.exists():
-        try:
-            events_count = len(reader.read_jsonl(events_path))
-        except (OSError, StateError):
-            logger.debug("run_events_read_failed", path=str(events_path))
+    # Count events. These counts are advisory archive metadata only, so a torn
+    # concurrent append should drop that one line rather than zero out the whole
+    # count via a strict-read StateError.
+    events_count = len(read_jsonl_resilient(meta / "events.jsonl"))
 
-    # Count checkpoints
-    checkpoints_count = 0
-    cp_path = meta / "checkpoints.jsonl"
-    if cp_path.exists():
-        try:
-            checkpoints_count = len(reader.read_jsonl(cp_path))
-        except (OSError, StateError):
-            logger.debug("run_checkpoints_read_failed", path=str(cp_path))
+    # Count checkpoints (advisory archive metadata, same resilient rationale).
+    checkpoints_count = len(read_jsonl_resilient(meta / "checkpoints.jsonl"))
 
     # Determine started_at from run_id
     run_id = str(run_data.get("run_id", run_dir.name))

@@ -19,6 +19,7 @@ from trw_mcp.models.typed_dicts import (
     CeremonyFeedbackStepResult,
     TelemetryStepResult,
 )
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -52,15 +53,18 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     inst_id = resolve_installation_id()
     tel_client = TelemetryClient.from_config()
 
-    # Read events for tool count and ceremony score computation
+    # Read events for tool count and ceremony score computation. events.jsonl is
+    # an append-only advisory log here (it feeds only tools_invoked and the
+    # ceremony-score inputs; authoritative run state is read from run.yaml
+    # below), so a torn concurrent append must drop that one line rather than
+    # StateError-abort the whole telemetry step — which _run_step would record
+    # as failed, wiping tools_invoked, the ceremony score, and the
+    # session_summary write that drives trw_quality_dashboard. Use the resilient
+    # reader, matching the trw_status / _do_reflect seams over this same log.
     events: list[dict[str, object]] = []
     if resolved_run is not None:
         ev_path = resolved_run / "meta" / "events.jsonl"
-        if ev_path.exists():
-            from trw_mcp.state.persistence import FileStateReader as _FSR2
-
-            ev_reader = _FSR2()
-            events = ev_reader.read_jsonl(ev_path)
+        events = read_jsonl_resilient(ev_path)
 
     # FIX-051-FR05: Pass trw_dir so compute_ceremony_score can also read
     # session-events.jsonl (where trw_session_start events land before trw_init).

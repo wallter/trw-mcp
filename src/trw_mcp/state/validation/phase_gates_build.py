@@ -246,7 +246,7 @@ def _best_effort_integration_check(
                 ValidationFailure(
                     field=f"integration:tools/{mod}.py",
                     rule="tool_registration",
-                    message=f"Tool module 'tools/{mod}.py' has register function but is not wired in server.py",
+                    message=f"Tool module 'tools/{mod}.py' has register function but is not wired into the server registration package (server/_tools.py)",
                     severity=severity,
                 )
                 for mod in unreg

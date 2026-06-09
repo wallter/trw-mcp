@@ -190,8 +190,9 @@ def test_init_project_registers_all_channels(tmp_path: Path) -> None:
 
 def test_lock_skip_returns_error_entry(tmp_path: Path) -> None:
     """When lock is held, generate_vscode_mcp_config returns skipped_lock in errors."""
-    from trw_mcp.channels._lock import ChannelLock
     import threading
+
+    from trw_mcp.channels._lock import ChannelLock
 
     lock_path = tmp_path / ".trw" / "channels" / "copilot-vscode-mcp-config.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)

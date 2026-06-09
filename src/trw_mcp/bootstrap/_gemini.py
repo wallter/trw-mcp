@@ -18,6 +18,7 @@ import structlog
 from ._file_ops import (
     _new_result,
     _record_write,
+    read_settings_for_merge,
     smart_merge_marker_section,
     write_instruction_file_with_merge,
 )
@@ -134,55 +135,21 @@ def generate_gemini_mcp_config(
     """Deep-merge TRW MCP server entry into ``.gemini/settings.json``.
 
     Only touches ``mcpServers.trw`` — preserves all other settings and servers.
-    Hardened against pre-existing user files written by the Gemini CLI itself
-    or other tooling: malformed JSON or schema-incompatible top-level types
-    fall back to a fresh document rather than corrupting the file silently.
-    The previous file is preserved alongside as ``settings.json.bak`` when
-    the parsed root is not a JSON object so the user can recover their
-    customizations.
+    Hardened (via the shared :func:`read_settings_for_merge` seam) against
+    pre-existing user files written by the Gemini CLI itself or other tooling:
+    non-UTF-8 bytes, malformed JSON, or a non-object top level fall back to a
+    fresh document rather than crashing or corrupting the file silently. The
+    previous file is preserved alongside as ``settings.json.bak`` so the user
+    can recover their customizations.
     """
     result = _new_result()
     settings_path = target_dir / _GEMINI_SETTINGS_PATH
     existed = settings_path.exists()
 
-    existing: dict[str, object] = {}
-    if existed:
-        try:
-            raw = settings_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            result["errors"].append(f"Failed to read {_GEMINI_SETTINGS_PATH}: {exc}")
-            return result
-
-        if raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                # Preserve user content so they can recover, then start fresh.
-                backup = settings_path.with_suffix(settings_path.suffix + ".bak")
-                try:
-                    backup.write_text(raw, encoding="utf-8")
-                except OSError:
-                    pass
-                result.setdefault("warnings", []).append(
-                    f"{_GEMINI_SETTINGS_PATH} was not valid JSON ({exc.msg}); "
-                    f"backed up to {backup.name} and rewriting from scratch"
-                )
-                parsed = None
-            else:
-                if not isinstance(parsed, dict):
-                    backup = settings_path.with_suffix(settings_path.suffix + ".bak")
-                    try:
-                        backup.write_text(raw, encoding="utf-8")
-                    except OSError:
-                        pass
-                    result.setdefault("warnings", []).append(
-                        f"{_GEMINI_SETTINGS_PATH} top-level was not a JSON object; "
-                        f"backed up to {backup.name} and rewriting from scratch"
-                    )
-                    parsed = None
-
-            if isinstance(parsed, dict):
-                existing = parsed
+    existing = read_settings_for_merge(settings_path, rel_path=_GEMINI_SETTINGS_PATH, result=result)
+    if existing is None:
+        # Unrecoverable read error (e.g. permission denied) — already recorded.
+        return result
 
     mcp_servers = existing.get("mcpServers")
     if not isinstance(mcp_servers, dict):
@@ -191,7 +158,6 @@ def generate_gemini_mcp_config(
         # mcpServers entries are lost in this corner case but the alternative
         # is crashing on a write that would produce an invalid Gemini config.
         mcp_servers = {}
-    existing["mcpServers"] = mcp_servers
 
     cmd, args = _resolve_trw_mcp_command()
     trw_entry: dict[str, object] = {
@@ -211,7 +177,9 @@ def generate_gemini_mcp_config(
     if existed and not force:
         try:
             current_text = settings_path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # A corrupt file was recovered above; its bytes can't match the
+            # fresh JSON we're about to write, so treat it as a non-match.
             current_text = ""
         if current_text == new_text:
             result.setdefault("preserved", []).append(_GEMINI_SETTINGS_PATH)

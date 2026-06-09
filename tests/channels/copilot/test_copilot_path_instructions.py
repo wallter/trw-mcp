@@ -13,12 +13,11 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 
-def _make_renderer() -> "CopilotPathInstructionsRenderer":
+def _make_renderer() -> CopilotPathInstructionsRenderer:
     from trw_mcp.channels.copilot._path_instructions import CopilotPathInstructionsRenderer
     return CopilotPathInstructionsRenderer()
 
@@ -155,7 +154,7 @@ def test_delete_rewrite_on_hotspot_set_change(tmp_path: Path) -> None:
     assert "new/path" in content or "different" in content
 
 
-def test_stale_ttl_full_delete(tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+def test_stale_ttl_full_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """TTL exceeded causes file to be deleted (FULL_PRUNE, no T0 fallback).
 
     Mocks check_staleness since tmp_path is not a git repo and check_staleness
@@ -245,9 +244,10 @@ def test_no_sidecar_data_skips_render(tmp_path: Path) -> None:
 
 def test_lock_skip_c2(tmp_path: Path) -> None:
     """C2 lock skip returns skipped_lock (channel_lock_skip event type used)."""
+    import threading
+
     from trw_mcp.channels._lock import ChannelLock
     from trw_mcp.channels._telemetry import VALID_EVENT_TYPES
-    import threading
 
     assert "channel_lock_skip" in VALID_EVENT_TYPES
 

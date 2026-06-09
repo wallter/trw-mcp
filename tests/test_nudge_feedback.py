@@ -12,8 +12,8 @@ from trw_mcp.state._feedback_nudge import (
     FEEDBACK_NUDGE_TEXT,
     _state_path,
     maybe_emit_feedback_nudge,
-    record_build_check_outcome,
     record_bug_learning,
+    record_build_check_outcome,
     record_unhandled_exception,
 )
 
@@ -124,6 +124,22 @@ def test_corrupt_state_file_recovers_to_empty(trw_dir: Path) -> None:
     path = _state_path(trw_dir)
     path.write_text("{not valid json", encoding="utf-8")
     # Subsequent writes must still succeed.
+    record_build_check_outcome("sess-A", passed=False, trw_dir=trw_dir)
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    assert parsed["sess-A"]["build_check_fail_count"] == 1
+
+
+def test_non_utf8_state_file_recovers_to_empty(trw_dir: Path) -> None:
+    """Non-UTF-8 bytes (a torn write) are treated as empty, not propagated.
+
+    Decoding raises UnicodeDecodeError, a ValueError rather than an OSError;
+    _read_state must catch it so the nudge-fatigue counters degrade to empty
+    instead of crashing the tool-call path that records outcomes.
+    """
+    path = _state_path(trw_dir)
+    # 0xFF is never a valid UTF-8 leading byte.
+    path.write_bytes(b'{"sess": \xff}')
+    # The read must not raise; the subsequent write rebuilds clean state.
     record_build_check_outcome("sess-A", passed=False, trw_dir=trw_dir)
     parsed = json.loads(path.read_text(encoding="utf-8"))
     assert parsed["sess-A"]["build_check_fail_count"] == 1

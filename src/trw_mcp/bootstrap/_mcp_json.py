@@ -17,7 +17,7 @@ from pathlib import Path
 
 import structlog
 
-from ._file_ops import ProgressCallback, _result_action_key
+from ._file_ops import ProgressCallback, _result_action_key, read_json_object
 
 logger = structlog.get_logger(__name__)
 
@@ -84,10 +84,11 @@ def _merge_mcp_json(
     trw_entry = _trw_mcp_server_entry()
 
     if mcp_path.exists():
-        try:
-            data = json.loads(mcp_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
+        # Fail open to a fresh document on any structural read failure
+        # (unreadable / non-UTF-8 / malformed / non-object top level). The
+        # seam keeps the diagnostic content-free so a malformed .mcp.json that
+        # happens to hold credentials never lands in logs.
+        data = read_json_object(mcp_path, context="mcp_json") or {}
         servers = data.get("mcpServers", {})
         if not isinstance(servers, dict):
             servers = {}

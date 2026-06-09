@@ -25,6 +25,7 @@ import structlog
 from ruamel.yaml import YAML
 
 from trw_mcp.bootstrap._codex_hooks import codex_hooks_review_warning
+from trw_mcp.bootstrap._file_ops import read_json_object
 from trw_mcp.channels._manifest_loader import (
     ManifestValidationError,
     auto_recreate_empty,
@@ -90,22 +91,17 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
         ],
     }
 
-    # Load existing hooks.json if present
+    # Load existing hooks.json if present, through the shared structural-safe
+    # seam. read_json_object returns None for an unreadable / non-UTF-8 /
+    # malformed / non-object file (a non-UTF-8 file raises UnicodeDecodeError, a
+    # ValueError that is NOT an OSError, and so previously escaped uncaught) and
+    # emits a content-free structural diagnostic. On any such failure ``existing``
+    # stays ``{}`` so we start fresh rather than leave a corrupt file.
     existing: dict[str, Any] = {}
     if hooks_json_path.exists():
-        try:
-            raw = hooks_json_path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                existing = parsed
-        except (OSError, json.JSONDecodeError) as exc:
-            log.warning(
-                "codex_distill_hooks_json_parse_failed",
-                path=str(hooks_json_path),
-                error=str(exc),
-                outcome="warning",
-            )
-            # Start fresh so we don't leave a corrupt file
+        parsed = read_json_object(hooks_json_path, context="codex_distill_hooks")
+        if parsed is not None:
+            existing = dict(parsed)
 
     # Idempotency: check if already registered
     hooks_section = existing.get("hooks", {})

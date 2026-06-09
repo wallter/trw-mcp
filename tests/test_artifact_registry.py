@@ -277,3 +277,56 @@ class TestRepoRootArtifactDiscovery:
         empty_data.mkdir()
         reg = SurfaceRegistry.build(data_root=empty_data, repo_root=None)
         assert reg.artifacts == ()
+
+
+class TestUnreadableFileResilience:
+    """Invariant #3: build must not raise on a disk-state anomaly.
+
+    A governing file can become unreadable (permission change, torn read,
+    TOCTOU vanish while a concurrent agent rewrites it) between the caller's
+    ``is_file()`` gate and the hash open. The fault must be contained to that
+    one record — not abort the whole walk and collapse the snapshot to ``""``.
+    """
+
+    def test_hash_file_returns_sentinel_on_oserror(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.telemetry._artifact_discovery import _hash_file
+
+        target = tmp_path / "x.md"
+        target.write_text("real content")
+        real_open = Path.open
+
+        def boom(self: Path, *args: object, **kwargs: object) -> object:
+            if self.name == "x.md":
+                raise PermissionError("permission denied")
+            return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", boom)
+        assert _hash_file(target) == ("", 0)
+
+    def test_build_skips_unreadable_file_without_raising(
+        self, _fake_data_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_open = Path.open
+
+        def boom(self: Path, *args: object, **kwargs: object) -> object:
+            if self.name == "a.md":  # one of two agent files
+                raise PermissionError("permission denied")
+            return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", boom)
+
+        # Must NOT raise — the whole snapshot would otherwise collapse to "".
+        reg = SurfaceRegistry.build(data_root=_fake_data_root)
+
+        by_id = {a.surface_id: a for a in reg.artifacts}
+        # Every artifact is still recorded — the unreadable one is contained,
+        # not the entire walk aborted.
+        assert "agents:agents/a.md" in by_id
+        assert "agents:agents/b.md" in by_id
+        assert "hooks:hooks/h.sh" in by_id
+        # The unreadable file degrades to the empty-hash sentinel...
+        assert by_id["agents:agents/a.md"].content_hash == ""
+        # ...while its readable siblings retain real content hashes.
+        assert len(by_id["agents:agents/b.md"].content_hash) == 64
+        # A non-empty snapshot id still resolves (identity preserved).
+        assert reg.snapshot_id

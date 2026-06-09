@@ -17,6 +17,8 @@ from trw_mcp.state.analytics import (
 )
 from ._analytics_branches_support import trw_dir  # noqa: F401
 
+from ._analytics_branches_support import trw_dir  # noqa: F401
+
 
 class TestIterEntryFilesIndexYamlSkipped:
     """Line 66: index.yaml is skipped by _iter_entry_files."""

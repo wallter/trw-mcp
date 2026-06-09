@@ -75,6 +75,8 @@ def collect_reflection_inputs(
     Returns:
         ReflectionInputs with all categorized event data.
     """
+    from trw_mcp.state._helpers import read_jsonl_resilient
+
     config = get_config()
     reader = FileStateReader()
 
@@ -84,8 +86,12 @@ def collect_reflection_inputs(
     if run_path:
         resolved = Path(run_path).resolve()
         events_path = resolved / "meta" / "events.jsonl"
-        if reader.exists(events_path):
-            events = reader.read_jsonl(events_path)
+        # events.jsonl is an append-only log read here only for advisory learning
+        # extraction. A single torn concurrent append must degrade to "drop that
+        # one line", not abort the whole read via strict read_jsonl (which raises
+        # StateError on the first malformed line) and lose every intact event.
+        # Mirrors the resilient reader agent_work_evidence applies to this log.
+        events = read_jsonl_resilient(events_path)
 
         run_yaml = resolved / "meta" / "run.yaml"
         if reader.exists(run_yaml):

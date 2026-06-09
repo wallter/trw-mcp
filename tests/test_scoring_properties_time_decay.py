@@ -16,8 +16,8 @@ _impact = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinit
 # Hypothesis 6.x: when ``timezones`` is supplied, ``min_value``/``max_value``
 # must be naive — the timezone is applied separately by the strategy.
 _past_datetime = st.datetimes(
-    min_value=datetime(2020, 1, 1),
-    max_value=datetime(2026, 12, 31),
+    min_value=datetime(2020, 1, 1),  # noqa: DTZ001 - Hypothesis requires naive bounds with timezones=
+    max_value=datetime(2026, 12, 31),  # noqa: DTZ001 - Hypothesis requires naive bounds with timezones=
     timezones=st.just(timezone.utc),
 )
 

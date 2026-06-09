@@ -91,6 +91,41 @@ def test_assemble_evidence_normalizes_build_events_artifacts_and_privacy(evidenc
     assert "No transcript body should leak" not in serialized
 
 
+def test_assemble_evidence_survives_torn_events_line(evidence_run: Path) -> None:
+    """A torn concurrent append to events.jsonl must not abort the whole export.
+
+    Regression: events were read via the strict FileStateReader.read_jsonl,
+    which raises StateError on the first malformed line — so one partial
+    append (the realistic multi-agent failure mode) failed the entire
+    privacy-safe evidence record. The assembler now reads events resiliently:
+    the torn line is dropped and the surviving events still drive the summary.
+    """
+    events_path = evidence_run / "meta" / "events.jsonl"
+    # Append a partial/torn record with no trailing newline, mimicking a
+    # concurrent writer interrupted mid-line.
+    with events_path.open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-05-20T03:36:30Z", "event": "tor')
+
+    evidence = assemble_agent_work_evidence(evidence_run, include_events=False)
+
+    assert isinstance(evidence, AgentWorkEvidence)
+    # The two well-formed events survive; the torn line is dropped.
+    assert evidence.event_summary.total_count == 2
+    assert "event_count=2" in evidence.plan_summary
+
+
+def test_assemble_evidence_survives_torn_checkpoints_line(evidence_run: Path) -> None:
+    """A torn checkpoints.jsonl line must not abort the checkpoint count."""
+    cp_path = evidence_run / "meta" / "checkpoints.jsonl"
+    with cp_path.open("a", encoding="utf-8") as fh:
+        fh.write('{"ts": "2026-05-20T03:37:00Z", "message": "partial')
+
+    evidence = assemble_agent_work_evidence(evidence_run, include_events=False)
+
+    # One valid checkpoint in the fixture; torn line dropped.
+    assert "checkpoint_count=1" in evidence.plan_summary
+
+
 def test_assemble_evidence_includes_review_yaml_verdict_and_findings(
     evidence_run: Path,
     writer: FileStateWriter,

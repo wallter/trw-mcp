@@ -20,7 +20,7 @@ from trw_mcp.models.report import (
     RunReport,
 )
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
-from trw_mcp.state._helpers import safe_float
+from trw_mcp.state._helpers import read_jsonl_resilient, safe_float
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader
 
@@ -231,22 +231,19 @@ def assemble_report(
     """
     meta_path = run_path / "meta"
 
-    # Required: run.yaml
+    # Required: run.yaml — authoritative, strict read (raises on corruption).
     state_data = reader.read_yaml(meta_path / "run.yaml")
 
-    # Optional: events.jsonl
-    events_path = meta_path / "events.jsonl"
-    events = reader.read_jsonl(events_path) if events_path.exists() else []
+    # Optional: events.jsonl — advisory append-only log. Use the resilient
+    # reader so a single torn concurrent append degrades to "drop that line",
+    # not "crash the whole report" (strict read_jsonl raises StateError).
+    events = read_jsonl_resilient(meta_path / "events.jsonl")
 
     # Parse events
     event_summary, phase_timeline, duration, reversion_rate = parse_run_events(events)
 
-    # Optional: checkpoints.jsonl
-    checkpoints_path = meta_path / "checkpoints.jsonl"
-    checkpoint_count = 0
-    if checkpoints_path.exists():
-        checkpoints = reader.read_jsonl(checkpoints_path)
-        checkpoint_count = len(checkpoints)
+    # Optional: checkpoints.jsonl — advisory append-only log, same resilience.
+    checkpoint_count = len(read_jsonl_resilient(meta_path / "checkpoints.jsonl"))
 
     # Optional: build-status.yaml
     build: BuildSummary | None = None

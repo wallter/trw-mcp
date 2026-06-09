@@ -249,6 +249,26 @@ class TestFR02FR06ReverseIterationEarlyExit:
         ids = [lid for lid, _ in results]
         assert "good-entry" in ids
 
+    def test_non_utf8_file_returns_empty_not_crash(self, tmp_path: Path) -> None:
+        """Regression: non-UTF-8 bytes in recall_tracking.jsonl must not crash correlate_recalls.
+
+        A torn/partial multi-byte append writes bytes that are not valid UTF-8.
+        ``read_text(encoding='utf-8')`` raises UnicodeDecodeError (a ValueError,
+        not an OSError) which was NOT caught before this fix, propagating up through
+        the deferred-delivery outcome_correlation step and crashing the caller.
+        After the fix, correlate_recalls must fail-open and return an empty list.
+        """
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        tracking = trw_dir / "logs" / "recall_tracking.jsonl"
+        tracking.parent.mkdir(parents=True)
+        # 0xFF is never valid as the start byte of a UTF-8 sequence.
+        tracking.write_bytes(b"\xff\xfe torn multi-byte garbage\n")
+
+        # Must not raise; must return empty list.
+        results = correlate_recalls(trw_dir, 30, scope="window")
+        assert results == []
+
 
 # ---------------------------------------------------------------------------
 # FR03: _batch_sync_to_sqlite
@@ -459,7 +479,15 @@ class TestFR07QValueCorrectness:
     """FR07: Q-value updates remain correct after batching optimization."""
 
     def test_q_value_increases_with_positive_reward(self, tmp_path: Path) -> None:
-        """Positive reward should increase Q-value from default 0.5."""
+        """Positive reward should increase Q-value from default 0.5.
+
+        Note: when the lookup_fn returns entry_path=None (SQLite-only entry),
+        _write_pending_entries skips the YAML write and does NOT include the
+        ID in updated_ids (correct post-fix behavior — no false write claims).
+        The Q-value computation (Phase 1) still mutates `data` in-place and
+        the SQLite write-back (Phase 3) is the authoritative persistence path
+        for these entries.
+        """
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -477,7 +505,9 @@ class TestFR07QValueCorrectness:
         with patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite"):
             updated = process_outcome(trw_dir, 0.8, "tests_passed", lookup_fn=fake_lookup)
 
-        assert "q-test-001" in updated
+        # SQLite-only entry: not in updated_ids (no YAML write occurred).
+        assert "q-test-001" not in updated
+        # The in-memory Q-value mutation still happened (Phase 1 always runs).
         new_q = float(str(data["q_value"]))
         assert new_q > original_q, f"Positive reward must increase Q-value; {new_q} <= {original_q}"
 

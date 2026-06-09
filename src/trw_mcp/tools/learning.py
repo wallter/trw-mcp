@@ -57,6 +57,7 @@ from trw_mcp.tools._learning_helpers import (
 from trw_mcp.tools._learning_module_helpers import (
     _annotate_injected_learnings,
     _build_call_ctx,
+    _coerce_tags,
     _create_llm_client,
     _is_solution_summary,
     _read_injected_ids,
@@ -72,29 +73,6 @@ def __getattr__(name: str) -> object:
 
     return _compat_getattr(name)
 
-
-def _coerce_tags(tags: list[str] | str | None) -> list[str] | None:
-    """Coerce a tags argument to ``list[str] | None`` (PRD-IMPROVE-MCP-01 FR1).
-
-    Agents frequently pass ``tags="a,b,c"`` (a comma- or whitespace-separated
-    string) instead of a JSON list. Rather than raising a Pydantic
-    ``list_type`` error, accept either shape:
-
-    - ``None`` → ``None`` (no tags).
-    - ``list`` → returned unchanged (each element coerced to ``str``).
-    - ``str`` → split on commas and/or whitespace, trimmed, empties dropped.
-      A blank/whitespace-only string yields ``None``.
-    """
-    if tags is None:
-        return None
-    if isinstance(tags, list):
-        return [str(t) for t in tags]
-    # String input: split on commas first, then whitespace within each part.
-    parts: list[str] = []
-    for chunk in tags.split(","):
-        parts.extend(chunk.split())
-    cleaned = [p.strip() for p in parts if p.strip()]
-    return cleaned or None
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -127,6 +105,8 @@ def register_learning_tools(server: FastMCP) -> None:
         phase_affinity: list[str] | None = None,
         team_origin: str = "",
         protection_tier: str = "normal",
+        # PRD-CORE-185 FR07: write-tier override.
+        scope: str = "auto",
     ) -> LearnResultDict:
         """Persist a non-obvious discovery so future agents inherit the finding.
 
@@ -153,6 +133,9 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Advanced (auto-detected if omitted):
         - shard/source/client/model/type/domain/phase/team/protection metadata.
+        - scope: write-tier override (PRD-CORE-185). "auto" (default) routes
+          portable learnings to the machine-local user tier when a user-scope
+          store is present, else the project tier; "project"/"user" force it.
         Most learnings need only summary and detail. Adding tags and impact
         improves recall precision. All other fields are auto-detected.
 
@@ -203,6 +186,7 @@ def register_learning_tools(server: FastMCP) -> None:
             phase_affinity=phase_affinity,
             team_origin=team_origin,
             protection_tier=protection_tier,
+            scope=scope,
             session_id=call_ctx.session_id or call_ctx.fastmcp_session,
             # Dependency injection: pass module-level refs for testability
             _adapter_store=adapter_store,
@@ -430,6 +414,8 @@ def register_learning_tools(server: FastMCP) -> None:
         ultra_compact: bool = False,
         topic: str | None = None,
         token_budget: int | None = None,
+        # PRD-CORE-185 FR07: tier-scoping.
+        include_tiers: list[str] | None = None,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task.
 
@@ -469,6 +455,9 @@ def register_learning_tools(server: FastMCP) -> None:
             token_budget: Optional max token ceiling for the serialized result.
                 Must be > 0. When omitted, a sane default cap is applied so a
                 recall can never overflow the context window (anti-collapse guard).
+            include_tiers: Optional tier scope (PRD-CORE-185). None (default)
+                includes the machine-local user tier when a user-scope store is
+                present; ["project"] restricts to project-only.
 
         See Also: trw_learn
         """
@@ -495,6 +484,7 @@ def register_learning_tools(server: FastMCP) -> None:
             ultra_compact=ultra_compact,
             topic=topic,
             call_ctx=call_ctx,
+            include_tiers=include_tiers,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,

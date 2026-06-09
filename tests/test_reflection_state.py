@@ -98,6 +98,34 @@ class TestCollectReflectionInputs:
         assert result.events == []
         assert result.run_id is None
 
+    def test_torn_line_does_not_abort_collection(self, trw_dir: Path, tmp_path: Path) -> None:
+        """A torn line in events.jsonl must not erase all reflection inputs.
+
+        The full ``trw_reflect`` path reads the append-only events.jsonl only for
+        advisory learning extraction. A single torn concurrent append must drop
+        that one line, not abort the whole read and lose every intact event.
+        """
+        rd = tmp_path / "runs" / "torn-run"
+        (rd / "meta").mkdir(parents=True)
+        (rd / "meta" / "run.yaml").write_text(
+            "run_id: torn-run-001\ntask: test\nphase: implement\nstatus: active\n",
+            encoding="utf-8",
+        )
+        valid_a = '{"ts": "2026-02-16T00:00:00Z", "event": "run_init", "data": {}}'
+        valid_b = '{"ts": "2026-02-16T00:02:00Z", "event": "build_error", "data": {"m": "x"}}'
+        # Middle line is a torn append: valid prefix, truncated mid-object.
+        (rd / "meta" / "events.jsonl").write_text(
+            valid_a + "\n" + '{"ts": "2026-02-16T00:01:00Z", "event": "par\n' + valid_b + "\n",
+            encoding="utf-8",
+        )
+
+        result = collect_reflection_inputs(str(rd), trw_dir)
+
+        assert result.run_id == "torn-run-001"
+        # The two intact events survive; the torn line is dropped, not fatal.
+        assert len(result.events) == 2
+        assert len(result.error_events) >= 1
+
 
 class TestGenerateReflectionLearnings:
     """Tests for generate_reflection_learnings (mechanical fallback)."""

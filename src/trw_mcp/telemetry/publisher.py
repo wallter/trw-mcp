@@ -61,14 +61,56 @@ def _content_hash(data: dict[str, object]) -> str:
 
 
 def _load_hashes(entries_dir: Path) -> dict[str, str]:
-    """Load the publish-hash sidecar file."""
+    """Load the publish-hash sidecar file.
+
+    Fail-open input seam: the sidecar is advisory change-tracking cache state,
+    not a source of truth. Every read, decode, JSON, and shape failure degrades
+    to an empty mapping so a corrupt sidecar can never break publishing — at
+    worst, already-published entries are re-sent once and the sidecar is
+    rewritten cleanly by ``_save_hashes``. Only structural diagnostics (path,
+    reason, error class) are recorded; raw sidecar content and hash values are
+    never logged.
+
+    The previous implementation cast ``dict(json.loads(read_text(...)))``
+    directly, leaking ``UnicodeDecodeError`` (non-UTF-8 bytes), ``TypeError``
+    (scalar/array JSON), and ``ValueError`` (non-pair sequences) past the only
+    ``(JSONDecodeError, OSError)`` guard — violating the module fail-open
+    contract.
+    """
     path = entries_dir / _HASH_FILE
-    if path.exists():
-        try:
-            return dict(json.loads(path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
-            return {}
-    return {}
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "publish_hash_load_failed",
+            path=str(path),
+            reason="unreadable_or_non_utf8",
+            error_class=type(exc).__name__,
+        )
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        logger.debug(
+            "publish_hash_load_failed",
+            path=str(path),
+            reason="invalid_json",
+            error_class=type(exc).__name__,
+        )
+        return {}
+    if not isinstance(parsed, dict):
+        logger.debug(
+            "publish_hash_load_failed",
+            path=str(path),
+            reason="not_a_json_object",
+            error_class=type(parsed).__name__,
+        )
+        return {}
+    # Keep only well-formed str->str rows; malformed rows are silently dropped
+    # (the affected entry re-publishes once, then gets a clean hash written back).
+    return {key: value for key, value in parsed.items() if isinstance(key, str) and isinstance(value, str)}
 
 
 def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:

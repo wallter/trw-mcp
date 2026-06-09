@@ -130,6 +130,54 @@ def test_smart_merge_cursor_json_malformed_overwrites(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_smart_merge_cursor_json_non_utf8_overwrites(tmp_path: Path) -> None:
+    """A non-UTF-8 existing file is overwritten, not a UnicodeDecodeError crash.
+
+    Regression: the prior ``except (json.JSONDecodeError, OSError)`` did not
+    catch ``UnicodeDecodeError`` (a ``ValueError`` subclass), so a non-UTF-8
+    .cursor/hooks.json crashed bootstrap. The shared ``read_json_object`` seam
+    now maps it to the malformed-overwrite path.
+    """
+    from trw_mcp.bootstrap._cursor import smart_merge_cursor_json
+
+    target = tmp_path / ".cursor" / "hooks.json"
+    target.parent.mkdir(parents=True)
+    # 0xFF 0xFE is not valid UTF-8.
+    target.write_bytes(b"\xff\xfe{invalid}")
+
+    trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
+    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert "hooks" in data
+    assert str(target) in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_smart_merge_cursor_json_non_object_root_overwrites(tmp_path: Path) -> None:
+    """A JSON array (non-object) root is overwritten, not an AttributeError crash.
+
+    Regression: a non-object root parsed cleanly under the old code, then
+    crashed at ``existing.get("hooks")`` / ``existing[key] = value`` because a
+    list has no ``.get`` and rejects string indices. The seam returns ``None``
+    for a non-object root, routing to the overwrite contract.
+    """
+    from trw_mcp.bootstrap._cursor import smart_merge_cursor_json
+
+    target = tmp_path / ".cursor" / "hooks.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
+    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    assert "hooks" in data
+    assert str(target) in result.get("updated", [])
+
+
+@pytest.mark.integration
 def test_smart_merge_cursor_json_creates_parent_dirs(tmp_path: Path) -> None:
     """smart_merge_cursor_json creates missing parent directories."""
     from trw_mcp.bootstrap._cursor import smart_merge_cursor_json

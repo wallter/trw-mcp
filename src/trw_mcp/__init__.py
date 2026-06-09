@@ -55,8 +55,33 @@ except ImportError:
 # happens to load first.
 from trw_memory.storage import _dbapi as _dbapi  # noqa: I001
 
-from importlib.metadata import version as _pkg_version
+import importlib.metadata as _importlib_metadata
+import re as _re
+from pathlib import Path as _Path
 
-__version__: str = _pkg_version("trw-mcp")
+
+def _resolve_version() -> str:
+    """Resolve the package version from source first, then metadata.
+
+    Development checkouts can be imported via ``PYTHONPATH`` while an older
+    ``trw-mcp`` wheel/editable install is still present in the environment. In
+    that case ``importlib.metadata.version("trw-mcp")`` reports the installed
+    distribution instead of the source tree under test, making CLI/status
+    surfaces advertise a stale version. Prefer the adjacent ``pyproject.toml``
+    when it exists; wheels fall back to distribution metadata because the
+    source ``pyproject.toml`` is not shipped.
+    """
+    pyproject = _Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if pyproject.exists():
+        match = _re.search(r'^version = "([^"\n]+)"', pyproject.read_text(encoding="utf-8"), _re.MULTILINE)
+        if match is not None:
+            return match.group(1)
+    try:
+        return _importlib_metadata.version("trw-mcp")
+    except _importlib_metadata.PackageNotFoundError:  # pragma: no cover - defensive source-tree fallback
+        return "0.0.0"
+
+
+__version__: str = _resolve_version()
 
 __all__ = ["__version__"]

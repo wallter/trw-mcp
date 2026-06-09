@@ -71,6 +71,8 @@ def execute_recall(
     ultra_compact: bool = False,
     topic: str | None = None,
     call_ctx: TRWCallContext | None = None,
+    # PRD-CORE-185 FR07: tier-scoping (None -> include user when present).
+    include_tiers: list[str] | None = None,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _adapter_update_access: Any = None,
@@ -153,15 +155,19 @@ def execute_recall(
     fetch_limit = max_results * PREFETCH_MULTIPLIER if max_results > 0 else 0
     # F-003: pass compact through so the backend skips loading the (up to
     # 2000-char) detail field at deserialization rather than stripping it later.
-    matching_learnings = recall_fn(
-        trw_dir,
-        query=query,
-        tags=tags,
-        min_impact=min_impact,
-        status=status,
-        max_results=fetch_limit,
-        compact=use_compact,
-    )
+    # PRD-CORE-185 FR07: forward include_tiers only when the caller scoped it, so
+    # injected recall doubles without the kwarg stay back-compatible.
+    recall_kwargs: dict[str, Any] = {
+        "query": query,
+        "tags": tags,
+        "min_impact": min_impact,
+        "status": status,
+        "max_results": fetch_limit,
+        "compact": use_compact,
+    }
+    if include_tiers is not None:
+        recall_kwargs["include_tiers"] = include_tiers
+    matching_learnings = recall_fn(trw_dir, **recall_kwargs)
 
     # Topic-scoped pre-filter (PRD-CORE-021-FR07)
     topic_filter_warning = ""
@@ -219,9 +225,13 @@ def execute_recall(
         estimate_entry_tokens=estimate_entry_tokens,
     )
 
-    # Apply result cap
-    if max_results > 0:
+    # Apply result cap — must happen BEFORE tokens_used is finalised so the
+    # reported token count matches the entries actually returned to the caller.
+    if max_results > 0 and len(ranked_learnings) > max_results:
         ranked_learnings = ranked_learnings[:max_results]
+        # Recompute tokens_used for the capped set; truncation flag stays True
+        # if the budget already trimmed the list (that state is unchanged).
+        tokens_used = sum(estimate_entry_tokens(entry) for entry in ranked_learnings)
 
     # --- Surface event logging (PRD-CORE-103-FR01) ---
     # Log each surfaced learning for telemetry/fatigue detection.

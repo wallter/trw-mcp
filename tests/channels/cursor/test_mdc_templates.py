@@ -6,8 +6,6 @@ PRD-DIST-2401 FR13, FR14, NFR09.
 
 from __future__ import annotations
 
-import pytest
-
 from trw_mcp.channels.cursor._mdc_templates import (
     ConventionRecord,
     EdgeCaseRecord,
@@ -26,7 +24,6 @@ from trw_mcp.channels.cursor._mdc_templates import (
     validate_mdc_frontmatter,
     validate_minimatch_glob,
 )
-
 
 # ---------------------------------------------------------------------------
 # dir_slug tests

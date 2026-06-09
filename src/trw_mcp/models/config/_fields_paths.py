@@ -144,3 +144,21 @@ class _PathsFields:
         default=True,
         description="Master kill-switch for per-connection pin isolation. When False, resolve_pin_key returns the process UUID regardless of ctx — matches pre-PRD-CORE-141 behavior (Wave 3 rollback).",
     )
+
+    # -- User-space memory tier (PRD-CORE-185) --
+    # Machine-layer knobs for the machine-local user-space memory tier. The
+    # EFFECTIVE gate is presence of the user-scope store (installer-detected,
+    # FR09); ``user_tier_enabled`` is an installer-seeded machine-layer knob +
+    # emergency kill switch. Absent a user-scope store, behavior is project-only
+    # regardless of this value (NFR02). Typically set at the machine layer
+    # (``~/.trw/config.yaml``) so it applies box-wide via the FR04 cascade.
+
+    user_tier_enabled: bool = Field(
+        default=False,
+        description="Installer-seeded machine-layer knob / emergency kill switch for the user-space memory tier. Effective gate is presence of the user-scope store; absent that store behavior is project-only regardless of this value (PRD-CORE-185 NFR02).",
+    )
+    recall_user_tier_cap: int = Field(
+        default=5,
+        ge=0,
+        description="Maximum number of user-tier hits that may enter a single federated recall result, so a flood of low-value user hits cannot bury a precise project hit (PRD-CORE-185 FR06 / D3 / R4).",
+    )

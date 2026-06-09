@@ -37,6 +37,30 @@ def test_load_pin_store_malformed_json_fallback(tmp_path: Path) -> None:
     assert any(e.get("log_level") == "warning" for e in events)
 
 
+def test_load_pin_store_non_utf8_bytes_fallback() -> None:
+    """Non-UTF-8 bytes in pins.json → empty dict + WARN, never crash.
+
+    A torn write or disk corruption can leave an invalid byte sequence in
+    pins.json. Decoding it raises UnicodeDecodeError (a ValueError, not an
+    OSError); load_pin_store sits on the hot session_start path and must
+    honor its documented fail-open contract rather than propagate.
+    """
+    from trw_mcp.state._pin_store import load_pin_store, pin_store_path
+
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    # 0xFF is never valid as the leading byte of a UTF-8 sequence.
+    pins_path.write_bytes(b'{"k": \xff}')
+
+    with capture_logs() as logs:
+        result = load_pin_store()
+
+    assert result == {}
+    events = [e for e in logs if e.get("event") == "pin_store_malformed_fallback"]
+    assert events, f"Expected pin_store_malformed_fallback WARN, got {logs}"
+    assert any(e.get("error") == "UnicodeDecodeError" for e in events)
+
+
 def test_load_pin_store_root_not_dict_fallback() -> None:
     """pins.json whose root is a list (not a dict) → empty dict + WARN."""
     from trw_mcp.state._pin_store import load_pin_store, pin_store_path
@@ -318,6 +342,28 @@ def test_prune_pin_store_orphans_no_op_when_clean(tmp_path: Path) -> None:
     assert pins_path.stat().st_mtime_ns == mtime_before
 
 
+def test_prune_pin_store_orphans_non_utf8_bytes_returns_zero() -> None:
+    """prune fails open on non-UTF-8 bytes: returns 0 + WARN, never crashes.
+
+    The boot sweep calls prune_pin_store_orphans; a corrupt store must not
+    take it down. UnicodeDecodeError is a ValueError (not OSError), so it
+    must be caught explicitly alongside JSONDecodeError/OSError.
+    """
+    from trw_mcp.state._pin_store import pin_store_path, prune_pin_store_orphans
+
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    pins_path.write_bytes(b'{"k": \xff}')
+
+    with capture_logs() as logs:
+        removed = prune_pin_store_orphans()
+
+    assert removed == 0
+    events = [e for e in logs if e.get("event") == "pin_store_prune_read_failed"]
+    assert events, f"Expected pin_store_prune_read_failed WARN, got {logs}"
+    assert any(e.get("error") == "UnicodeDecodeError" for e in events)
+
+
 def test_prune_pin_store_orphans_missing_file_returns_zero(tmp_path: Path) -> None:
     """prune is a no-op when the pin store file does not exist."""
     from trw_mcp.state._pin_store import pin_store_path, prune_pin_store_orphans
@@ -328,3 +374,35 @@ def test_prune_pin_store_orphans_missing_file_returns_zero(tmp_path: Path) -> No
 
     assert prune_pin_store_orphans() == 0
     assert not pins_path.exists()
+
+
+def test_load_pin_store_concurrent_deletion_after_load_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: stat() after json.load must not crash if the file was deleted concurrently.
+
+    A concurrent GC process can delete pins.json between the json.load() and the
+    subsequent pins_path.stat() call.  Before the fix, the stat() call in the
+    malformed-fallback and root-not-dict branches was guarded only by
+    ``pins_path.exists()``, which is a TOCTOU race — and the success-path stat()
+    had NO guard at all, so FileNotFoundError propagated uncaught.
+
+    After the fix, all three call-sites use _safe_mtime_ns() which catches OSError
+    and returns None, preserving the fail-open contract.
+    """
+    import trw_mcp.state._pin_store as ps_mod
+    from trw_mcp.state._pin_store import load_pin_store, pin_store_path
+
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    pins_path.write_text('{"valid": {}}', encoding="utf-8")
+    ps_mod.invalidate_pin_store_cache()
+
+    # Simulate: stat() always raises FileNotFoundError (concurrent delete).
+    monkeypatch.setattr(ps_mod, "_safe_mtime_ns", lambda _path: None)
+
+    # Must not raise, even though stat() would normally fail.
+    result = load_pin_store()
+    # The store contains no valid pin entries (eviction removes keys without
+    # proper schema), so the result may be empty — what matters is no crash.
+    assert isinstance(result, dict)

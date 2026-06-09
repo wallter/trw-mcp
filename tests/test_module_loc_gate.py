@@ -3,10 +3,20 @@
 Every ``.py`` file under ``trw_mcp/state/claude_md/`` MUST stay at or below
 350 raw lines. Enforces the decomposition outcome and prevents future
 re-monolithing.
+
+P2-B (knowledge-fabric audit): the gate is extended to cover the entire
+``trw_mcp/tools/`` package on the *effective*-LOC definition (the canonical
+350-LOC gate from ``.claude/rules/trw-mcp-python.md`` — blanks, ``#`` comments
+and triple-quote docstrings excluded). Pre-existing overruns are grandfathered
+at their recorded effective-LOC in ``_TOOLS_EFF_LOC_BASELINE`` so the gate goes
+green today while any NEW file over 350 — or any grandfathered file that GROWS
+past its baseline — fails. This is the same ratchet ``scripts/check_max_loc.py``
+implements; importing its counter keeps the definition single-sourced.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +25,16 @@ pytestmark = pytest.mark.unit
 
 _MAX_LINES = 350
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _CLAUDE_MD_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "claude_md"
+_TOOLS_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "tools"
+
+# Import the canonical effective-LOC counter from the repo gate script so the
+# test and the CI ratchet share ONE definition of "effective LOC".
+_SCRIPTS_DIR = _REPO_ROOT / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from check_max_loc import _effective_line_count  # type: ignore[import-not-found]
 
 
 def _iter_py_files(root: Path) -> list[Path]:
@@ -88,3 +107,61 @@ def test_sync_under_350() -> None:
     sync = _CLAUDE_MD_DIR / "_sync.py"
     assert sync.exists()
     assert _line_count(sync) <= _MAX_LINES
+
+
+# --------------------------------------------------------------------------- #
+# P2-B: effective-LOC gate over the whole tools/ package (ratchet)
+# --------------------------------------------------------------------------- #
+
+# Grandfathered effective-LOC for files already over the 350 gate when the
+# tools/ coverage was added. Each may stay AT (not exceed) its recorded count;
+# new files must come in under 350. Decompose to shrink — do NOT raise an entry.
+_TOOLS_EFF_LOC_BASELINE: dict[str, int] = {
+    "_ceremony_status.py": 369,
+    "_deferred_delivery.py": 352,
+    "_delivery_helpers.py": 394,
+    "_learn_impl.py": 357,
+    "learning.py": 360,
+    "orchestration.py": 414,
+    "requirements.py": 418,
+}
+
+
+def test_tools_package_effective_loc_ratchet() -> None:
+    """Every tools/ file is <=350 effective LOC, or at/under its baseline.
+
+    Uses the canonical ``_effective_line_count`` so the gate matches CI's
+    ``scripts/check_max_loc.py --effective``. A new file over 350, or a
+    grandfathered file that grew past its recorded count, fails.
+    """
+    grown: list[str] = []
+    new_over: list[str] = []
+    for py_file in _iter_py_files(_TOOLS_DIR):
+        eff = _effective_line_count(py_file)
+        name = py_file.name
+        if name in _TOOLS_EFF_LOC_BASELINE:
+            if eff > _TOOLS_EFF_LOC_BASELINE[name]:
+                grown.append(f"{name}={eff} (baseline {_TOOLS_EFF_LOC_BASELINE[name]})")
+        elif eff > _MAX_LINES:
+            new_over.append(f"{py_file.relative_to(_TOOLS_DIR).as_posix()}={eff}")
+
+    assert not grown, (
+        "tools/ files grew past their grandfathered effective-LOC baseline "
+        "(decompose, do not raise the baseline): " + ", ".join(grown)
+    )
+    assert not new_over, (
+        f"new tools/ files exceed the {_MAX_LINES} effective-LOC gate "
+        "(split before merge): " + ", ".join(new_over)
+    )
+
+
+def test_ceremony_facade_under_gate() -> None:
+    """P2-B: ceremony.py was decomposed below the 350 effective-LOC gate.
+
+    Regression guard for the audit fix — ceremony.py must NOT be in the
+    grandfathered baseline and must stay under the gate.
+    """
+    ceremony = _TOOLS_DIR / "ceremony.py"
+    assert ceremony.exists()
+    assert "ceremony.py" not in _TOOLS_EFF_LOC_BASELINE
+    assert _effective_line_count(ceremony) <= _MAX_LINES

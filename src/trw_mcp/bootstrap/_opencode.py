@@ -12,6 +12,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -40,11 +41,7 @@ _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
-_DEFAULT_PERMISSIONS: dict[str, str] = {
-    "bash": "ask",
-    "write": "ask",
-    "edit": "ask",
-}
+_DEFAULT_PERMISSIONS: dict[str, str] = {"bash": "ask", "write": "ask", "edit": "ask"}
 
 _OPENCODE_DATA_DIR = _DATA_DIR / "opencode"
 _OPENCODE_COMMANDS_DIR = _OPENCODE_DATA_DIR / "commands"
@@ -76,11 +73,14 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     }
 
 
-def _parse_jsonc(content: str) -> OpencodeConfig:
-    """Parse JSONC (JSON with comments) by stripping comments.
+def _strip_jsonc_comments(content: str) -> str:
+    """Strip ``//`` line and ``/* */`` block comments from a JSONC string.
 
-    Handles // line comments and /* block comments */.
-    Returns parsed dict. Raises json.JSONDecodeError on invalid JSON.
+    The string-aware core shared by :func:`_parse_jsonc` (which then parses the
+    result) and :func:`_read_existing_opencode_config` (which parses through
+    ``json.loads`` so the parsed value is genuinely untyped and its top-level
+    shape can be validated). Comment delimiters inside JSON string literals are
+    preserved.
     """
     # Remove block comments /* ... */ (including multi-line)
     content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
@@ -115,9 +115,90 @@ def _parse_jsonc(content: str) -> OpencodeConfig:
             continue
         result_parts.append(ch)
         i += 1
-    stripped = "".join(result_parts)
-    result: OpencodeConfig = json.loads(stripped)
+    return "".join(result_parts)
+
+
+def _parse_jsonc(content: str) -> OpencodeConfig:
+    """Parse JSONC (JSON with comments) by stripping comments.
+
+    Handles // line comments and /* block comments */.
+    Returns parsed dict. Raises json.JSONDecodeError on invalid JSON.
+    """
+    result: OpencodeConfig = json.loads(_strip_jsonc_comments(content))
     return result
+
+
+def _read_existing_opencode_config(
+    path: Path,
+    *,
+    result: dict[str, list[str]],
+) -> OpencodeConfig | None:
+    """Read an existing ``opencode.json`` as a JSONC object, or return ``None``.
+
+    The deep seam behind the FR16 smart-merge read. It is JSONC-aware (the
+    OpenCode config permits ``//`` and ``/* */`` comments, so it cannot reuse
+    the plain-JSON :func:`read_json_object` seam) yet shares that seam's
+    fail-closed, content-free policy: every malformed-input outcome collapses to
+    ``None`` plus a structural diagnostic, never a crash.
+
+    Outcomes (the prior call site read text + parsed inline and caught only
+    ``json.JSONDecodeError`` / ``OSError``, so the first two below escaped or
+    surfaced raw parser context):
+
+      - **unreadable** — ``OSError`` (permission, race, is-a-directory, ...).
+      - **non_utf8** — bytes are not valid UTF-8. ``bytes.decode("utf-8")``
+        raises ``UnicodeDecodeError`` (a ``ValueError`` subclass, *not* an
+        ``OSError``), which the prior call site let escape and crash bootstrap.
+      - **malformed_json** — valid UTF-8 but the JSONC payload will not parse.
+      - **non_object** — parses, but the top level is an array or scalar;
+        :func:`merge_opencode_json` would then ``.get(...)`` on a non-mapping
+        and raise ``AttributeError``.
+
+    On every failure a *content-free* reason category
+    (``unreadable`` / ``non_utf8`` / ``malformed_json`` / ``non_object``) is
+    appended to ``result["errors"]`` against the stable rel-name
+    ``opencode.json`` — never an absolute path, the raw bytes, a secret marker,
+    the decode offset, or ``str(exc)``. A malformed config that happens to hold
+    a token therefore never leaks into the result or logs.
+
+    Returns the parsed mapping on success, else ``None`` (the caller reports the
+    recorded error and leaves the user's file untouched).
+    """
+    rel = path.name  # stable "opencode.json"; never the absolute path
+
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        logger.warning("opencode_json_unreadable", path=str(path), reason="unreadable")
+        result["errors"].append(f"Failed to read {rel}: unreadable")
+        return None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("opencode_json_non_utf8", path=str(path), reason="non_utf8")
+        result["errors"].append(f"Failed to read {rel}: non_utf8")
+        return None
+
+    parsed: object
+    try:
+        parsed = json.loads(_strip_jsonc_comments(text))
+    except json.JSONDecodeError:
+        logger.warning("opencode_json_malformed", path=str(path), reason="malformed_json")
+        result["errors"].append(f"Failed to read {rel}: malformed_json")
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "opencode_json_non_object",
+            path=str(path),
+            reason="non_object",
+            json_kind=type(parsed).__name__,
+        )
+        result["errors"].append(f"Failed to read {rel}: non_object")
+        return None
+
+    return cast("OpencodeConfig", parsed)
 
 
 def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
@@ -320,30 +401,24 @@ def generate_opencode_config(
 
     Returns dict with 'created', 'updated', 'preserved', 'errors' lists.
     """
-    result: dict[str, list[str]] = {
-        "created": [],
-        "updated": [],
-        "preserved": [],
-        "errors": [],
-    }
+    result = _new_result()
     config_path = target_dir / "opencode.json"
     trw_entry = _get_trw_mcp_entry()
 
     if config_path.exists() and not force:
-        # Smart merge path (FR16)
-        try:
-            raw = config_path.read_text(encoding="utf-8")
-            existing = _parse_jsonc(raw)
-        except (json.JSONDecodeError, OSError) as exc:
-            result["errors"].append(f"Failed to read/parse {config_path}: {exc}")
+        # Smart merge path (FR16). The read seam fails closed and content-free:
+        # on unreadable/non-UTF-8/malformed/non-object input it returns None
+        # after recording a structural reason, so the user's file is preserved.
+        existing = _read_existing_opencode_config(config_path, result=result)
+        if existing is None:
             return result
 
         merged = merge_opencode_json(existing, trw_entry)
         try:
             config_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
-            result["updated"].append(str(config_path.name))
+            result["updated"].append(config_path.name)
         except OSError as exc:
-            result["errors"].append(f"Failed to write {config_path}: {exc}")
+            result["errors"].append(f"Failed to write {config_path.name}: {exc}")
     else:
         # Fresh install: write full template with .opencode/INSTRUCTIONS.md
         template: OpencodeTemplateDict = {
@@ -355,9 +430,9 @@ def generate_opencode_config(
         }
         try:
             config_path.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
-            result["created"].append(str(config_path.name))
+            result["created"].append(config_path.name)
         except OSError as exc:
-            result["errors"].append(f"Failed to write {config_path}: {exc}")
+            result["errors"].append(f"Failed to write {config_path.name}: {exc}")
 
     logger.debug(
         "generate_opencode_config",
@@ -388,12 +463,7 @@ def generate_agents_md(
     so that this ceremony writer and the distill segment writer cannot race.
     Fail-open: if the lock cannot be acquired, returns a skipped indication.
     """
-    result: dict[str, list[str]] = {
-        "created": [],
-        "updated": [],
-        "preserved": [],
-        "errors": [],
-    }
+    result = _new_result()
 
     # Acquire shared AGENTS.md lock (OC-B1 / PRD-DIST-2403 FR05)
     try:

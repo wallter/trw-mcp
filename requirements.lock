@@ -181,8 +181,8 @@ torch==2.10.0
 tqdm==4.67.3
 transformers==5.2.0
 triton==3.6.0
--e git+https://github.com/wallter/trw-framework.git@0c7d4263a89d57e5505b1fc0b8531aef9140f060#egg=trw_mcp&subdirectory=trw-mcp
--e git+https://github.com/wallter/trw-framework.git@0c7d4263a89d57e5505b1fc0b8531aef9140f060#egg=trw_memory&subdirectory=trw-memory
+-e .
+-e ../trw-memory
 typer==0.24.1
 typer-slim==0.24.0
 types-PyYAML==6.0.12.20250915

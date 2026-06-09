@@ -148,9 +148,9 @@ class TestBackwardCompatReExports:
 
         assert callable(_sync_to_sqlite)
 
-    def test_load_entries_from_decay(self) -> None:
-        """_load_entries_from_dir re-exported from _decay."""
-        from trw_mcp.scoring._decay import _load_entries_from_dir
+    def test_load_entries_from_distribution(self) -> None:
+        """_load_entries_from_dir re-exported from _distribution."""
+        from trw_mcp.scoring._distribution import _load_entries_from_dir
 
         assert callable(_load_entries_from_dir)
 
@@ -202,10 +202,80 @@ class TestScoringPublicApi:
 
 @pytest.mark.unit
 class TestIoBoundarySize:
-    """_io_boundary.py must stay under 300 lines (module size gate)."""
+    """_io_boundary.py must stay under the 350-raw-line module size gate."""
 
-    def test_module_under_300_lines(self) -> None:
-        """_io_boundary.py should be a focused boundary module."""
+    def test_module_under_350_lines(self) -> None:
+        """_io_boundary.py should be a focused boundary facade.
+
+        Cohesive helper groups were extracted to sibling modules
+        (``_io_sqlite_sync``, ``_io_entries``, ``_io_recall_jsonl``) and are
+        re-exported from the facade for back-compat, keeping this module well
+        under the 350-line gate.
+        """
         src = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring" / "_io_boundary.py"
         line_count = len(src.read_text().splitlines())
-        assert line_count < 600, f"_io_boundary.py is {line_count} lines, should be < 600"
+        assert line_count < 350, f"_io_boundary.py is {line_count} lines, should be < 350"
+
+
+# ---------------------------------------------------------------------------
+# _decay.py / _distribution.py module size guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCorrelationWindowSize:
+    """Correlation facade and its recall-window policy each stay under 350 raw lines.
+
+    The recall-scan policy (windowing, recency discount, early-exit) was split
+    out of ``_correlation.py`` into the sibling ``_recall_window.py`` deep
+    module (the policy counterpart to the ``_recall_receipts.py`` row-decoding
+    mechanism). Both must remain under the 350-raw-line module size gate so the
+    decomposition sticks and ``_correlation.py`` cannot re-monolith.
+    """
+
+    _SCORING_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring"
+
+    def test_correlation_under_350_lines(self) -> None:
+        """_correlation.py is a focused outcome-correlation facade."""
+        line_count = len((self._SCORING_DIR / "_correlation.py").read_text().splitlines())
+        assert line_count < 350, f"_correlation.py is {line_count} lines, should be < 350"
+
+    def test_recall_window_under_350_lines(self) -> None:
+        """_recall_window.py is a focused recall-scan policy deep module."""
+        line_count = len((self._SCORING_DIR / "_recall_window.py").read_text().splitlines())
+        assert line_count < 350, f"_recall_window.py is {line_count} lines, should be < 350"
+
+    def test_correlate_recalls_from_recall_window(self) -> None:
+        """correlate_recalls is importable from its new home module."""
+        from trw_mcp.scoring._recall_window import correlate_recalls
+
+        assert callable(correlate_recalls)
+
+    def test_correlate_recalls_reexported_from_correlation(self) -> None:
+        """correlate_recalls stays importable from the _correlation facade."""
+        from trw_mcp.scoring._correlation import correlate_recalls
+
+        assert callable(correlate_recalls)
+
+
+@pytest.mark.unit
+class TestDecayDistributionSize:
+    """Decay/utility and tier-distribution concerns each stay under 350 raw lines.
+
+    The impact-tier distribution analysis and forced-distribution enforcement
+    were split out of ``_decay.py`` into the sibling ``_distribution.py`` deep
+    module. Both must remain under the 350-raw-line module size gate so the
+    decomposition sticks.
+    """
+
+    _SCORING_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring"
+
+    def test_decay_under_350_lines(self) -> None:
+        """_decay.py is a focused decay/utility deep module."""
+        line_count = len((self._SCORING_DIR / "_decay.py").read_text().splitlines())
+        assert line_count < 350, f"_decay.py is {line_count} lines, should be < 350"
+
+    def test_distribution_under_350_lines(self) -> None:
+        """_distribution.py is a focused tier-distribution deep module."""
+        line_count = len((self._SCORING_DIR / "_distribution.py").read_text().splitlines())
+        assert line_count < 350, f"_distribution.py is {line_count} lines, should be < 350"

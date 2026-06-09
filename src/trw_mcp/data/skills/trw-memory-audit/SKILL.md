@@ -17,19 +17,19 @@ Analyze the health of TRW's self-learning memory layer and provide actionable re
 
 ## Workflow
 
-### Step 1: Run trw-maintain audit
+### Step 1: Run trw-distill maintain audit
 
-The heavy analysis runs locally via `trw-maintain audit`:
+The heavy analysis runs locally via `trw-distill maintain audit`:
 
 ```bash
 # Full audit with assertion verification (slower, requires codebase)
-trw-maintain audit --trw-dir .trw --no-llm
+trw-distill maintain audit --trw-dir .trw --no-llm
 
 # Quick audit without verification
-trw-maintain audit --trw-dir .trw --no-llm --no-verify
+trw-distill maintain audit --trw-dir .trw --no-llm --no-verify
 
 # Machine-readable output for further processing
-trw-maintain audit --trw-dir .trw --no-llm --format json
+trw-distill maintain audit --trw-dir .trw --no-llm --format json
 ```
 
 This produces a structured report covering:
@@ -45,7 +45,7 @@ This produces a structured report covering:
 For deeper assertion health analysis:
 
 ```bash
-trw-maintain verify --trw-dir .trw --workers 4
+trw-distill maintain verify --trw-dir .trw --workers 4
 ```
 
 Reports per-entry pass/fail with specific failing assertions.

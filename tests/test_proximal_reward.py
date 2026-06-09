@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.scoring.proximal_reward import (
     detect_proximal_signals,
     read_recent_events,
@@ -134,3 +136,78 @@ class TestReadRecentEvents:
         events_path.write_bytes(b"\x00\x01\x02\xff\xfe")
         result = read_recent_events(events_path)
         assert result == []
+
+    def test_malformed_line_skipped_keeps_valid(self, tmp_path: Path) -> None:
+        """A single corrupt JSONL line is skipped without dropping valid lines."""
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text(
+            '{"event": "session_start"}\n'
+            "NOT JSON AT ALL\n"
+            '{"event": "nudge_shown"}\n',
+            encoding="utf-8",
+        )
+        result = read_recent_events(events_path)
+        assert [e["event"] for e in result] == ["session_start", "nudge_shown"]
+
+    def test_non_object_json_line_skipped(self, tmp_path: Path) -> None:
+        """A valid-JSON-but-non-object line (e.g. a bare array) is skipped."""
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text(
+            '{"event": "a"}\n[1, 2, 3]\n{"event": "b"}\n',
+            encoding="utf-8",
+        )
+        result = read_recent_events(events_path)
+        assert [e["event"] for e in result] == ["a", "b"]
+
+    def test_malformed_line_emits_structured_skip_event(self, tmp_path: Path) -> None:
+        """Corrupt line emits proximal_reward.event_line_skipped with no payload leak."""
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text(
+            '{"event": "ok"}\nNOT JSON\n',
+            encoding="utf-8",
+        )
+        with structlog.testing.capture_logs() as logs:
+            result = read_recent_events(events_path)
+        assert [e["event"] for e in result] == ["ok"]
+        skips = [
+            log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"
+        ]
+        assert len(skips) == 1
+        skip = skips[0]
+        assert skip["path"] == str(events_path)
+        assert skip["line_number"] == 2
+        assert skip["error_class"] == "JSONDecodeError"
+        # Must not leak the offending line contents or any parsed payload.
+        assert "NOT JSON" not in repr(skip)
+
+    def test_corrupt_file_emits_unreadable_event(self, tmp_path: Path) -> None:
+        """File-level decode failure emits proximal_reward.event_file_unreadable."""
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_bytes(b"\x00\x01\x02\xff\xfe")
+        with structlog.testing.capture_logs() as logs:
+            result = read_recent_events(events_path)
+        assert result == []
+        unreadable = [
+            log
+            for log in logs
+            if log.get("event") == "proximal_reward.event_file_unreadable"
+        ]
+        assert len(unreadable) == 1
+        assert unreadable[0]["path"] == str(events_path)
+        assert unreadable[0]["error_class"] == "UnicodeDecodeError"
+
+    def test_skip_line_number_within_window(self, tmp_path: Path) -> None:
+        """Skip line_number is anchored to the post-strip line list."""
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text(
+            '{"event": "e0"}\n{"event": "e1"}\nBAD\n{"event": "e3"}\n',
+            encoding="utf-8",
+        )
+        with structlog.testing.capture_logs() as logs:
+            result = read_recent_events(events_path)
+        assert [e["event"] for e in result] == ["e0", "e1", "e3"]
+        skips = [
+            log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"
+        ]
+        assert len(skips) == 1
+        assert skips[0]["line_number"] == 3

@@ -8,10 +8,7 @@ PRD-DIST-2406 FR08, P0-12.
 
 from __future__ import annotations
 
-import re
-
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -19,7 +16,7 @@ import pytest
 
 
 @pytest.fixture()
-def compute_glob() -> "type":
+def compute_glob() -> type:
     from trw_mcp.channels.copilot._path_instructions import compute_apply_to_glob
     return compute_apply_to_glob  # type: ignore[return-value]
 

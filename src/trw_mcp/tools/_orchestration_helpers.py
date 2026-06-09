@@ -38,6 +38,89 @@ logger = structlog.get_logger(__name__)
 _events = FileEventLogger(FileStateWriter())
 
 
+def _scan_init_artifacts(
+    writer: FileStateWriter,
+    run_root: Path,
+    resolved_artifacts: list[str],
+    run_id: str,
+) -> None:
+    """Scan run artifacts for knowledge requirements and persist them (PRD-CORE-106).
+
+    Fail-open: artifact scanning must never block ``trw_init``.
+    """
+    from trw_mcp.state.artifact_scanner import scan_artifacts
+
+    try:
+        kr = scan_artifacts(resolved_artifacts)
+        # Write scanned knowledge requirements alongside run.yaml
+        kr_data: dict[str, object] = {
+            "learning_ids": sorted(kr.learning_ids),
+            "domains": sorted(kr.domains),
+            "checks": kr.checks,
+            "research_notes": kr.research_notes,
+            "prd_references": sorted(kr.prd_references),
+            "phase_requirements": kr.phase_requirements,
+        }
+        writer.write_yaml(
+            run_root / "meta" / "knowledge_requirements.yaml",
+            kr_data,
+        )
+        logger.info(
+            "artifact_scan_complete",
+            run_id=run_id,
+            artifact_count=len(resolved_artifacts),
+            domains=len(kr.domains),
+            learning_ids=len(kr.learning_ids),
+        )
+    except Exception:  # justified: fail-open, artifact scanning must not block run init
+        logger.warning("artifact_scan_failed", run_id=run_id, exc_info=True)
+
+
+def _log_init_events(
+    events_jsonl_path: Path,
+    *,
+    task_name: str,
+    framework_version: str,
+    task_type: str,
+    detection_method: str,
+    rationale: str,
+    recall_policy: str,
+) -> None:
+    """Log the run_init, task_type_detected, and session_start boundary events for trw_init."""
+    _events.log_event(
+        events_jsonl_path,
+        "run_init",
+        {"task": task_name, "framework": framework_version},
+    )
+
+    # PRD-CORE-184-FR05: observability — emit a task_type_detected event so
+    # eval campaigns can stratify by task type without parsing run.yaml.
+    try:
+        _events.log_event(
+            events_jsonl_path,
+            "task_type_detected",
+            {
+                "task_type": task_type,
+                "detection_method": detection_method,
+                "rationale": rationale,
+                "recall_policy": recall_policy,
+            },
+        )
+    except Exception:  # justified: fail-open, observability event must not block init
+        logger.debug("task_type_detected_event_skipped", exc_info=True)
+
+    # PRD-QUAL-050-FR03: always record a session_start boundary here;
+    # a later explicit trw_session_start supersedes it.
+    try:
+        _events.log_event(
+            events_jsonl_path,
+            "session_start",
+            {"source": "trw_init", "run_detected": True, "query": "*"},
+        )
+    except Exception:  # justified: fail-open, session boundary must not block run init
+        logger.debug("init_session_start_event_skipped", exc_info=True)
+
+
 def _get_bundled_file(filename: str, subdir: str = "") -> str | None:
     """Load a bundled file from the package data directory.
 

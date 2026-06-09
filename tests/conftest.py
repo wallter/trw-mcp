@@ -110,6 +110,7 @@ _TOOL_GROUPS: dict[str, tuple[str, str]] = {
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
     "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
+    "pipeline_health": ("trw_mcp.tools._pipeline_health_tool", "register_pipeline_health_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
 }

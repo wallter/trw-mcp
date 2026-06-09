@@ -1,6 +1,7 @@
 """Run lifecycle helpers extracted from orchestration.py (PRD-CORE-089-FR03).
 
 Contains:
+  - _phase_duration_summary: Summarize phase-transition durations for status.
   - _compute_reflection_metrics: Count reflections from event stream.
   - _compute_last_activity_ts: Extract last activity timestamp.
   - _parse_timestamp_hours: ISO timestamp to hours-since.
@@ -18,6 +19,33 @@ from trw_mcp.models.typed_dicts import StatusReflectionDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
+
+
+def _phase_duration_summary(events: list[dict[str, object]], current_phase: str) -> dict[str, object]:
+    """Summarize phase transition timestamps and active phase duration."""
+    phase_entries: list[tuple[str, datetime]] = []
+    for event in events:
+        if event.get("event") != "phase_enter":
+            continue
+        phase = str(event.get("phase", ""))
+        ts_raw = str(event.get("ts", ""))
+        try:
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        phase_entries.append((phase, ts.astimezone(timezone.utc)))
+    phase_entries.sort(key=lambda item: item[1])
+    durations: dict[str, float] = {}
+    for index, (phase, started_at) in enumerate(phase_entries):
+        ended_at = phase_entries[index + 1][1] if index + 1 < len(phase_entries) else datetime.now(timezone.utc)
+        durations[phase] = round(max(0.0, (ended_at - started_at).total_seconds()), 3)
+    active_started_at = phase_entries[-1][1].isoformat() if phase_entries else ""
+    return {
+        "active_phase": current_phase,
+        "active_started_at": active_started_at,
+        "phase_seconds": durations or {current_phase: 0.0},
+        "transition_count": len(phase_entries),
+    }
 
 
 def _compute_reflection_metrics(events: list[dict[str, object]]) -> StatusReflectionDict:

@@ -2,6 +2,18 @@
 
 Keeps file-system, SQLite, and YAML access out of the pure scoring modules.
 Extracted for PRD-FIX-061 FR05/FR06 to remove scoring -> state layer violations.
+
+This module is the single import point (facade) for the boundary. Cohesive
+helper groups live in sibling modules and are re-exported here for back-compat:
+
+- ``_io_sqlite_sync``  — best-effort Q-value SQLite write-back.
+- ``_io_entries``      — YAML entry read/write helpers.
+- ``_io_recall_jsonl`` — recall-tracking JSONL tail reader.
+
+The YAML path index, scoring-config resolution, session-event scanning, and the
+default entry lookup stay here because their cross-references are monkeypatched
+on this module by the test-suite (e.g. ``_build_yaml_path_index``,
+``_get_yaml_path_index``, ``_resolve_scoring_config``).
 """
 
 from __future__ import annotations
@@ -9,13 +21,39 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
 
 import structlog
+
+from trw_mcp.scoring._io_entries import (
+    _load_entries_from_dir as _load_entries_from_dir,
+)
+from trw_mcp.scoring._io_entries import (
+    _write_pending_entries as _write_pending_entries,
+)
+from trw_mcp.scoring._io_recall_jsonl import (
+    _read_recall_tracking_jsonl as _read_recall_tracking_jsonl,
+)
+from trw_mcp.scoring._io_recall_jsonl import (
+    _tail_lines as _tail_lines,
+)
+from trw_mcp.scoring._io_recall_jsonl import (
+    _warn_recall_tracking_skip as _warn_recall_tracking_skip,
+)
+from trw_mcp.scoring._io_sqlite_sync import (
+    Q_LEARNING_BATCH_CHUNK_SIZE as Q_LEARNING_BATCH_CHUNK_SIZE,
+)
+from trw_mcp.scoring._io_sqlite_sync import (
+    _batch_sync_to_sqlite as _batch_sync_to_sqlite,
+)
+from trw_mcp.scoring._io_sqlite_sync import (
+    _sync_chunk as _sync_chunk,
+)
+from trw_mcp.scoring._io_sqlite_sync import (
+    _sync_to_sqlite as _sync_to_sqlite,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -44,26 +82,6 @@ class _ScoringConfig(Protocol):
     """Minimal config surface needed by scoring I/O helpers."""
 
     runs_root: str
-
-
-class _TransactionalBackend(Protocol):
-    """Structural-typed surface of the memory backend used by ``_sync_chunk``.
-
-    PRD-FIX-088 NFR01 ("0 type:ignore added"): scoring previously used
-    ``# type: ignore[attr-defined]`` to call ``backend.transaction()`` and
-    ``backend.update()`` on an ``object`` parameter. This Protocol pins
-    the contract structurally so mypy --strict resolves the calls and the
-    ignores are removed.
-
-    The concrete backends (``SQLiteBackend``, the in-memory test double,
-    and the YAML pass-through) all implement these two methods today;
-    backends without batching expose ``transaction()`` as a no-op
-    pass-through context manager.
-    """
-
-    def transaction(self) -> AbstractContextManager[object]: ...
-
-    def update(self, entry_id: str, /, **fields: object) -> object: ...
 
 
 def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
@@ -151,14 +169,36 @@ def _resolve_scoring_config() -> _ScoringConfig:
     return cast("_ScoringConfig", get_config())
 
 
+def _decode_jsonl_line(raw: bytes) -> str | None:
+    """Decode one JSONL byte line as UTF-8, or None when the bytes are invalid.
+
+    Reading JSONL in byte-line mode and decoding per row isolates a single
+    non-UTF-8 row so adjacent valid rows survive instead of the whole-file
+    read aborting on a ``UnicodeDecodeError``. The undecodable bytes are never
+    surfaced (callers log structural-only signals).
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def _read_recent_session_records(events_path: Path) -> list[dict[str, object]]:
-    """Read parseable event records from an events.jsonl file."""
+    """Read parseable event records from an events.jsonl file.
+
+    Reads in byte-line mode so a single non-UTF-8 row is skipped without losing
+    adjacent valid run_init/session_start rows. Malformed JSON and non-object
+    rows are skipped the same way.
+    """
     import json
 
     records: list[dict[str, object]] = []
     try:
-        with events_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
+        with events_path.open("rb") as fh:
+            for raw in fh:
+                line = _decode_jsonl_line(raw)
+                if line is None:
+                    continue
                 stripped = line.strip()
                 if not stripped:
                     continue
@@ -171,11 +211,6 @@ def _read_recent_session_records(events_path: Path) -> list[dict[str, object]]:
     except OSError:
         return []
     return records
-
-
-# ---------------------------------------------------------------------------
-# Extracted from _correlation.py
-# ---------------------------------------------------------------------------
 
 
 def _default_lookup_entry(
@@ -247,295 +282,6 @@ def _default_lookup_entry(
     return entry_path, data
 
 
-def _sync_to_sqlite(
-    lid: str,
-    q_new: float,
-    q_obs: int,
-    history: list[str],
-    trw_dir: Path,
-) -> None:
-    """Sync Q-value and outcome_history back to SQLite (best-effort)."""
-    try:
-        from trw_mcp.state.memory_adapter import get_backend
-
-        backend = get_backend(trw_dir)
-        backend.update(
-            lid,
-            q_value=round(q_new, 4),
-            q_observations=q_obs,  # already incremented by _update_entry_q_values
-            outcome_history=history,
-        )
-    except Exception:  # justified: fail-open, SQLite sync is best-effort (YAML is authoritative)
-        logger.debug("q_value_sqlite_sync_skipped", exc_info=True)  # justified: fail-open, YAML is authoritative
-
-
-# PRD-FIX-088 FR02: Chunk size for ``_batch_sync_to_sqlite`` transaction bracket.
-# Each chunk wraps N ``backend.update()`` calls in a single
-# ``BEGIN IMMEDIATE`` / ``COMMIT``. Bounds lock-hold-time to ~150 ms/chunk
-# (NFR07: ≤ 250 ms p95) so the async sync loop introduced by PRD-FIX-087
-# can still interleave between chunks. Tunable without an FR change.
-Q_LEARNING_BATCH_CHUNK_SIZE: int = 500
-
-
-def _batch_sync_to_sqlite(
-    updates: list[_PendingUpdate],
-    trw_dir: Path,
-) -> None:
-    """Batch sync Q-values to SQLite in chunked transactions.
-
-    PRD-FIX-070-FR03: groups updates into a single backend session
-    instead of N individual calls.
-
-    PRD-FIX-088 FR02: wraps each chunk of ``Q_LEARNING_BATCH_CHUNK_SIZE``
-    rows in a single ``BEGIN IMMEDIATE`` / ``COMMIT`` (via
-    ``backend.transaction()``). Collapses N implicit transactions to
-    ``ceil(N / chunk)`` explicit transactions while bounding the
-    SQLite write-lock-hold-time per chunk so the async sync loop is
-    not starved.
-
-    Per-row exceptions are caught (existing fail-open behavior preserved);
-    a chunk still commits with whatever rows succeeded. WHEN a
-    ``BEGIN``/``COMMIT`` itself raises, the chunk is logged at WARNING
-    and execution falls through to the next chunk; no exception
-    propagates to the caller (Q-learning is best-effort, YAML is
-    authoritative).
-    """
-    if not updates:
-        return
-    try:
-        from trw_mcp.state.memory_adapter import get_backend
-
-        # Cast to the structural protocol since concrete backends define
-        # ``transaction``/``update`` (no-op pass-through on backends
-        # without batching support); the cast is the documented contract
-        # boundary, replacing two ``# type: ignore[attr-defined]``.
-        backend = cast("_TransactionalBackend", get_backend(trw_dir))
-    except Exception:  # justified: fail-open, SQLite batch sync is best-effort
-        logger.debug("q_value_sqlite_batch_sync_failed", exc_info=True)
-        return
-
-    total = len(updates)
-    expected_chunks = (total + Q_LEARNING_BATCH_CHUNK_SIZE - 1) // Q_LEARNING_BATCH_CHUNK_SIZE
-    synced = 0
-    for chunk_index in range(expected_chunks):
-        start = chunk_index * Q_LEARNING_BATCH_CHUNK_SIZE
-        chunk = updates[start : start + Q_LEARNING_BATCH_CHUNK_SIZE]
-        chunk_synced = _sync_chunk(backend, chunk, chunk_index, len(chunk))
-        synced += chunk_synced
-    logger.debug(
-        "batch_sqlite_sync_complete",
-        synced=synced,
-        total=total,
-        chunks=expected_chunks,
-        chunk_size=Q_LEARNING_BATCH_CHUNK_SIZE,
-    )
-
-
-def _sync_chunk(
-    backend: _TransactionalBackend,
-    chunk: list[_PendingUpdate],
-    chunk_index: int,
-    chunk_size: int,
-) -> int:
-    """Run one transaction-bracketed chunk of ``backend.update()`` calls.
-
-    Returns the number of rows that succeeded. Per-row exceptions are
-    caught and logged at debug; a transaction-level failure (BEGIN/COMMIT)
-    is caught and logged at WARNING with chunk metadata.
-    """
-    chunk_synced = 0
-    try:
-        # backend.transaction() defaults to a no-op pass-through on
-        # backends without batching support, so this is safe across
-        # SQLite/YAML/in-memory test backends.
-        with backend.transaction():
-            for lid, _path, _data, q_new, q_obs, history in chunk:
-                try:
-                    backend.update(
-                        lid,
-                        q_value=round(q_new, 4),
-                        q_observations=q_obs,
-                        outcome_history=history,
-                    )
-                    chunk_synced += 1
-                except Exception:  # justified: fail-open, individual entry failures don't abort chunk
-                    logger.debug(
-                        "q_value_sqlite_sync_skipped",
-                        learning_id=lid,
-                        exc_info=True,
-                    )
-    except Exception:  # justified: fail-open, transaction-level failure must not propagate
-        logger.warning(
-            "batch_sqlite_chunk_failed",
-            chunk_index=chunk_index,
-            chunk_size=chunk_size,
-            exc_info=True,
-        )
-    return chunk_synced
-
-
-def _write_pending_entries(
-    pending_updates: list[_PendingUpdate],
-) -> list[str]:
-    """Write pending Q-value updates to YAML files.
-
-    PRD-FIX-061-FR05: Extracted from ``process_outcome`` so that
-    ``_correlation.py`` does not need to import ``FileStateWriter``
-    from the state layer.
-
-    Args:
-        pending_updates: List of pending update tuples from process_outcome.
-
-    Returns:
-        List of learning IDs that were successfully written.
-    """
-    from trw_mcp.state.persistence import FileStateWriter
-
-    updated_ids: list[str] = []
-    writer = FileStateWriter()
-    for lid, entry_path, data, _q_new, _q_obs, _history in pending_updates:
-        if entry_path is not None:
-            try:
-                writer.write_yaml(entry_path, data)
-            except Exception:  # justified: fail-open, YAML write failures exclude entry from updated_ids
-                logger.warning(
-                    "q_value_yaml_write_failed",
-                    learning_id=lid,
-                    exc_info=True,
-                )
-                continue  # Do not claim this ID was updated
-        updated_ids.append(lid)
-    return updated_ids
-
-
-# ---------------------------------------------------------------------------
-# Extracted from _decay.py
-# ---------------------------------------------------------------------------
-
-
-def _load_entries_from_dir(entries_dir: Path) -> Iterator[dict[str, object]]:
-    """Load entry dicts from a YAML entries directory.
-
-    Yields parsed dicts for each readable YAML entry file.
-    Silently skips files that fail to parse.
-
-    Args:
-        entries_dir: Directory containing YAML entry files.
-
-    Yields:
-        Parsed entry dicts.
-    """
-    from trw_mcp.state._helpers import iter_yaml_entry_files
-    from trw_mcp.state.persistence import FileStateReader
-
-    reader = FileStateReader()
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        try:
-            yield reader.read_yaml(yaml_file)
-        except Exception:  # justified: fail-open, skip unreadable YAML entries  # noqa: S112
-            continue
-
-
-def _read_recall_tracking_jsonl(
-    receipt_path: Path,
-    *,
-    max_lines: int = 5000,
-) -> list[dict[str, object]]:
-    """Read the TAIL of the recall-tracking JSONL file, skipping malformed lines.
-
-    Reads from the end of the file to avoid scanning 100K+ old records
-    that will be filtered out by the correlation window anyway.  The
-    ``max_lines`` cap keeps memory and CPU bounded even for very large
-    files (the old implementation read all 172K+ lines).
-
-    PRD-FIX-061-FR05: Extracted from ``correlate_recalls`` so that
-    ``_correlation.py`` does not need to import ``FileStateReader``
-    from the state layer.
-
-    Args:
-        receipt_path: Path to recall_tracking.jsonl.
-        max_lines: Maximum number of recent lines to read (default 5000).
-
-    Returns:
-        List of record dicts; empty list if file missing or unreadable.
-    """
-    import json
-
-    if not receipt_path.exists():
-        return []
-
-    records: list[dict[str, object]] = []
-    try:
-        # Read the tail of the file efficiently: seek backwards from EOF
-        # to find the last ``max_lines`` newline-delimited records.
-        raw_lines = _tail_lines(receipt_path, max_lines)
-        for line in raw_lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                record = json.loads(stripped)
-            except json.JSONDecodeError:
-                logger.debug("recall_tracking_bad_json_skipped", path=str(receipt_path))
-                continue
-            if isinstance(record, dict):
-                records.append(record)
-    except OSError:  # justified: fail-open, can't read the tracking file
-        logger.debug("recall_tracking_read_failed", path=str(receipt_path))
-    return records
-
-
-def _tail_lines(path: Path, max_lines: int) -> list[str]:
-    """Read the last ``max_lines`` lines from a file efficiently.
-
-    Uses backward seeking from EOF to avoid reading the entire file
-    when only the tail is needed.  Falls back to reading the whole
-    file when it is small enough (< 64 KB).
-    """
-    import os
-
-    file_size = path.stat().st_size
-    if file_size == 0:
-        return []
-
-    # For small files, just read the whole thing
-    if file_size < 65_536:
-        with path.open("r", encoding="utf-8") as fh:
-            return fh.readlines()[-max_lines:]
-
-    # For large files, seek backwards in chunks to find enough newlines
-    chunk_size = min(file_size, max(4096, max_lines * 256))  # ~256 bytes/line estimate
-    raw_lines: list[bytes] = []
-    with path.open("rb") as fh:
-        fh.seek(0, os.SEEK_END)
-        remaining = file_size
-        buf = b""
-        while remaining > 0 and len(raw_lines) < max_lines + 1:
-            read_size = min(chunk_size, remaining)
-            remaining -= read_size
-            fh.seek(remaining)
-            chunk = fh.read(read_size)
-            buf = chunk + buf
-            raw_lines = buf.split(b"\n")
-        # Decode only the tail we need
-        tail = raw_lines[-max_lines:] if len(raw_lines) > max_lines else raw_lines
-        return [ln.decode("utf-8", errors="replace") for ln in tail if ln]
-
-
-__all__ = [
-    "Q_LEARNING_BATCH_CHUNK_SIZE",
-    "_PendingUpdate",
-    "_batch_sync_to_sqlite",
-    "_default_lookup_entry",
-    "_find_session_start_ts",
-    "_load_entries_from_dir",
-    "_read_recall_tracking_jsonl",
-    "_sync_chunk",
-    "_sync_to_sqlite",
-    "_write_pending_entries",
-]
-
-
 def _find_session_start_ts(trw_dir: Path) -> datetime | None:
     """Return the newest ``run_init`` or ``session_start`` timestamp under ``runs_root``.
 
@@ -573,3 +319,17 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
 
     logger.debug("session_scope_fallback_to_window")
     return None
+
+
+__all__ = [
+    "Q_LEARNING_BATCH_CHUNK_SIZE",
+    "_PendingUpdate",
+    "_batch_sync_to_sqlite",
+    "_default_lookup_entry",
+    "_find_session_start_ts",
+    "_load_entries_from_dir",
+    "_read_recall_tracking_jsonl",
+    "_sync_chunk",
+    "_sync_to_sqlite",
+    "_write_pending_entries",
+]

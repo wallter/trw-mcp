@@ -5,7 +5,6 @@ PRD-DIST-2403 FR20-FR24.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,9 +33,9 @@ def test_explorer_agent_content_is_valid_yaml_frontmatter() -> None:
 
 def test_explorer_agent_permissions_deny_write_edit() -> None:
     """FR20: Permissions deny bash, edit, write; allow read."""
-    from trw_mcp.channels.opencode._explorer_agent import get_explorer_agent_content
-
     from ruamel.yaml import YAML
+
+    from trw_mcp.channels.opencode._explorer_agent import get_explorer_agent_content
 
     content = get_explorer_agent_content()
     parts = content.split("---\n", maxsplit=2)
@@ -102,7 +101,6 @@ def test_install_explorer_agent_user_modified_preserved(tmp_path: Path) -> None:
     """FR23: User-modified explorer agent is preserved (SHA check)."""
     from trw_mcp.channels.opencode._explorer_agent import (
         EXPLORER_AGENT_RELPATH,
-        get_explorer_agent_content,
         install_explorer_agent,
     )
 

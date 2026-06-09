@@ -7,6 +7,7 @@ import json
 import pytest
 
 from trw_mcp.bootstrap._gemini import _GEMINI_SETTINGS_PATH, generate_gemini_mcp_config
+
 from ._gemini_test_support import fake_git_repo  # noqa: F401
 
 
@@ -78,6 +79,42 @@ class TestGeminiMCPConfig:
         warnings = result.get("warnings", [])
         assert any("backed up" in warning for warning in warnings), warnings
         assert settings_path.with_suffix(".json.bak").exists()
+
+    def test_mcp_config_handles_non_utf8(self, fake_git_repo) -> None:
+        """Non-UTF-8 bytes must not crash (regression: UnicodeDecodeError escaped).
+
+        ``read_text(encoding="utf-8")`` raised ``UnicodeDecodeError`` — a
+        ``ValueError``, not an ``OSError`` — so the prior local catch let it
+        crash bootstrap. The shared seam now backs the bytes up and rewrites.
+        """
+        settings_path = fake_git_repo / ".gemini" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_bytes(b"\xff\xfe{\x00bad")
+
+        result = generate_gemini_mcp_config(fake_git_repo)  # must not raise
+        assert result["errors"] == []
+        assert any("backed up" in w for w in result.get("warnings", []))
+
+        backup = settings_path.with_suffix(".json.bak")
+        assert backup.exists()
+        assert backup.read_bytes() == b"\xff\xfe{\x00bad"  # original bytes preserved
+
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
+
+    def test_mcp_config_handles_non_object_top_level(self, fake_git_repo) -> None:
+        """A JSON array/scalar top level is recovered, not propagated."""
+        settings_path = fake_git_repo / ".gemini" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+        result = generate_gemini_mcp_config(fake_git_repo)
+        assert result["errors"] == []
+        assert any("not a JSON object" in w or "top-level" in w for w in result.get("warnings", []))
+        assert settings_path.with_suffix(".json.bak").exists()
+
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert "trw" in data["mcpServers"]
 
     def test_mcp_config_updated_when_existing(self, fake_git_repo) -> None:
         """Re-running on existing file marks as updated."""

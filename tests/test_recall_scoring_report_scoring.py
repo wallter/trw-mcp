@@ -88,7 +88,7 @@ class TestUtilityBasedPruneCandidatesTier3:
 
         test_config = TRWConfig()
 
-        with patch("trw_mcp.scoring._recall.get_config", return_value=test_config):
+        with patch("trw_mcp.scoring._recall_prune.get_config", return_value=test_config):
             entry = self._make_entry("L-t3b", "2025-12-15", impact=0.45)
             utility_based_prune_candidates([entry])
             old_entry = self._make_entry("L-t3c", "2025-09-01", impact=0.35)
@@ -104,7 +104,7 @@ class TestUtilityBasedPruneCandidatesTier3:
         object.__setattr__(cfg, "learning_utility_delete_threshold", 0.0)
         object.__setattr__(cfg, "learning_utility_prune_threshold", 0.99)
 
-        with patch("trw_mcp.scoring._recall.get_config", return_value=cfg):
+        with patch("trw_mcp.scoring._recall_prune.get_config", return_value=cfg):
             entry = self._make_entry("L-t3-reason", "2025-10-01", impact=0.5)
             result = utility_based_prune_candidates([entry])
 

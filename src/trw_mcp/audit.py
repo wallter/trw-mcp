@@ -61,7 +61,14 @@ def _iter_entries(entries_dir: Path) -> list[LearningEntryDict]:
     for f in iter_yaml_entry_files(entries_dir):
         try:
             entries.append(cast("LearningEntryDict", reader.read_yaml(f)))
-        except Exception:  # per-item error handling: fail-open, skip malformed YAML entries  # noqa: S112
+        except Exception as exc:  # per-item error handling: fail-open, skip malformed YAML entries
+            # Structural-only signal: a silently dropped entry understates audit
+            # learning counts. Log path + error_class, never the entry body.
+            logger.warning(
+                "audit_entry_read_skipped",
+                path=str(f),
+                error_class=type(exc).__name__,
+            )
             continue
     return entries
 
@@ -156,6 +163,44 @@ def _audit_index_consistency(
     }
 
 
+def _parse_recall_receipt_line(
+    line: str,
+    *,
+    receipt_path: Path,
+    line_number: int,
+) -> dict[str, object] | None:
+    """Parse one ``recall_log.jsonl`` line into a receipt record.
+
+    Returns the decoded record for valid JSON objects, or ``None`` for blank
+    lines, malformed JSON, and valid-JSON-but-non-object rows. Skipped rows log
+    a ``recall_receipt_parse_skipped`` warning carrying only structural fields
+    (path, line_number, error_class). The raw line, query text, and matched_ids
+    are deliberately never logged — the recall log can contain sensitive query
+    content and matched learning IDs (observability must not leak record bodies).
+    """
+    if not line.strip():
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "recall_receipt_parse_skipped",
+            path=str(receipt_path),
+            line_number=line_number,
+            error_class=type(exc).__name__,
+        )
+        return None
+    if not isinstance(record, dict):
+        logger.warning(
+            "recall_receipt_parse_skipped",
+            path=str(receipt_path),
+            line_number=line_number,
+            error_class="NonObjectRecord",
+        )
+        return None
+    return cast("dict[str, object]", record)
+
+
 def _audit_recall_effectiveness(
     trw_dir: Path,
     config: TRWConfig,
@@ -171,26 +216,31 @@ def _audit_recall_effectiveness(
     zero_match_queries: list[str] = []
 
     try:
-        lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            total += 1
-            query = str(record.get("query", ""))
-            matched_ids = record.get("matched_ids", [])
-
-            if query.strip() in ("*", ""):
-                wildcard += 1
-            elif len(matched_ids) == 0:
-                zero_match += 1
-                if len(zero_match_queries) < 5:
-                    zero_match_queries.append(query)
-    except Exception:  # justified: fail-open, corrupt recall log degrades gracefully
+        raw = receipt_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:  # justified: fail-open, unreadable log degrades to SKIP
+        logger.warning(
+            "recall_log_read_failed",
+            path=str(receipt_path),
+            error_class=type(exc).__name__,
+        )
         return {"total_queries": 0, "verdict": "SKIP"}
+
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        record = _parse_recall_receipt_line(line, receipt_path=receipt_path, line_number=line_number)
+        if record is None:
+            continue
+        total += 1
+        query = str(record.get("query", ""))
+        matched_ids = record.get("matched_ids", [])
+        if not isinstance(matched_ids, list):
+            matched_ids = []
+
+        if query.strip() in ("*", ""):
+            wildcard += 1
+        elif len(matched_ids) == 0:
+            zero_match += 1
+            if len(zero_match_queries) < 5:
+                zero_match_queries.append(query)
 
     named_queries = total - wildcard
     miss_rate = zero_match / max(named_queries, 1) if named_queries > 0 else 0.0

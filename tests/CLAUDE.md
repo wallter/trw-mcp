@@ -29,21 +29,22 @@ cd trw-mcp
 
 ## Test Count & Performance
 
-- **3,799 tests** across 112 files
-- **Collection**: ~38s (dominated by import overhead)
-- **Unit tier** (`-m unit`): ~784 tests, target <60s
+For current counts, run `make test-fast` (unit tier) or `pytest tests/ --collect-only -q | tail -1` (full collection). Counts drift constantly — do not hardcode them here.
+
+- **Collection**: dominated by import overhead
+- **Unit tier** (`-m unit`): target <60s
 - **Full suite**: ~8-15min sequential, ~3-5min parallel
-- **Coverage threshold**: 80% (fail_under)
+- **Coverage threshold**: 80% (`fail_under`)
 - **Per-test timeout**: 120s
 
 ## Test Tiers
 
-| Tier | Marker | Count | When to Run |
-|------|--------|-------|-------------|
-| `unit` | `-m unit` | ~784 | During implementation |
-| `integration` | `-m integration` | ~3,000 | Before delivery |
-| `e2e` | `-m e2e` | 0 (planned) | At delivery |
-| `slow` | `-m slow` | ~15 | Only in full suite |
+| Tier | Marker | When to Run |
+|------|--------|-------------|
+| `unit` | `-m unit` | During implementation |
+| `integration` | `-m integration` | Before delivery |
+| `e2e` | `-m e2e` | At delivery (planned) |
+| `slow` | `-m slow` | Only in full suite |
 
 ## Conftest Fixtures
 
@@ -86,9 +87,9 @@ Tests are auto-assigned markers in `conftest.py`:
 - Files in `_SLOW_FILES` frozenset → `@pytest.mark.slow`
 - Everything else → `@pytest.mark.integration` (default)
 
-**To classify a new test as unit**: Add the filename to `_UNIT_FILES` in `conftest.py` (line 77-90). The test must NOT use `tmp_path`, `tmp_project`, or do any filesystem I/O.
+**To classify a new test as unit**: Add the filename to the `_UNIT_FILES` frozenset in `conftest.py`. The test must NOT use `tmp_path`, `tmp_project`, or do any filesystem I/O.
 
-**To classify a new test as slow**: Add the filename to `_SLOW_FILES` in `conftest.py` (line 92-96). Only for tests that individually take >5s.
+**To classify a new test as slow**: Add the filename to the `_SLOW_FILES` frozenset in `conftest.py`. Only for tests that individually take >5s.
 
 ## Known Gotchas
 
@@ -139,7 +140,7 @@ If your sprint creates models with behavioral fields (weights, flags, config), y
 
 ## File Organization
 
-Current structure is flat — all 112 test files in `tests/`. A migration to tiered directories is planned:
+Current structure is flat — all test files live directly in `tests/`. A migration to tiered directories is planned:
 
 ```
 tests/

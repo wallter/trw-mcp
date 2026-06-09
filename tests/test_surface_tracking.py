@@ -250,6 +250,34 @@ class TestReadSurfaceEvents:
         assert len(events) == 1
         assert events[0]["learning_id"] == "L-ok"
 
+    def test_one_corrupt_line_does_not_discard_valid_events(self, tmp_path: Path) -> None:
+        """A single torn/corrupt line is skipped; surrounding valid events survive.
+
+        Regression: the previous list-comprehension-in-one-try idiom returned
+        [] for the whole tail when any line failed to parse, silently wiping
+        the nudge-fatigue history. Per-line recovery must keep the good rows.
+        """
+        trw_dir = tmp_path / ".trw"
+        log_dir = trw_dir / "logs"
+        log_dir.mkdir(parents=True)
+        good_a = json.dumps({"learning_id": "L-a", "surface_type": "nudge"})
+        good_b = json.dumps({"learning_id": "L-b", "surface_type": "recall"})
+        # Corrupt line wedged between two valid records (e.g. interleaved append).
+        (log_dir / "surface_tracking.jsonl").write_text(f"{good_a}\n{{partial broken\n{good_b}\n")
+        events = read_surface_events(trw_dir)
+        assert [e["learning_id"] for e in events] == ["L-a", "L-b"]
+
+    def test_non_object_line_is_skipped(self, tmp_path: Path) -> None:
+        """A structurally valid but non-object JSON line is dropped, not returned."""
+        trw_dir = tmp_path / ".trw"
+        log_dir = trw_dir / "logs"
+        log_dir.mkdir(parents=True)
+        good = json.dumps({"learning_id": "L-ok", "surface_type": "recall"})
+        (log_dir / "surface_tracking.jsonl").write_text(f"[1, 2, 3]\n{good}\n42\n")
+        events = read_surface_events(trw_dir)
+        assert len(events) == 1
+        assert events[0]["learning_id"] == "L-ok"
+
 
 class TestSurfaceEventTypedDict:
     """Tests for the SurfaceEvent TypedDict schema."""

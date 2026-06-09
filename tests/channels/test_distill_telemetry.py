@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from trw_mcp.channels._distill_telemetry import (
     _ENV_VAR,
@@ -15,7 +11,6 @@ from trw_mcp.channels._distill_telemetry import (
     emit_tool_call,
     resolve_client_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 # resolve_client_profile

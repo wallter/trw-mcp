@@ -65,10 +65,10 @@ def test_effective_hooks_enabled_opencode_profile() -> None:
 
 @pytest.mark.unit
 def test_effective_tool_exposure_mode_default() -> None:
-    """Default config ('all') with claude-code profile -> 'all'."""
+    """Default config (None sentinel) with claude-code profile -> 'all' from profile."""
     cfg = TRWConfig()
-    assert cfg.tool_exposure_mode == "all"
-    assert cfg.effective_tool_exposure_mode == "all"
+    assert cfg.tool_exposure_mode is None  # None = "not explicitly set"
+    assert cfg.effective_tool_exposure_mode == "all"  # claude-code profile default
 
 
 @pytest.mark.unit
@@ -80,11 +80,20 @@ def test_effective_tool_exposure_mode_explicit_core() -> None:
 
 @pytest.mark.unit
 def test_effective_tool_exposure_mode_opencode_profile() -> None:
-    """Default config ('all') + opencode profile -> 'standard' (from profile)."""
+    """None sentinel + opencode profile -> 'standard' (profile governs when not set)."""
     cfg = TRWConfig(target_platforms=["opencode"])
-    assert cfg.tool_exposure_mode == "all"
+    assert cfg.tool_exposure_mode is None  # None = "not explicitly set"
     assert cfg.client_profile.tool_exposure_mode == "standard"
     assert cfg.effective_tool_exposure_mode == "standard"
+
+
+@pytest.mark.unit
+def test_effective_tool_exposure_mode_explicit_all_overrides_profile() -> None:
+    """Explicit tool_exposure_mode='all' wins over opencode profile's 'standard'."""
+    cfg = TRWConfig(tool_exposure_mode="all", target_platforms=["opencode"])
+    assert cfg.tool_exposure_mode == "all"
+    assert cfg.client_profile.tool_exposure_mode == "standard"
+    assert cfg.effective_tool_exposure_mode == "all"  # explicit 'all' wins
 
 
 @pytest.mark.unit
@@ -213,11 +222,11 @@ def test_effective_framework_ref_enabled_explicit_true() -> None:
 
 @pytest.mark.unit
 def test_tools_sub_config_default() -> None:
-    """config.tools returns ToolsConfig with default values."""
+    """config.tools returns ToolsConfig with sentinel None when not explicitly set."""
     cfg = TRWConfig()
     tools = cfg.tools
     assert isinstance(tools, ToolsConfig)
-    assert tools.tool_exposure_mode == "all"
+    assert tools.tool_exposure_mode is None  # None = not explicitly set; profile governs
     assert tools.tool_exposure_list == []
     assert tools.tool_descriptions_variant == "default"
     assert tools.mcp_server_instructions_enabled is None

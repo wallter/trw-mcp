@@ -9,6 +9,8 @@ from tests._review_helpers_support import _make_config
 from trw_mcp.tools._review_helpers import handle_auto_mode
 from ._review_helpers_support import run_dir  # noqa: F401
 
+from ._review_helpers_support import run_dir  # noqa: F401
+
 
 class TestHandleAutoMode:
     """handle_auto_mode: confidence filtering and reviewer analysis flow."""

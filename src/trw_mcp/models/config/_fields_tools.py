@@ -17,8 +17,13 @@ class _ToolsFields:
     """Tool exposure domain mixin -- mixed into _TRWConfigFields via MI."""
 
     # -- Tool exposure (S1, PRD-CORE-125) --
-
-    tool_exposure_mode: Literal["all", "core", "minimal", "standard", "custom"] = "all"
+    # None = "not explicitly set" → defer to client profile (same sentinel
+    # pattern as hooks_enabled / skills_enabled). This lets users explicitly
+    # set "all" in config.yaml to override a profile that defaults to "standard"
+    # (e.g. cursor-cli, opencode, codex).  The previous "all" default was
+    # indistinguishable from an explicit "all", so the profile always silently
+    # won when the effective mode checked `!= "all"`.  PRD-CORE-125-FR02.
+    tool_exposure_mode: Literal["all", "core", "minimal", "standard", "custom"] | None = None
     tool_exposure_list: list[str] = Field(default_factory=list)
     tool_descriptions_variant: Literal["default", "minimal", "verbose"] = "default"
     mcp_server_instructions_enabled: bool | None = None

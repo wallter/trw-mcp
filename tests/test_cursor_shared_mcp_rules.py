@@ -60,6 +60,88 @@ def test_cursor_mcp_config_malformed_json_overwrites(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_cursor_mcp_config_non_object_json_overwrites(tmp_path: Path) -> None:
+    """A mcp.json whose top level is an array (not an object) no longer crashes.
+
+    Before the read_json_object seam, ``existing.get("mcpServers", {})`` raised
+    AttributeError on a list top level (only JSONDecodeError/KeyError were caught).
+    """
+    from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "mcp.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    result = generate_cursor_mcp_config(tmp_path)
+    data = json.loads((cursor_dir / "mcp.json").read_text(encoding="utf-8"))
+
+    assert "trw" in data["mcpServers"]
+    assert ".cursor/mcp.json" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_cursor_mcp_config_non_utf8_overwrites(tmp_path: Path) -> None:
+    """A non-UTF-8 mcp.json no longer raises UnicodeDecodeError; it is overwritten fresh."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "mcp.json").write_bytes(b"\xff\xfe\x00 invalid")
+
+    result = generate_cursor_mcp_config(tmp_path)
+    data = json.loads((cursor_dir / "mcp.json").read_text(encoding="utf-8"))
+
+    assert "trw" in data["mcpServers"]
+    assert ".cursor/mcp.json" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_cursor_mcp_config_tolerates_non_dict_mcpservers(tmp_path: Path) -> None:
+    """A ``mcpServers`` value that is not a dict is replaced rather than crashing."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "mcp.json").write_text(
+        json.dumps({"mcpServers": ["not", "a", "dict"], "keepKey": True}),
+        encoding="utf-8",
+    )
+
+    result = generate_cursor_mcp_config(tmp_path)
+    data = json.loads((cursor_dir / "mcp.json").read_text(encoding="utf-8"))
+
+    assert "trw" in data["mcpServers"]
+    # Unrelated top-level keys survive the merge.
+    assert data.get("keepKey") is True
+    assert ".cursor/mcp.json" in result.get("updated", [])
+
+
+@pytest.mark.integration
+def test_cursor_mcp_config_no_raw_payload_in_logs(tmp_path: Path) -> None:
+    """Structural diagnostics must not leak the malformed file's raw bytes.
+
+    A malformed mcp.json that happens to hold a secret must produce only a
+    content-free category diagnostic from the shared seam.
+    """
+    import structlog
+
+    from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
+
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    secret = "sk-super-secret-token-1234567890"
+    (cursor_dir / "mcp.json").write_text("not valid json " + secret, encoding="utf-8")
+
+    with structlog.testing.capture_logs() as logs:
+        generate_cursor_mcp_config(tmp_path)
+
+    rendered = json.dumps(logs)
+    assert secret not in rendered
+    # The seam still records that a malformed config was seen, by category only.
+    assert any(entry.get("reason") == "malformed_json" for entry in logs)
+
+
+@pytest.mark.integration
 def test_cursor_rules_mdc_fresh_write(tmp_path: Path) -> None:
     """generate_cursor_rules_mdc creates .cursor/rules/trw-ceremony.mdc on first call."""
     from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc

@@ -31,7 +31,7 @@ from trw_mcp.models.typed_dicts import (
 )
 
 from ._codex_normalize import _normalize_hook_config
-from ._file_ops import _new_result, _record_write
+from ._file_ops import _new_result, _record_write, read_json_object
 
 _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 _CODEX_HOOKS_PATH = ".codex/hooks.json"
@@ -185,17 +185,31 @@ def generate_codex_hooks(
     hooks_path = codex_dir / "hooks.json"
     existed = hooks_path.exists()
 
-    try:
-        if existed and not force:
-            raw_existing = json.loads(hooks_path.read_text(encoding="utf-8"))
-            payload = merge_codex_hooks(_normalize_hook_config(raw_existing))
-            hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=True)
-        else:
-            payload = _codex_hooks_payload()
-            hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=existed)
-    except (OSError, json.JSONDecodeError) as exc:
-        result["errors"].append(f"Failed to write {hooks_path}: {exc}")
+    if existed and not force:
+        # Route the existing-file read through the shared structural-safe seam
+        # so a non-UTF-8 hooks.json (``UnicodeDecodeError`` is a ``ValueError``,
+        # *not* an ``OSError``) can no longer escape uncaught, and so any
+        # malformed/non-object payload yields a content-free diagnostic instead
+        # of a noisy local exception string.
+        raw_existing = read_json_object(hooks_path, context="codex_hooks")
+        if raw_existing is None:
+            # Unreadable / non-UTF-8 / malformed / non-object existing file.
+            # Fail closed: leave the user's bytes untouched rather than clobber
+            # hooks we cannot parse (read_json_object already logged a
+            # content-free structural reason).
+            result["errors"].append(
+                f"Skipped {_CODEX_HOOKS_PATH}: existing file is unreadable or not a "
+                "JSON object; left unchanged to preserve user hooks"
+            )
+            return result
+        payload = merge_codex_hooks(_normalize_hook_config(raw_existing))
+    else:
+        payload = _codex_hooks_payload()
 
+    try:
+        hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        result["errors"].append(f"Failed to write {hooks_path}: {exc}")
+        return result
+    _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=existed)
     return result

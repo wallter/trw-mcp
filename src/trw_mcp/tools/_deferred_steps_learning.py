@@ -62,10 +62,11 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
         trw_dir_rt = resolve_trw_dir()
         tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
         if tracking_path.exists():
-            from trw_mcp.state.persistence import FileStateReader as _FSR
+            from trw_mcp.state._helpers import read_jsonl_resilient
 
-            rt_reader = _FSR()
-            records_rt = rt_reader.read_jsonl(tracking_path)
+            # Append-only log; tolerate a torn concurrent append rather than
+            # losing the whole recall-outcome recording step on one bad line.
+            records_rt = read_jsonl_resilient(tracking_path)
             seen: set[str] = set()
             for rec in records_rt:
                 lid = str(rec.get("learning_id", ""))

@@ -24,6 +24,7 @@ from typing import Final
 
 import structlog
 
+from trw_mcp.bootstrap._file_ops import read_json_object
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
@@ -135,17 +136,27 @@ def generate_cursor_hooks(
     ]
 
     if hooks_file.exists() and not force:
-        # Smart merge: preserve user hooks, add/replace TRW hooks
-        try:
-            existing: CursorHooksConfig = json.loads(hooks_file.read_text(encoding="utf-8"))
-            existing_hooks: list[CursorHookEntry] = existing.get("hooks", [])
-            # Remove existing TRW hooks (identified by description prefix)
-            non_trw = [h for h in existing_hooks if not h.get("description", "").startswith("TRW")]
+        # Smart merge: preserve user hooks, add/replace TRW hooks.
+        # ``read_json_object`` is the shared bootstrap seam: it returns ``None``
+        # (fail open) for an unreadable / non-UTF-8 / malformed / non-object
+        # file, logging only a content-free structural diagnostic so a hooks.json
+        # that happens to hold secrets never lands in logs. A ``None`` here means
+        # "no usable prior config" → overwrite with a fresh TRW-only document.
+        existing = read_json_object(hooks_file, context="cursor_hooks")
+        if existing is None:
+            hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
+        else:
+            raw_hooks = existing.get("hooks", [])
+            existing_hooks = raw_hooks if isinstance(raw_hooks, list) else []
+            # Remove existing TRW hooks (identified by description prefix);
+            # tolerate non-dict list entries from a hand-edited file.
+            non_trw = [
+                h
+                for h in existing_hooks
+                if not (isinstance(h, dict) and str(h.get("description", "")).startswith("TRW"))
+            ]
             existing["hooks"] = non_trw + trw_hooks
             hooks_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-        except (json.JSONDecodeError, KeyError):
-            # Malformed JSON — overwrite with fresh config
-            hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
         result["updated"].append(".cursor/hooks.json")
     else:
         hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
@@ -217,16 +228,20 @@ def generate_cursor_mcp_config(
     trw_entry = _get_trw_mcp_entry_cursor()
 
     if mcp_file.exists() and not force:
-        # Smart merge: update only the trw key, preserve everything else
-        try:
-            existing: CursorMcpConfig = json.loads(mcp_file.read_text(encoding="utf-8"))
-            servers: dict[str, CursorServerEntry] = existing.get("mcpServers", {})
+        # Smart merge: update only the trw key, preserve everything else.
+        # Fail open via the shared seam — a ``None`` return (unreadable /
+        # non-UTF-8 / malformed / non-object top level) drops us to a fresh
+        # TRW-only document, matching the prior malformed-JSON branch while also
+        # covering the cases the old ``try`` block let crash.
+        existing = read_json_object(mcp_file, context="cursor_mcp")
+        if existing is None:
+            _write_fresh_mcp(mcp_file, trw_entry)
+        else:
+            raw_servers = existing.get("mcpServers", {})
+            servers = raw_servers if isinstance(raw_servers, dict) else {}
             servers["trw"] = trw_entry
             existing["mcpServers"] = servers
             mcp_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-        except (json.JSONDecodeError, KeyError):
-            # Malformed JSON — write fresh config
-            _write_fresh_mcp(mcp_file, trw_entry)
         result["updated"].append(".cursor/mcp.json")
     else:
         _write_fresh_mcp(mcp_file, trw_entry)

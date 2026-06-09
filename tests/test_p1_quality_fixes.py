@@ -214,12 +214,20 @@ class TestAnchorDictTypedDict:
 
 
 class TestPurePosixPathModuleLevel:
-    """PurePosixPath is imported at module level in scoring/_recall.py."""
+    """PurePosixPath is imported at module level in scoring/_recall_domains.py.
+
+    The path-handling helpers (``_extract_path_stems`` / ``_sanitize_path``)
+    that use ``PurePosixPath`` were extracted from the ``_recall.py`` facade
+    into the cohesive ``_recall_domains.py`` sibling (re-exported via the
+    facade). This guards the original perf intent — ``PurePosixPath`` imported
+    once at module load, never re-imported inside a hot function body — at the
+    module where the usage now lives.
+    """
 
     def test_pure_posix_path_at_module_level(self) -> None:
         import ast
 
-        source_path = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring" / "_recall.py"
+        source_path = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring" / "_recall_domains.py"
         tree = ast.parse(source_path.read_text())
 
         # Check for module-level import of PurePosixPath
@@ -237,7 +245,7 @@ class TestPurePosixPathModuleLevel:
         """PurePosixPath should NOT be imported inside function bodies."""
         import ast
 
-        source_path = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring" / "_recall.py"
+        source_path = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring" / "_recall_domains.py"
         tree = ast.parse(source_path.read_text())
 
         for node in ast.walk(tree):

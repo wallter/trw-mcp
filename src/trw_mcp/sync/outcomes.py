@@ -28,6 +28,14 @@ logger = structlog.get_logger(__name__)
 
 _SYNCED_MARKER = "synced.json"
 
+# Backend `OutcomeSync.learning_ids` is declared `Field(..., max_length=50)`
+# with `model_config = ConfigDict(extra="forbid")` in `backend/routers/sync.py`.
+# Any payload whose `learning_ids` exceeds 50 entries is 422-rejected, and
+# because the whole batch is rejected no outcomes (or learnings) ever sync.
+# We therefore cap client-side at the same limit. Truncation keeps the FIRST
+# 50 ids (deterministic, preserves the run's recorded exposure ordering).
+_MAX_OUTCOME_LEARNING_IDS = 50
+
 
 @dataclass(frozen=True)
 class PendingOutcome:
@@ -160,9 +168,13 @@ def _aggregate_recall_outcomes(trw_dir: Path | None) -> dict[str, dict[str, obje
         return {}
 
     try:
-        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.state._helpers import read_jsonl_resilient
 
-        records = FileStateReader().read_jsonl(tracking_path)
+        # Append-only log written per-recall by concurrent agents: a single torn
+        # line must drop only that row, not collapse every learning's bandit
+        # signal to {} (the strict reader's StateError did exactly that, silently
+        # starving the backend IPS / arm-update loop for the whole sync cycle).
+        records = read_jsonl_resilient(tracking_path)
     except Exception:  # justified: fail-open, recall enrichment must not block sync
         logger.debug("recall_outcome_aggregate_read_failed", path=str(tracking_path), exc_info=True)
         return {}
@@ -215,7 +227,11 @@ def _build_outcome_payload(
     """Construct an OutcomeSync-shaped dict from one run's session_metrics."""
     exposure = session_metrics.get("learning_exposure") or {}
     raw_ids = exposure.get("ids") if isinstance(exposure, dict) else None
-    learning_ids: list[str] = [str(i) for i in raw_ids] if isinstance(raw_ids, list) else []
+    learning_ids: list[str] = (
+        [str(i) for i in raw_ids][:_MAX_OUTCOME_LEARNING_IDS]
+        if isinstance(raw_ids, list)
+        else []
+    )
 
     rework = session_metrics.get("rework_rate") or {}
     rework_rate: float | None = None

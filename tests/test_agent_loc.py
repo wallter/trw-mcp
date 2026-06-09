@@ -18,7 +18,7 @@ AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 LOC_LIMIT = 350
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from post_extraction_static_audit import available_static_audit_commands  # noqa: E402
+from post_extraction_static_audit import available_static_audit_commands
 
 
 def _agent_files() -> list[Path]:

@@ -46,27 +46,53 @@ from trw_mcp.state._paths import (
 from trw_mcp.state.claude_md import execute_claude_md_sync as execute_claude_md_sync
 from trw_mcp.state.persistence import (
     FileEventLogger,
-    FileStateReader,
     FileStateWriter,
 )
 from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
-from trw_mcp.tools._ceremony_deliver_steps import (
-    log_deliver_complete,
-    step_clear_score,
-    step_knowledge_sync,
-    unpack_gate_result,
-)
+from trw_mcp.tools._ceremony_deliver_tool import run_trw_deliver as _run_trw_deliver
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
-from trw_mcp.tools._deferred_delivery import (
-    _launch_deferred,
-    _step_checkpoint,
-)
-from trw_mcp.tools._helpers import _run_step
+from trw_mcp.tools._deferred_delivery import _step_checkpoint as _step_checkpoint
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
 _events = FileEventLogger(FileStateWriter())
+_STEP_CHECKPOINT_PATCH_SEAM = _step_checkpoint
+
+# F24 (legibility): advisory delivery-gate warning keys. These are SOFT gates —
+# surfaced on the deliver result but never blocking — so historically a
+# "warned-but-delivered" run was byte-identical (success=True, no warning
+# signal) to a fully-clean one. We aggregate the subset of these keys actually
+# present on the result into warning_count / warnings_present / warnings so
+# downstream eval / false-completion scoring can separate clean vs warned
+# delivers. Blocking keys (review_block, *_scope_block, build_gate_*,
+# delivery_blocked, truthfulness_gate_bypassed) are deliberately EXCLUDED —
+# they already drive success=False or their own audit trail and are not
+# "advisory warnings on an otherwise-successful deliver".
+_ADVISORY_WARNING_KEYS: tuple[str, ...] = (
+    "review_warning",
+    "review_advisory",
+    "integration_review_warning",
+    "checkpoint_blocker_warning",
+    "untracked_warning",
+    "complexity_drift_warning",
+    "instruction_parity_warning",
+    "warning",
+)
+
+
+def _aggregate_advisory_warnings(results: DeliverResultDict) -> None:
+    """Populate warning_count / warnings_present / warnings on the result.
+
+    Scans ``results`` for the advisory-warning keys in
+    :data:`_ADVISORY_WARNING_KEYS` that are present and non-empty, and records
+    an aggregate count, a boolean flag, and the sorted list of present keys.
+    Pure legibility — does not touch ``success`` or any blocking behavior.
+    """
+    present = sorted(key for key in _ADVISORY_WARNING_KEYS if results.get(key))
+    results["warnings"] = present
+    results["warning_count"] = len(present)
+    results["warnings_present"] = bool(present)
 
 # F24 (legibility): advisory delivery-gate warning keys. These are SOFT gates —
 # surfaced on the deliver result but never blocking — so historically a
@@ -408,13 +434,16 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, graph health must not block session start
             logger.debug("graph_health_failed", exc_info=True)
 
-        # PRD-FIX-COMPOUNDING-6 FR03: unified compounding-pipeline health surface.
-        # Injects pipeline_health_advisory (compact single-line string) when any
-        # of the five pipeline signals is degraded. Absent on healthy sessions
-        # (PRD-INFRA-068 lesson). Fail-open: never blocks session_start.
+        # PRD-FIX-COMPOUNDING-6 FR03 + PRD-FIX-107 FR06: compounding-pipeline
+        # health surface. Injects pipeline_health_advisory (compact single-line
+        # string) when any of the five pipeline signals is degraded, and — when
+        # the fail-closed FR06 gate trips (push staleness / dead graph /
+        # localhost-only target) — escalates to a prominent pipeline_health_warning.
+        # Absent on healthy sessions (PRD-INFRA-068 lesson). Fail-open: never
+        # blocks session_start (the hard gate lives in check_pipeline_health for CI).
         _pipeline_health_started = time.monotonic()
         try:
-            step_pipeline_health_advisory(resolve_trw_dir(), cast("dict[str, object]", results))
+            step_pipeline_health_advisory(resolve_trw_dir(), cast("dict[str, object]", results), config)
         except Exception:  # justified: fail-open, pipeline health must not block session start
             logger.debug("pipeline_health_advisory_failed", exc_info=True)
         _record_step("pipeline_health", _pipeline_health_started)
@@ -487,295 +516,14 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         See Also: trw_checkpoint, trw_instructions_sync
         """
-        config = get_config()
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        t0 = time.monotonic()
-        results: DeliverResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
-        errors: list[str] = []
-        trw_dir = resolve_trw_dir()
-
-        # Resolve run path (PRD-CORE-141 FR03/FR05: ctx-aware find_active_run
-        # suppresses scan fallback for fresh sessions).
-        call_ctx = _build_call_context(ctx)
-        resolved_run: Path | None = None
-        if run_path:
-            resolved_run = Path(run_path).resolve()
-        else:
-            resolved_run = _find_active_run_compat(call_ctx)
-
-        results["run_path"] = str(resolved_run) if resolved_run else None
-        candidate_runs = _candidate_run_hints() if resolved_run is None else []
-        if candidate_runs:
-            results["candidate_runs"] = candidate_runs
-
-        logger.info(
-            "deliver_started",
-            run_id=str(resolved_run.name) if resolved_run else "",
-            phase="DELIVER",
+        return _run_trw_deliver(
+            ctx,
+            run_path,
+            skip_reflect,
+            skip_index_sync,
+            allow_unverified,
+            unverified_reason,
         )
-
-        # Auto-update phase to DELIVER
-        from trw_mcp.models.run import Phase
-        from trw_mcp.state.phase import try_update_phase
-
-        try_update_phase(resolved_run, Phase.DELIVER)
-
-        # Steps 0, 0b, premature guard: extracted to helper
-        from trw_mcp.tools._ceremony_helpers import check_delivery_gates
-
-        gate_result = check_delivery_gates(resolved_run, reader, trw_dir)
-        unpack_gate_result(gate_result, results)
-
-        # Step 0c: Copy compliance artifacts (INFRA-027-FR05)
-        from trw_mcp.tools._ceremony_helpers import copy_compliance_artifacts
-
-        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
-        if "compliance_artifacts_copied" in compliance_result:
-            results["compliance_artifacts_copied"] = compliance_result["compliance_artifacts_copied"]
-        if "compliance_dir" in compliance_result:
-            results["compliance_dir"] = compliance_result["compliance_dir"]
-
-        # Block delivery if integration review has blocking verdict
-        if gate_result.get("integration_review_block"):
-            errors.append(str(gate_result["integration_review_block"]))
-            results["errors"] = errors
-            results["success"] = False
-            return results
-
-        # Block delivery if >5 files modified without review (R-01)
-        if gate_result.get("review_scope_block"):
-            errors.append(str(gate_result["review_scope_block"]))
-            results["errors"] = errors
-            results["success"] = False
-            return results
-
-        # Block delivery when the review verdict is 'block' with critical findings
-        # on a STANDARD/COMPREHENSIVE run. This is the primary truthfulness gate:
-        # a block review must actually block (CONSTITUTION §1). The sanctioned
-        # escape hatch is allow_unverified + a concrete unverified_reason
-        # (Deliver Gate Path 3) — honored exactly like the build/integration gates.
-        review_block = gate_result.get("review_block")
-        if review_block and not (allow_unverified and unverified_reason.strip()):
-            errors.append(str(review_block))
-            results["errors"] = errors
-            results["success"] = False
-            logger.warning(
-                "deliver_review_block",
-                run=str(resolved_run),
-            )
-            return results
-        if review_block:
-            # Override taken — make the bypass of the truthfulness gate UNMISSABLE,
-            # mirroring the build-gate override audit trail (A-P1-02).
-            reason = unverified_reason.strip()
-            results["truthfulness_gate_bypassed"] = reason
-            logger.warning(
-                "review_block_override_used",
-                reason=reason,
-                review_block=str(review_block),
-                run=str(resolved_run),
-            )
-            if resolved_run is not None and (resolved_run / "meta").exists():
-                _events.log_event(
-                    resolved_run / "meta" / "events.jsonl",
-                    "delivery_gate_overridden",
-                    {"reason": reason, "review_block": str(review_block)},
-                )
-
-        # PRD-CORE-184-FR03: task-type-aware deliver gate. When the configured
-        # deliver_gate_mode + the run's task_type promote the advisory build
-        # gate to a structural block, treat the missing build check as a hard
-        # gate (still overridable via allow_unverified + unverified_reason).
-        # When the mode is advisory (default) ``delivery_blocked`` is never set,
-        # so this is a pure no-op for existing deployments (zero regression).
-        delivery_blocked = gate_result.get("delivery_blocked")
-        if delivery_blocked and not (allow_unverified and unverified_reason.strip()):
-            results["delivery_blocked"] = str(delivery_blocked)
-            results["missing_gate"] = str(gate_result.get("missing_gate", "build_check"))
-            errors.append(str(delivery_blocked))
-            results["errors"] = errors
-            results["success"] = False
-            logger.warning(
-                "deliver_gate_mode_blocked",
-                task_type=str(gate_result.get("blocked_task_type", "unknown")),
-                run=str(resolved_run),
-            )
-            return results
-
-        # PRD-DIST-1865 / iter-29 Track-A: do not let "must call deliver"
-        # override truthfulness.  A run with work events but no successful
-        # trw_build_check can still be delivered through an explicit
-        # acceptable-failure override, but not silently.
-        build_gate_warning = gate_result.get("build_gate_warning")
-        if build_gate_warning:
-            reason = unverified_reason.strip()
-            if not allow_unverified or not reason:
-                block = (
-                    f"Delivery blocked: {build_gate_warning} "
-                    "If this is an acceptable failure, retry with "
-                    "allow_unverified=true and a concrete unverified_reason."
-                )
-                results["build_gate_block"] = block
-                errors.append(block)
-                results["errors"] = errors
-                results["success"] = False
-                return results
-            results["build_gate_override"] = reason
-            # A-P1-02: the truthfulness gate (CONSTITUTION §1.a) was bypassed via
-            # allow_unverified. Previously this was only stored in a result key —
-            # invisible to an operator watching the log/event stream, and
-            # indistinguishable from a legitimate acceptable-failure deliver.
-            # Make the bypass UNMISSABLE: a WARNING, a prominent result key, and
-            # (when a run exists) a delivery_gate_overridden event for audit.
-            results["truthfulness_gate_bypassed"] = reason
-            logger.warning(
-                "build_gate_override_used",
-                reason=reason,
-                build_gate_warning=str(build_gate_warning),
-                run=str(resolved_run),
-            )
-            if resolved_run is not None and (resolved_run / "meta").exists():
-                _events.log_event(
-                    resolved_run / "meta" / "events.jsonl",
-                    "delivery_gate_overridden",
-                    {"reason": reason, "build_gate_warning": str(build_gate_warning)},
-                )
-
-        # -- CRITICAL PATH (synchronous) --
-        # These 3 steps must complete before returning — they produce the
-        # artifacts the next session depends on.
-
-        # Use a typed accumulator view for _run_step (which operates on dict[str, object])
-        _results_view: dict[str, object] = cast("dict[str, object]", results)
-
-        # Step 1: Reflect (extract learnings from events)
-        if not skip_reflect:
-            _run_step("reflect", lambda: _do_reflect(trw_dir, resolved_run), _results_view, errors)
-        else:
-            results["reflect"] = {"status": "skipped"}
-
-        # Step 2: Checkpoint (delivery state snapshot)
-        if resolved_run is not None:
-            _run_step("checkpoint", lambda: _step_checkpoint(resolved_run), _results_view, errors)
-        else:
-            checkpoint_skip: dict[str, object] = {
-                "status": "skipped",
-                "reason": "no_active_run",
-                "detail": (
-                    "Learning persistence can still succeed, but run checkpointing was skipped because "
-                    "this MCP session has no pinned run."
-                ),
-                "hint": _no_active_run_hint(candidate_runs),
-            }
-            if candidate_runs:
-                checkpoint_skip["candidate_runs"] = candidate_runs
-            results["checkpoint"] = checkpoint_skip
-
-        # Step 3: CLAUDE.md sync removed (PRD-CORE-093 FR06).
-        # Learning promotion no longer rotates CLAUDE.md content, so the prompt
-        # cache stays stable across delivers. Explicit trw_instructions_sync() or
-        # update_project() remain the only triggers for instruction-file re-render.
-        results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
-
-        critical_elapsed = round(time.monotonic() - t0, 2)
-        results["critical_elapsed_seconds"] = critical_elapsed
-
-        # Step 3b: DB integrity check on delivery (PRD-INFRA-067 / C2)
-        # Observability only — a failed probe is logged at WARNING but does
-        # not block deliver or trigger recovery.
-        try:
-            from trw_mcp.tools._deliver_integrity import check_memory_integrity_on_deliver
-
-            integrity_result = check_memory_integrity_on_deliver(trw_dir, resolved_run)
-            results["db_integrity"] = cast("dict[str, object]", dict(integrity_result))
-        except Exception:  # justified: fail-open — integrity probe must not block deliver
-            logger.debug("deliver_integrity_check_failed", exc_info=True)
-
-        # Step 3c: PRD-HPO-MEAS-001 FR-5 — CLEAR score for this session.
-        if resolved_run is not None:
-            step_clear_score(resolved_run, results)
-
-        # Step 3d: PRD-FIX-COMPOUNDING-2 FR03 — auto-trigger knowledge-graph
-        # topic sync when the entry count meets the threshold. Fail-open: a sync
-        # failure records knowledge_sync.status="failed" but never fails deliver.
-        step_knowledge_sync(trw_dir, results)
-
-        # -- DEFERRED PATH (background thread) --
-        # Housekeeping, analytics, publishing, and telemetry — these don't
-        # affect the next session's startup and can run after we return.
-        # Concurrency-safe: file lock prevents overlapping deferred batches.
-        deferred_status = _launch_deferred(
-            trw_dir,
-            resolved_run,
-            _results_view,
-            skip_index_sync=skip_index_sync,
-        )
-        results["deferred"] = deferred_status
-
-        # Count only critical steps for immediate success evaluation
-        critical_step_count = 2  # reflect + checkpoint (claude_md_sync removed per PRD-CORE-093)
-        results["errors"] = errors
-        results["success"] = len(errors) == 0
-        results["critical_steps_completed"] = critical_step_count - len(errors)
-        results["deferred_steps"] = 11  # launched in background
-
-        # F24 (legibility): aggregate advisory warnings so a warned-but-delivered
-        # run is distinguishable from a fully-clean one. Pure diagnostic — does
-        # not affect success (which is still ``len(errors) == 0`` above).
-        _aggregate_advisory_warnings(results)
-
-        # Mark deliver in ceremony state (PRD-CORE-124 FR-deliver)
-        try:
-            from trw_mcp.state.ceremony_progress import mark_deliver
-
-            mark_deliver(trw_dir)
-        except Exception:  # justified: fail-open — state mutation must not block deliver
-            logger.debug("mark_deliver_failed", exc_info=True)
-
-        # PRD-CORE-125 FR05: Self-reflection gate — learning count feedback
-        try:
-            from trw_mcp.state.ceremony_progress import read_ceremony_state as _read_cs_fr05
-
-            _cs_fr05 = _read_cs_fr05(trw_dir)
-            _learnings_count_fr05 = _cs_fr05.learnings_this_session
-            results["learning_reflection"] = _learning_reflection_message(_learnings_count_fr05)
-        except Exception:  # justified: fail-open — reflection must not block deliver
-            logger.debug("learning_reflection_failed", exc_info=True)
-
-        # PRD-QUAL-058-FR05: Read nudge_counts from CeremonyState for deliver event
-        _nudge_summary: dict[str, int] = {}
-        try:
-            from trw_mcp.state.ceremony_progress import read_ceremony_state as _read_cs
-
-            _cs = _read_cs(trw_dir)
-            _nudge_summary = dict(_cs.nudge_counts)
-        except Exception:  # justified: fail-open
-            logger.debug("deliver_nudge_summary_unavailable", exc_info=True)
-
-        # Log trw_deliver_complete to events.jsonl so hooks can detect it
-        if resolved_run is not None and (resolved_run / "meta").exists():
-            _events.log_event(
-                resolved_run / "meta" / "events.jsonl",
-                "trw_deliver_complete",
-                {
-                    "critical_steps_completed": results.get("critical_steps_completed"),
-                    "deferred": deferred_status,
-                    "critical_elapsed_seconds": critical_elapsed,
-                    "errors": len(errors),
-                    # PRD-QUAL-058-FR05: Aggregate nudge signal at deliver time
-                    "nudge_summary": _nudge_summary,
-                },
-            )
-
-        log_deliver_complete(
-            resolved_run=resolved_run,
-            results=results,
-            errors=errors,
-            deferred_status=deferred_status,
-            critical_elapsed=critical_elapsed,
-        )
-        return results
 
     # ── PRD-CORE-141 FR07 — trw_heartbeat ─────────────────────────────
     @server.tool(output_schema=None)

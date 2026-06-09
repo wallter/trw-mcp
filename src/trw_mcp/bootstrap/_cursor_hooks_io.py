@@ -20,6 +20,7 @@ from typing import Any
 import structlog
 
 from trw_mcp.bootstrap._cursor_models import CursorHooksV1Config, HookHandlerEntry
+from trw_mcp.bootstrap._file_ops import read_json_object
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
@@ -147,9 +148,17 @@ def smart_merge_cursor_json(
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if target_path.exists():
-        try:
-            existing: dict[str, Any] = json.loads(target_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        # ``read_json_object`` is the shared bootstrap seam: it collapses
+        # unreadable / non-UTF-8 / malformed / non-object-root into one ``None``
+        # return with a content-free diagnostic. Routing through it here closes
+        # two reachable crashes the prior local ``except (JSONDecodeError, OSError)``
+        # missed: a non-UTF-8 file raised ``UnicodeDecodeError`` (a ``ValueError``,
+        # not ``OSError``) and escaped uncaught, and a non-object root (e.g. a JSON
+        # array) parsed cleanly then crashed below at ``existing.get("hooks")`` /
+        # ``existing[key] = value``. ``None`` preserves the existing
+        # malformed-overwrite contract; a non-``None`` result is guaranteed a dict.
+        existing_obj = read_json_object(target_path, context="cursor_smart_merge")
+        if existing_obj is None:
             logger.warning(
                 "smart_merge_cursor_json_malformed",
                 path=rel,
@@ -158,6 +167,7 @@ def smart_merge_cursor_json(
             target_path.write_text(json.dumps(trw_entries, indent=2) + "\n", encoding="utf-8")
             result["updated"].append(rel)
             return result
+        existing: dict[str, Any] = existing_obj
 
         # Handle hooks.json shape: remove prior TRW entries by command prefix
         if "hooks" in existing and isinstance(existing["hooks"], dict) and identity_prefix:

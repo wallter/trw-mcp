@@ -8,11 +8,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
-
-from trw_mcp.channels.cursor._mdc_emitter import MdcEmitter, MdcEmitterError
+from trw_mcp.channels.cursor._mdc_emitter import MdcEmitter
 
 
 def _make_sidecar(

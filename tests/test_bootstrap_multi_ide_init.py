@@ -13,7 +13,7 @@ from trw_mcp.bootstrap import init_project
 
 
 @pytest.fixture(autouse=True)
-def _restore_structlog_config() -> "object":
+def _restore_structlog_config() -> object:
     """init_project calls configure_logging(), which globally reconfigures
     structlog and breaks structlog.testing.capture_logs() in later-running
     test files. Save and restore the config so the global mutation does not

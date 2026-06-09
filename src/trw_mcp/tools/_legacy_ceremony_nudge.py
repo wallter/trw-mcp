@@ -12,8 +12,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state.ceremony_progress import CeremonyState
-from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
 
@@ -22,12 +22,15 @@ def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
     """Hydrate compatibility state from file-modified events."""
 
     try:
-        from trw_mcp.state._paths import find_active_run
+        from trw_mcp.state._paths import find_run_via_mtime_scan
 
         # PRD-FIX-085 FR01: this module has no production callers in
-        # trw-mcp/src/ (verified 2026-05-03). Pin-only behavior is fine;
-        # if dead-code-removal lands, the whole file goes.
-        run_dir = find_active_run()  # noqa: PRD-FIX-085 — legacy module, no live callers
+        # trw-mcp/src/ (verified 2026-05-03) and carries no session
+        # context, so it uses the explicit mtime-scan entry point rather
+        # than the pin-only find_active_run(). This preserves the
+        # pre-split "latest active run by scan" behavior for the legacy
+        # compat path; if dead-code-removal lands, the whole file goes.
+        run_dir = find_run_via_mtime_scan()
         if run_dir is None:
             return
 
@@ -35,7 +38,9 @@ def _hydrate_files_modified(state: CeremonyState, trw_dir: Path) -> None:
         if not events_path.exists():
             return
 
-        events = FileStateReader().read_jsonl(events_path)
+        # Advisory count over an append-only log: a torn concurrent append drops
+        # that one line rather than aborting the whole file-modified tally.
+        events = read_jsonl_resilient(events_path)
         threshold = state.last_checkpoint_ts or ""
         state.files_modified_since_checkpoint = sum(
             1

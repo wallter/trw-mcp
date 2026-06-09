@@ -10,10 +10,8 @@ dependencies are patched out.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -193,11 +191,12 @@ class TestBeforeEditHintTierWiring:
         tmp_path: Any,
     ) -> dict[str, Any]:
         """Build a real git repo + sidecar + entitlement, set TRW_CLIENT_PROFILE, call tool."""
-        import subprocess
         import json
-        import sys
         import os
+        import subprocess
+        import sys
         from datetime import datetime, timedelta, timezone
+
         from trw_mcp.state._entitlements import sign_entitlement_for_dev
         from trw_mcp.tools.before_edit_hint import _SCHEMA_VERSION_ACCEPTED
 
@@ -246,9 +245,9 @@ class TestBeforeEditHintTierWiring:
         if tests_dir not in sys.path:
             sys.path.insert(0, tests_dir)
         from conftest import get_tools_sync
+        from fastmcp import FastMCP
 
         from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
-        from fastmcp import FastMCP
 
         srv = FastMCP("test")
         register_before_edit_hint_tools(srv)

@@ -50,17 +50,63 @@ def get_config() -> TRWConfig:
     return _singleton
 
 
-def _build_config() -> TRWConfig:
-    """Build TRWConfig with ``.trw/config.yaml`` overrides merged.
+def _deep_merge(base: dict[str, object], over: dict[str, object]) -> dict[str, object]:
+    """Deep key-wise merge: values in *over* win, nested dicts merge recursively.
 
-    Precedence (highest wins):
+    The more specific layer (*over*) overrides the less specific (*base*) per
+    key; nested mappings are merged rather than whole-object replaced
+    (PRD-CORE-185 FR04).
+    """
+    merged: dict[str, object] = dict(base)
+    for key, value in over.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(
+                {str(k): v for k, v in existing.items()},
+                {str(k): v for k, v in value.items()},
+            )
+        else:
+            merged[key] = value
+    return merged
+
+
+def _read_yaml_overrides(config_path: object) -> dict[str, object]:
+    """Read a ``config.yaml`` into a string-keyed dict, or ``{}`` on absence.
+
+    Uses ``YAML(typ="safe")`` via ``FileStateReader`` (NFR05). Never raises;
+    a missing or malformed file yields an empty mapping so the cascade collapses
+    to the next layer.
+    """
+    from pathlib import Path
+
+    from trw_mcp.state.persistence import FileStateReader
+
+    path = config_path if isinstance(config_path, Path) else Path(str(config_path))
+    if not path.exists():
+        return {}
+    overrides = FileStateReader().read_yaml(path)
+    if not isinstance(overrides, dict):
+        return {}
+    return {str(k): v for k, v in overrides.items() if v is not None}
+
+
+def _build_config() -> TRWConfig:
+    """Build TRWConfig with the machine -> project -> env config cascade merged.
+
+    Precedence (highest wins) -- PRD-CORE-185 FR04:
     1. Environment variables (``TRW_*``) -- checked explicitly
-    2. ``.trw/config.yaml`` values -- passed as init kwargs
-    3. Field defaults defined in TRWConfig
+    2. ``.trw/config.yaml`` (project) -- passed as init kwargs
+    3. ``~/.trw/config.yaml`` (machine defaults) -- merged BENEATH the project file
+    4. Field defaults defined in TRWConfig
+
+    The machine layer is additive and OPTIONAL: with no ``~/.trw/config.yaml``
+    present the effective config is byte-identical to the prior project-only
+    behavior (NFR02). The merge is a deep key-wise merge (project overrides
+    machine per key); env still overrides both.
 
     Pydantic BaseSettings gives init kwargs *highest* priority, so we
-    must exclude config.yaml keys that have a corresponding ``TRW_*``
-    env var set to preserve the documented precedence.
+    must exclude merged keys that have a corresponding ``TRW_*`` env var set to
+    preserve the documented precedence.
 
     Gracefully falls back to defaults-only when:
     - Running outside a git repository (e.g. during ``pip install``)
@@ -68,26 +114,22 @@ def _build_config() -> TRWConfig:
     - Any import or filesystem error occurs
     """
     import os
+    from pathlib import Path
 
     try:
         from trw_mcp.state._paths import resolve_project_root
-        from trw_mcp.state.persistence import FileStateReader
 
+        machine_overrides = _read_yaml_overrides(Path.home() / ".trw" / "config.yaml")
         project_root = resolve_project_root()
-        config_path = project_root / ".trw" / "config.yaml"
-        if config_path.exists():
-            reader = FileStateReader()
-            overrides = reader.read_yaml(config_path)
-            if isinstance(overrides, dict):
-                # Filter to non-None values with string keys,
-                # excluding keys that have a TRW_ env var set
-                filtered = {
-                    str(k): v
-                    for k, v in overrides.items()
-                    if v is not None and f"TRW_{str(k).upper()}" not in os.environ
-                }
-                if filtered:
-                    return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
+        project_overrides = _read_yaml_overrides(project_root / ".trw" / "config.yaml")
+
+        # Deep merge: machine is the base, project overrides per key.
+        merged = _deep_merge(machine_overrides, project_overrides)
+        if merged:
+            # Exclude keys overridden by a TRW_ env var (env wins).
+            filtered = {k: v for k, v in merged.items() if f"TRW_{k.upper()}" not in os.environ}
+            if filtered:
+                return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
     except Exception:  # justified: fail-open, config file read failure falls back to defaults
         logger.debug("config_load_failed", exc_info=True)
     return TRWConfig()

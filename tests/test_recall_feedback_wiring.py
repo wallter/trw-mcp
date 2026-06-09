@@ -11,13 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from trw_memory.lifecycle.scoring import entry_utility
 
 from trw_mcp.state.memory_adapter import (
     find_entry_by_id,
     store_learning,
     update_access_tracking,
 )
-from trw_memory.lifecycle.scoring import entry_utility
 
 
 @pytest.fixture

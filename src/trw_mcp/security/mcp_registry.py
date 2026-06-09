@@ -286,14 +286,10 @@ class MCPRegistry:
                     entry=entry,
                     quarantine_reason=quarantine_reason,
                 )
-        if quarantine_reason:
-            return RegistryDecision(
-                allowed=False,
-                reason=quarantine_reason,
-                match_type="quarantined",
-                entry=entry,
-                quarantine_reason=quarantine_reason,
-            )
+        # Note: the second ``if quarantine_reason:`` block that existed here
+        # was dead code — the only path through the first block that does not
+        # return also sets quarantine_reason = None (auto-release), so the
+        # second guard was always False.  Removed to eliminate the confusion.
 
         if entry is None:
             if self.allow_unsigned:

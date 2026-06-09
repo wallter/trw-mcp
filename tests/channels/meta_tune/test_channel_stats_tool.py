@@ -13,7 +13,6 @@ import pytest
 
 from trw_mcp.tools.channel_stats import compute_channel_stats_result
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

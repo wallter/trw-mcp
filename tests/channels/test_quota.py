@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from trw_mcp.channels._quota import (
     TIER_DOWN_LADDER,
     check_quota,
@@ -11,7 +9,6 @@ from trw_mcp.channels._quota import (
     tier_down,
     tier_index,
 )
-
 
 # ---------------------------------------------------------------------------
 # tier_index

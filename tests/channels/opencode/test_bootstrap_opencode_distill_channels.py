@@ -93,9 +93,10 @@ def test_manifest_entries_written(tmp_path: Path) -> None:
 
 def test_manifest_entries_have_correct_default_tier() -> None:
     """FR16: opencode-tool-return-enrichment has default_tier T2."""
-    from pathlib import Path as _Path
-    from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
     import tempfile
+    from pathlib import Path as _Path
+
+    from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
 
     with tempfile.TemporaryDirectory() as tmp:
         p = _Path(tmp)
@@ -148,11 +149,8 @@ def test_manifest_all_or_nothing_on_validation_error(tmp_path: Path) -> None:
         "trw_mcp.bootstrap._opencode_distill_channels.YAML"
     ) as _:
         # Patch the actual file read instead
-        from pathlib import Path as _Path
-        import importlib
 
         # We patch the manifest data file path's read_text
-        from unittest.mock import MagicMock, mock_open
         with patch("pathlib.Path.read_text", return_value=bad_yaml):
             try:
                 bootstrap_channel_manifest(tmp_path)
@@ -171,13 +169,14 @@ def test_manifest_merge_preserves_existing_entries(tmp_path: Path) -> None:
     from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
     from trw_mcp.channels._manifest_loader import (
         auto_recreate_empty,
-        load as manifest_load,
         write,
+    )
+    from trw_mcp.channels._manifest_loader import (
+        load as manifest_load,
     )
     from trw_mcp.channels._manifest_models import (
         ChannelEntry,
         ChannelSurface,
-        ChannelStatus,
     )
     from trw_mcp.channels._provenance import now_utc_iso8601
 
@@ -236,10 +235,9 @@ def test_bootstrap_module_under_loc_gate() -> None:
                 rest = s[3:]
                 if q in rest:
                     break
-                else:
-                    in_doc = True
-                    quote = q
-                    break
+                in_doc = True
+                quote = q
+                break
         else:
             count += 1
 

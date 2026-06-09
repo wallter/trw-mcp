@@ -19,6 +19,8 @@ from trw_mcp.state.memory_adapter import (
 )
 from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_edge_support import trw_dir  # noqa: F401
+
 
 class TestIncrementSessionCounts:
     def test_deduplicates_ids_and_defaults_none_to_zero(self, trw_dir: Path) -> None:

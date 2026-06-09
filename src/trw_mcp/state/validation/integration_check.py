@@ -1,8 +1,10 @@
 """Integration validation — tool registration, test coverage, and orphan detection.
 
-Scans tool modules for registration functions, compares against server.py
-imports, checks for corresponding test files, and detects orphan modules
-not imported by any other production source file (PRD-QUAL-011).
+Scans tool modules for registration functions, compares against the server
+registration Seam (a single ``server.py`` module *or* a ``server/`` package —
+the current trw-mcp layout wires tools in ``server/_tools.py``), checks for
+corresponding test files, and detects orphan modules not imported by any other
+production source file (PRD-QUAL-011).
 """
 
 from __future__ import annotations
@@ -19,12 +21,61 @@ _EXIT_CRITERIA_RE = re.compile(r"^##\s*Exit\s+Criteria", re.IGNORECASE | re.MULT
 _CHECKBOX_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*(.+)$", re.MULTILINE)
 
 
+def _gather_registration_text(source_dir: Path) -> str:
+    """Concatenate the server registration source(s) for this package.
+
+    The registration Seam has two supported topologies:
+
+    * a single ``server.py`` module (legacy / portable single-file layout), and
+    * a ``server/`` package whose submodules call ``register_*_tools`` (the
+      current trw-mcp layout, where wiring lives in ``server/_tools.py``).
+
+    Both are scanned so the integration check reflects the *real* registration
+    Seam instead of assuming a single ``server.py`` that no longer exists —
+    otherwise every registered tool module is falsely flagged as unregistered.
+    Unreadable files are skipped rather than aborting the scan.
+
+    Args:
+        source_dir: Root source directory (e.g., ``src/trw_mcp``).
+
+    Returns:
+        The concatenated text of every registration source found (empty
+        string when neither a ``server.py`` module nor a ``server/`` package
+        is present).
+    """
+    parts: list[str] = []
+
+    server_module = source_dir / "server.py"
+    if server_module.is_file():
+        try:
+            parts.append(server_module.read_text(encoding="utf-8"))
+        except OSError as exc:
+            logger.debug(
+                "integration_registration_source_unreadable",
+                path=str(server_module),
+                error=str(exc),
+            )
+
+    server_pkg = source_dir / "server"
+    if server_pkg.is_dir():
+        for py_file in sorted(server_pkg.rglob("*.py")):
+            if "__pycache__" in str(py_file):
+                continue
+            try:
+                parts.append(py_file.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+
+    return "\n".join(parts)
+
+
 def check_integration(source_dir: Path) -> dict[str, object]:
     """Detect unregistered tool modules and missing test files.
 
     PRD-QUAL-011-FR01/FR02: Scan ``tools/*.py`` for ``register_*_tools``
-    definitions, compare against ``server.py`` imports/calls, and check
-    for corresponding test files.
+    definitions, compare against the server registration Seam (``server.py``
+    module or ``server/`` package — see :func:`_gather_registration_text`),
+    and check for corresponding test files.
 
     Args:
         source_dir: Root source directory (e.g., ``src/trw_mcp``).
@@ -34,7 +85,6 @@ def check_integration(source_dir: Path) -> dict[str, object]:
         and ``all_registered`` boolean.
     """
     tools_dir = source_dir / "tools"
-    server_path = source_dir / "server.py"
     tests_dir = source_dir.parent.parent / "tests"
 
     unregistered: list[str] = []
@@ -63,28 +113,27 @@ def check_integration(source_dir: Path) -> dict[str, object]:
             if not any(t.exists() for t in test_candidates):
                 missing_tests.append(f"test_tools_{name}.py")
 
-    # Step 2: Parse server.py for imports and registration calls
-    if server_path.is_file():
-        try:
-            server_content = server_path.read_text(encoding="utf-8")
-        except OSError:
-            server_content = ""
+    # Step 2: Parse the server registration Seam for imports and call sites.
+    # Supports both a single ``server.py`` module and a ``server/`` package
+    # (the current trw-mcp topology wires tools in ``server/_tools.py``).
+    server_content = _gather_registration_text(source_dir)
 
-        # Find server imports that target tool modules and register_* functions
-        for match in re.finditer(
-            r"from\s+trw_mcp\.tools\.(\w+)\s+import\s+(register_\w+_tools)",
-            server_content,
-        ):
-            registered_funcs.add(match.group(2))
+    # Find server imports that target tool modules and register_* functions
+    for match in re.finditer(
+        r"from\s+trw_mcp\.tools\.(\w+)\s+import\s+(register_\w+_tools)",
+        server_content,
+    ):
+        registered_funcs.add(match.group(2))
 
-        # Also find call sites: register_X_tools(
-        for match in re.finditer(
-            r"(register_\w+_tools)\s*\(",
-            server_content,
-        ):
-            registered_funcs.add(match.group(1))
+    # Also find call sites: register_X_tools(
+    for match in re.finditer(
+        r"(register_\w+_tools)\s*\(",
+        server_content,
+    ):
+        registered_funcs.add(match.group(1))
 
-    # Step 3: Diff — tool modules with registration functions but not in server.py
+    # Step 3: Diff — tool modules with a register function but not wired into
+    # the server registration Seam (server.py module or server/ package).
     for module_name, func_name in tool_modules.items():
         if func_name not in registered_funcs:
             unregistered.append(module_name)

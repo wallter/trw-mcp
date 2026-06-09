@@ -14,6 +14,8 @@ from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader
 from ._review_modes_support import run_dir  # noqa: F401
 
+from ._review_modes_support import run_dir  # noqa: F401
+
 
 class TestAutoMode:
     """trw_review auto mode behavior with confidence-filtered findings."""

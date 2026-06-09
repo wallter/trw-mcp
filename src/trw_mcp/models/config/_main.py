@@ -309,8 +309,15 @@ class TRWConfig(_TRWConfigFields):
 
     @property
     def effective_tool_exposure_mode(self) -> str:
-        """Profile-aware tool exposure. Non-default config wins."""
-        if self.tool_exposure_mode != "all":
+        """Profile-aware tool exposure. Explicit config wins; None defers to profile.
+
+        ``tool_exposure_mode=None`` (the field default) means "not explicitly
+        set" — the client profile's value governs.  Any non-None value (including
+        "all") is an explicit operator choice and wins over the profile default.
+        This mirrors the hooks_enabled / skills_enabled sentinel pattern.
+        PRD-CORE-125-FR02.
+        """
+        if self.tool_exposure_mode is not None:
             return self.tool_exposure_mode
         return self.client_profile.tool_exposure_mode
 

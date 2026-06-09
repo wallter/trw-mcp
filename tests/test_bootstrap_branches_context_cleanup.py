@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.bootstrap import _CONTEXT_ALLOWLIST, _cleanup_context_transients, update_project
+
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 

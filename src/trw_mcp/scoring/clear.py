@@ -251,7 +251,7 @@ def compute(
         reliability=_reliability_dim(agg),
         tool_call_count=agg.tool_call_count,
         total_usd_cost=agg.total_usd,
-        total_wall_ms=agg.total_tool_wall_ms,
+        total_wall_ms=agg.session_wall_ms,
     )
     logger.debug(
         "clear_score_computed",

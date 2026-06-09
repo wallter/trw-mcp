@@ -5,11 +5,8 @@ PRD-DIST-2403 FR10-FR15.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
-
 
 # ---------------------------------------------------------------------------
 # FR10-FR13 — Command content verification
@@ -111,7 +108,7 @@ def test_unmodified_command_file_overwritten(tmp_path: Path) -> None:
     results2 = install_custom_commands(tmp_path, existing_hashes=hashes)
 
     # When hash matches, file is NOT user-modified — should be "written" (idempotent)
-    for fname, res in results2.items():
+    for _fname, res in results2.items():
         # status can be written (idempotent) since hash match means TRW-installed version
         assert res["status"] in ("written", "preserved")
 
@@ -175,9 +172,9 @@ def test_command_write_error_returns_error_status(tmp_path: Path) -> None:
 def test_truncation_applied_when_content_exceeds_quota() -> None:
     """FR15: _apply_quota truncates content over 4096 bytes with footer."""
     from trw_mcp.channels.opencode._custom_commands import (
+        _TRUNCATION_FOOTER,
         COMMAND_QUOTA_BYTES,
         _apply_quota,
-        _TRUNCATION_FOOTER,
     )
 
     # Build content over the limit

@@ -57,8 +57,16 @@ def _is_sensitive_key(key: object) -> bool:
 
 
 def _redact_sensitive(data: dict[str, object]) -> dict[str, object]:
-    """Return a shallow copy with any sensitive keys redacted."""
-    return {k: (_REDACTED if _is_sensitive_key(k) and v else v) for k, v in data.items()}
+    """Return a shallow copy with any sensitive keys redacted.
+
+    Redacts by key name alone — the ``and v`` guard was removed because a
+    sensitive field should be masked regardless of whether its current value
+    is empty or falsy.  Falsy values (empty string, 0, None) for a key named
+    ``backend_api_key`` are still sensitive metadata that confirms the field
+    exists in the config; redacting them prevents any accidental value later
+    leaking through a cached resource snapshot.
+    """
+    return {k: (_REDACTED if _is_sensitive_key(k) else v) for k, v in data.items()}
 
 
 def register_config_resources(server: FastMCP) -> None:

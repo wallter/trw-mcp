@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
+from trw_mcp.channels._cleanup import (
+    cleanup_channel,
+    is_t0_beacon,
+    tombstone_content,
+)
 from trw_mcp.channels._manifest_models import (
     ChannelEntry,
     ChannelSurface,
@@ -14,12 +17,6 @@ from trw_mcp.channels._manifest_models import (
     CleanupTrigger,
     MarkersConfig,
 )
-from trw_mcp.channels._cleanup import (
-    cleanup_channel,
-    is_t0_beacon,
-    tombstone_content,
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers

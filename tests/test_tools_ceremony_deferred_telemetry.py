@@ -302,3 +302,79 @@ class TestDeliverTelemetryIntegration:
         assert result["deferred_steps"] == 11
         assert result["deferred"] == "launched"
         assert result["success"] is True
+
+
+@pytest.mark.integration
+class TestStepTelemetryTornEvents:
+    """The telemetry step's events.jsonl read tolerates torn concurrent appends."""
+
+    def test_torn_events_line_does_not_fail_telemetry_step(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A torn append in events.jsonl drops one line, not the whole step.
+
+        ``_step_telemetry`` reads the run's events.jsonl only for advisory
+        analytics — ``tools_invoked`` and the ceremony-score inputs. The strict
+        ``FileStateReader.read_jsonl`` raised ``StateError`` on the first
+        malformed line, and ``_run_step`` records any step exception as a failed
+        step — so a single torn concurrent append wiped the entire telemetry
+        emission (tool count, ceremony score, and the session_summary write that
+        feeds trw_quality_dashboard). The resilient reader skips just the torn
+        line, so the surrounding intact events are still counted (regression
+        guard).
+        """
+        from unittest.mock import MagicMock
+
+        from trw_mcp.tools._deferred_steps_telemetry import _step_telemetry
+
+        run_dir = tmp_path / ".trw" / "runs" / "task" / "20260211T120000Z-test"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        (meta / "run.yaml").write_text(
+            "run_id: r\nstatus: active\nphase: implement\ntask: t\n",
+            encoding="utf-8",
+        )
+        intact_a = '{"ts": "2026-02-11T12:00:00Z", "type": "tool_call"}\n'
+        torn = '{"ts": "2026-02-11T12:01:00Z", "type": "tool_ca\n'  # truncated mid-object
+        intact_b = '{"ts": "2026-02-11T12:02:00Z", "type": "checkpoint"}\n'
+        (meta / "events.jsonl").write_text(intact_a + torn + intact_b, encoding="utf-8")
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True, exist_ok=True)
+
+        recorded: list[Any] = []
+        mock_client = MagicMock()
+        mock_client.record_event = recorded.append
+
+        # Patch heavy collaborators at their source modules (imported at call
+        # time inside _step_telemetry), so the test stays hermetic and free of
+        # real telemetry / installation side effects.
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.client.TelemetryClient.from_config",
+            classmethod(lambda cls: mock_client),
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_installation_id",
+            lambda: "test-inst",
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state._paths.resolve_trw_dir",
+            lambda: trw_dir,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.state.analytics.report.compute_ceremony_score",
+            lambda *a, **k: {"score": 0, "build_passed": False},
+        )
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.TelemetryPipeline.get_instance",
+            classmethod(lambda cls: MagicMock()),
+        )
+
+        result = _step_telemetry(run_dir)
+
+        assert result["status"] == "success"
+        # The torn middle line is dropped; both intact events are counted.
+        session_end = next(e for e in recorded if type(e).__name__ == "SessionEndEvent")
+        assert session_end.tools_invoked == 2

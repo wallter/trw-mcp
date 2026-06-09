@@ -8,12 +8,9 @@ Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
-import json as _json
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-
-import structlog
 
 import trw_mcp.scoring._utils as _su
 from trw_mcp.exceptions import StateError
@@ -31,6 +28,12 @@ from trw_mcp.scoring._io_boundary import (
 from trw_mcp.scoring._io_boundary import (
     _sync_to_sqlite as _sync_to_sqlite,
 )
+from trw_mcp.scoring._recall_window import (
+    _CONSECUTIVE_OLD_EARLY_EXIT as _CONSECUTIVE_OLD_EARLY_EXIT,
+)
+from trw_mcp.scoring._recall_window import (
+    correlate_recalls as correlate_recalls,
+)
 from trw_mcp.scoring._reward_resolution import (
     EVENT_ALIASES,
     REWARD_MAP,
@@ -40,7 +43,6 @@ from trw_mcp.scoring._reward_resolution import (
 )
 from trw_mcp.scoring._utils import (
     TRWConfig,
-    _ensure_utc,
     get_config,
     safe_float,
     safe_int,
@@ -50,8 +52,6 @@ from trw_mcp.scoring._utils import (
 # Type alias for the entry lookup callable used by process_outcome.
 # Given (learning_id, trw_dir, entries_dir) returns (yaml_path_or_None, data_or_None).
 EntryLookupFn = Callable[[str, Path, Path], tuple[Path | None, dict[str, object] | None]]
-
-logger = structlog.get_logger(__name__)
 
 
 # --- Q-value pre-seeding from impact score ---
@@ -88,160 +88,8 @@ def compute_initial_q_value(impact: float) -> float:
 # --- Outcome correlation (PRD-CORE-004 Phase 1c, moved from tools/learning.py) ---
 
 
-def _extract_recalled_ids(record: dict[str, object]) -> list[str]:
-    """Return learning IDs only for actual recall receipts.
-
-    ``recall_tracking.jsonl`` mixes recall events and later outcome-only rows.
-    Outcome rows must not be treated as fresh recall evidence for correlation.
-    """
-    matched_ids = record.get("matched_ids")
-    if isinstance(matched_ids, list) and matched_ids:
-        return [lid for lid in matched_ids if isinstance(lid, str) and lid]
-
-    lid_single = record.get("learning_id")
-    if not isinstance(lid_single, str) or not lid_single:
-        return []
-
-    outcome = record.get("outcome")
-    if outcome not in (None, ""):
-        return []
-
-    return [lid_single]
-
-
-_CONSECUTIVE_OLD_EARLY_EXIT = 50
-"""Number of consecutive out-of-window records before ``correlate_recalls``
-stops scanning (PRD-FIX-070-FR06).  Allows for minor non-chronological
-records while still providing early exit on chronological files."""
-
-
 # Backward-compat alias (tests may patch this name directly)
 _lookup_learning_entry = _default_lookup_entry
-
-
-def correlate_recalls(
-    trw_dir: Path,
-    window_minutes: int,
-    *,
-    scope: str = "",
-) -> list[tuple[str, float]]:
-    """Find learning IDs from recent recall receipts within the correlation scope.
-
-    PRD-CORE-026-FR04: Session-scoped correlation replaces the fixed 30-min
-    window. When scope="session", correlates with ALL recall receipts since
-    the last run_init/session_start event. Falls back to window-based when
-    no session boundary is found.
-
-    Returns (learning_id, recency_discount) tuples. Discount ranges from
-    1.0 (just recalled) to 0.5 (at edge of window).
-
-    Args:
-        trw_dir: Path to .trw directory.
-        window_minutes: How many minutes back to look for recall receipts
-            (used when scope is "window" or as fallback).
-        scope: Correlation scope -- "session" or "window". Empty string
-            reads from config.
-
-    Returns:
-        List of (learning_id, discount) tuples. May contain duplicates
-        across receipts (caller should deduplicate).
-    """
-    cfg_corr: TRWConfig = get_config()
-    effective_scope = scope or cfg_corr.learning_outcome_correlation_scope
-    receipt_path = trw_dir / "logs" / "recall_tracking.jsonl"
-    if not receipt_path.exists():
-        return []
-
-    now = datetime.now(timezone.utc)
-
-    # Determine the cutoff timestamp based on scope (session overrides window)
-    cutoff_ts = now - timedelta(minutes=window_minutes)
-    if effective_scope == "session":
-        session_start = _find_session_start_ts(trw_dir)
-        if session_start is not None:
-            cutoff_ts = session_start
-
-    # Total seconds from cutoff to now (for discount calculation)
-    total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
-    results: list[tuple[str, float]] = []
-
-    # Read raw lines and iterate in reverse for early-exit optimization
-    # (PRD-FIX-070-FR02/FR06). Since recall_tracking.jsonl is append-only
-    # and chronological, once we hit a record older than the cutoff, ALL
-    # remaining records are also older -- we can break.
-    try:
-        raw_lines = receipt_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        logger.debug("recall_tracking_read_failed", exc_info=True)
-        return []
-
-    records_scanned = 0
-    records_in_window = 0
-    consecutive_old = 0
-
-    for line in reversed(raw_lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        records_scanned += 1
-        try:
-            record: dict[str, object] = _json.loads(stripped)
-        except (ValueError, _json.JSONDecodeError):
-            continue
-
-        # Extract timestamp (supports both formats)
-        ts_str = str(record.get("ts", ""))
-        if not ts_str:
-            ts_raw = record.get("timestamp")
-            if ts_raw is not None:
-                try:
-                    receipt_ts = datetime.fromtimestamp(
-                        float(str(ts_raw)),
-                        tz=timezone.utc,
-                    )
-                except (ValueError, OSError):
-                    continue
-            else:
-                continue
-        else:
-            try:
-                receipt_ts = _ensure_utc(datetime.fromisoformat(ts_str.replace("Z", "+00:00")))
-            except ValueError:
-                continue
-
-        # Early exit: after enough consecutive old records, assume all
-        # remaining are also old (file is mostly chronological).
-        # PRD-FIX-070-FR06
-        if receipt_ts < cutoff_ts:
-            consecutive_old += 1
-            if consecutive_old >= _CONSECUTIVE_OLD_EARLY_EXIT:
-                break
-            continue
-        consecutive_old = 0
-
-        elapsed_secs = (now - receipt_ts).total_seconds()
-        if elapsed_secs < 0:
-            continue
-
-        discount = max(
-            cfg_corr.scoring_recency_discount_floor,
-            1.0 - elapsed_secs / total_window_secs,
-        )
-
-        recalled_ids = _extract_recalled_ids(record)
-        if recalled_ids:
-            results.extend((lid, discount) for lid in recalled_ids)
-            records_in_window += 1
-
-    logger.debug(
-        "correlate_recalls_stats",
-        total_lines=len(raw_lines),
-        records_scanned=records_scanned,
-        records_in_window=records_in_window,
-        unique_ids=len({lid for lid, _ in results}),
-    )
-
-    return results
 
 
 def _deduplicate_recalls(

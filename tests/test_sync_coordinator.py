@@ -165,3 +165,37 @@ def test_record_sync_success_keeps_highest_push_seq(trw_dir: Path) -> None:
     coord.record_sync_success(pushed=2, pulled=0, push_seq=2)
 
     assert coord.get_last_push_seq() == 4
+
+
+def test_company_pull_cursor_is_independent_of_org_cursor(trw_dir: Path) -> None:
+    """PRD-INFRA-139 P1-B: the company cursor is disjoint from the org pull_seq.
+
+    A large org cursor must not influence the company cursor (the disjoint-cursor
+    bug that permanently hid company rows). They advance separately and never
+    regress to a lower value.
+    """
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    # Org cursor races far ahead.
+    coord.record_sync_success(pushed=0, pulled=1, push_seq=0, pull_seq=9999, pull_completed=True)
+    # Company cursor starts at a small per-company sequence.
+    coord.record_company_pull_seq(2)
+
+    assert coord.get_last_pull_seq() == 9999
+    assert coord.get_last_company_pull_seq() == 2
+
+    # Company cursor advances monotonically, never regresses.
+    coord.record_company_pull_seq(5)
+    coord.record_company_pull_seq(3)
+    assert coord.get_last_company_pull_seq() == 5
+    # The org cursor is untouched by company-cursor writes.
+    assert coord.get_last_pull_seq() == 9999
+
+
+def test_get_last_company_pull_seq_default(trw_dir: Path) -> None:
+    """get_last_company_pull_seq returns 0 when no state exists."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    assert coord.get_last_company_pull_seq() == 0

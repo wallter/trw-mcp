@@ -166,3 +166,80 @@ class TestGracefulDegradation:
             report = assemble_report(minimal_run_dir, reader, trw_dir)
 
         assert report.learning_summary.total_produced == 0
+
+
+class TestCorruptJsonlResilience:
+    """A torn/undecodable line in an advisory append-only log must degrade to
+    "drop that line", not crash the whole report (strict read raised StateError).
+    """
+
+    def test_torn_events_line_does_not_crash_report(
+        self,
+        report_run_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A half-written final event line is skipped; valid events still parse."""
+        events_path = report_run_dir / "meta" / "events.jsonl"
+        with events_path.open("a", encoding="utf-8") as fh:
+            fh.write('{"ts": "2026-02-19T13:30:00Z", "event": "phase_en')  # torn append
+
+        reader = FileStateReader()
+        trw_dir = tmp_path / ".trw"
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(report_run_dir, reader, trw_dir)
+
+        # All 10 well-formed events survive; the torn 11th line is dropped.
+        assert report.event_summary.total_count == 10
+        assert report.event_summary.by_type["phase_enter"] == 6
+
+    def test_non_object_events_line_is_skipped(
+        self,
+        report_run_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A valid-JSON-but-non-object line (e.g. a bare number) is skipped."""
+        events_path = report_run_dir / "meta" / "events.jsonl"
+        with events_path.open("a", encoding="utf-8") as fh:
+            fh.write("12345\n")
+
+        reader = FileStateReader()
+        trw_dir = tmp_path / ".trw"
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(report_run_dir, reader, trw_dir)
+
+        assert report.event_summary.total_count == 10
+
+    def test_undecodable_events_line_is_skipped(
+        self,
+        report_run_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A non-UTF-8 byte row is contained to its own line and skipped."""
+        events_path = report_run_dir / "meta" / "events.jsonl"
+        with events_path.open("ab") as fh:
+            fh.write(b"\xff\xfe not utf-8\n")
+
+        reader = FileStateReader()
+        trw_dir = tmp_path / ".trw"
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(report_run_dir, reader, trw_dir)
+
+        assert report.event_summary.total_count == 10
+
+    def test_torn_checkpoints_line_does_not_crash_report(
+        self,
+        report_run_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A torn checkpoint append is dropped; valid checkpoints still counted."""
+        checkpoints_path = report_run_dir / "meta" / "checkpoints.jsonl"
+        with checkpoints_path.open("a", encoding="utf-8") as fh:
+            fh.write('{"ts": "2026-02-19T13:00:00Z", "messa')  # torn append
+
+        reader = FileStateReader()
+        trw_dir = tmp_path / ".trw"
+        with patch("trw_mcp.state.report.list_active_learnings", return_value=[]):
+            report = assemble_report(report_run_dir, reader, trw_dir)
+
+        # Two well-formed checkpoints survive; the torn line is dropped.
+        assert report.checkpoint_count == 2

@@ -175,6 +175,7 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     Simplified version of the full trw_reflect tool, focused on
     mechanical extraction for delivery ceremony.
     """
+    from trw_mcp.state._helpers import read_jsonl_resilient
     from trw_mcp.state.analytics import (
         extract_learnings_mechanical,
         find_repeated_operations,
@@ -182,7 +183,6 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     )
 
     config = get_config()
-    reader = FileStateReader()
     writer = FileStateWriter()
     writer.ensure_dir(trw_dir / config.learnings_dir / config.entries_dir)
     writer.ensure_dir(trw_dir / config.reflections_dir)
@@ -190,8 +190,14 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     events: list[dict[str, object]] = []
     if run_dir:
         events_path = run_dir / "meta" / "events.jsonl"
-        if reader.exists(events_path):
-            events = reader.read_jsonl(events_path)
+        # events.jsonl is an append-only log read here only for advisory,
+        # content-free learning extraction. A single torn concurrent append must
+        # degrade to "drop that one line", not abort the whole reflection and
+        # erase every mechanically extracted learning for the deliver. Use the
+        # resilient full-scan reader — the same one agent_work_evidence already
+        # applies to this exact log — instead of the strict FileStateReader.read_jsonl,
+        # which raises StateError on the first malformed line.
+        events = read_jsonl_resilient(events_path)
 
     error_events = [e for e in events if is_error_event(e)]
     repeated_ops = find_repeated_operations(events)

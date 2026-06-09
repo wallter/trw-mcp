@@ -187,6 +187,8 @@ class TestReliabilityDimension:
 
 class TestTotalRollups:
     def test_aggregates_costs_and_wall_ms(self) -> None:
+        # total_wall_ms stores session wall-clock (start→end), not sum of tool durations.
+        # Without session_start/end events the session wall is 0; tool costs still accumulate.
         events: list[HPOTelemetryEvent] = [
             _tool_call(wall_ms=100, usd=0.01),
             _tool_call(wall_ms=200, usd=0.02),
@@ -194,7 +196,24 @@ class TestTotalRollups:
         ]
         score = compute("s", events)
         assert score.tool_call_count == 3
-        assert score.total_wall_ms == 600
+        assert score.total_wall_ms == 0  # no session_start/end events → session_wall_ms=0
+        assert score.total_usd_cost == pytest.approx(0.06, abs=1e-6)
+
+    def test_total_wall_ms_reflects_session_wall_clock(self) -> None:
+        # Verify that total_wall_ms == (session_end - session_start) in ms,
+        # NOT the sum of individual tool wall_ms values (100+200+300=600 ≠ 5000).
+        start = datetime(2026, 4, 23, 10, 0, 0, tzinfo=timezone.utc)
+        end = start + timedelta(seconds=5)
+        events: list[HPOTelemetryEvent] = [
+            _session_start(start),
+            _tool_call(wall_ms=100, usd=0.01),
+            _tool_call(wall_ms=200, usd=0.02),
+            _tool_call(wall_ms=300, usd=0.03),
+            _session_end(end),
+        ]
+        score = compute("s", events)
+        assert score.total_wall_ms == 5000  # 5 seconds in ms (session clock)
+        assert score.tool_call_count == 3
         assert score.total_usd_cost == pytest.approx(0.06, abs=1e-6)
 
 
