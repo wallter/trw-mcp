@@ -15,6 +15,7 @@ from __future__ import annotations
 
 __all__ = ["ContextBudgetMiddleware"]
 
+from collections import OrderedDict
 from typing import Literal
 
 import structlog
@@ -31,10 +32,29 @@ from trw_mcp.middleware._compression import compress_text_block, hash_content
 logger = structlog.get_logger(__name__)
 
 # ── Module-level session state ──────────────────────────────────────────
-# session_id -> tool call count
-_turn_counts: dict[str, int] = {}
-# session_id -> {tool_name -> (last_response_hash, turn_number)}
-_response_hashes: dict[str, dict[str, tuple[str, int]]] = {}
+# Bounded LRU cap: the MCP server is long-lived and shared across many
+# sessions, so unbounded per-session dicts grow without limit (memory leak).
+# When the cap is exceeded we evict the least-recently-used session.
+_MAX_TRACKED_SESSIONS = 1024
+
+# session_id -> tool call count (LRU-ordered: most recent at the end)
+_turn_counts: OrderedDict[str, int] = OrderedDict()
+# session_id -> {tool_name -> (last_response_hash, turn_number)} (LRU-ordered)
+_response_hashes: OrderedDict[str, dict[str, tuple[str, int]]] = OrderedDict()
+
+
+def _touch_session(session_id: str) -> None:
+    """Mark a session most-recently-used and evict the LRU tail past the cap."""
+    if session_id in _turn_counts:
+        _turn_counts.move_to_end(session_id)
+    if session_id in _response_hashes:
+        _response_hashes.move_to_end(session_id)
+    while len(_turn_counts) > _MAX_TRACKED_SESSIONS:
+        evicted, _ = _turn_counts.popitem(last=False)
+        _response_hashes.pop(evicted, None)
+    while len(_response_hashes) > _MAX_TRACKED_SESSIONS:
+        evicted, _ = _response_hashes.popitem(last=False)
+        _turn_counts.pop(evicted, None)
 
 
 def get_turn_count(session_id: str) -> int:
@@ -84,9 +104,10 @@ class ContextBudgetMiddleware(Middleware):
 
         session_id: str = ctx.session_id
 
-        # Increment turn count
+        # Increment turn count and enforce the bounded LRU cap.
         _turn_counts[session_id] = _turn_counts.get(session_id, 0) + 1
         turn = _turn_counts[session_id]
+        _touch_session(session_id)
 
         # Get the tool result
         result: ToolResult = await call_next(context)

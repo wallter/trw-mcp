@@ -17,6 +17,8 @@ from ._memory_adapter_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_support import trw_dir  # noqa: F401
+
 
 class TestUpdateLearning:
     def test_status_change(self, trw_dir: Path) -> None:

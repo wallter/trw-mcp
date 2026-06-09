@@ -11,6 +11,30 @@ from ._orchestration_waves_support import orch_tools  # noqa: F401
 
 from ._orchestration_waves_support import orch_tools  # noqa: F401
 
+from ._orchestration_waves_support import orch_tools  # noqa: F401
+
+
+class TestTrwInitTaskNameLengthCap:
+    """PRD-QUAL-042-FR01: task_name is a filesystem path component and must be
+    length-capped so an over-long name cannot exceed NAME_MAX / fail mkdir."""
+
+    def test_overlong_task_name_rejected(self, orch_tools: dict[str, Any]) -> None:
+        from trw_mcp.exceptions import StateError
+        from trw_mcp.tools import orchestration as orch_mod
+
+        too_long = "a" * (orch_mod._MAX_TASK_NAME_CHARS + 1)
+        with pytest.raises(StateError, match=r"exceeds \d+ chars"):
+            orch_tools["trw_init"].fn(task_name=too_long)
+
+    def test_max_length_task_name_accepted(self, orch_tools: dict[str, Any]) -> None:
+        from trw_mcp.tools import orchestration as orch_mod
+
+        # Exactly at the cap is allowed (boundary).
+        at_cap = "a" * orch_mod._MAX_TASK_NAME_CHARS
+        result = orch_tools["trw_init"].fn(task_name=at_cap)
+        assert result.get("status") != "error"
+        assert result.get("run_id")
+
 
 class TestTrwInitConfigOverrides:
     """Tests for trw_init config_overrides parameter (line 103)."""

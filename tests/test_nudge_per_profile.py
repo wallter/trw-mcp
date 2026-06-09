@@ -237,6 +237,71 @@ def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp
     assert "last_shown_turn" in entry
 
 
+# --- FR03 regression: passed profile's pool weights win over config global ----
+
+
+def test_compute_nudge_uses_passed_profile_weights_not_global(tmp_path: Path) -> None:
+    """Regression: ``compute_nudge`` must select the nudge pool using the
+    RESOLVED ``profile`` argument's ``nudge_pool_weights`` — NOT
+    ``config.client_profile.nudge_pool_weights`` (the global active profile).
+
+    Construct a config whose global profile would ONLY ever pick the
+    ``context`` pool (context=100, all others 0) and pass an explicit profile
+    that would ONLY ever pick the ``workflow`` pool (workflow=100, others 0).
+    The previous code read the global weights, so it would emit a context-pool
+    nudge; the fix reads the passed profile, so it emits the workflow message.
+    """
+    from unittest.mock import PropertyMock
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._client_profile import NudgePoolWeights
+    from trw_mcp.models.config._profiles import resolve_client_profile
+    from trw_mcp.state._ceremony_progress_state import CeremonyState
+    from trw_mcp.state.ceremony_nudge import compute_nudge
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=["claude-code"])
+
+    # ClientProfile is frozen — derive both profiles from the resolved registry
+    # profile via model_copy(update=...) so all required fields stay valid.
+    base = resolve_client_profile("claude-code")
+
+    # Global profile (config.client_profile) — context-only weighting. If the
+    # buggy code read this, the context pool would be selected.
+    global_profile = base.model_copy(
+        update={
+            "nudge_enabled": True,
+            "nudge_pool_weights": NudgePoolWeights(workflow=0, learnings=0, ceremony=0, context=100),
+        }
+    )
+
+    # Explicit caller-supplied profile — workflow-only weighting.
+    passed_profile = base.model_copy(
+        update={
+            "nudge_enabled": True,
+            "nudge_pool_weights": NudgePoolWeights(workflow=100, learnings=0, ceremony=0, context=0),
+        }
+    )
+
+    state = CeremonyState()
+    sentinel = "WORKFLOW-POOL-MESSAGE"
+
+    with (
+        patch("trw_mcp.models.config._loader.get_config", return_value=config),
+        patch.object(
+            type(config), "client_profile", new_callable=PropertyMock, return_value=global_profile
+        ),
+        patch("trw_mcp.state._nudge_content.load_pool_message", return_value=sentinel),
+    ):
+        result = compute_nudge(state, available_learnings=0, profile=passed_profile)
+
+    # The workflow pool was selected (per the PASSED profile), so the sentinel
+    # workflow message appears. If the buggy global weights were used, the
+    # context pool would have been selected and the sentinel would be absent.
+    assert sentinel in result, f"expected workflow-pool message from passed profile, got: {result!r}"
+
+
 # --- FR11: nudge-off profiles emit nothing ------------------------------------
 
 

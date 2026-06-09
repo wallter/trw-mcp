@@ -6,6 +6,8 @@ import contextlib
 import json
 import os
 import tempfile
+import threading
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +18,44 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
+
+# --- Concurrent read-modify-write protection (shared-HTTP server) -------------
+# In shared-HTTP mode multiple MCP tool calls run on different threads of one
+# process. Each ceremony mutator does an unguarded read -> mutate -> write of
+# ceremony-state.json; without serialization two concurrent calls both read the
+# stale state and the second os.replace() silently discards the first's update
+# (e.g. a checkpoint increment is lost, or build_check_result is clobbered).
+#
+# Serialize every mutator's read-modify-write under a per-state-file lock keyed
+# on the RESOLVED (absolute) state path, so all callers targeting the same file
+# share one lock regardless of how ``trw_dir`` was spelled. The registry itself
+# is guarded by ``_state_locks_guard``.
+_state_locks: dict[str, threading.Lock] = {}
+_state_locks_guard = threading.Lock()
+
+
+def _state_lock_for(trw_dir: Path) -> threading.Lock:
+    """Return the process-wide lock guarding this state file's RMW cycle."""
+    key = str(_state_path(trw_dir).resolve())
+    with _state_locks_guard:
+        lock = _state_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _state_locks[key] = lock
+        return lock
+
+
+@contextlib.contextmanager
+def _state_rmw(trw_dir: Path) -> Iterator[None]:
+    """Serialize a read-modify-write of the ceremony state for ``trw_dir``.
+
+    Wrap the read_ceremony_state(...) -> mutate -> write_ceremony_state(...)
+    body of every mutator so concurrent tool calls (shared-HTTP mode) cannot
+    interleave and silently drop one another's updates.
+    """
+    lock = _state_lock_for(trw_dir)
+    with lock:
+        yield
 
 
 class NudgeHistoryEntry(TypedDict):
@@ -218,71 +258,81 @@ def mark_session_started(trw_dir: Path) -> None:
     # so the sentinel written by init-project is cleared automatically as soon
     # as this function runs. Runs where MCP never connected keep the sentinel
     # because nothing else calls write_ceremony_state().
-    state = read_ceremony_state(trw_dir)
-    state.session_started = True
-    write_ceremony_state(trw_dir, state)
-
-
-def mark_checkpoint(trw_dir: Path) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.checkpoint_count += 1
-    state.last_checkpoint_ts = datetime.now(timezone.utc).isoformat()
-    state.last_checkpoint_turn = state.tool_call_counter
-    state.files_modified_since_checkpoint = 0
-    write_ceremony_state(trw_dir, state)
-
-
-def mark_build_check(trw_dir: Path, passed: bool) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.build_check_result = "passed" if passed else "failed"
-    state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
-    write_ceremony_state(trw_dir, state)
-
-
-def mark_deliver(trw_dir: Path) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.deliver_called = True
-    write_ceremony_state(trw_dir, state)
-
-
-def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.review_called = True
-    state.review_verdict = verdict
-    state.review_p0_count = p0_count
-    write_ceremony_state(trw_dir, state)
-
-
-def set_ceremony_phase(trw_dir: Path, new_phase: str) -> None:
-    state = read_ceremony_state(trw_dir)
-    if state.phase != new_phase:
-        state.previous_phase = state.phase
-        state.phase = new_phase
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.session_started = True
         write_ceremony_state(trw_dir, state)
 
 
+def mark_checkpoint(trw_dir: Path) -> None:
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.checkpoint_count += 1
+        state.last_checkpoint_ts = datetime.now(timezone.utc).isoformat()
+        state.last_checkpoint_turn = state.tool_call_counter
+        state.files_modified_since_checkpoint = 0
+        write_ceremony_state(trw_dir, state)
+
+
+def mark_build_check(trw_dir: Path, passed: bool) -> None:
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.build_check_result = "passed" if passed else "failed"
+        state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
+        write_ceremony_state(trw_dir, state)
+
+
+def mark_deliver(trw_dir: Path) -> None:
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.deliver_called = True
+        write_ceremony_state(trw_dir, state)
+
+
+def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0) -> None:
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.review_called = True
+        state.review_verdict = verdict
+        state.review_p0_count = p0_count
+        write_ceremony_state(trw_dir, state)
+
+
+def set_ceremony_phase(trw_dir: Path, new_phase: str) -> None:
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        if state.phase != new_phase:
+            state.previous_phase = state.phase
+            state.phase = new_phase
+            write_ceremony_state(trw_dir, state)
+
+
 def increment_files_modified(trw_dir: Path, count: int = 1) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.files_modified_since_checkpoint += count
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.files_modified_since_checkpoint += count
+        write_ceremony_state(trw_dir, state)
 
 
 def increment_learnings(trw_dir: Path) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.learnings_this_session += 1
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.learnings_this_session += 1
+        write_ceremony_state(trw_dir, state)
 
 
 def increment_nudge_count(trw_dir: Path, step: str) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.nudge_counts[step] = state.nudge_counts.get(step, 0) + 1
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.nudge_counts[step] = state.nudge_counts.get(step, 0) + 1
+        write_ceremony_state(trw_dir, state)
 
 
 def reset_nudge_count(trw_dir: Path, step: str) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.nudge_counts[step] = 0
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.nudge_counts[step] = 0
+        write_ceremony_state(trw_dir, state)
 
 
 _NUDGE_HISTORY_CAP = 100
@@ -311,22 +361,23 @@ def record_nudge_shown(
     Emission is best-effort: any failure in the session-event append is
     suppressed so the primary ceremony-state update always completes.
     """
-    state = read_ceremony_state(trw_dir)
-    if learning_id in state.nudge_history:
-        entry = state.nudge_history[learning_id]
-        if phase not in entry["phases_shown"]:
-            entry["phases_shown"].append(phase)
-        entry["last_shown_turn"] = turn
-    else:
-        if len(state.nudge_history) >= _NUDGE_HISTORY_CAP:
-            oldest_id = min(state.nudge_history, key=lambda key: state.nudge_history[key]["last_shown_turn"])
-            del state.nudge_history[oldest_id]
-        state.nudge_history[learning_id] = NudgeHistoryEntry(
-            phases_shown=[phase],
-            turn_first_shown=turn,
-            last_shown_turn=turn,
-        )
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        if learning_id in state.nudge_history:
+            entry = state.nudge_history[learning_id]
+            if phase not in entry["phases_shown"]:
+                entry["phases_shown"].append(phase)
+            entry["last_shown_turn"] = turn
+        else:
+            if len(state.nudge_history) >= _NUDGE_HISTORY_CAP:
+                oldest_id = min(state.nudge_history, key=lambda key: state.nudge_history[key]["last_shown_turn"])
+                del state.nudge_history[oldest_id]
+            state.nudge_history[learning_id] = NudgeHistoryEntry(
+                phases_shown=[phase],
+                turn_first_shown=turn,
+                last_shown_turn=turn,
+            )
+        write_ceremony_state(trw_dir, state)
 
     # PRD-QUAL-058-FR04: Also emit a nudge_shown event to session-events.jsonl
     # so the event-based eval pipeline (proximal_reward, TraceAnalyzer,
@@ -385,9 +436,10 @@ def _emit_nudge_shown_event(
 
 
 def clear_nudge_history(trw_dir: Path) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.nudge_history = {}
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.nudge_history = {}
+        write_ceremony_state(trw_dir, state)
 
 
 def is_nudge_eligible(state: CeremonyState, learning_id: str, current_phase: str) -> bool:
@@ -397,22 +449,25 @@ def is_nudge_eligible(state: CeremonyState, learning_id: str, current_phase: str
 
 
 def increment_tool_call_counter(trw_dir: Path) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.tool_call_counter += 1
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.tool_call_counter += 1
+        write_ceremony_state(trw_dir, state)
 
 
 def record_pool_nudge(trw_dir: Path, pool: str) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.pool_nudge_counts[pool] = state.pool_nudge_counts.get(pool, 0) + 1
-    state.last_nudge_pool = pool
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.pool_nudge_counts[pool] = state.pool_nudge_counts.get(pool, 0) + 1
+        state.last_nudge_pool = pool
+        write_ceremony_state(trw_dir, state)
 
 
 def record_pool_ignore(trw_dir: Path, pool: str) -> None:
-    state = read_ceremony_state(trw_dir)
-    state.pool_ignore_counts[pool] = state.pool_ignore_counts.get(pool, 0) + 1
-    write_ceremony_state(trw_dir, state)
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        state.pool_ignore_counts[pool] = state.pool_ignore_counts.get(pool, 0) + 1
+        write_ceremony_state(trw_dir, state)
 
 
 def _step_complete(step: str, state: CeremonyState) -> bool:

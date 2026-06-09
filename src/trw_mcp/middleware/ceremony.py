@@ -16,6 +16,7 @@ from __future__ import annotations
 __all__ = ["CeremonyMiddleware"]
 
 import json
+from collections import OrderedDict
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -26,9 +27,14 @@ from fastmcp.server.middleware.middleware import (
 from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
+# Bound on per-session tracking maps. In stdio mode connections are short-lived
+# (1 per client session) so these stay tiny — but in a long-lived shared-HTTP
+# server (this monorepo's dev mode) clients reconnect with fresh session_ids
+# indefinitely, so without eviction these maps leak memory for the life of the
+# process. Cap them and evict the least-recently-registered session_id.
+_MAX_TRACKED_SESSIONS = 2048
+
 # Module-level session state: session_id -> True (ceremony completed).
-# MCP connections are short-lived (1 per Claude Code session), so this
-# dict stays small (1-3 entries max). No cleanup needed.
 _session_state: dict[str, bool] = {}
 
 # Session-local recovery gate state. A session that sees the post-compaction
@@ -36,10 +42,28 @@ _session_state: dict[str, bool] = {}
 # session later clears the shared disk marker.
 _compaction_gate_sessions: dict[str, bool] = {}
 
-# Sessions observed by the middleware in this server process. When a new
-# compaction marker appears, every currently known session must recover again,
-# even if it had already completed an earlier session_start().
-_known_sessions: set[str] = set()
+# Sessions observed by the middleware in this server process, in insertion
+# order. When a new compaction marker appears, every currently known session
+# must recover again. Ordered so we can evict the oldest under the cap; the
+# value is unused (acts as an ordered set).
+_known_sessions: OrderedDict[str, None] = OrderedDict()
+
+
+def _register_session(session_id: str) -> None:
+    """Track a session, evicting the oldest once the cap is exceeded.
+
+    Keeps ``_known_sessions`` (the authoritative recency order) and the two
+    per-session maps bounded so a long-lived shared-HTTP server does not leak
+    memory as clients reconnect with new session_ids.
+    """
+    if session_id in _known_sessions:
+        _known_sessions.move_to_end(session_id)
+    else:
+        _known_sessions[session_id] = None
+    while len(_known_sessions) > _MAX_TRACKED_SESSIONS:
+        oldest, _ = _known_sessions.popitem(last=False)
+        _session_state.pop(oldest, None)
+        _compaction_gate_sessions.pop(oldest, None)
 
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
@@ -183,7 +207,7 @@ def _is_compaction_gate_required_for_session(session_id: str) -> bool:
     """Return True when this session still owes post-compaction recovery."""
 
     if _is_compaction_gate_required():
-        for known_session_id in _known_sessions:
+        for known_session_id in list(_known_sessions):
             _compaction_gate_sessions[known_session_id] = True
 
     return _compaction_gate_sessions.get(session_id, False)
@@ -215,7 +239,7 @@ class CeremonyMiddleware(Middleware):
             return await call_next(context)
 
         session_id = ctx.session_id
-        _known_sessions.add(session_id)
+        _register_session(session_id)
 
         compaction_gate_required = _is_compaction_gate_required_for_session(session_id)
 

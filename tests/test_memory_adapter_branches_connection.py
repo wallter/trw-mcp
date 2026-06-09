@@ -21,6 +21,8 @@ from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
 
 class TestGetBackendAutoResolve:
     def test_auto_resolve_trw_dir_when_none(self, trw_dir: Path) -> None:

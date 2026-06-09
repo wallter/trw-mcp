@@ -158,6 +158,7 @@ _recall_output=$(
   python3 - "$_entries_dir" "$_prompt" "$_injected_file" "$_auto_recall_max_results" "$_auto_recall_max_tokens" "$_auto_recall_min_score" <<'PY'
 from __future__ import annotations
 
+import os
 import re
 import sys
 import time
@@ -165,6 +166,11 @@ from pathlib import Path
 
 TIMEOUT_NS = 500_000_000
 MAX_KEYWORDS = 16
+# Bound the corpus scan: on a large learnings store, sorting+iterating every
+# entry can blow the 500ms budget (and the lexicographic order scanned oldest
+# entries first). Cap at the N most-recently-modified entries so recall stays
+# bounded and favors fresh learnings. Override via TRW_AUTO_RECALL_SCAN_CAP.
+MAX_SCAN_FILES = 500
 STOP_WORDS = {
     "also",
     "been",
@@ -251,8 +257,29 @@ if injected_file.is_file():
         if line.strip()
     }
 
+# Bound the scan to the most-recently-modified entries (cap configurable).
+try:
+    scan_cap = int(os.environ.get("TRW_AUTO_RECALL_SCAN_CAP", "") or MAX_SCAN_FILES)
+except ValueError:
+    scan_cap = MAX_SCAN_FILES
+if scan_cap <= 0:
+    scan_cap = MAX_SCAN_FILES
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+all_entries = list(entries_dir.glob("*.yaml"))
+if len(all_entries) > scan_cap:
+    all_entries.sort(key=_mtime, reverse=True)
+    all_entries = all_entries[:scan_cap]
+
 results: list[tuple[float, str, str, str]] = []
-for entry in sorted(entries_dir.glob("*.yaml")):
+for entry in sorted(all_entries):
     if time.monotonic_ns() >= deadline_ns:
         raise SystemExit(0)
 

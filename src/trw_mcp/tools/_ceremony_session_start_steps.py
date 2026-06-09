@@ -45,11 +45,23 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+# Bound for injected_learning_ids.txt. Each session appends the IDs it
+# surfaced; without a cap the file grows without limit across every session of
+# a long-lived project, slowing the auto-injection hook's read and wasting
+# disk. The most recent IDs are the ones the hook needs (older surfaced
+# learnings age out of relevance), so keep a recency-ordered tail.
+_MAX_INJECTED_IDS = 500
+
+
 def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
     """Write learning IDs from session_start to the injected-IDs state file.
 
     PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
     learnings that session_start already surfaced.
+
+    The file is bounded: existing IDs are merged with the new ones, de-duplicated
+    preserving recency (last occurrence wins), and truncated to the most recent
+    ``_MAX_INJECTED_IDS`` so it cannot grow without limit.
     """
     ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
     if not ids:
@@ -57,9 +69,27 @@ def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) 
     state_file = trw_dir / "context" / "injected_learning_ids.txt"
     try:
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        with state_file.open("a", encoding="utf-8") as f:
-            for lid in ids:
-                f.write(lid + "\n")
+        existing: list[str] = []
+        if state_file.exists():
+            existing = [
+                line.strip()
+                for line in state_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        # Merge old + new, de-dup preserving recency (newest occurrence wins),
+        # then keep only the most-recent tail.
+        merged = existing + ids
+        seen: set[str] = set()
+        deduped_reversed: list[str] = []
+        for lid in reversed(merged):
+            if lid not in seen:
+                seen.add(lid)
+                deduped_reversed.append(lid)
+        capped = list(reversed(deduped_reversed[:_MAX_INJECTED_IDS]))
+        # Atomic rewrite so a crash mid-write can't corrupt the bounded file.
+        tmp = state_file.with_suffix(state_file.suffix + ".tmp")
+        tmp.write_text("".join(lid + "\n" for lid in capped), encoding="utf-8")
+        tmp.replace(state_file)
     except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
         logger.debug("injected_ids_write_failed", exc_info=True)
 
@@ -156,7 +186,14 @@ def step_recall_learnings(
         if "side_effects_deferred" not in extra:
             _write_session_start_ids(trw_dir, learnings)
     except Exception as exc:  # justified: fail-open, recall failure must not block session start
-        errors.append(f"recall: {exc}")
+        # Recall is fail-open by contract: a recall failure must NOT flip the
+        # overall session_start ``success`` (which would mislead agents into
+        # retrying an otherwise-successful session_start). Surface it as a
+        # non-fatal warning instead of an error. ``errors`` is reserved for
+        # failures that genuinely break the session_start contract.
+        warnings = results.setdefault("warnings", [])
+        warnings.append(f"recall: {exc}")
+        logger.info("session_recall_degraded", error=str(exc))
         results["learnings"] = []
         results["learnings_count"] = 0
 

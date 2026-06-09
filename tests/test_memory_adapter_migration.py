@@ -16,6 +16,11 @@ from ._memory_adapter_support import (
     trw_dir_with_entries,  # noqa: F401
 )
 
+from ._memory_adapter_support import (
+    trw_dir,  # noqa: F401
+    trw_dir_with_entries,  # noqa: F401
+)
+
 
 class TestEnsureMigrated:
     def test_migrates_yaml_entries(self, trw_dir_with_entries: Path) -> None:

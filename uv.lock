@@ -2740,7 +2740,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "0.55.2"
+version = "0.55.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },

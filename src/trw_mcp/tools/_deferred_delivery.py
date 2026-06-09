@@ -24,6 +24,7 @@ from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
 
 from __future__ import annotations
 
+import atexit
 import json
 import threading
 import time
@@ -449,4 +450,56 @@ def _launch_deferred(
             daemon=True,
         )
         _ds._deferred_thread.start()
+        # PRD-FIX-088: the deferred thread is a daemon so a stuck step can never
+        # hang process shutdown — but daemon threads are killed mid-write on
+        # interpreter exit, silently losing pending learning/delivery work
+        # (publish, outcome correlation, index sync). Register a bounded atexit
+        # join so the in-flight batch flushes durably in the normal-exit case.
+        _register_deferred_atexit_join()
         return "launched"
+
+
+# atexit registration is idempotent-by-flag: register the join hook at most once
+# per process so repeated trw_deliver calls do not stack handlers.
+_atexit_join_registered = False
+
+# Bound the shutdown join so a genuinely stuck deferred step (held by the
+# cooperative cancel watchdog otherwise) cannot wedge interpreter exit forever.
+_DEFERRED_ATEXIT_JOIN_TIMEOUT_S = 30.0
+
+
+def _register_deferred_atexit_join() -> None:
+    """Register a one-shot atexit hook that flushes the deferred thread.
+
+    Must be called while holding ``_ds._deferred_lock`` (it is, from
+    ``_launch_deferred``) so the registration flag is mutated race-free.
+    """
+    global _atexit_join_registered
+    if _atexit_join_registered:
+        return
+    atexit.register(_join_deferred_thread_at_exit)
+    _atexit_join_registered = True
+
+
+def _join_deferred_thread_at_exit() -> None:
+    """Flush any in-flight deferred-delivery batch on process exit.
+
+    Signals cooperative cancellation first so long-running steps return at
+    their next poll, then joins with a bounded timeout. A daemon thread that
+    is killed mid-write loses pending learnings; this join makes the
+    normal-exit path durable while the timeout preserves the "shutdown can
+    never wedge" guarantee.
+    """
+    thread = _ds._deferred_thread
+    if thread is None or not thread.is_alive():
+        return
+    logger.info("deferred_atexit_join_start", thread=thread.name)
+    thread.join(timeout=_DEFERRED_ATEXIT_JOIN_TIMEOUT_S)
+    if thread.is_alive():
+        logger.warning(
+            "deferred_atexit_join_timeout",
+            thread=thread.name,
+            timeout_s=_DEFERRED_ATEXIT_JOIN_TIMEOUT_S,
+        )
+    else:
+        logger.info("deferred_atexit_join_complete", thread=thread.name)

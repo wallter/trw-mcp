@@ -84,12 +84,27 @@ find_active_run() {
   return 1
 }
 
+# _json_escape: Escape a string for safe embedding as a JSON string value.
+# Escapes backslash and double-quote, and strips/escapes control characters
+# (newline, tab, CR, and other C0 controls + DEL) so an attacker-controlled
+# value (e.g. a crafted file path or tool name) cannot break out of the JSON
+# string and inject extra fields or split the JSONL line.
+# Hooks MUST route any interpolated value through this before writing JSONL.
+_json_escape() {
+  printf '%s' "$1" \
+    | sed 's/\\/\\\\/g; s/"/\\"/g' \
+    | awk 'BEGIN{ORS=""} {gsub(/\t/,"\\t"); if(NR>1)printf "\\n"; printf "%s",$0}' \
+    | tr -d '\000-\010\013\014\016-\037\177'
+}
+
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
 # Requires: date, printf. Uses jq if available, falls back to printf.
+# SECURITY: $2 (event_type) is JSON-escaped here. The caller is responsible
+# for escaping any value embedded in $3 via _json_escape (see post-tool-event.sh).
 append_event() {
   _events_path="$1"
-  _event_type="$2"
+  _event_type="$(_json_escape "$2")"
   _extra="${3:-}"
   _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
@@ -107,7 +122,11 @@ has_event() {
   _path="$1"
   _type="$2"
   [ -f "$_path" ] || return 1
-  grep -q "\"event\":[[:space:]]*\"$_type\"" "$_path" 2>/dev/null
+  # Escape BRE metacharacters in the event type so it is matched as a literal
+  # (a value containing . * [ ] \ ^ $ would otherwise alter the pattern / match
+  # the wrong events — regex injection).
+  _type_esc=$(printf '%s' "$_type" | sed 's/[.[\*^$\\/]/\\&/g')
+  grep -q "\"event\":[[:space:]]*\"$_type_esc\"" "$_path" 2>/dev/null
 }
 
 # has_recent_deliver: Check if ANY run modified in the last N minutes has deliver_complete.

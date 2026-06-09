@@ -236,3 +236,94 @@ class TestLaunchDeferred:
         finally:
             barrier.set()
             fake_thread.join(timeout=5)
+
+
+class TestDeferredAtexitJoin:
+    """PRD-FIX-088: the atexit hook must flush an in-flight deferred batch so
+    daemon-thread mid-write data loss cannot drop pending learning work."""
+
+    def test_atexit_join_flushes_inflight_work(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The atexit hook joins the live deferred thread so its pending work
+        runs to completion before interpreter exit (no silent loss)."""
+        import threading
+
+        import trw_mcp.tools._deferred_delivery as _dd
+        import trw_mcp.tools._deferred_state as _ds
+
+        completed = threading.Event()
+        release = threading.Event()
+
+        def worker() -> None:
+            # Block until the test releases us, then mark work done. The atexit
+            # join must wait for this completion rather than abandon it.
+            release.wait(timeout=10)
+            completed.set()
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        monkeypatch.setattr(_ds, "_deferred_thread", thread)
+
+        # Release the worker, then invoke the atexit hook: it must join and
+        # observe the work as completed.
+        release.set()
+        _dd._join_deferred_thread_at_exit()
+
+        assert completed.is_set(), "atexit hook returned before deferred work finished"
+        assert not thread.is_alive(), "deferred thread should be joined after atexit hook"
+
+    def test_atexit_join_bounded_when_thread_stuck(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A genuinely stuck deferred step must not wedge interpreter exit —
+        the join is bounded by a timeout and returns even if the thread runs on."""
+        import threading
+
+        import trw_mcp.tools._deferred_delivery as _dd
+        import trw_mcp.tools._deferred_state as _ds
+
+        stuck = threading.Event()
+        try:
+            thread = threading.Thread(target=lambda: stuck.wait(timeout=30), daemon=True)
+            thread.start()
+            monkeypatch.setattr(_ds, "_deferred_thread", thread)
+            monkeypatch.setattr(_dd, "_DEFERRED_ATEXIT_JOIN_TIMEOUT_S", 0.1)
+
+            # Must return promptly despite the thread still running.
+            _dd._join_deferred_thread_at_exit()
+            assert thread.is_alive(), "thread should still be running (proving the join was bounded)"
+        finally:
+            stuck.set()
+            thread.join(timeout=5)
+
+    def test_launch_registers_atexit_hook_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``_launch_deferred`` registers the flush hook with ``atexit`` exactly
+        once per process even across repeated launches."""
+        import trw_mcp.tools._deferred_delivery as _dd
+        import trw_mcp.tools._deferred_state as _ds
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "logs").mkdir(parents=True)
+
+        # No-op the orchestrator body so the launched threads finish instantly;
+        # this test only asserts the atexit-registration behavior.
+        monkeypatch.setattr(_dd, "_run_deferred_steps", lambda *a, **k: {})
+
+        registered: list[object] = []
+        monkeypatch.setattr(_dd.atexit, "register", lambda fn: registered.append(fn))
+        # Reset the one-shot flag so this test exercises a fresh registration.
+        monkeypatch.setattr(_dd, "_atexit_join_registered", False)
+        monkeypatch.setattr(_ds, "_deferred_thread", None)
+
+        _launch_deferred(trw_dir, None, {})
+        with _ds._deferred_lock:
+            if _ds._deferred_thread is not None:
+                _ds._deferred_thread.join(timeout=10)
+        monkeypatch.setattr(_ds, "_deferred_thread", None)
+        _launch_deferred(trw_dir, None, {})
+        with _ds._deferred_lock:
+            if _ds._deferred_thread is not None:
+                _ds._deferred_thread.join(timeout=10)
+
+        assert len(registered) == 1, f"expected exactly one atexit registration, got {len(registered)}"

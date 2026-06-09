@@ -15,6 +15,11 @@ from ._memory_adapter_support import (
     trw_dir_with_entries,  # noqa: F401
 )
 
+from ._memory_adapter_support import (
+    trw_dir,  # noqa: F401
+    trw_dir_with_entries,  # noqa: F401
+)
+
 
 class TestStoreLearning:
     def test_basic_store(self, trw_dir: Path) -> None:

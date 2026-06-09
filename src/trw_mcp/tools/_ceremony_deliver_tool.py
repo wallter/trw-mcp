@@ -56,6 +56,31 @@ def run_trw_deliver(
 
     call_ctx = _ceremony._build_call_context(ctx)
     resolved_run = Path(run_path).resolve() if run_path else _ceremony._find_active_run_compat(call_ctx)
+
+    # PRD-QUAL-042-FR02 (path-traversal): a caller-supplied ``run_path`` must
+    # resolve INSIDE the project root. Without this an explicit run_path like
+    # ``../../etc`` would make deliver checkpoint/copy artifacts into arbitrary
+    # directories outside the project. Mirrors the containment check in
+    # ``_paths.resolve_run_path``. Reject (do not silently fall back) so the
+    # traversal attempt is visible.
+    if run_path and resolved_run is not None:
+        from trw_mcp.state._paths import resolve_project_root
+
+        project_root = resolve_project_root().resolve()
+        if not resolved_run.is_relative_to(project_root):
+            logger.warning(
+                "deliver_run_path_escapes_project",
+                run_path=str(resolved_run),
+                project_root=str(project_root),
+            )
+            results["run_path"] = None
+            block_msg = f"run_path escapes project root: {resolved_run}"
+            errors.append(block_msg)
+            results["errors"] = errors
+            results["delivery_blocked"] = block_msg
+            results["success"] = False
+            return results
+
     results["run_path"] = str(resolved_run) if resolved_run else None
     candidate_runs = _ceremony._candidate_run_hints() if resolved_run is None else []
     if candidate_runs:

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from trw_mcp._locking import _lock_ex, _lock_un
+
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
@@ -96,32 +98,44 @@ def append_audit_entry(
         raise ValueError("append_audit_entry requires edit_id or proposal_id")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    prev_hash = _last_entry_hash(log_path)
-    entry_sans_hash: dict[str, Any] = {
-        "ts": (ts or datetime.now(tz=timezone.utc)).isoformat(),
-        "edit_id": resolved_edit_id,
-        "event": event,
-        "proposer_id": proposer_id,
-        "candidate_diff": candidate_diff,
-        "surface_classification": surface_classification,
-        "gate_decision": gate_decision,
-        "promotion_session_id": promotion_session_id,
-        "reviewer_id": reviewer_id,
-        "vote_type": vote_type,
-        "verdict": verdict,
-        "voter_id": voter_id,
-        "payload": payload,
-        "prev_hash": prev_hash,
-    }
-    entry_hash = _compute_entry_hash(prev_hash, entry_sans_hash)
-    entry = {**entry_sans_hash, "entry_hash": entry_hash}
-    line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
 
+    # The read-tail-hash -> compute -> append sequence is a single critical
+    # section. Without a lock, concurrent appenders read the same prev_hash and
+    # write sibling entries that both chain off it, breaking verify_audit_chain.
+    # We hold an exclusive advisory lock on a dedicated sidecar lock file across
+    # the whole read+write so the hash chain stays linear under concurrency.
+    lock_path = log_path.with_name(log_path.name + ".lock")
     try:
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-            fh.flush()
-            os.fsync(fh.fileno())
+        with lock_path.open("a", encoding="utf-8") as lock_fh:
+            _lock_ex(lock_fh.fileno())
+            try:
+                prev_hash = _last_entry_hash(log_path)
+                entry_sans_hash: dict[str, Any] = {
+                    "ts": (ts or datetime.now(tz=timezone.utc)).isoformat(),
+                    "edit_id": resolved_edit_id,
+                    "event": event,
+                    "proposer_id": proposer_id,
+                    "candidate_diff": candidate_diff,
+                    "surface_classification": surface_classification,
+                    "gate_decision": gate_decision,
+                    "promotion_session_id": promotion_session_id,
+                    "reviewer_id": reviewer_id,
+                    "vote_type": vote_type,
+                    "verdict": verdict,
+                    "voter_id": voter_id,
+                    "payload": payload,
+                    "prev_hash": prev_hash,
+                }
+                entry_hash = _compute_entry_hash(prev_hash, entry_sans_hash)
+                entry = {**entry_sans_hash, "entry_hash": entry_hash}
+                line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
+
+                with log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            finally:
+                _lock_un(lock_fh.fileno())
     except OSError as exc:
         logger.exception(
             "audit_append_failed",

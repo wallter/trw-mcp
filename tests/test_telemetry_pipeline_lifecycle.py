@@ -18,6 +18,8 @@ from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F4
 
 from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
+from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
+
 
 class TestTimerThread:
     """start()/stop() manage the background flush thread correctly."""

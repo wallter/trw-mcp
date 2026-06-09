@@ -15,6 +15,8 @@ from ._review_modes_support import run_dir  # noqa: F401
 
 from ._review_modes_support import run_dir  # noqa: F401
 
+from ._review_modes_support import run_dir  # noqa: F401
+
 
 class TestModeDetection:
     """trw_review mode detection logic."""

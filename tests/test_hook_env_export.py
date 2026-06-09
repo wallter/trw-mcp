@@ -8,6 +8,7 @@ absent (backward compat for pre-FR04 installs).
 from __future__ import annotations
 
 from pathlib import Path
+from shlex import quote as shlex_quote
 
 import pytest
 
@@ -28,10 +29,12 @@ def test_bootstrap_writes_hook_env_file(tmp_path: Path) -> None:
     assert written == trw_dir / "runtime" / "hook-env.sh"
     assert written.exists()
     content = _read(written)
-    assert 'export HOOKS_ENABLED="true"' in content
-    assert 'export NUDGE_ENABLED="true"' in content
-    assert 'export TRW_CLIENT_DISPLAY_NAME="Claude Code"' in content
-    assert 'export TRW_CLIENT_CONFIG_DIR=".claude"' in content
+    # Values are shell-quoted via shlex.quote: metachar-free tokens are emitted
+    # bare, values with spaces are single-quoted.
+    assert "export HOOKS_ENABLED=true" in content
+    assert "export NUDGE_ENABLED=true" in content
+    assert "export TRW_CLIENT_DISPLAY_NAME='Claude Code'" in content
+    assert "export TRW_CLIENT_CONFIG_DIR=.claude" in content
 
 
 def test_opencode_profile_writes_false_flags(tmp_path: Path) -> None:
@@ -39,10 +42,10 @@ def test_opencode_profile_writes_false_flags(tmp_path: Path) -> None:
     written = _write_hook_env_file(tmp_path / ".trw", profile)
     content = _read(written)
     # opencode is a light-mode profile: hooks_enabled=False, nudge_enabled=False
-    assert 'export HOOKS_ENABLED="false"' in content
-    assert 'export NUDGE_ENABLED="false"' in content
-    assert 'export TRW_CLIENT_DISPLAY_NAME="OpenCode"' in content
-    assert 'export TRW_CLIENT_CONFIG_DIR=".opencode"' in content
+    assert "export HOOKS_ENABLED=false" in content
+    assert "export NUDGE_ENABLED=false" in content
+    assert "export TRW_CLIENT_DISPLAY_NAME=OpenCode" in content
+    assert "export TRW_CLIENT_CONFIG_DIR=.opencode" in content
 
 
 def test_rewrites_idempotently(tmp_path: Path) -> None:
@@ -60,7 +63,7 @@ def test_rewrite_after_profile_change_reflects_new_values(tmp_path: Path) -> Non
     _write_hook_env_file(trw_dir, resolve_client_profile("claude-code"))
     _write_hook_env_file(trw_dir, resolve_client_profile("opencode"))
     content = _read(trw_dir / "runtime" / "hook-env.sh")
-    assert 'HOOKS_ENABLED="false"' in content
+    assert "HOOKS_ENABLED=false" in content
     assert "OpenCode" in content
     assert "Claude Code" not in content
 
@@ -72,6 +75,38 @@ def test_creates_parent_runtime_dir(tmp_path: Path) -> None:
     _write_hook_env_file(trw_dir, resolve_client_profile("claude-code"))
     assert (trw_dir / "runtime").is_dir()
     assert (trw_dir / "runtime" / "hook-env.sh").exists()
+
+
+def test_malicious_display_name_is_shell_escaped(tmp_path: Path) -> None:
+    """A profile value with shell metacharacters must not inject when sourced.
+
+    The generated hook-env.sh is ``source``d by every TRW hook at startup, so an
+    unescaped display_name like ``$(touch pwned)`` would execute. shlex.quote
+    must neutralize it.
+    """
+    import subprocess
+
+    profile = resolve_client_profile("claude-code").model_copy(
+        update={"display_name": '$(touch ' + str(tmp_path / "pwned") + ')`echo hi`'}
+    )
+    written = _write_hook_env_file(tmp_path / ".trw", profile)
+    # Source the file in a real shell; the payload must NOT run.
+    subprocess.run(
+        ["sh", "-c", f". {shlex_quote(str(written))}"],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert not (tmp_path / "pwned").exists(), "command substitution executed — injection!"
+    # And the literal value must survive intact when read back.
+    out = subprocess.run(
+        ["sh", "-c", f". {shlex_quote(str(written))}; printf '%s' \"$TRW_CLIENT_DISPLAY_NAME\""],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert out.stdout == profile.display_name
 
 
 def test_file_permissions_are_readable(tmp_path: Path) -> None:

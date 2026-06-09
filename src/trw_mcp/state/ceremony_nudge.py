@@ -172,7 +172,12 @@ def compute_nudge(
             profile = config.client_profile
 
         budget = config.nudge_budget_chars
-        weights = config.client_profile.nudge_pool_weights
+        # PRD-CORE-149 FR03: pool selection MUST use the RESOLVED profile (set
+        # just above from the explicit ``profile`` arg or the active config
+        # profile) — NOT the global ``config.client_profile``. A caller passing
+        # a non-default profile would otherwise get pool weights from the wrong
+        # client identity, silently altering which ceremony nudge is selected.
+        weights = profile.nudge_pool_weights
         cooldown_after = config.nudge_pool_cooldown_after
         cooldown_calls = config.nudge_pool_cooldown_calls
 

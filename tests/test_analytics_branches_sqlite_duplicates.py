@@ -12,6 +12,8 @@ from ._analytics_branches_support import trw_dir  # noqa: F401
 
 from ._analytics_branches_support import trw_dir  # noqa: F401
 
+from ._analytics_branches_support import trw_dir  # noqa: F401
+
 
 class TestUpdateLearningIndexOverflow:
     """Lines 444-445: update_learning_index overflow pruning."""

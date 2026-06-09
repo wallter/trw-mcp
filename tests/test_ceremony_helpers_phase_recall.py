@@ -13,6 +13,8 @@ from ._ceremony_helpers_support import trw_dir  # noqa: F401
 
 from ._ceremony_helpers_support import trw_dir  # noqa: F401
 
+from ._ceremony_helpers_support import trw_dir  # noqa: F401
+
 
 class TestPhaseToTags:
     """Phase-to-tag mapping for auto-recall."""

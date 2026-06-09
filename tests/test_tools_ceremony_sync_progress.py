@@ -13,6 +13,8 @@ from ._tools_ceremony_support import trw_project  # noqa: F401
 
 from ._tools_ceremony_support import trw_project  # noqa: F401
 
+from ._tools_ceremony_support import trw_project  # noqa: F401
+
 
 class TestDoClaudeMdSync:
     """CLAUDE.md sync during delivery ceremony."""

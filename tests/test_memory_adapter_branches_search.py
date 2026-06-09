@@ -13,6 +13,8 @@ from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
 
 class TestKeywordSearchMultiToken:
     def test_multi_token_intersection(self, trw_dir: Path) -> None:

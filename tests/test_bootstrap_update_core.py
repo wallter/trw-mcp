@@ -16,10 +16,30 @@ class TestUpdateProjectBasics:
     """Test update_project basic behavior."""
 
     def test_requires_trw_installed(self, tmp_path: Path) -> None:
-        """update_project errors if .trw/ does not exist."""
+        """update_project errors if .trw/ does not exist (in a real repo)."""
+        (tmp_path / ".git").mkdir()
         result = update_project(tmp_path)
         assert len(result["errors"]) == 1
         assert ".trw/ not found" in result["errors"][0]
+
+    def test_requires_git_repo(self, tmp_path: Path) -> None:
+        """update_project refuses to scaffold into a non-repo (symmetry with init)."""
+        # No .git/ at all — even with .trw/ present the guard must fire first.
+        (tmp_path / ".trw").mkdir()
+        result = update_project(tmp_path)
+        assert any("not a git repository" in e for e in result["errors"])
+
+    def test_rejects_symlinked_git(self, tmp_path: Path) -> None:
+        """A symlinked .git must not satisfy the git-repo guard (symlink-safe)."""
+        real_repo = tmp_path / "real"
+        real_repo.mkdir()
+        (real_repo / ".git").mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / ".trw").mkdir()
+        (victim / ".git").symlink_to(real_repo / ".git")
+        result = update_project(victim)
+        assert any("not a git repository" in e for e in result["errors"])
 
     def test_no_errors_on_initialized_repo(self, initialized_repo: Path) -> None:
         """update_project succeeds on an initialized repo."""

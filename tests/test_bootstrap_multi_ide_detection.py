@@ -34,6 +34,7 @@ class TestUpdateProjectMultiIDE:
     def test_fr15_update_detects_opencode_by_dir(self, tmp_path: Path) -> None:
         """With .opencode/ present, update generates opencode.json."""
         # Set up a minimal existing TRW project
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         (tmp_path / ".opencode").mkdir()
@@ -50,6 +51,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_detects_opencode_by_json(self, tmp_path: Path) -> None:
         """With opencode.json present, update performs smart-merge."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         # Create existing opencode.json (triggers detection)
@@ -66,6 +68,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_detects_codex_by_dir(self, tmp_path: Path) -> None:
         """With .codex/ present, update generates Codex artifacts."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
         (tmp_path / ".codex").mkdir()
@@ -91,6 +94,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_codex_generates_hooks_when_opted_in(self, tmp_path: Path) -> None:
         """update_project honors explicit Codex hook opt-in instead of forcing hooks."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
         codex_dir = tmp_path / ".codex"
@@ -130,6 +134,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_no_opencode_skips(self, tmp_path: Path) -> None:
         """Without opencode indicators, update does not create opencode.json."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         # Only Claude Code present
@@ -142,6 +147,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_ide_override_opencode(self, tmp_path: Path) -> None:
         """update_project(ide='opencode') creates opencode.json even without detection."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         # No .opencode/ dir, but explicit override

@@ -112,11 +112,37 @@ class TelemetryPipeline:
     # Enqueue
     # ------------------------------------------------------------------
 
+    # Structural/identifier fields that are safe by construction and would be
+    # corrupted by PII scrubbing (e.g. emails-as-ids, timestamps). Everything
+    # else that is a string is scrubbed — messages, args, paths, errors all
+    # carry user content and must not ship raw PII to telemetry.
+    _PII_SAFE_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "ts",
+            "event_type",
+            "event_id",
+            "parent_event_id",
+            "installation_id",
+            "framework_version",
+            "phase",
+            "tool",
+            "tool_name",
+            "outcome",
+            "session_id",
+        }
+    )
+
     def _scrub_pii(self, event: dict[str, object]) -> None:
-        """Scrub PII and redact paths from event in-place."""
-        error_val = event.get("error")
-        if isinstance(error_val, str):
-            event["error"] = strip_pii(error_val)
+        """Scrub PII and redact paths from every string field in-place.
+
+        Previously only the ``error`` field was PII-scrubbed, leaking PII in
+        other string fields (messages, args, paths). Now ``strip_pii`` is
+        applied to all string values except an explicit safe-key allowlist.
+        """
+        for key, value in event.items():
+            if key in self._PII_SAFE_KEYS or not isinstance(value, str):
+                continue
+            event[key] = strip_pii(value)
 
         try:
             project_root = resolve_project_root()
@@ -125,6 +151,8 @@ class TelemetryPipeline:
 
         if project_root is not None:
             for key, value in event.items():
+                if key in self._PII_SAFE_KEYS:
+                    continue
                 if isinstance(value, str):
                     event[key] = redact_paths(value, project_root)
 

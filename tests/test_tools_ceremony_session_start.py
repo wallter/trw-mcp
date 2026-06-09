@@ -19,7 +19,12 @@ class TestSessionStartPartialFailure:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If recall raises, status step still runs and result is returned."""
+        """If recall raises, status step still runs and result is returned.
+
+        Recall is fail-open by contract: a recall-only failure must NOT flip
+        ``success`` (which would mislead agents into needless retries). The
+        failure is surfaced under the non-fatal ``warnings`` channel instead.
+        """
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -37,10 +42,12 @@ class TestSessionStartPartialFailure:
         ):
             result = tools["trw_session_start"].fn()
 
-        assert result["success"] is False
-        assert len(result["errors"]) >= 1
-        assert "recall" in result["errors"][0]
+        # Recall-only failure no longer flips success; it lands in warnings.
+        assert result["success"] is True
         assert "run" in result
+        warnings = result.get("warnings", [])
+        assert any("recall" in w for w in warnings), f"expected recall warning, got {warnings}"
+        assert "recall" not in " ".join(result.get("errors", []))
 
     def test_returns_result_when_status_fails(
         self,
@@ -119,6 +126,43 @@ class TestSessionStartPartialFailure:
             "L-session-1",
             "L-session-2",
         ]
+
+    def test_injected_ids_file_is_bounded_and_deduped(self, tmp_path: Path) -> None:
+        """_write_session_start_ids must cap the file size and de-dup IDs so it
+        cannot grow without limit across sessions."""
+        from trw_mcp.tools import _ceremony_session_start_steps as steps
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True)
+        cap = steps._MAX_INJECTED_IDS
+
+        # Simulate many sessions each surfacing a fresh batch of unique IDs.
+        total = cap * 3
+        for i in range(total):
+            steps._write_session_start_ids(trw_dir, [{"id": f"L-{i}"}])
+
+        injected_file = trw_dir / "context" / "injected_learning_ids.txt"
+        lines = [ln for ln in injected_file.read_text(encoding="utf-8").splitlines() if ln]
+        assert len(lines) == cap, f"file not capped: {len(lines)} lines"
+        # The most recent IDs are retained (recency tail).
+        assert lines[-1] == f"L-{total - 1}"
+        assert f"L-{total - cap}" in lines
+        # An old ID well outside the window was evicted.
+        assert "L-0" not in lines
+
+    def test_injected_ids_dedup_preserves_recency(self, tmp_path: Path) -> None:
+        """Re-surfacing an existing ID does not duplicate it; recency wins."""
+        from trw_mcp.tools import _ceremony_session_start_steps as steps
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "context").mkdir(parents=True)
+
+        steps._write_session_start_ids(trw_dir, [{"id": "A"}, {"id": "B"}])
+        steps._write_session_start_ids(trw_dir, [{"id": "A"}])  # re-surface A
+
+        injected_file = trw_dir / "context" / "injected_learning_ids.txt"
+        lines = [ln for ln in injected_file.read_text(encoding="utf-8").splitlines() if ln]
+        assert lines == ["B", "A"], f"expected dedup with A moved to most-recent, got {lines}"
 
     def test_session_start_returns_assertion_health(
         self,

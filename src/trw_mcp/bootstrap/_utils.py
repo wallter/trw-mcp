@@ -424,6 +424,30 @@ def detect_installed_clis() -> list[str]:
     return detected
 
 
+def is_git_repo(target_dir: Path) -> bool:
+    """Return True if *target_dir* looks like a git repository root.
+
+    Symlink-safe: ``Path.exists()`` follows symlinks, so a symlinked ``.git``
+    pointing at an attacker-chosen (or unrelated) location could fool a naive
+    guard into scaffolding TRW into the wrong tree. We require ``.git`` to be a
+    real directory (standard repo) or a regular file (git worktree / submodule
+    gitfile), and explicitly reject a symlink at that path.
+
+    Args:
+        target_dir: Candidate repository root.
+
+    Returns:
+        True if ``target_dir/.git`` is a non-symlink directory or regular file.
+    """
+    git_path = target_dir / ".git"
+    if git_path.is_symlink():
+        return False
+    # is_dir()/is_file() do not follow into a non-existent target and return
+    # False for a dangling path, so this also rejects a broken .git symlink
+    # (already excluded above) and a missing .git.
+    return git_path.is_dir() or git_path.is_file()
+
+
 def resolve_ide_targets(
     target_dir: Path,
     ide_override: str | None = None,
@@ -433,7 +457,9 @@ def resolve_ide_targets(
     Args:
         target_dir: Project directory to check for existing IDE configs.
         ide_override: Explicit IDE selection ("claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "all").
-            If provided, overrides auto-detection.
+            If provided, overrides auto-detection. An unrecognized value is
+            rejected (the override is ignored and auto-detection is used) so a
+            caller cannot inject an arbitrary string as a scaffolding target.
 
     Returns:
         List of IDE identifiers to configure.
@@ -441,7 +467,14 @@ def resolve_ide_targets(
     if ide_override == "all":
         return SUPPORTED_IDES.copy()
     if ide_override:
-        return [ide_override]
+        if ide_override in SUPPORTED_IDES:
+            return [ide_override]
+        # Unknown override — do NOT use it as a target. Fall back to detection.
+        logger.warning(
+            "ide_override_rejected",
+            ide_override=ide_override,
+            supported=SUPPORTED_IDES,
+        )
     detected = detect_ide(target_dir)
     return detected or ["claude-code"]  # default to Claude Code
 

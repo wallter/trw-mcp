@@ -9,7 +9,6 @@ from tests._test_middleware_ceremony_support import FakeToolResult
 from trw_mcp.middleware.ceremony import (
     _compaction_gate_sessions,
     _extract_session_start_payload,
-    _known_sessions,
     _session_start_succeeded,
 )
 
@@ -41,7 +40,11 @@ class TestSessionStartPayloadHelpers:
             "trw_mcp.middleware.ceremony._is_compaction_gate_required",
             lambda: True,
         )
-        _known_sessions.update({"sess-a", "sess-b"})
+        from trw_mcp.middleware.ceremony import _register_session, reset_state
+
+        reset_state()
+        _register_session("sess-a")
+        _register_session("sess-b")
 
         from trw_mcp.middleware.ceremony import _is_compaction_gate_required_for_session
 

@@ -12,6 +12,8 @@ from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
+from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
 
 class TestBackfillEmbeddings:
     def test_no_embedder_returns_zeros(self, trw_dir: Path) -> None:

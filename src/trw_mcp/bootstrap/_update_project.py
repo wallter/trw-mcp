@@ -148,6 +148,7 @@ from ._utils import (
     _verify_installation,
     _write_installer_metadata,
     _write_version_yaml,
+    is_git_repo,
     resolve_ide_targets,
 )
 
@@ -449,6 +450,17 @@ def update_project(
         dry_run=dry_run,
         pip_install=pip_install,
     )
+
+    # Symmetry with init_project: refuse to scaffold into a non-repo / wrong dir.
+    # is_git_repo is symlink-safe (a plain .exists() follows symlinks).
+    if not is_git_repo(target_dir):
+        result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
+        logger.error(
+            "project_update_failed",
+            project_root=str(target_dir),
+            error="not a git repository",
+        )
+        return result
 
     if not (target_dir / ".trw").exists():
         result["errors"].append(

@@ -85,3 +85,52 @@ class TestHashContent:
         c1 = [TextContent(type="text", text="hello")]
         c2 = [TextContent(type="text", text="world")]
         assert hash_content(c1) != hash_content(c2)
+
+
+class TestSessionEviction:
+    """Round-2 fix: bounded LRU cap prevents unbounded per-session growth."""
+
+    def test_session_state_is_capped_lru(self) -> None:
+        """_touch_session evicts least-recently-used sessions past the cap."""
+        from trw_mcp.middleware.context_budget import (
+            _MAX_TRACKED_SESSIONS,
+            _response_hashes,
+            _touch_session,
+            _turn_counts,
+        )
+
+        reset_state()
+        total = _MAX_TRACKED_SESSIONS + 50
+        for i in range(total):
+            sid = f"sess-{i}"
+            _turn_counts[sid] = i
+            _response_hashes[sid] = {"tool": ("h", i)}
+            _touch_session(sid)
+
+        # Cap is enforced — neither dict grows without bound.
+        assert len(_turn_counts) == _MAX_TRACKED_SESSIONS
+        assert len(_response_hashes) == _MAX_TRACKED_SESSIONS
+        # Oldest sessions evicted; newest retained.
+        assert "sess-0" not in _turn_counts
+        assert "sess-0" not in _response_hashes
+        assert f"sess-{total - 1}" in _turn_counts
+        reset_state()
+
+    def test_touch_keeps_recently_used(self) -> None:
+        """Re-touching an old session protects it from eviction."""
+        from trw_mcp.middleware.context_budget import (
+            _MAX_TRACKED_SESSIONS,
+            _touch_session,
+            _turn_counts,
+        )
+
+        reset_state()
+        _turn_counts["keepme"] = 1
+        _touch_session("keepme")
+        for i in range(_MAX_TRACKED_SESSIONS):
+            sid = f"filler-{i}"
+            _turn_counts[sid] = i
+            _touch_session("keepme")  # keep re-touching the protected session
+            _touch_session(sid)
+        assert "keepme" in _turn_counts
+        reset_state()

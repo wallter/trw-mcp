@@ -56,6 +56,10 @@ from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
+# PRD-QUAL-042-FR01: cap trw_init ``task_name`` (a filesystem path component)
+# below NAME_MAX (255) with headroom for the appended run_id suffix.
+_MAX_TASK_NAME_CHARS = 128
+
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
@@ -101,13 +105,16 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         from trw_mcp.models.run import ComplexityClass
 
-        # Input validation (PRD-QUAL-042-FR01).  ``task_name`` defaults to ""
-        # purely so FastMCP can inject ``ctx`` as the leading typed kwarg
-        # (PRD-CORE-141 FR03); an empty name is still rejected here.
+        # Input validation (PRD-QUAL-042-FR01). ``task_name`` defaults to "" only
+        # so FastMCP can inject ``ctx`` first (PRD-CORE-141 FR03); empty is rejected.
         if not task_name or not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", task_name):
             raise StateError(
                 f"Invalid task_name: must match [a-zA-Z0-9][a-zA-Z0-9_-]*, got: {task_name!r}",
             )
+        # Cap length: an over-long name (a path component) can exceed NAME_MAX
+        # and fail mkdir mid-init. 128 leaves headroom for the run_id suffix.
+        if len(task_name) > _MAX_TASK_NAME_CHARS:
+            raise StateError(f"Invalid task_name: exceeds {_MAX_TASK_NAME_CHARS} chars (got {len(task_name)})")
 
         config = get_config()
         reader = FileStateReader()

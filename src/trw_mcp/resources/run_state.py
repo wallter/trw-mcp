@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 from fastmcp import FastMCP
 
@@ -40,4 +42,36 @@ def register_run_state_resources(server: FastMCP) -> None:
         if not candidates:
             return "No active run found"
 
-        return max(candidates, key=lambda p: p.stat().st_mtime).read_text(encoding="utf-8")
+        # Concurrent runs can delete/rotate run.yaml between the glob above and
+        # the stat/read below. A bare ``p.stat()`` inside the key or the final
+        # ``read_text()`` would raise OSError and crash the MCP resource (it is
+        # surfaced to the client, not caught upstream). Guard the stat in the
+        # key (treat a vanished file as oldest) and fail open on read errors.
+        # PRD-FIX: also cap the read so a runaway run.yaml can't blow the
+        # resource response budget.
+        _MAX_RUN_STATE_BYTES = 1_000_000  # 1 MB — run.yaml is normally < 10 KB
+
+        def _safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except (OSError, PermissionError):
+                return -1.0
+
+        newest = max(candidates, key=_safe_mtime)
+        try:
+            size = newest.stat().st_size
+            if size > _MAX_RUN_STATE_BYTES:
+                logger.warning(
+                    "run_state_oversized",
+                    run_state_path=str(newest),
+                    size_bytes=size,
+                    cap_bytes=_MAX_RUN_STATE_BYTES,
+                )
+                with newest.open("r", encoding="utf-8") as handle:
+                    return handle.read(_MAX_RUN_STATE_BYTES)
+            return newest.read_text(encoding="utf-8")
+        except (OSError, PermissionError):
+            # The chosen run.yaml was deleted/became unreadable in the deletion
+            # race. Fail open rather than crash the resource.
+            logger.info("run_state_read_race", run_state_path=str(newest), exc_info=True)
+            return "No active run found"

@@ -175,7 +175,9 @@ def classify_candidate(
 
     # Emit telemetry via MetaTuneEvent (no ad-hoc jsonl).
     try:
-        MetaTuneEvent(
+        from trw_mcp.telemetry.unified_events import emit as _emit_unified
+
+        event = MetaTuneEvent(
             session_id=candidate.proposer_id,
             payload={
                 "action": "surface_classify",
@@ -184,6 +186,7 @@ def classify_candidate(
                 "surfaces": [s.value for s in cls.surfaces],
             },
         )
+        _emit_unified(event, run_dir=None, fallback_dir=None)
     except Exception:  # justified: telemetry_best_effort, safety-critical classification must never raise
         logger.warning(
             "surface_classify_telemetry_failed",

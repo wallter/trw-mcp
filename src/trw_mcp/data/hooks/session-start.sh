@@ -80,6 +80,29 @@ _emit_tier_guidance() {
   esac
 }
 
+# --- Untrusted-text sanitizer for AI-context injection defense ---
+# The checkpoint/last-checkpoint text in pre_compact_state.json is attacker-
+# influenceable (any process that can write the file, or a crafted run). When
+# echoed verbatim into the SessionStart context it can carry prompt-injection
+# payloads or terminal control sequences. _sanitize_context_text:
+#   - strips ASCII control chars (incl. CR/LF/ESC/BEL) so it stays single-line
+#   - collapses runs of whitespace
+#   - neutralizes common prompt-injection role/instruction markers
+#   - bounds length to 200 chars
+_sanitize_context_text() {
+  printf '%s' "$1" \
+    | tr -d '\000-\037\177' \
+    | tr -s '[:space:]' ' ' \
+    | sed -e 's/[][<>`]/ /g' \
+          -e 's/\$(/ (/g' \
+          -e 's/${/ {/g' \
+          -e 's/[Ss][Yy][Ss][Tt][Ee][Mm][[:space:]]*:/system_/g' \
+          -e 's/[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt][[:space:]]*:/assistant_/g' \
+          -e 's/[Uu][Ss][Ee][Rr][[:space:]]*:/user_/g' \
+          -e 's/\[\/*[Ii][Nn][Ss][Tt][^]]*\]/ /g' \
+    | cut -c1-200
+}
+
 # --- PRD-CORE-125-FR06: Framework reference gating ---
 _framework_ref_enabled() {
   # Returns 0 (true) when framework reference is enabled, 1 (false) when disabled.
@@ -165,6 +188,15 @@ case "$_source" in
       _phase=$(jq -r '.phase // empty' "$_state_file" 2>/dev/null) || true
       _event_count=$(jq -r '.events_logged // 0' "$_state_file" 2>/dev/null) || true
       _last_cp=$(jq -r '.last_checkpoint // empty' "$_state_file" 2>/dev/null) || true
+      # Sanitize all values read from the untrusted pre_compact_state.json before
+      # echoing them into the AI context (prompt-injection / control-char defense).
+      _run_path=$(_sanitize_context_text "$_run_path")
+      _phase=$(_sanitize_context_text "$_phase")
+      _last_cp=$(_sanitize_context_text "$_last_cp")
+      # events_logged must be numeric; coerce to 0 if not.
+      case "$_event_count" in
+        ''|*[!0-9]*) _event_count=0 ;;
+      esac
       if [ -n "$_run_path" ]; then
         echo "RECOVERED: Run at $_run_path"
         [ -n "$_phase" ] && echo "RECOVERED: Phase: $_phase | Events: ${_event_count:-0}"

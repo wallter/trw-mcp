@@ -23,6 +23,7 @@ from ._utils import (
     _write_if_missing,
     _write_installer_metadata,
     _write_version_yaml,
+    is_git_repo,
     resolve_ide_targets,
 )
 
@@ -274,8 +275,9 @@ def init_project(
 
     logger.info("project_init_started", project_root=str(target_dir), ide=ide)
 
-    # Validate target is a git repo
-    if not (target_dir / ".git").exists():
+    # Validate target is a git repo. is_git_repo is symlink-safe — a plain
+    # .exists() follows symlinks, so a symlinked .git could fool this guard.
+    if not is_git_repo(target_dir):
         result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
         logger.error(
             "project_init_failed",

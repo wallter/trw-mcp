@@ -41,6 +41,7 @@ class TestBootstrapDryRunBranches:
         """Create a minimal target dir with .trw/ so update_project doesn't error."""
         target = tmp_path / "target"
         target.mkdir()
+        (target / ".git").mkdir()  # update_project now requires a real git repo
         (target / ".trw").mkdir()
         (target / ".claude" / "hooks").mkdir(parents=True)
         (target / ".claude" / "skills").mkdir(parents=True)

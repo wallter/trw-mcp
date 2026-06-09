@@ -17,6 +17,11 @@ from ._tools_ceremony_support import (
     trw_project,  # noqa: F401
 )
 
+from ._tools_ceremony_support import (
+    run_dir,  # noqa: F401
+    trw_project,  # noqa: F401
+)
+
 
 class TestFindActiveRun:
     """Helper function for locating active runs."""

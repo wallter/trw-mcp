@@ -73,6 +73,56 @@ def test_step_recall_learnings_surfaces_degraded_metadata_without_error(
     assert results["recall_degraded"] == degraded
 
 
+def test_step_recall_learnings_exception_goes_to_warnings_not_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recall failure must NOT flip session_start success.
+
+    Recall is fail-open by contract. When ``perform_session_recalls`` raises,
+    the failure is recorded under ``results['warnings']`` (for visibility) and
+    NOT appended to ``errors`` (which would set ``success=False`` and mislead
+    agents into retrying an otherwise-successful session_start).
+    """
+    monkeypatch.setattr(
+        "trw_mcp.tools.ceremony.resolve_trw_dir",
+        lambda: tmp_path,
+        raising=False,
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> tuple[list[object], list[object], dict[str, object]]:
+        raise RuntimeError("recall backend unavailable")
+
+    monkeypatch.setattr(
+        "trw_mcp.tools._ceremony_helpers.perform_session_recalls",
+        _boom,
+    )
+
+    results: dict[str, object] = {}
+    errors: list[str] = []
+    step_recall_learnings("*", TRWConfig(), results, errors)
+
+    # errors stays empty -> finalize_session_start computes success=True.
+    assert errors == [], f"recall failure must not populate errors, got {errors}"
+    warnings = results.get("warnings")
+    assert isinstance(warnings, list) and len(warnings) == 1
+    assert "recall: recall backend unavailable" in warnings[0]
+    assert results["learnings"] == []
+    assert results["learnings_count"] == 0
+
+
+def test_finalize_success_true_when_only_recall_warned(tmp_path: Path) -> None:
+    """End-to-end: a recall-only warning leaves finalize success=True."""
+    from trw_mcp.tools._ceremony_session_start_steps import finalize_session_start
+
+    results: dict[str, object] = {"warnings": ["recall: boom"], "learnings_count": 0}
+    errors: list[str] = []
+    finalize_session_start(results, TRWConfig(), {}, errors)  # type: ignore[arg-type]
+
+    assert results["success"] is True
+    assert results["warnings"] == ["recall: boom"]
+
+
 def test_direct_recall_propagates_canary_tamper(
     tmp_path: Path,
 ) -> None:

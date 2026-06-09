@@ -90,7 +90,16 @@ def execute_learn(
     protection_tier: str = "normal",
     session_id: str | None = None,
     scope: str = "auto",  # PRD-CORE-185 FR07: write-tier override
-    # Injected deps (patched at trw_mcp.tools.learning.* in tests)
+    # Injected deps (patched at trw_mcp.tools.learning.* in tests).
+    # justified Any: these are optional test-seam overrides for heterogeneous
+    # functions (store_learning, generate_learning_id, save_learning_entry,
+    # update_analytics, list_active_learnings, check_and_handle_dedup) whose
+    # return values feed directly into typed downstream calls (LearningParams,
+    # _append_provenance_signed, enforce_distribution, ...). Narrowing to
+    # ``Callable[..., object] | None`` does not type the *results*, so it forces
+    # ~10 explicit ``cast`` calls at every use site for zero added safety; the
+    # real type contract is enforced by the concrete default each ``or``-falls
+    # back to below. Keep ``Any`` here deliberately.
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
     _save_learning_entry: Any = None,

@@ -11,6 +11,8 @@ from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 
+from ._bootstrap_test_support import fake_git_repo  # noqa: F401
+
 
 class TestRunClaudeMdSync:
     """Tests for _run_claude_md_sync — fail-open + stdout suppression."""

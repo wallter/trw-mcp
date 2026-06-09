@@ -19,6 +19,7 @@ class TestUpdateProjectMultiIDE:
 
     def test_fr15_update_opencode_also_creates_agents_md(self, tmp_path: Path) -> None:
         """update_project with opencode detected also creates/updates AGENTS.md."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         (tmp_path / ".opencode").mkdir()

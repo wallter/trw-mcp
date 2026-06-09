@@ -62,6 +62,60 @@ class TestSessionState:
         assert not is_session_active("any-session")
 
 
+class TestSessionTrackingBounded:
+    """The per-session tracking maps must be bounded so a long-lived shared
+    server does not leak memory as clients reconnect with new session_ids."""
+
+    @pytest.mark.unit
+    def test_known_sessions_evicts_oldest_over_cap(self) -> None:
+        from trw_mcp.middleware import ceremony as mw
+
+        reset_state()
+        # Shrink the cap for a fast, deterministic test.
+        cap = 10
+        original_cap = mw._MAX_TRACKED_SESSIONS
+        mw._MAX_TRACKED_SESSIONS = cap
+        try:
+            for i in range(cap * 3):
+                mw._register_session(f"sess-{i}")
+                # Also populate the per-session maps so eviction is observable.
+                mw._session_state[f"sess-{i}"] = True
+                mw._compaction_gate_sessions[f"sess-{i}"] = True
+
+            assert len(mw._known_sessions) == cap, "known_sessions not capped"
+            # The companion maps are pruned in lockstep (no orphan growth).
+            assert len(mw._session_state) <= cap
+            assert len(mw._compaction_gate_sessions) <= cap
+            # Oldest evicted, newest retained.
+            assert "sess-0" not in mw._known_sessions
+            assert f"sess-{cap * 3 - 1}" in mw._known_sessions
+        finally:
+            mw._MAX_TRACKED_SESSIONS = original_cap
+            reset_state()
+
+    @pytest.mark.unit
+    def test_reregister_refreshes_recency(self) -> None:
+        from trw_mcp.middleware import ceremony as mw
+
+        reset_state()
+        cap = 3
+        original_cap = mw._MAX_TRACKED_SESSIONS
+        mw._MAX_TRACKED_SESSIONS = cap
+        try:
+            mw._register_session("a")
+            mw._register_session("b")
+            mw._register_session("c")
+            # Touch "a" again — it should become most-recent and survive the
+            # eviction caused by adding "d".
+            mw._register_session("a")
+            mw._register_session("d")
+            assert "a" in mw._known_sessions, "recently-touched session was wrongly evicted"
+            assert "b" not in mw._known_sessions, "oldest untouched session should be evicted"
+        finally:
+            mw._MAX_TRACKED_SESSIONS = original_cap
+            reset_state()
+
+
 class TestCeremonyTools:
     """Tests for the CEREMONY_TOOLS constant."""
 

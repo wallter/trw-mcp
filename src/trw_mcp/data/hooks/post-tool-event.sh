@@ -46,8 +46,13 @@ _events_path="${_run_dir}meta/events.jsonl"
 # Ensure events directory exists
 [ -d "$(dirname "$_events_path")" ] || exit 0
 
-# Append file_modified event
-append_event "$_events_path" "file_modified" "\"tool\":\"$_tool_name\",\"file\":\"$_file_path\""
+# Append file_modified event.
+# SECURITY: tool_name / file_path are attacker-influenceable — JSON-escape both
+# before embedding so a value containing a quote/backslash/newline cannot break
+# out of the JSON string and inject extra fields or split the JSONL line.
+_tool_name_esc="$(_json_escape "$_tool_name")"
+_file_path_esc="$(_json_escape "$_file_path")"
+append_event "$_events_path" "file_modified" "\"tool\":\"$_tool_name_esc\",\"file\":\"$_file_path_esc\""
 
 log_hook_execution "PostToolUse" "$_tool_name" "0"
 

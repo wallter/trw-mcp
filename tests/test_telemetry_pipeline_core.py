@@ -15,6 +15,8 @@ from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F4
 
 from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
+from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
+
 
 class TestDisabledPipeline:
     """Tests for pipeline with _enabled=False."""
@@ -153,3 +155,52 @@ class TestQueueOverflow:
 
         assert len(p._queue) == 10
         assert p._overflow_count == 0
+
+
+class TestScrubPiiAllFields:
+    """Round-2 SECURITY fix: _scrub_pii must scrub ALL string fields, not only 'error'."""
+
+    def test_scrub_pii_scrubs_non_error_string_fields(
+        self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PII in message/args fields must be redacted, not just the 'error' field."""
+        # Avoid path-redaction interference; isolate strip_pii behavior.
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.resolve_project_root",
+            lambda: None,
+            raising=False,
+        )
+        p = pipeline_cls()
+        event: dict[str, object] = {
+            "error": "boom contact admin@example.com",
+            "message": "user alice@example.com hit an error",
+            "args": "token sk-ABCDEFGHIJKLMNOPQRSTUVWX leaked",
+            "count": 7,
+        }
+        p._scrub_pii(event)
+
+        assert "admin@example.com" not in str(event["error"])
+        # Regression: the message field was previously shipped raw.
+        assert "alice@example.com" not in str(event["message"])
+        assert "<email>" in str(event["message"])
+        assert "sk-ABCDEFGHIJKLMNOPQRSTUVWX" not in str(event["args"])
+        # Non-string fields are untouched.
+        assert event["count"] == 7
+
+    def test_scrub_pii_preserves_safe_identifier_fields(
+        self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Safe-key allowlist (ids/timestamps) is not mangled by scrubbing."""
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.resolve_project_root",
+            lambda: None,
+            raising=False,
+        )
+        p = pipeline_cls()
+        event: dict[str, object] = {
+            "session_id": "agent@host-session",
+            "ts": "2026-06-09T00:00:00+00:00",
+        }
+        p._scrub_pii(event)
+        assert event["session_id"] == "agent@host-session"
+        assert event["ts"] == "2026-06-09T00:00:00+00:00"

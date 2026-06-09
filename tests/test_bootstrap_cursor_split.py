@@ -302,6 +302,7 @@ class TestCursorBootstrap:
 
     def test_fr05_fr07_update_project_cursor_ide(self, tmp_path: Path) -> None:
         """FR05+FR07: update_project with cursor detected updates .cursor/ artifacts."""
+        (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
         (tmp_path / ".cursor").mkdir()  # Presence triggers cursor detection

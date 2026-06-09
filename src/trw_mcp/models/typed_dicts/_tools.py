@@ -142,6 +142,12 @@ class SessionStartResultDict(TypedDict, total=False):
     health_summary: str
     learnings_omitted: int
     payload_token_estimate: int
+    # Non-fatal degradations that do NOT flip ``success``. A recall failure is
+    # fail-open by contract (recall must never block session start), so it is
+    # surfaced here for visibility rather than appended to ``errors`` — where it
+    # would set ``success=False`` and mislead agents into needless retries of an
+    # otherwise-successful session_start.
+    warnings: list[str]
 
 
 class QLearningDeferredDict(TypedDict):

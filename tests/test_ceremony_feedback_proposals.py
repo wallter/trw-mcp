@@ -20,6 +20,8 @@ from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
 from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
+from ._ceremony_feedback_support import feedback_env  # noqa: F401
+
 
 class TestReductionProposal:
     """FR04: Ceremony Reduction Proposal Generator."""

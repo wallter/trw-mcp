@@ -237,3 +237,56 @@ def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: 
     assert len(calls) == 1
     assert result["decision"] == "approve"
     assert target.read_text(encoding="utf-8") == "after-from-tool\n"
+
+
+def test_concurrent_promotes_serialize_via_target_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-2 fix: concurrent promotes against the same target must not corrupt it.
+
+    The read-modify-write of the live target is guarded by a per-target advisory
+    lock. With two threads racing on the same file, the final content must equal
+    exactly one whole candidate (never interleaved/truncated bytes).
+    """
+    import threading
+
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("before\n", encoding="utf-8")
+
+    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+
+    state_dir = tmp_path / "state"
+    barrier = threading.Barrier(2)
+    results: list[Any] = []
+    errors: list[Exception] = []
+    candidates = {"AAAA\n" * 200, "BBBB\n" * 200}
+
+    def _promote(content: str) -> None:
+        barrier.wait()
+        try:
+            res = dispatch.promote_candidate(
+                target_path=target,
+                candidate_content=content,
+                proposer_id="agent-1",
+                reviewer_id="alice",
+                approval_ts=datetime.now(timezone.utc),
+                sandbox_command=["python", "-c", "print('unused')"],
+                _config=cfg,
+                state_dir=state_dir,
+            )
+            results.append(res)
+        except Exception as exc:  # noqa: BLE001 — surface to assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_promote, args=(c,)) for c in candidates]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"concurrent promote raised: {errors}"
+    # Final content is exactly one whole candidate — no interleaving.
+    assert target.read_text(encoding="utf-8") in candidates
+    # The per-target lock sidecar was created under the state dir.
+    assert (state_dir / "locks").is_dir()

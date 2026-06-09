@@ -15,6 +15,8 @@ from ._review_modes_support import run_dir  # noqa: F401
 
 from ._review_modes_support import run_dir  # noqa: F401
 
+from ._review_modes_support import run_dir  # noqa: F401
+
 
 class TestIntegration:
     """Integration scenarios spanning multiple mode paths."""

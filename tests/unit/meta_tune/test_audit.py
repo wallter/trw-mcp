@@ -247,3 +247,51 @@ def test_append_refuses_to_continue_after_corruption(tmp_path: Path) -> None:
             payload={},
             _config=cfg,
         )
+
+
+def test_concurrent_appends_keep_chain_intact(tmp_path: Path) -> None:
+    """Round-2 fix: concurrent appends must not interleave and break the chain.
+
+    Without a file lock around read-tail-hash + append, parallel writers read
+    the same prev_hash and write sibling entries that both chain off it, so
+    verify_audit_chain would report a break. The lock serializes the critical
+    section, keeping the hash chain linear.
+    """
+    import threading
+
+    log = tmp_path / "audit.jsonl"
+    cfg = _cfg_enabled()
+    n_threads = 8
+    appends_per_thread = 6
+    barrier = threading.Barrier(n_threads)
+    errors: list[Exception] = []
+
+    def _worker(worker_id: int) -> None:
+        barrier.wait()  # maximize contention
+        for j in range(appends_per_thread):
+            try:
+                append_audit_entry(
+                    log,
+                    edit_id=f"w{worker_id}-{j}",
+                    event="proposed",
+                    proposer_id=f"agent:{worker_id}",
+                    candidate_diff="--- a/CLAUDE.md\n+++ b/CLAUDE.md\n",
+                    surface_classification="advisory",
+                    gate_decision="pending",
+                    payload={"worker": worker_id, "seq": j},
+                    _config=cfg,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface to assertion
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"appends raised under concurrency: {errors}"
+    # Chain must be unbroken and contain every entry.
+    assert verify_audit_chain(log) is None
+    rows = [line for line in log.read_text().splitlines() if line.strip()]
+    assert len(rows) == n_threads * appends_per_thread

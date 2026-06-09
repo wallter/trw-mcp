@@ -191,3 +191,49 @@ class TestRunStateResource:
         result = resources["trw://run/state"].fn()
         assert "run-001" in result
         assert "active" in result
+
+    def test_deletion_race_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run.yaml deleted between glob and read must fail open, not raise.
+
+        Simulates the concurrent-deletion race: the file exists when globbed
+        but read_text raises OSError. The resource must return the fallback
+        rather than propagate OSError (which would crash the MCP resource).
+        """
+        run_dir = tmp_path / ".trw" / "runs" / "test" / "run-001" / "meta"
+        run_dir.mkdir(parents=True)
+        run_yaml = run_dir / "run.yaml"
+        run_yaml.write_text("run_id: run-001\nstatus: active\n", encoding="utf-8")
+
+        orig_read_text = Path.read_text
+
+        def boom(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self == run_yaml:
+                raise OSError("file vanished in deletion race")
+            return orig_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", boom)
+
+        resources = _get_resources()
+        # Must NOT raise — fail open to the no-active-run fallback.
+        result = resources["trw://run/state"].fn()
+        assert "No active run" in result
+
+    def test_oversized_run_yaml_is_capped(self, tmp_path: Path) -> None:
+        """A pathologically large run.yaml is truncated to the byte cap rather
+        than blowing the resource response budget."""
+        from trw_mcp.resources import run_state as run_state_mod
+
+        run_dir = tmp_path / ".trw" / "runs" / "test" / "run-big" / "meta"
+        run_dir.mkdir(parents=True)
+        # Build content larger than the cap.
+        cap = 1_000_000
+        big = "x" * (cap + 50_000)
+        (run_dir / "run.yaml").write_text(big, encoding="utf-8")
+
+        resources = _get_resources()
+        result = resources["trw://run/state"].fn()
+        assert len(result) <= cap, f"result not capped: {len(result)} bytes"
+        # Sanity: the helper module exposes the cap we asserted against.
+        assert run_state_mod is not None

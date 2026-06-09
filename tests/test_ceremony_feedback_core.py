@@ -15,6 +15,8 @@ from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
 from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
+from ._ceremony_feedback_support import feedback_env  # noqa: F401
+
 
 class TestTaskClassifier:
     """FR01: Task Class Classifier."""

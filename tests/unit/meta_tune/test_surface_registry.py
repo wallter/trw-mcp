@@ -148,3 +148,33 @@ def test_classification_model_is_frozen_extra_forbid() -> None:
     with pytest.raises(ValidationError):
         # frozen: direct mutation raises
         cls.__class__.model_validate({"is_control": False, "surfaces": [Surface.PROMPT], "extra": 1})
+
+
+# --- telemetry emission (round-2 P0 fix) --------------------------------------
+
+
+def test_classify_candidate_emits_telemetry_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P0 regression: the MetaTuneEvent MUST be emitted, not merely constructed.
+
+    Previously the event was instantiated and discarded, so the surface
+    classification was invisible to observability. Assert the unified emit
+    function is actually invoked with a MetaTuneEvent.
+    """
+    from trw_mcp.telemetry import unified_events
+    from trw_mcp.telemetry.event_base import MetaTuneEvent
+
+    captured: list[object] = []
+
+    def _fake_emit(event: object, *, run_dir: object = None, fallback_dir: object = None) -> bool:
+        captured.append(event)
+        return True
+
+    monkeypatch.setattr(unified_events, "emit", _fake_emit)
+
+    classify_candidate(_candidate("CLAUDE.md"), _config=_enabled_config())
+
+    assert len(captured) == 1, "surface classification did not emit a telemetry event"
+    event = captured[0]
+    assert isinstance(event, MetaTuneEvent)
+    assert event.payload["action"] == "surface_classify"
+    assert event.payload["surface_classification_result"] == "advisory"

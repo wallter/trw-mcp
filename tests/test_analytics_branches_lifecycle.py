@@ -17,6 +17,8 @@ from ._analytics_branches_support import trw_dir  # noqa: F401
 
 from ._analytics_branches_support import trw_dir  # noqa: F401
 
+from ._analytics_branches_support import trw_dir  # noqa: F401
+
 
 class TestMarkPromotedNoEntriesDir:
     """Line 607: mark_promoted returns early when entries_dir doesn't exist."""

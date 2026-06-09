@@ -12,6 +12,8 @@ from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
 
 from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
 
+from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
+
 
 class TestPhaseContextualRecall:
     """Phase-contextual auto-recall with ranking."""

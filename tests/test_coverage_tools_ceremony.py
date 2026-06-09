@@ -24,10 +24,14 @@ class TestCeremonySessionStartFailurePaths:
         ):
             result = tool()
 
-        assert "errors" in result
-        recall_errors = [e for e in result["errors"] if "recall" in e]
-        assert len(recall_errors) == 1
-        assert "disk failure" in recall_errors[0]
+        # Recall is fail-open by contract: a recall-only failure must NOT flip
+        # ``success`` (which would mislead agents into needless retries). The
+        # failure is surfaced under the non-fatal ``warnings`` channel instead.
+        assert result["success"] is True
+        recall_warnings = [w for w in result.get("warnings", []) if "recall" in w]
+        assert len(recall_warnings) == 1
+        assert "disk failure" in recall_warnings[0]
+        assert "recall" not in " ".join(result.get("errors", []))
         assert result["learnings"] == []
         assert result["learnings_count"] == 0
 

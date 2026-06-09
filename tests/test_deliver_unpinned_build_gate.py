@@ -106,3 +106,47 @@ def test_deliver_override_surfaces_truthfulness_gate_bypass(tmp_path: Path) -> N
     overrides = [e for e in logs if e.get("event") == "build_gate_override_used"]
     assert overrides, f"expected a build_gate_override_used warning; got {logs}"
     assert overrides[0]["log_level"] == "warning"
+
+
+def test_deliver_rejects_run_path_outside_project_root(tmp_path: Path) -> None:
+    """PRD-QUAL-042-FR02: an explicit run_path that resolves OUTSIDE the project
+    root is a path-traversal attempt — deliver must block, not operate on it."""
+    project = tmp_path / "project"
+    trw_dir = project / ".trw"
+    _write_ceremony_state(trw_dir, "passed")
+    # A directory entirely outside the project root.
+    outside = tmp_path / "outside-target"
+    outside.mkdir()
+    deliver_fn = _make_deliver_fn()
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+    ):
+        result = deliver_fn(run_path=str(outside), skip_reflect=True)
+
+    assert result["success"] is False, "traversal run_path must block delivery"
+    assert result.get("run_path") is None
+    assert "escapes project root" in str(result.get("delivery_blocked", ""))
+
+
+def test_deliver_accepts_run_path_inside_project_root(tmp_path: Path) -> None:
+    """A run_path under the project root passes the containment check (the
+    block above is specific to traversal, not a blanket rejection)."""
+    project = tmp_path / "project"
+    trw_dir = project / ".trw"
+    _write_ceremony_state(trw_dir, "passed")
+    run_dir = project / ".trw" / "runs" / "task" / "run-1" / "meta"
+    run_dir.mkdir(parents=True)
+    deliver_fn = _make_deliver_fn()
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+    ):
+        result = deliver_fn(run_path=str(run_dir.parent), skip_reflect=True)
+
+    # Not blocked for traversal: run_path is retained (delivery may still warn
+    # for other reasons, but the containment check did not fire).
+    assert "escapes project root" not in str(result.get("delivery_blocked", ""))
+    assert result.get("run_path") == str(run_dir.parent.resolve())

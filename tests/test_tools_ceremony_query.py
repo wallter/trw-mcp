@@ -140,8 +140,12 @@ class TestSessionStartWithQuery:
         ):
             result = tools["trw_session_start"].fn(query="auth")
 
-        assert result["success"] is False
-        assert any("recall" in error for error in result["errors"])
+        # Recall is fail-open by contract: a recall-only failure (here injected
+        # via resolve_trw_dir, which the recall step calls) is surfaced as a
+        # non-fatal warning and must NOT flip success into a misleading retry.
+        assert result["success"] is True
+        assert any("recall" in w for w in result.get("warnings", []))
+        assert "recall" not in " ".join(result.get("errors", []))
         assert result["learnings"] == []
         assert "run" in result
 

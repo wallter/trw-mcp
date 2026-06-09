@@ -94,41 +94,6 @@ def _aggregate_advisory_warnings(results: DeliverResultDict) -> None:
     results["warning_count"] = len(present)
     results["warnings_present"] = bool(present)
 
-# F24 (legibility): advisory delivery-gate warning keys. These are SOFT gates —
-# surfaced on the deliver result but never blocking — so historically a
-# "warned-but-delivered" run was byte-identical (success=True, no warning
-# signal) to a fully-clean one. We aggregate the subset of these keys actually
-# present on the result into warning_count / warnings_present / warnings so
-# downstream eval / false-completion scoring can separate clean vs warned
-# delivers. Blocking keys (review_block, *_scope_block, build_gate_*,
-# delivery_blocked, truthfulness_gate_bypassed) are deliberately EXCLUDED —
-# they already drive success=False or their own audit trail and are not
-# "advisory warnings on an otherwise-successful deliver".
-_ADVISORY_WARNING_KEYS: tuple[str, ...] = (
-    "review_warning",
-    "review_advisory",
-    "integration_review_warning",
-    "checkpoint_blocker_warning",
-    "untracked_warning",
-    "complexity_drift_warning",
-    "instruction_parity_warning",
-    "warning",
-)
-
-
-def _aggregate_advisory_warnings(results: DeliverResultDict) -> None:
-    """Populate warning_count / warnings_present / warnings on the result.
-
-    Scans ``results`` for the advisory-warning keys in
-    :data:`_ADVISORY_WARNING_KEYS` that are present and non-empty, and records
-    an aggregate count, a boolean flag, and the sorted list of present keys.
-    Pure legibility — does not touch ``success`` or any blocking behavior.
-    """
-    present = sorted(key for key in _ADVISORY_WARNING_KEYS if results.get(key))
-    results["warnings"] = present
-    results["warning_count"] = len(present)
-    results["warnings_present"] = bool(present)
-
 
 def __getattr__(name: str) -> object:
     """Backward-compat shim for removed module-level singletons (FIX-044)."""
