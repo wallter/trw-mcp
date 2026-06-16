@@ -229,7 +229,7 @@ You are a requirements consistency analyst. Check these requirements for conflic
 consistency_analysis:
   requirements_analyzed: X
   conflicts_found: X
-  consistency_score: X%  # Target: >= 95%
+  consistency_score: X%  # advisory self-estimate — no fixed target; calibrate locally (AARE-F §C2)
 
   direct_contradictions:
     - req_a: "..."
@@ -259,9 +259,8 @@ consistency_analysis:
       recommendation: "Standardize on '...'"
 
   quality_gate:
-    passed: true|false
-    threshold: 95%
-    actual: X%
+    passed: true|false  # gate on findings (zero unresolved direct contradictions, no critical conflicts) — not on a fixed % threshold
+    blocking_findings: X
 ```
 ```
 
@@ -322,7 +321,7 @@ You are a requirements completeness analyst. Assess whether this requirements se
 
 ```yaml
 completeness_assessment:
-  overall_score: X%  # Target: >= 85%
+  overall_score: X%  # advisory self-estimate — no fixed target; the live validator's risk-scaled tiers (AARE-F §5/§8) are the scoring authority
 
   coverage:
     functional:
@@ -361,9 +360,8 @@ completeness_assessment:
         suggested_requirements: [...]
 
   quality_gate:
-    passed: true|false
-    threshold: 85%
-    actual: X%
+    passed: true|false  # gate on critical gaps (none unaddressed) — not on a fixed % threshold
+    critical_gaps_open: X
 ```
 ```
 

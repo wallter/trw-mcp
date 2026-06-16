@@ -285,9 +285,7 @@ def test_roundtrip_preserves_channel_count(tmp_path: Path) -> None:
     assert reloaded.channels[0].id == original.channels[0].id
 
 
-def test_write_is_atomic_failed_replace_preserves_original(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_is_atomic_failed_replace_preserves_original(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A crash between the temp dump and the rename must leave the EXISTING
     manifest intact (not truncated/half-written) and leave no orphan temp file.
     The manifest is the channel registry — a partial write breaks every channel.
@@ -355,9 +353,8 @@ def test_auto_recreate_empty_emits_manifest_recovered_telemetry_event(tmp_path: 
 
     events = [json.loads(l) for l in lines]
     recovered_events = [e for e in events if e.get("event_type") == "manifest_recovered"]
-    assert recovered_events, (
-        "No manifest_recovered event found in telemetry JSONL. "
-        "Events written: " + str([e.get("event_type") for e in events])
+    assert recovered_events, "No manifest_recovered event found in telemetry JSONL. Events written: " + str(
+        [e.get("event_type") for e in events]
     )
     ev = recovered_events[0]
     assert ev["channel_id"] == "__system__"
@@ -466,8 +463,7 @@ def test_check_marker_collisions_ceremony_markers_not_a_collision(tmp_path: Path
     target = tmp_path / "CLAUDE.md"
     # Standard TRW-bootstrapped CLAUDE.md contains ceremony markers
     target.write_text(
-        "# Claude guidance\n<!-- trw:start -->\nCeremony section\n<!-- trw:end -->\n"
-        "## Other content\n",
+        "# Claude guidance\n<!-- trw:start -->\nCeremony section\n<!-- trw:end -->\n## Other content\n",
         encoding="utf-8",
     )
     entry = ChannelEntry(

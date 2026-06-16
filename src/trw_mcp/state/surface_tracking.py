@@ -59,6 +59,18 @@ class SurfaceEvent(TypedDict, total=False):
     client_profile: str  # Client profile identifier (e.g., "claude-code")
     model_family: str  # Model family (e.g., "claude", "gpt")
     trw_version: str  # Framework version (e.g., "v24.4_TRW")
+    # Live nudge timing-validity (nudge-deep-dive work target #4). Stamped at
+    # emission so mistimed nudges (fired AFTER the step was already done) are
+    # detectable live, without the post-hoc step_timestamps the eval pipeline
+    # needs. Only present on surface_type=="nudge" events.
+    nudge_step: str  # Ceremony step the nudge targeted (e.g., "checkpoint")
+    is_timely: bool  # True if the targeted step was still pending at emission
+    step_distance_from_call: int  # completed-step index minus targeted-step index
+    # Live A/B (work target #6): the experiment arm label + the messenger that
+    # produced this nudge, so population comparison can slice REAL traffic by
+    # arm. Only present on surface_type=="nudge" events.
+    nudge_variant: str  # Operator-set A/B arm label (config.nudge_variant)
+    messenger: str  # Active messenger that produced the nudge (e.g., "minimal")
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +101,11 @@ def log_surface_event(
     client_profile: str = "",
     model_family: str = "",
     trw_version: str = "",
+    nudge_step: str = "",
+    is_timely: bool | None = None,
+    step_distance_from_call: int | None = None,
+    nudge_variant: str = "",
+    messenger: str = "",
 ) -> None:
     """Append a surface event to ``surface_tracking.jsonl``.
 
@@ -100,10 +117,26 @@ def log_surface_event(
 
     PRD-CORE-103: When *client_profile*, *model_family*, or *trw_version*
     are empty strings, auto-detection from config is attempted (best-effort).
+
+    Nudge-deep-dive work target #4: ``nudge_step`` / ``is_timely`` /
+    ``step_distance_from_call`` capture live timing validity for nudge
+    surfaces. They are only written when supplied (``is_timely`` /
+    ``step_distance_from_call`` non-None, ``nudge_step`` non-empty), so
+    non-nudge surface events keep their original shape.
+
+    Nudge-deep-dive work target #6: ``nudge_variant`` (the A/B arm label from
+    ``config.nudge_variant``) and ``messenger`` (the messenger that produced the
+    nudge) are stamped on nudge events so population comparison can slice live
+    traffic by arm. Only written when non-empty.
     """
     try:
+        from trw_mcp.state._paths_permissions import harden_dir_mode
+
         log_dir = trw_dir / _LOG_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # PRD-QUAL-110-FR02 follow-up: .trw/logs/ holds session state; create
+        # 0700 (also tightens .trw root if first-touched here).
+        harden_dir_mode(trw_dir, create=True)
+        harden_dir_mode(log_dir, create=True)
         log_path = log_dir / _SURFACE_FILE
 
         # Rotate if needed
@@ -124,7 +157,7 @@ def log_surface_event(
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
             except Exception:  # justified: fail-open, auto-detection is best-effort
-                pass
+                logger.debug("surface_event_config_probe_failed", exc_info=True)
 
         event: SurfaceEvent = {
             "learning_id": learning_id,
@@ -141,6 +174,20 @@ def log_surface_event(
             "model_family": model_family,
             "trw_version": trw_version,
         }
+
+        # Work target #4: stamp live timing-validity only when provided, so
+        # non-nudge surfaces (recall/session_start/phase_transition) are byte
+        # -for-byte unchanged and the eval-side schema contract is untouched.
+        if nudge_step:
+            event["nudge_step"] = nudge_step
+        if is_timely is not None:
+            event["is_timely"] = is_timely
+        if step_distance_from_call is not None:
+            event["step_distance_from_call"] = step_distance_from_call
+        if nudge_variant:
+            event["nudge_variant"] = nudge_variant
+        if messenger:
+            event["messenger"] = messenger
 
         with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event, default=str) + "\n")

@@ -127,48 +127,23 @@ class TestValidateMinimatchGlob:
 
 class TestValidateMdcFrontmatter:
     def test_valid_full_frontmatter(self) -> None:
-        content = (
-            "---\n"
-            "description: hello world\n"
-            "globs: **/*.py\n"
-            "alwaysApply: false\n"
-            "---\n"
-        )
+        content = "---\ndescription: hello world\nglobs: **/*.py\nalwaysApply: false\n---\n"
         valid, reason = validate_mdc_frontmatter(content)
         assert valid, reason
 
     def test_empty_description_is_valid_for_tombstone(self) -> None:
-        content = (
-            "---\n"
-            "description: \n"
-            "globs: []\n"
-            "alwaysApply: false\n"
-            "---\n"
-        )
+        content = "---\ndescription: \nglobs: []\nalwaysApply: false\n---\n"
         valid, reason = validate_mdc_frontmatter(content)
         assert valid, reason
 
     def test_rejects_extra_key(self) -> None:
-        content = (
-            "---\n"
-            "description: hello\n"
-            "globs: []\n"
-            "alwaysApply: false\n"
-            "unknown_key: value\n"
-            "---\n"
-        )
+        content = "---\ndescription: hello\nglobs: []\nalwaysApply: false\nunknown_key: value\n---\n"
         valid, reason = validate_mdc_frontmatter(content)
         assert not valid
         assert "unknown key" in reason
 
     def test_rejects_invalid_always_apply(self) -> None:
-        content = (
-            "---\n"
-            "description: hello\n"
-            "globs: []\n"
-            "alwaysApply: yes\n"
-            "---\n"
-        )
+        content = "---\ndescription: hello\nglobs: []\nalwaysApply: yes\n---\n"
         valid, reason = validate_mdc_frontmatter(content)
         assert not valid
         assert "alwaysApply" in reason
@@ -217,9 +192,7 @@ class TestAssembleMdcFrontmatter:
         fm = assemble_mdc_frontmatter(description="x", globs=[])
         # Only allowed keys
         keys_in_fm = [
-            line.split(":")[0].strip()
-            for line in fm.splitlines()
-            if ":" in line and not line.startswith("---")
+            line.split(":")[0].strip() for line in fm.splitlines() if ":" in line and not line.startswith("---")
         ]
         assert all(k in ("description", "globs", "alwaysApply") for k in keys_in_fm)
 
@@ -231,18 +204,14 @@ class TestAssembleMdcFrontmatter:
 
 class TestRenderTombstoneMdc:
     def test_tombstone_empty_globs_and_description(self) -> None:
-        content = render_tombstone_mdc(
-            "cursor-mdc-conventions", "trw-distill self-improve mdc-emit", "ttl_exceeded"
-        )
+        content = render_tombstone_mdc("cursor-mdc-conventions", "trw-distill self-improve mdc-emit", "ttl_exceeded")
         valid, reason = validate_mdc_frontmatter(content)
         assert valid, reason
         assert "description: " in content  # empty description
         assert "globs: []" in content
 
     def test_tombstone_contains_regenerate_cmd(self) -> None:
-        content = render_tombstone_mdc(
-            "test-channel", "trw-distill self-improve mdc-emit", "stale"
-        )
+        content = render_tombstone_mdc("test-channel", "trw-distill self-improve mdc-emit", "stale")
         assert "trw-distill self-improve mdc-emit" in content
 
     def test_tombstone_passes_frontmatter_validation(self) -> None:

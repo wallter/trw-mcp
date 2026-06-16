@@ -108,9 +108,7 @@ def _extract_fr_sections(content: str) -> list[tuple[str, str]]:
     if is_fix:
         # FIX PRDs may use the hyphenated heading form too; merge + sort by
         # position so the body-extraction span logic stays correct.
-        hyphen_matches = [
-            m for m in _FR_HYPHEN_HEADING_RE.finditer(content) if not _FR_HEADING_RE.match(m.group(0))
-        ]
+        hyphen_matches = [m for m in _FR_HYPHEN_HEADING_RE.finditer(content) if not _FR_HEADING_RE.match(m.group(0))]
         matches = sorted([*matches, *hyphen_matches], key=lambda m: m.start())
     sections: list[tuple[str, str]] = []
     for i, m in enumerate(matches):

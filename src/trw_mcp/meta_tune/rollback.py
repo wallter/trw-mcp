@@ -130,8 +130,14 @@ def rollback_proposal(
             if isinstance(snapshot_data, dict):
                 snapshot_data["rollback_attempts"] = int(snapshot_data.get("rollback_attempts", 0)) + 1
                 snapshot_path.write_text(json.dumps(snapshot_data), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as attempts_exc:
+            logger.warning(
+                "rollback_attempt_counter_update_failed",
+                component="meta_tune.rollback",
+                op="rollback_proposal",
+                outcome="degraded",
+                error=str(attempts_exc),
+            )
         elapsed = (time.monotonic() - start) * 1000.0
         logger.exception(
             "rollback_failed",

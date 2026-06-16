@@ -7,11 +7,125 @@ OpenCode instructions, and the compatibility prompting-guide loader.
 
 from __future__ import annotations
 
+import hashlib
+import re
+
+import structlog
+
 # PRD-CORE-149-FR01: resolve ``get_config`` via the facade.
 import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_BOUNDARY_TEXT
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+
+_logger = structlog.get_logger(__name__)
+
+# PRD-QUAL-104 FR02: the deliver-gate phrase every loaded/fallback body MUST
+# contain so FR03 injection can never produce a gate-less instruction file.
+DELIVER_GATE_PHRASE = "Do NOT call `trw_deliver` unless"
+
+# PRD-QUAL-104 FR04: whole-line content-hash markers emitted ahead of the
+# synced lifecycle block. Lint recomputes + compares (sha256 first-12-hex).
+LIFECYCLE_SYNC_MARKER_PREFIX = "<!-- trw:lifecycle-sync:sha256-"
+
+# PRD-QUAL-104 FR02 NFR02: last-known-good in-module fallback. Verbatim snapshot
+# of the canonical tool-lifecycle body — MUST contain the deliver-gate phrase.
+_FALLBACK_TOOL_LIFECYCLE = """# TRW Tool Lifecycle
+
+## Core Mandates
+
+**MUST call `trw_session_start()` as your absolute first action.** It loads prior learnings, active run state, and the operational protocol; without it you start from zero.
+
+## Mandatory Tool Lifecycle
+
+| Tool | When | Requirement |
+|------|------|-------------|
+| `trw_session_start()` | **First Action** | **MANDATORY.** Loads prior learnings and active run state. |
+| `trw_learn(summary, detail)` | On discoveries | **REQUIRED** for non-obvious technical insights or gotchas. |
+| `trw_checkpoint(message)` | After milestones | **REQUIRED.** Saves resume point for context compaction. |
+| `trw_deliver()` | **Last Action** | **MANDATORY.** Persists your discoveries for future agents. |
+
+## Delegation
+
+Delegate to focused helpers when the harness supports it and file ownership is clear. When it does not, run the same shards sequentially. Delegation is an optimization — the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
+
+## Deliver Gate (v26)
+
+Do NOT call `trw_deliver` unless at least one of:
+- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (b) a `review_verdict` carries an explicit `acceptable-failure` label, **or**
+- (c) an explicit override justification is included in the deliver message.
+
+For task types `coding`, `rca`, `eval` the gate blocks by default (`deliver_gate_mode: block_coding`). Docs, research, planning, and unknown types remain advisory.
+"""
+
+
+def _read_bundled_surface(filename: str) -> str:
+    """Read a bundled instruction surface from ``trw_mcp/data/surfaces``.
+
+    Isolated for monkeypatching in tests (patch ``_read_bundled_surface`` to
+    simulate a packaging anomaly and exercise the fail-open fallback).
+    """
+    from importlib.resources import files as pkg_files
+
+    surface = pkg_files("trw_mcp.data") / "surfaces" / filename
+    return surface.read_text(encoding="utf-8")
+
+
+def load_tool_lifecycle() -> str:
+    """Load the bundled ``tool-lifecycle.md`` body (PRD-QUAL-104 FR02).
+
+    Fail-open (NFR02): any read/decode/packaging error falls back to the
+    last-known-good in-module constant (which carries the deliver-gate phrase)
+    and logs a warning rather than raising.
+    """
+    try:
+        body = _read_bundled_surface("tool-lifecycle.md")
+    except Exception:  # justified: fail-open — missing bundled resource must not break rendering
+        _logger.warning("tool_lifecycle_surface_load_failed", exc_info=True)
+        return _FALLBACK_TOOL_LIFECYCLE
+    if DELIVER_GATE_PHRASE not in body:
+        # Defensive: a corrupted bundle without the gate phrase would silently
+        # produce a gate-less surface — prefer the known-good fallback.
+        _logger.warning("tool_lifecycle_surface_missing_gate")
+        return _FALLBACK_TOOL_LIFECYCLE
+    return body
+
+
+def bundled_lifecycle_hash_prefix() -> str:
+    """Return the sha256 first-12-hex prefix of the loaded tool-lifecycle body.
+
+    PRD-QUAL-104 FR04: emit and lint-recompute share this single helper so a
+    clean tree never disagrees on the marker.
+    """
+    body = load_tool_lifecycle()
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
+
+def render_deliver_gate_statement() -> str:
+    """Return the deliver-gate Markdown block derived from the bundled source.
+
+    PRD-QUAL-104 FR03: the non-negotiable instruction-file text injected into
+    every light-client surface. Sourced via the FR02 loader (fail-open
+    fallback) so it always carries the deliver-gate phrase. Preceded by a
+    whole-line content-hash sync marker (FR04) so the lint can verify freshness
+    in light-client files too.
+    """
+    body = load_tool_lifecycle()
+    # Extract just the "## Deliver Gate" section from the bundled body so the
+    # light-client block stays focused; fall back to the whole body if the
+    # heading shape changes (still carries the gate phrase).
+    match = re.search(r"(?ms)^##\s+Deliver Gate.*?(?=\n##\s|\Z)", body)
+    gate_section = match.group(0).rstrip("\n") if match else body.rstrip("\n")
+    sync_marker = f"{LIFECYCLE_SYNC_MARKER_PREFIX}{bundled_lifecycle_hash_prefix()} -->"
+    return (
+        f"{sync_marker}\n"
+        "\n"
+        "## TRW Governance (non-negotiable)\n"
+        "\n"
+        "Call `trw_session_start()` first.\n"
+        "\n" + gate_section + "\n"
+    )
 
 
 def render_framework_reference() -> str:
@@ -24,8 +138,14 @@ def render_closing_reminder() -> str:
     """Render closing reminder with session boundaries and fallback guidance.
 
     PRD-FIX-073-FR03: Includes local CLI fallback troubleshooting.
+    PRD-QUAL-104 FR02: the deliver-gate language is now derived from the
+    bundled ``tool-lifecycle.md`` source (loaded via ``importlib.resources``
+    with fail-open fallback) rather than a hand-written copy, and a whole-line
+    content-hash sync marker (FR04) precedes the synced block.
     """
     return (
+        render_deliver_gate_statement().rstrip("\n") + "\n"
+        "\n"
         "### Session Boundaries\n"
         "\n" + _SESSION_BOUNDARY_TEXT + "\n"
         "### Troubleshooting\n"
@@ -38,7 +158,12 @@ def render_closing_reminder() -> str:
 
 
 def render_codex_instructions() -> str:
-    """Render instructions content for Codex .codex/INSTRUCTIONS.md."""
+    """Render instructions content for Codex .codex/INSTRUCTIONS.md.
+
+    PRD-QUAL-104 FR03: appends the non-negotiable session-start + deliver-gate
+    block (bundled-source derived) so the Codex protocol carrier states the
+    gate verbatim regardless of ceremony/deliver-gate config.
+    """
     return (
         "# Codex TRW Instructions\n"
         "\n"
@@ -76,7 +201,7 @@ def render_codex_instructions() -> str:
         "- **Hooks and nudges are optional**: treat them as additive hints, not correctness gates\n"
         "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
-        "\n"
+        "\n" + render_deliver_gate_statement()
     )
 
 

@@ -1,13 +1,13 @@
 """PRD-CORE-146 FR03: trw-mcp schema-parse contract test.
 
-Pins the shape of the trw-mcp <-> trw-eval nudge contract surface:
+Pins the shape of the nudge event contract surface consumed by downstream
+eval consumers:
 - ceremony-state.json persisted fields
 - surface_tracking.jsonl line shape
 - nudge_shown JSONL event shape
 
-Dual-enforcement: trw-eval/tests/test_nudge_contract.py asserts the same
-shapes so breakage is caught from whichever side changes first. See
-docs/documentation/nudge-eval-contract.md and PRD-CORE-146 NFR03.
+Dual-enforcement: a downstream eval consumer asserts the same shapes so
+breakage is caught from whichever side changes first. See PRD-CORE-146 NFR03.
 """
 
 from __future__ import annotations
@@ -236,7 +236,7 @@ def test_live_record_nudge_shown_emits_canonical_event(tmp_path: Path) -> None:
     assert event["event"] == "nudge_shown"
     assert event["step"] == "validate"
     assert event["learning_ids"] == ["L-test-001"]
-    # Legacy fields preserved for backward compat with test_proximal_reward
-    # and TraceAnalyzer data.* consumers (NFR03 — no public rename).
+    # Legacy fields preserved for backward compat with existing downstream
+    # eval consumers of the data.* block (NFR03 — no public rename).
     assert event["learning_id"] == "L-test-001"
     assert event["phase"] == "validate"

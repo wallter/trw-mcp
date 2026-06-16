@@ -61,14 +61,16 @@ def test_malformed_lines_skipped(tmp_path: Path) -> None:
         "{not valid json",
         "null",
         "42",
-        json.dumps({
-            "schema_version": "channel-event/v1",
-            "channel_id": "copilot-instructions-distill",
-            "client": "copilot",
-            "ts": now_ts,
-            "event_type": "push_write",
-            "extra": {"file_path": "some/file.py"},
-        }),
+        json.dumps(
+            {
+                "schema_version": "channel-event/v1",
+                "channel_id": "copilot-instructions-distill",
+                "client": "copilot",
+                "ts": now_ts,
+                "event_type": "push_write",
+                "extra": {"file_path": "some/file.py"},
+            }
+        ),
         "another {bad line",
     ]
     log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -153,8 +155,17 @@ def test_correlation_record_has_required_fields(tmp_path: Path) -> None:
     lines = [json.loads(l) for l in log_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     rec = next(l for l in lines if l.get("event_type") == "edit_after_push")
 
-    required_fields = {"schema_version", "channel_id", "client", "ts", "event_type",
-                       "file_path", "tool", "lag_seconds", "push_sha"}
+    required_fields = {
+        "schema_version",
+        "channel_id",
+        "client",
+        "ts",
+        "event_type",
+        "file_path",
+        "tool",
+        "lag_seconds",
+        "push_sha",
+    }
     for field in required_fields:
         assert field in rec, f"Missing field: {field}"
 

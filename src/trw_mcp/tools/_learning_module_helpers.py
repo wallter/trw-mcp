@@ -19,20 +19,108 @@ from __future__ import annotations
 import re as _re
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import get_config
+from trw_mcp.models.typed_dicts import LearnResultDict
 from trw_mcp.state._call_context import build_call_context as _build_call_ctx
 from trw_mcp.state._paths import resolve_trw_dir
 
 __all__ = [
+    "_LEARN_TYPE_ALIASES",
     "_SOLUTION_PATTERNS",
     "_annotate_injected_learnings",
     "_build_call_ctx",
+    "_coerce_learn_type",
     "_coerce_tags",
     "_create_llm_client",
     "_is_solution_summary",
     "_read_injected_ids",
+    "_validate_learn_enums",
 ]
+
+logger = structlog.get_logger(__name__)
+
+# core185-ENUM-UNGUARDED-3: enum-valued ``trw_learn`` args must be validated in
+# the tool BEFORE forwarding to ``execute_learn``. ``_learning_to_memory_entry``
+# constructs ``MemoryType(type)`` / ``Confidence(confidence)`` /
+# ``ProtectionTier(protection_tier)`` unconditionally; an invalid value raises a
+# raw ``ValueError`` that is neither a ``StorageError`` nor caught by the recovery
+# branches, so it escapes ``store_learning`` to the MCP caller as an unhandled
+# exception -- violating the stable ``LearnResultDict`` return-shape contract.
+# ``trw_learn_update`` already guards these; ``trw_learn`` did not. These sets
+# mirror the enum members in ``trw_memory.models.memory``.
+_VALID_LEARN_TYPES: frozenset[str] = frozenset({"incident", "pattern", "convention", "hypothesis", "workaround"})
+_VALID_LEARN_CONFIDENCES: frozenset[str] = frozenset({"unverified", "low", "medium", "high", "verified"})
+_VALID_LEARN_TIERS: frozenset[str] = frozenset({"critical", "high", "normal", "low", "protected", "permanent"})
+
+
+def _validate_learn_enums(*, type: str, confidence: str, protection_tier: str) -> LearnResultDict | None:
+    """Return a rejection ``LearnResultDict`` for an invalid enum arg, else None.
+
+    core185-ENUM-UNGUARDED-3. Keeps the tool's contract stable: an out-of-range
+    ``type`` / ``confidence`` / ``protection_tier`` yields a structured
+    ``{"status": "rejected", "reason": ..., "message": ...}`` instead of letting
+    the downstream enum construction raise an unhandled ``ValueError``.
+    """
+    if type not in _VALID_LEARN_TYPES:
+        return {
+            "status": "rejected",
+            "reason": "invalid_type",
+            "message": f"Invalid type '{type}'. Must be one of: {sorted(_VALID_LEARN_TYPES)}",
+        }
+    if confidence not in _VALID_LEARN_CONFIDENCES:
+        return {
+            "status": "rejected",
+            "reason": "invalid_confidence",
+            "message": f"Invalid confidence '{confidence}'. Must be one of: {sorted(_VALID_LEARN_CONFIDENCES)}",
+        }
+    if protection_tier not in _VALID_LEARN_TIERS:
+        return {
+            "status": "rejected",
+            "reason": "invalid_protection_tier",
+            "message": (f"Invalid protection_tier '{protection_tier}'. Must be one of: {sorted(_VALID_LEARN_TIERS)}"),
+        }
+    return None
+
+
+# Potemkin defect C (sub_zAfRqZYYq2KtF72d): trw_learn(type='gotcha') was
+# rejected ("'gotcha' is not a valid MemoryType") even though the trw_learn
+# docstring and the trw-deliver / trw-ceremony-guide skills present "gotchas"
+# as first-class durable content to record. Rather than widen trw-memory's
+# MemoryType enum (which has downstream consumers), we alias ONLY the type
+# vocabulary that TRW's own tool docs / skills advertise to callers, at the
+# tool boundary, with a logged coercion. Keep this map small and justified
+# (Substrate-First): every key must be a word a caller is told to use that is
+# NOT already a valid enum member, and every value must be a valid MemoryType.
+_LEARN_TYPE_ALIASES: dict[str, str] = {
+    # The trw_learn docstring literally says "you just found a root cause,
+    # gotcha, or durable pattern"; a gotcha is a known pitfall to work around.
+    "gotcha": "workaround",
+    "gotchas": "workaround",
+}
+
+
+def _coerce_learn_type(type: str) -> str:
+    """Map an advertised type alias to a valid ``MemoryType`` value.
+
+    Returns *type* unchanged when it is already valid or is not an advertised
+    alias (so the downstream :func:`_validate_learn_enums` still produces an
+    honest rejection for genuine nonsense). Emits a structlog debug event when
+    a coercion actually happens, so the remapping is observable, not silent.
+    """
+    if type in _VALID_LEARN_TYPES:
+        return type
+    resolved = _LEARN_TYPE_ALIASES.get(type)
+    if resolved is None:
+        return type
+    logger.debug(
+        "learn_type_alias_coerced",
+        requested=type,
+        resolved=resolved,
+    )
+    return resolved
 
 
 def _coerce_tags(tags: list[str] | str | None) -> list[str] | None:

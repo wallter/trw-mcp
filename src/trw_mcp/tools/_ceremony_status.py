@@ -1,7 +1,9 @@
 """Ceremony status helpers for live MCP tool responses."""
+# ruff: noqa: I001 - facade re-export imports stay grouped for module-size ratchet.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,47 +14,20 @@ from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 from trw_mcp.tools._ceremony_status_helpers import (
     _cached_bandit_weight as _cached_bandit_weight,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _candidate_domains as _candidate_domains,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _coerce_float as _coerce_float,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
+    _emit_nudge_surface_event as _emit_nudge_surface_event,
     _contextualize_candidates as _contextualize_candidates,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _ContextualSelector as _ContextualSelector,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _deterministic_fallback_text as _deterministic_fallback_text,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _domain_match_score as _domain_match_score,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _has_cached_learning_weights as _has_cached_learning_weights,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _matches_inferred_domains as _matches_inferred_domains,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _normalize_inferred_domains as _normalize_inferred_domains,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _normalized_modified_files as _normalized_modified_files,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _phase_match_score as _phase_match_score,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _select_cached_or_deterministic_learning as _select_cached_or_deterministic_learning,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _select_deterministic_fallback_learning as _select_deterministic_fallback_learning,
-)
-from trw_mcp.tools._ceremony_status_helpers import (
     _synthetic_nudge_learning_id as _synthetic_nudge_learning_id,
 )
 from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content as _try_learning_nudge_content
@@ -145,6 +120,7 @@ def append_ceremony_status(
                 defer_nudge, writer_pids, defer_reason = should_defer_session_start_optional_work(
                     effective_dir,
                     threshold=cfg.session_start_writer_pressure_threshold,
+                    pin_ttl_hours=cfg.pin_ttl_hours,
                 )
                 if defer_nudge:
                     response["nudge_deferred"] = {
@@ -177,7 +153,6 @@ def append_ceremony_status(
             compute_nudge_minimal,
             select_learning_injection_content,
         )
-        from trw_mcp.state.surface_tracking import log_surface_event
 
         # Increment tool call counter for cooldown tracking (PRD-CORE-134)
         try:
@@ -217,7 +192,7 @@ def append_ceremony_status(
             except Exception:  # justified: fail-open
                 logger.debug("record_nudge_shown_failed", exc_info=True)
 
-            try:
+            with suppress(Exception):  # justified: fail-open per NFR02
                 logger.info(
                     "nudge_shown",
                     pool=pool_name,
@@ -227,8 +202,6 @@ def append_ceremony_status(
                     client_id=client_id,
                     turn=state.tool_call_counter,
                 )
-            except Exception:  # justified: fail-open per NFR02
-                pass
             return effective_learning_id
 
         if messenger == "minimal":
@@ -263,7 +236,7 @@ def append_ceremony_status(
                     skip_phase_duplicates=True,
                 )
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
-                    try:
+                    with suppress(Exception):  # justified: fail-open per NFR02
                         structlog.get_logger(__name__).debug(
                             "nudge_skipped",
                             reason="phase_dedup",
@@ -271,8 +244,6 @@ def append_ceremony_status(
                             learning_id=learning_id,
                             client_id=str(getattr(cfg.client_profile, "client_id", "")),
                         )
-                    except Exception:  # justified: fail-open per NFR02
-                        pass
                     injected_content = None
                 if injected_content:
                     response["nudge_content"] = injected_content
@@ -282,24 +253,16 @@ def append_ceremony_status(
                         learning_id=learning_id,
                     )
                     if learning_id:
-                        try:
-                            from trw_mcp.state._session_id import resolve_effective_session_id
-
-                            log_surface_event(
-                                effective_dir,
-                                learning_id=learning_id,
-                                surface_type="nudge",
-                                phase=state.phase,
-                                files_context=[target_file] if target_file else [],
-                                exploration=False,
-                                bandit_score=1.0,
-                                client_profile=client_id,
-                                model_family=cfg.model_family or "generic",
-                                trw_version=cfg.framework_version,
-                                session_id=resolve_effective_session_id(effective_dir),
-                            )
-                        except Exception:  # justified: fail-open
-                            logger.debug("surface_event_log_failed", exc_info=True)
+                        _emit_nudge_surface_event(
+                            effective_dir,
+                            cfg=cfg,
+                            state=state,
+                            messenger=messenger,
+                            client_id=client_id,
+                            learning_id=learning_id,
+                            target_file=target_file,
+                            pending_step=_pending_nudge_step(),
+                        )
                     else:
                         _ = effective_learning_id
                     logger.debug(
@@ -337,7 +300,7 @@ def append_ceremony_status(
                 )
 
                 if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
-                    try:
+                    with suppress(Exception):  # justified: fail-open per NFR02
                         structlog.get_logger(__name__).debug(
                             "nudge_skipped",
                             reason="phase_dedup",
@@ -345,8 +308,6 @@ def append_ceremony_status(
                             learning_id=learning_id,
                             client_id=str(getattr(cfg.client_profile, "client_id", "")),
                         )
-                    except Exception:  # justified: fail-open per NFR02
-                        pass
                     contentual_content = None
 
                 if contentual_content:
@@ -357,24 +318,16 @@ def append_ceremony_status(
                         learning_id=learning_id,
                     )
                     if learning_id:
-                        try:
-                            from trw_mcp.state._session_id import resolve_effective_session_id
-
-                            log_surface_event(
-                                effective_dir,
-                                learning_id=learning_id,
-                                surface_type="nudge",
-                                phase=state.phase,
-                                files_context=[target_file] if target_file else [],
-                                exploration=False,
-                                bandit_score=1.0,
-                                client_profile=client_id,
-                                model_family=cfg.model_family or "generic",
-                                trw_version=cfg.framework_version,
-                                session_id=resolve_effective_session_id(effective_dir),
-                            )
-                        except Exception:  # justified: fail-open
-                            logger.debug("surface_event_log_failed", exc_info=True)
+                        _emit_nudge_surface_event(
+                            effective_dir,
+                            cfg=cfg,
+                            state=state,
+                            messenger=messenger,
+                            client_id=client_id,
+                            learning_id=learning_id,
+                            target_file=target_file,
+                            pending_step=_pending_nudge_step(),
+                        )
                     logger.debug(
                         "nudge_messenger_selected",
                         messenger=messenger,

@@ -8,6 +8,7 @@ This module is a thin orchestrator.  Implementation lives in:
 - ``_template_updater`` — file copying, CLAUDE.md management, IDE configs
 - ``_version_migration`` — predecessor cleanup, stale artifact removal, manifest I/O
 """
+# ruff: noqa: I001 - backward-compat re-exports stay grouped for LOC ratchet.
 
 from __future__ import annotations
 
@@ -25,21 +26,19 @@ import structlog
 # to the canonical implementation in the sub-module.
 # ---------------------------------------------------------------------------
 # --- from _template_updater ---
-from ._template_updater import _ALWAYS_UPDATE as _ALWAYS_UPDATE
-from ._template_updater import _NEVER_OVERWRITE as _NEVER_OVERWRITE
-from ._template_updater import _TRW_END_MARKER as _TRW_END_MARKER
-from ._template_updater import _TRW_HEADER_MARKER as _TRW_HEADER_MARKER
-from ._template_updater import _TRW_START_MARKER as _TRW_START_MARKER
 from ._template_updater import (
+    _ALWAYS_UPDATE as _ALWAYS_UPDATE,
     _extract_trw_section_content as _extract_trw_section_content,
-)
-from ._template_updater import _get_bundled_names as _get_bundled_names
-from ._template_updater import _get_custom_names as _get_custom_names
-from ._template_updater import (
+    _get_bundled_names as _get_bundled_names,
+    _get_custom_names as _get_custom_names,
     _minimal_claude_md_trw_block as _minimal_claude_md_trw_block,
+    _NEVER_OVERWRITE as _NEVER_OVERWRITE,
+    _report_preserved_files as _report_preserved_files,
+    _run_claude_md_sync as _run_claude_md_sync,
+    _TRW_END_MARKER as _TRW_END_MARKER,
+    _TRW_HEADER_MARKER as _TRW_HEADER_MARKER,
+    _TRW_START_MARKER as _TRW_START_MARKER,
 )
-from ._template_updater import _report_preserved_files as _report_preserved_files
-from ._template_updater import _run_claude_md_sync as _run_claude_md_sync
 
 _logger = structlog.get_logger(__name__)
 
@@ -108,37 +107,23 @@ def _run_auto_maintenance(
             _logger.debug("auto_maintenance_config_reset_failed", exc_info=True)
 
 
-from ._template_updater import _update_agents as _update_agents
 from ._template_updater import (
+    _update_agents as _update_agents,
     _update_always_overwrite_files as _update_always_overwrite_files,
-)
-from ._template_updater import (
     _update_antigravity_artifacts as _update_antigravity_artifacts,
-)
-from ._template_updater import (
     _update_claude_md_trw_section as _update_claude_md_trw_section,
-)
-from ._template_updater import (
     _update_codex_artifacts as _update_codex_artifacts,
-)
-from ._template_updater import (
     _update_config_target_platforms as _update_config_target_platforms,
-)
-from ._template_updater import (
     _update_copilot_artifacts as _update_copilot_artifacts,
-)
-from ._template_updater import _update_cursor_artifacts as _update_cursor_artifacts
-from ._template_updater import _update_framework_files as _update_framework_files
-from ._template_updater import (
+    _update_cursor_artifacts as _update_cursor_artifacts,
+    _update_framework_files as _update_framework_files,
     _update_gemini_artifacts as _update_gemini_artifacts,
-)
-from ._template_updater import _update_hooks as _update_hooks
-from ._template_updater import _update_mcp_config as _update_mcp_config
-from ._template_updater import (
+    _update_hooks as _update_hooks,
+    _update_mcp_config as _update_mcp_config,
     _update_opencode_artifacts as _update_opencode_artifacts,
+    _update_or_report as _update_or_report,
+    _update_skills as _update_skills,
 )
-from ._template_updater import _update_or_report as _update_or_report
-from ._template_updater import _update_skills as _update_skills
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
@@ -153,28 +138,20 @@ from ._utils import (
 )
 
 # --- from _version_migration ---
-from ._version_migration import _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST
-from ._version_migration import _MANIFEST_FILE as _MANIFEST_FILE
-from ._version_migration import PREDECESSOR_MAP as PREDECESSOR_MAP
 from ._version_migration import (
     _cleanup_context_transients as _cleanup_context_transients,
-)
-from ._version_migration import (
     _cleanup_stale_artifacts as _cleanup_stale_artifacts,
-)
-from ._version_migration import _coerce_manifest_list as _coerce_manifest_list
-from ._version_migration import (
+    _coerce_manifest_list as _coerce_manifest_list,
+    _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST,
+    _MANIFEST_FILE as _MANIFEST_FILE,
     _migrate_predecessor_set as _migrate_predecessor_set,
-)
-from ._version_migration import (
     _migrate_prefix_predecessors as _migrate_prefix_predecessors,
-)
-from ._version_migration import _read_manifest as _read_manifest
-from ._version_migration import (
+    PREDECESSOR_MAP as PREDECESSOR_MAP,
+    _read_manifest as _read_manifest,
     _remove_stale_artifacts as _remove_stale_artifacts,
+    _remove_stale_set as _remove_stale_set,
+    _write_manifest as _write_manifest,
 )
-from ._version_migration import _remove_stale_set as _remove_stale_set
-from ._version_migration import _write_manifest as _write_manifest
 
 logger = structlog.get_logger(__name__)
 
@@ -330,6 +307,12 @@ def _run_post_update_phases(
     prev_manifest: dict[str, object] | None = None,
 ) -> None:
     """Execute post-update phases (package install, verification, IDE configs)."""
+    # PRD-SEC-005-FR05: migrate any tracked config.yaml key into the ignored
+    # credentials.yaml (idempotent, fail-open) before other post-update work.
+    from trw_mcp.models.config._credentials import migrate_for_update_project
+
+    migrate_for_update_project(target_dir / ".trw" / "config.yaml", result)
+
     if pip_install:
         if on_progress:
             on_progress("Phase", "Reinstalling package...")
@@ -483,9 +466,7 @@ def update_project(
 
         if not dry_run:
             _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
-    except (
-        Exception
-    ) as exc:  # justified: fail-open — update-project errors are captured here and rolled back in finally
+    except Exception as exc:  # justified: fail-open — errors captured here, rolled back in finally
         result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
     finally:
         if snapshot_root is not None:

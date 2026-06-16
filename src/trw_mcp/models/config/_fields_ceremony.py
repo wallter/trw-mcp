@@ -39,8 +39,8 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v25_TRW"
-    aaref_version: str = "v3.0.0"
+    framework_version: str = "v26_TRW"
+    aaref_version: str = "v3.1.0"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -62,12 +62,21 @@ class _CeremonyFields:
     validation_review_threshold: float = 85.0
     validation_fk_optimal_min: float = 8.0
     validation_fk_optimal_max: float = 12.0
+    # Wiring gate (PRD-CORE-190): warn=advisory; block=opt-in WIRING_GATE_FAIL.
+    wiring_gate_mode: Literal["warn", "block"] = "warn"
 
     risk_scaling_enabled: bool = True
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     prd_min_content_density: float = 0.30
     prd_required_status_for_implement: str = "approved"
     prds_relative_path: str = "docs/requirements-aare-f/prds"
+    # Sibling repo roots for multi-repo workspaces (Potemkin defect B,
+    # sub_zAfRqZYYq2KtF72d): when a PRD lives in a research/PRD repo but its
+    # key-file references point into a sibling code repo, list those sibling
+    # roots here so trw_prd_validate resolves them instead of emitting false
+    # repo_path_exists errors. Empty by default — single-repo behaviour
+    # unchanged. Paths may be absolute or relative to the project root.
+    additional_repo_roots: list[str] = Field(default_factory=list)
     index_auto_sync_on_status_change: bool = True
     strict_input_criteria: bool = False
 
@@ -109,6 +118,12 @@ class _CeremonyFields:
     compliance_dir: str = "compliance"
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
+    # PRD-LOCAL-049 FR03: package-changelog advisory. Default OFF — the session
+    # changelog (FR01) is always written, but the advisory that warns when
+    # package source changed without a CHANGELOG.md update is opt-in. v1 is
+    # advisory-only and NEVER fails delivery; a future strict mode would gate
+    # behind a separate flag.
+    changelog_advisory_enabled: bool = False
     commit_fr_trailer_enabled: bool = True
     sprint_integration_branch_pattern: str = "sprint-{N}-integration"
     compliance_review_retention_days: int = 365
@@ -157,6 +172,13 @@ class _CeremonyFields:
     nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_dedup_enabled: bool = True
     nudge_messenger: NudgeMessengerLiteral | None = None
+
+    # Live A/B arm label (nudge-deep-dive work target #6). Free-text tag stamped
+    # onto every nudge surface event so an experiment's arms can be compared on
+    # REAL traffic (not just eval campaigns). Routing of which messenger an arm
+    # uses is still done via ``nudge_messenger``; this field only labels the arm
+    # (e.g. "control", "structural-v2"). None => unlabelled (no A/B in effect).
+    nudge_variant: str | None = None
 
     nudge_density: Literal["low", "medium", "high"] | None = Field(
         default=None,

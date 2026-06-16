@@ -69,6 +69,11 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     avg_rework_delta: float | None
     outcome_correlation: str
     session_count: int
+    # Bi-temporal validity (PRD-CORE-194 FR03). ``superseded`` surfaces WHY a
+    # record is down-ranked/excluded; ``invalidated_by`` names the superseding
+    # record. Present only when the entry's validity window is closed.
+    superseded: bool
+    invalidated_by: str | None
 
 
 class PruneCandidateDict(TypedDict):

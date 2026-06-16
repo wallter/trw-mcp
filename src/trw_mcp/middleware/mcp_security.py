@@ -275,7 +275,7 @@ class MCPSecurityMiddleware(Middleware):
 
         reason = auth.reason or scope_reason
         allowed = auth.allowed and not scope_reason
-        if self._detector._config.mode == "enforce" and "rate_spike" in fired:
+        if self._detector.mode == "enforce" and "rate_spike" in fired:
             allowed = False
             reason = "rate_spike"
         if not self._enforce:

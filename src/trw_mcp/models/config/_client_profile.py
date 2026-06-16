@@ -205,6 +205,15 @@ class ClientProfile(BaseModel):
     # field only carries the per-profile name/opt-out metadata.
     feedback_skill: str | None = "trw-feedback"
 
+    # -- Phase-aware tool exposure (PRD-INTENT-002 FR04/FR05b) --
+    # Behavior when the active phase transitions and the client did NOT
+    # advertise the `tools.listChanged` capability. `notify` emits anyway
+    # (best-effort); `require_reconnect` signals a reconnect; `silent` leaves
+    # the stale cache until the next connect. Default `require_reconnect` is
+    # the safest (guarantees the client's tool view matches server state after
+    # reconnect) per FR05b.
+    on_transition: Literal["notify", "require_reconnect", "silent"] = "require_reconnect"
+
     # -- Tool namespace rendering (PRD-FIX-078) --
     # Prepended to bare ``trw_*`` tool names in rendered instructional text.
     # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to

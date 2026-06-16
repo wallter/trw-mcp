@@ -72,7 +72,7 @@ _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "xarray": {"xarray", "scientific", "arrays"},
     "scikit-learn": {"scikit-learn", "ml", "scientific"},
     "sklearn": {"scikit-learn", "ml", "scientific"},
-    # FeatureBench repo roots (frequent ones).
+    # Additional common benchmark-corpus repo roots (frequent ones).
     "pandas": {"pandas", "dataframes", "scientific"},
     "transformers": {"transformers", "ml", "huggingface"},
     "mlflow": {"mlflow", "ml", "tracking"},

@@ -63,9 +63,7 @@ def test_channel_surface_canonical_values_present() -> None:
 
 
 def test_channel_status_values() -> None:
-    assert {s.value for s in ChannelStatus} == {
-        "active", "aspirational", "deprecated", "disabled"
-    }
+    assert {s.value for s in ChannelStatus} == {"active", "aspirational", "deprecated", "disabled"}
 
 
 def test_human_edit_detection_values() -> None:
@@ -78,16 +76,11 @@ def test_human_edit_detection_values() -> None:
 
 
 def test_cleanup_trigger_values() -> None:
-    assert {e.value for e in CleanupTrigger} == {
-        "TTL_EXCEEDED", "QUOTA_EXCEEDED", "DISABLED", "NONE"
-    }
+    assert {e.value for e in CleanupTrigger} == {"TTL_EXCEEDED", "QUOTA_EXCEEDED", "DISABLED", "NONE"}
 
 
 def test_cleanup_action_values() -> None:
-    expected = {
-        "TIER_DOWN", "TIER_DOWN_TO_T0", "FULL_PRUNE",
-        "CLEAR_SEGMENT", "SUPPRESS", "TOMBSTONE", "NONE"
-    }
+    expected = {"TIER_DOWN", "TIER_DOWN_TO_T0", "FULL_PRUNE", "CLEAR_SEGMENT", "SUPPRESS", "TOMBSTONE", "NONE"}
     assert {e.value for e in CleanupAction} == expected
 
 

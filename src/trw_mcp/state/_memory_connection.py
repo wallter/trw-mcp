@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,9 +27,25 @@ if TYPE_CHECKING:
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+from trw_mcp.state import _memory_offline as _offline
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
+from trw_mcp.state._memory_backfill import run_backfill_embeddings
+from trw_mcp.state._memory_embedding_status import build_embeddings_status
+
+# PRD-QUAL-110-FR02 gate: ``ensure_migrated`` lives in the ``_memory_migration``
+# sibling; re-exported so ``get_backend`` and tests patching
+# ``_memory_connection.ensure_migrated`` keep working (bare-name call resolves
+# through module globals at call time, so the monkeypatch propagates).
+from trw_mcp.state._memory_migration import ensure_migrated as ensure_migrated
+from trw_mcp.state._memory_wal_health import _append_wal_health
 
 logger = structlog.get_logger(__name__)
+
+# PRD-QUAL-110-FR04: embeddings offline-switch detection lives in the
+# ``_memory_offline`` sibling; re-exported for back-compat (tests + warmup).
+_OFFLINE_ENV_VARS = _offline._OFFLINE_ENV_VARS
+_embeddings_offline = _offline.embeddings_offline
+warmup_suppressed_by_offline = _offline.warmup_suppressed_by_offline
 
 # ---------------------------------------------------------------------------
 # Module-level singletons
@@ -52,6 +67,17 @@ _embedder_unavailable_reason: str = ""
 # backfill races when get_backend() is called multiple times after a recovery.
 _BACKFILL_THREAD: threading.Thread | None = None
 _BACKFILL_LOCK = threading.Lock()
+
+# Option A+ (council-ratified 2026-06-10): first-recall download warm-up guard.
+# With embeddings ON by default, the FIRST trw_recall that allows cold init would
+# otherwise pay the all-MiniLM-L6-v2 *download* synchronously on a never-cached
+# box, risking an MCP-client timeout on slow networks. `_schedule_embedder_warmup`
+# runs the cold `get_embedder()` load on a daemon thread (same single-flight
+# pattern as `_BACKFILL_THREAD`), kicked off at session_start, never blocking the
+# hot path. Recall degrades to keyword (get_initialized_embedder -> None) until the
+# warm-up completes.
+_WARMUP_THREAD: threading.Thread | None = None
+_WARMUP_LOCK = threading.Lock()
 
 _SENTINEL_NAME = ".migrated"
 _NAMESPACE = DEFAULT_NAMESPACE
@@ -139,6 +165,73 @@ def _schedule_post_recovery_backfill(trw_dir: Path, reason: str = "post_recovery
     return True
 
 
+def _schedule_embedder_warmup() -> bool:
+    """Warm the local embedder on a background daemon thread, if needed.
+
+    Option A+ (council-ratified 2026-06-10, PRD-DIST-254 §FR03 follow-up):
+    With ``embeddings_enabled`` now defaulting to True, the FIRST ``trw_recall``
+    that passes ``allow_cold_embedding_init=True`` would otherwise pay the
+    all-MiniLM-L6-v2 model *download* synchronously on a never-cached box, which
+    can exceed an MCP client timeout on slow networks. This kicks off the cold
+    :func:`get_embedder` load (which performs the import + download + load) on a
+    daemon thread so the download is paid in the background. ``trw_session_start``
+    calls this; the hot path itself stays cold-load-free because it uses
+    :func:`get_initialized_embedder`, which returns ``None`` (keyword fallback)
+    until this warm-up has populated the singleton.
+
+    Single-flight via ``_WARMUP_LOCK`` (mirrors ``_schedule_post_recovery_backfill``).
+    No-op (returns ``False``) when embeddings are disabled or the embedder has
+    already been initialized.
+
+    Returns:
+        True if a new warm-up thread was started, False otherwise.
+    """
+    global _WARMUP_THREAD
+
+    from trw_mcp.models.config import get_config
+
+    if not get_config().embeddings_enabled:
+        return False
+    # Already checked/loaded (e.g. an explicit trw_learn embed ran first) — nothing to warm.
+    if _embedder_checked:
+        return False
+
+    # PRD-QUAL-110-FR04: honor the offline switch (suppress warm-up so no
+    # huggingface.co download is attempted at session_start) and otherwise emit
+    # the first-run egress-disclosure log line. Delegated to the _memory_offline
+    # sibling to keep this facade under the 350-eLOC gate.
+    if warmup_suppressed_by_offline(logger):
+        return False
+
+    def _run_warmup() -> None:
+        global _WARMUP_THREAD
+        try:
+            # Look the accessor up on the module so tests that patch
+            # `_memory_connection.get_embedder` are honored, and so the cold-load
+            # path (download + model load) is exercised exactly once.
+            get_embedder()
+        except Exception:  # justified: fail-open, warm-up thread must never crash the MCP server
+            logger.warning("embedder_warmup_failed", exc_info=True)
+        finally:
+            with _WARMUP_LOCK:
+                if _WARMUP_THREAD is threading.current_thread():
+                    _WARMUP_THREAD = None
+
+    with _WARMUP_LOCK:
+        if _WARMUP_THREAD is not None and _WARMUP_THREAD.is_alive():
+            return False
+        thread = threading.Thread(
+            target=_run_warmup,
+            name="trw-embed-warmup",
+            daemon=True,
+        )
+        _WARMUP_THREAD = thread
+        thread.start()
+
+    logger.info("embedder_warmup_scheduled")
+    return True
+
+
 def _create_backend(db_path: Path, backend_kwargs: dict[str, Any]) -> SQLiteBackend:
     """Instantiate ``SQLiteBackend`` with a compatibility fallback for tests.
 
@@ -184,8 +277,12 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
 
             trw_dir = resolve_trw_dir()
 
+        # PRD-QUAL-110-FR02: create the memory dir 0700 (it holds the memory.db
+        # secret store + sqlite-vec sidecars), consistent with pins.json 0600.
+        from trw_mcp.state._paths_permissions import harden_dir_mode, harden_secret_file_mode
+
         memory_dir = trw_dir / "memory"
-        memory_dir.mkdir(parents=True, exist_ok=True)
+        harden_dir_mode(memory_dir, create=True)
         db_path = memory_dir / "memory.db"
 
         from trw_mcp.models.config import get_config
@@ -224,6 +321,10 @@ def get_backend(trw_dir: Path | None = None) -> SQLiteBackend:
             except CorruptDatabaseUnsalvageableError as retry_exc:
                 _log_terminal_recovery(db_path, retry_exc)
                 raise
+
+        # PRD-QUAL-110-FR02: the SQLite store is secret-bearing — 0600 it once
+        # the file exists on disk (best-effort; non-POSIX degrades to a WARN).
+        harden_secret_file_mode(db_path)
 
         if backend.recovered:
             # Remove migration sentinel so ensure_migrated re-runs the
@@ -406,136 +507,24 @@ def reset_embed_failure_count() -> None:
     _embed_failures = 0
 
 
-def _resolve_memory_db_path() -> Path:
-    """Resolve the memory.db path from the .trw directory.
-
-    Returns the primary SQLite store path (``memory.db``, distinct from
-    ``vectors.db`` used for embeddings). Internal helper for WAL health
-    reporting — avoids circular imports.
-    """
-    from trw_mcp.state._paths import resolve_trw_dir
-
-    return resolve_trw_dir() / "memory" / "memory.db"
-
-
-def _append_wal_health(result: dict[str, object]) -> None:
-    """Append WAL file size advisory to an embeddings status result dict.
-
-    PRD-QUAL-050-FR06: When the WAL file exceeds the configured threshold,
-    adds ``wal_size_mb`` and ``wal_advisory`` keys to the result dict.
-    Fail-open: exceptions are silently caught.
-    """
-    try:
-        from trw_mcp.models.config import get_config as _get_config
-
-        cfg = _get_config()
-        db_path = _resolve_memory_db_path()
-        wal_path = db_path.with_suffix(".db-wal")
-        if wal_path.exists():
-            wal_size_mb = wal_path.stat().st_size / (1024 * 1024)
-            if wal_size_mb > cfg.wal_checkpoint_threshold_mb:
-                result["wal_size_mb"] = round(wal_size_mb, 1)
-                result["wal_advisory"] = (
-                    f"WAL file is {wal_size_mb:.1f}MB (threshold: {cfg.wal_checkpoint_threshold_mb}MB)"
-                )
-    except Exception:  # justified: fail-open, WAL health is advisory only
-        logger.debug("wal_health_check_failed", exc_info=True)
-
-
 def check_embeddings_status(
     *,
     allow_initialize: bool = True,
     coverage_probe: bool = False,
 ) -> dict[str, object]:
-    """Check embedding readiness and return status for session_start advisory.
-
-    Args:
-        allow_initialize: Whether to initialize the embedder (cold load) if not yet checked.
-            Set False on the MCP hot path to avoid blocking model loads.
-        coverage_probe: When True, probe existing_vector_ids()/count() on the live backend
-            and compute a coverage_ratio. When below embeddings_coverage_warn_threshold,
-            adds an advisory (PRD-FIX-COMPOUNDING-3-FR02). Default False for backward compat.
-
-    Returns a dict with:
-    - ``enabled``: whether config has embeddings_enabled=True
-    - ``available``: whether deps are installed and model loads
-    - ``advisory``: human-readable message (empty when everything is fine)
-    - ``recent_failures``: count of embed failures since process start (FR07)
-    - ``coverage_ratio``: (optional, when coverage_probe=True) vector count / entry count
-    - ``wal_size_mb``: (optional) WAL file size when above threshold (FR06)
-    - ``wal_advisory``: (optional) human-readable WAL size warning (FR06)
-    """
-    from trw_mcp.models.config import get_config
-
-    cfg = get_config()
-    if not cfg.embeddings_enabled:
-        result: dict[str, object] = {
-            "enabled": False,
-            "available": False,
-            "advisory": "",
-            "recent_failures": _embed_failures,
-        }
-        _append_wal_health(result)
-        return result
-
-    if not allow_initialize and not _embedder_checked:
-        result = {
-            "enabled": True,
-            "available": False,
-            "advisory": "Embeddings enabled; cold model initialization was deferred on the MCP hot path.",
-            "recent_failures": _embed_failures,
-            "initialization_deferred": True,
-        }
-        _append_wal_health(result)
-        return result
-
-    embedder = get_embedder() if allow_initialize else get_initialized_embedder()
-    if embedder is not None:
-        advisory = ""
-        result = {
-            "enabled": True,
-            "available": True,
-            "advisory": advisory,
-            "recent_failures": _embed_failures,
-        }
-        # PRD-FIX-COMPOUNDING-3-FR02: Optional coverage probe
-        if coverage_probe:
-            backend = peek_backend()
-            if backend is not None:
-                try:
-                    vec_count = len(backend.existing_vector_ids())
-                    total = backend.count()
-                    coverage_ratio: float = vec_count / total if total > 0 else 1.0
-                    result["coverage_ratio"] = coverage_ratio
-                    warn_threshold = getattr(cfg, "embeddings_coverage_warn_threshold", 0.10)
-                    if coverage_ratio < warn_threshold:
-                        advisory = (
-                            f"Vector coverage is low: {vec_count}/{total} entries have embeddings "
-                            f"({coverage_ratio:.1%}). Run 'update-project' to backfill vectors. "
-                            f"Hybrid KNN recall is degraded until backfill completes."
-                        )
-                        result["advisory"] = advisory
-                        logger.warning(
-                            "embeddings_coverage_low",
-                            coverage_ratio=round(coverage_ratio, 4),
-                            vec_count=vec_count,
-                            total=total,
-                            warn_threshold=warn_threshold,
-                        )
-                except Exception:  # justified: fail-open, coverage probe is advisory only
-                    logger.debug("embeddings_coverage_probe_failed", exc_info=True)
-        _append_wal_health(result)
-        return result
-
-    reason = _embedder_unavailable_reason or "sentence-transformers is not installed"
-    result = {
-        "enabled": True,
-        "available": False,
-        "advisory": f"Embeddings enabled but unavailable: {reason}. Run: pip install trw-memory[embeddings]",
-        "recent_failures": _embed_failures,
-    }
-    _append_wal_health(result)
-    return result
+    """Check embedding readiness and return status for session_start advisory."""
+    return build_embeddings_status(
+        allow_initialize=allow_initialize,
+        coverage_probe=coverage_probe,
+        embed_failures=_embed_failures,
+        embedder_checked=_embedder_checked,
+        embedder_unavailable_reason=_embedder_unavailable_reason,
+        get_embedder=get_embedder,
+        get_initialized_embedder=get_initialized_embedder,
+        peek_backend=peek_backend,
+        append_wal_health=_append_wal_health,
+        logger=logger,
+    )
 
 
 def _embed_and_store_returning(backend: SQLiteBackend, entry_id: str, text: str) -> list[float] | None:
@@ -550,7 +539,14 @@ def _embed_and_store_returning(backend: SQLiteBackend, entry_id: str, text: str)
     global _embed_failures
     embedder = get_embedder()
     if embedder is None:
-        _embed_failures += 1
+        # FR07: only count this as a failure when embeddings are EXPECTED
+        # (embeddings_enabled=True) but the embedder is unavailable. When
+        # embeddings are intentionally disabled, there is no failure to report
+        # and incrementing the counter would conflate config with health.
+        from trw_mcp.models.config import get_config
+
+        if get_config().embeddings_enabled:
+            _embed_failures += 1
         return None
     try:
         vector = embedder.embed(text)
@@ -578,165 +574,18 @@ def _embed_and_store(backend: SQLiteBackend, entry_id: str, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Migration
+# Migration — ``ensure_migrated`` is imported at module top from the
+# ``_memory_migration`` sibling (extracted for the 350-eLOC gate).
 # ---------------------------------------------------------------------------
 
 
-def ensure_migrated(trw_dir: Path, backend: SQLiteBackend) -> dict[str, int]:
-    """One-time migration of YAML learning entries into SQLite.
-
-    Idempotent: writes a sentinel file on success; subsequent calls are no-ops.
-    Individual entry failures are logged and skipped -- never aborts the batch.
-
-    Args:
-        trw_dir: Path to the ``.trw`` directory.
-        backend: Active :class:`SQLiteBackend` to store entries in.
-
-    Returns:
-        Dict with ``migrated`` and ``skipped`` counts.
-    """
-    sentinel = trw_dir / "memory" / _SENTINEL_NAME
-    if sentinel.exists():
-        return {"migrated": 0, "skipped": 0}
-
-    from trw_mcp.models.config import get_config
-
-    cfg = get_config()
-    entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    if not entries_dir.exists():
-        # Fresh project -- nothing to migrate
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text("migrated_at=" + datetime.now(timezone.utc).isoformat())
-        return {"migrated": 0, "skipped": 0}
-
-    migrated = 0
-    skipped = 0
-
-    try:
-        from trw_memory.migration.from_trw import migrate_entries_dir
-
-        memory_entries = migrate_entries_dir(entries_dir)
-    except Exception:  # justified: boundary, migration from YAML entries may fail on corrupt files
-        logger.warning(
-            "memory_migration_read_failed",
-            exc_info=True,
-            entries_dir=str(entries_dir),
-        )
-        return {"migrated": 0, "skipped": 0}
-
-    for entry in memory_entries:
-        try:
-            # Ensure namespace is set
-            if not entry.namespace or entry.namespace == "":
-                entry = entry.model_copy(update={"namespace": _NAMESPACE})
-            backend.store(entry)
-            migrated += 1
-        except Exception:  # per-item error handling: one bad entry must not abort migration
-            skipped += 1
-            logger.warning(
-                "memory_migration_entry_skipped",
-                exc_info=True,
-                entry_id=entry.id,
-            )
-
-    # Only write sentinel on success
-    sentinel.parent.mkdir(parents=True, exist_ok=True)
-    sentinel.write_text(
-        f"migrated_at={datetime.now(timezone.utc).isoformat()}\nmigrated={migrated}\nskipped={skipped}\n"
-    )
-
-    logger.info(
-        "memory_migration_complete",
-        migrated=migrated,
-        skipped=skipped,
-    )
-    return {"migrated": migrated, "skipped": skipped}
-
-
 def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
-    """Generate embeddings for all entries that don't have one yet.
-
-    Called on first activation of embeddings (session_start with
-    embeddings_enabled=True and deps available). Idempotent -- skips
-    entries that already have a vector stored.
-
-    Returns counts: ``{"embedded": N, "skipped": N, "failed": N}``.
-    """
-    embedder = get_embedder()
-    if embedder is None:
-        return {"embedded": 0, "skipped": 0, "failed": 0}
-
-    backend = get_backend(trw_dir)
-
-    # Idempotency: bulk-fetch already-embedded IDs first. When the vector
-    # count covers (or exceeds) the entry count, there is nothing to do --
-    # short-circuit BEFORE list_entries(), which loads + Pydantic-validates
-    # every MemoryEntry (~27s for 6438 rows). Both checks are O(rows-only)
-    # COUNT/SELECT-ID queries, ~ms even on big corpora.
-    already_embedded = backend.existing_vector_ids()
-    entry_count = backend.count(namespace=_NAMESPACE)
-    missing_count = max(0, entry_count - len(already_embedded))
-
-    if entry_count <= len(already_embedded):
-        logger.info(
-            "embeddings_backfill_complete",
-            embedded=0,
-            skipped=entry_count,
-            failed=0,
-        )
-        return {"embedded": 0, "skipped": entry_count, "failed": 0}
-
-    # PRD-FIX-COMPOUNDING-3-FR04: Log at WARNING when vectors are missing so
-    # ops logs surface the gap. INFO was silent in agent output.
-    logger.warning(
-        "embeddings_backfill_start",
-        total_entries=entry_count,
-        already_embedded=len(already_embedded),
-        missing_count=missing_count,
+    """Generate embeddings for all entries that don't have one yet."""
+    return run_backfill_embeddings(
+        trw_dir,
+        get_backend=get_backend,
+        get_embedder=get_embedder,
+        logger=logger,
+        namespace=_NAMESPACE,
+        max_entries=_MAX_ENTRIES,
     )
-
-    entries = backend.list_entries(namespace=_NAMESPACE, limit=_MAX_ENTRIES)
-
-    embedded = 0
-    skipped = 0
-    failed = 0
-
-    for entry in entries:
-        if entry.metadata.get("system_canary") == "true":
-            continue
-        if entry.id in already_embedded:
-            skipped += 1
-            continue
-        try:
-            text = f"{entry.content} {entry.detail}"
-            if not text.strip():
-                skipped += 1
-                continue
-
-            vector = embedder.embed(text)
-            if vector is None:
-                failed += 1
-                continue
-
-            backend.upsert_vector(entry.id, vector)
-            embedded += 1
-        except (OSError, ValueError, RuntimeError):
-            failed += 1
-
-    # PRD-FIX-COMPOUNDING-3-FR04: Log at WARNING when vectors were actually embedded
-    # so ops logs surface completion and counts are visible in agent output.
-    if embedded > 0 or failed > 0:
-        logger.warning(
-            "embeddings_backfill_complete",
-            embedded=embedded,
-            skipped=skipped,
-            failed=failed,
-        )
-    else:
-        logger.info(
-            "embeddings_backfill_complete",
-            embedded=embedded,
-            skipped=skipped,
-            failed=failed,
-        )
-    return {"embedded": embedded, "skipped": skipped, "failed": failed}

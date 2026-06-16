@@ -123,6 +123,7 @@ def test_enforce_quota_no_tier_down_needed() -> None:
 
 def test_enforce_quota_tiers_down_once() -> None:
     """Content too large at T3 but fits at T2."""
+
     def renderer(tier: str) -> str:
         if tier == "T3":
             return "x" * 200
@@ -161,6 +162,7 @@ def test_enforce_quota_full_ladder_traversal() -> None:
 
 def test_enforce_quota_tier_min_floor_respected() -> None:
     """Does not descend below tier_min even if over quota."""
+
     def renderer(tier: str) -> str:
         return "x" * 500  # always over quota
 

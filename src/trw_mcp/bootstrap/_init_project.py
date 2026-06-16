@@ -79,6 +79,40 @@ def _create_directory_structure(
         _ensure_dir(target_dir / rel_dir, result, on_progress)
 
 
+def _harden_trw_permissions(target_dir: Path) -> None:
+    """Tighten the just-created ``.trw`` tree to 0700 (PRD-QUAL-110-FR02).
+
+    Without this, ``init-project`` left ``.trw`` + its state subdirs
+    (``learnings/``, ``logs/``, ``context/`` …) at the default umask
+    (group/other-readable), contradicting the README security claim that
+    "``.trw/`` dirs are 0700". Only ``.trw/memory`` was hardened previously
+    (by the memory-backend path), so a fresh install leaked the learning
+    corpus, logs, and context to group/other.
+
+    Reuses the shared :func:`harden_trw_tree` helper (well-known state
+    subdirs) and additionally hardens the init-created scaffold dirs that
+    are not in the well-known list (``frameworks/``, ``templates/``,
+    ``scripts/``, ``learnings/entries/``). Best-effort: chmod failures on
+    non-POSIX platforms degrade to a WARNING and never abort init (NFR02).
+    """
+    from trw_mcp.state._paths_permissions import harden_dir_mode, harden_trw_tree
+
+    trw_dir = target_dir / ".trw"
+    if not trw_dir.exists():
+        return
+    # Harden root + well-known state subdirs (runs/, learnings/, logs/,
+    # runtime/, memory/, context/, reflections/, knowledge/, security/).
+    harden_trw_tree(trw_dir, create_subdirs=True)
+    # init-project also scaffolds non-well-known dirs (frameworks/, templates/,
+    # scripts/, learnings/entries/) and some are created lazily by sub-installers
+    # AFTER the well-known set (e.g. channels/, telemetry/). Walk the whole tree
+    # so EVERY directory under .trw is owner-only — the README claims "`.trw/`
+    # dirs are 0700" with no exceptions. Best-effort per-dir (NFR02).
+    for sub in trw_dir.rglob("*"):
+        if sub.is_dir() and not sub.is_symlink():
+            harden_dir_mode(sub, create=False)
+
+
 def _write_ceremony_state_skeleton(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -383,6 +417,12 @@ def init_project(
     # 9. Write installer metadata + VERSION.yaml
     _write_installer_metadata(target_dir, "init-project", result, on_progress)
     _write_version_yaml(target_dir, result, on_progress)
+
+    # 10. Harden the .trw tree to 0700 (PRD-QUAL-110-FR02). Done LAST so every
+    # directory created above (including those created lazily by file writes)
+    # is tightened. Makes the README "`.trw/` dirs are 0700" claim true on the
+    # install path, not just the run-scaffold path.
+    _harden_trw_permissions(target_dir)
 
     if result["errors"]:
         logger.warning(

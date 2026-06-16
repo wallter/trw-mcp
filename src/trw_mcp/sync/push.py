@@ -85,6 +85,9 @@ class SyncPusher:
         batch_size: int = 100,
         timeout: float = 10.0,
         client_id: str | None = None,
+        *,
+        learning_sharing_enabled: bool = False,
+        platform_telemetry_enabled: bool = False,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._api_key = api_key
@@ -92,6 +95,16 @@ class SyncPusher:
         self._timeout = timeout
         self._client_id = (client_id or "").strip() or resolve_sync_client_id()
         self._project_root = os.getenv("TRW_PROJECT_ROOT", os.getcwd())
+        # PRD-SEC-004-FR05/FR01: the background sync push is a second off-machine
+        # egress path (alongside publisher.py). Learning CONTENT (summary+detail)
+        # rides /v1/sync/learnings and is gated by learning_sharing_enabled;
+        # session-outcome metrics ride /v1/sync/outcomes and are gated by the
+        # anonymous-usage flag platform_telemetry_enabled. Both default False
+        # (fail-closed for egress) so a pusher constructed without explicit
+        # consent never transmits — belt-and-suspenders behind the cycle-level
+        # gate in BackendSyncClient._run_one_cycle.
+        self._learning_sharing_enabled = learning_sharing_enabled
+        self._platform_telemetry_enabled = platform_telemetry_enabled
 
     async def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
         """Batch push learnings to POST /v1/sync/learnings. Never raises.
@@ -103,6 +116,20 @@ class SyncPusher:
         import httpx
 
         if not entries:
+            return PushResult()
+
+        # PRD-SEC-004-FR05: defensive consent gate at the egress boundary. A
+        # user who set learning_sharing_enabled=false (the default) NEVER has
+        # learning summary/detail leave the machine via background sync, even if
+        # a caller hands this pusher dirty entries. Zero off-machine POST when
+        # disabled; entries stay locally dirty for a future consented push.
+        if not self._learning_sharing_enabled:
+            logger.debug(
+                "sync_push_skipped",
+                reason="learning_sharing_disabled",
+                client_id=self._client_id,
+                entry_count=len(entries),
+            )
             return PushResult()
 
         started_at = perf_counter()
@@ -180,6 +207,19 @@ class SyncPusher:
         import httpx
 
         if not outcomes:
+            return PushResult()
+
+        # PRD-SEC-004-FR01: session-outcome metrics are anonymous usage
+        # telemetry — defensively gated on platform_telemetry_enabled. Zero
+        # off-machine POST when disabled (the documented opt-out flag); pending
+        # outcomes remain locally queued for a future consented push.
+        if not self._platform_telemetry_enabled:
+            logger.debug(
+                "sync_push_outcomes_skipped",
+                reason="platform_telemetry_disabled",
+                client_id=self._client_id,
+                count=len(outcomes),
+            )
             return PushResult()
 
         started_at = perf_counter()

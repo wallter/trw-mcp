@@ -40,12 +40,7 @@ _DIFF_WITH_TODO = (
 )
 
 _DIFF_NO_MARKERS = (
-    "diff --git a/mod.py b/mod.py\n"
-    "--- a/mod.py\n"
-    "+++ b/mod.py\n"
-    "@@ -1,1 +1,2 @@\n"
-    "+def clean():\n"
-    " existing_line\n"
+    "diff --git a/mod.py b/mod.py\n--- a/mod.py\n+++ b/mod.py\n@@ -1,1 +1,2 @@\n+def clean():\n existing_line\n"
 )
 
 

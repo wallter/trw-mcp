@@ -170,9 +170,7 @@ def read_settings_for_merge(
             # the recovery copy was unavailable rather than claiming it was made.
             logger.warning("bootstrap_settings_backup_failed", path=str(path), backup_path=str(backup))
             backup_note = f"backup to {backup.name} failed"
-        result.setdefault("warnings", []).append(
-            f"{rel_path} {reason}; {backup_note} and rewriting from scratch"
-        )
+        result.setdefault("warnings", []).append(f"{rel_path} {reason}; {backup_note} and rewriting from scratch")
         return {}
 
     try:

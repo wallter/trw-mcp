@@ -213,8 +213,17 @@ def process_outcome(
             history = []
         pending_updates.append((lid, entry_path, data, q_new, q_obs, history))
 
-    # Phase 2: Batch YAML writes (PRD-FIX-070-FR04)
+    # Phase 2: Batch YAML writes (PRD-FIX-070-FR04). SQLite-only entries have
+    # no YAML path by design, but they still received a Q/history update above
+    # and are persisted through the SQLite batch sync below; include them in the
+    # returned update set so callers and telemetry do not silently undercount
+    # successful SQLite-primary correlations.
     updated_ids = _write_pending_entries(pending_updates)
+    seen_updated = set(updated_ids)
+    for lid, entry_path, _data, _q_new, _q_obs, _history in pending_updates:
+        if entry_path is None and lid not in seen_updated:
+            updated_ids.append(lid)
+            seen_updated.add(lid)
 
     # Phase 3: Batch SQLite syncs (PRD-FIX-070-FR03)
     _batch_sync_to_sqlite(pending_updates, trw_dir)

@@ -1,8 +1,14 @@
 """Telemetry event models — PRD-CORE-031.
 
-Pydantic v2 models for anonymized, opt-in telemetry events.
-These models are serialized to local JSONL before any optional
-remote transmission.
+Pydantic v2 models for opt-in telemetry events. These models are serialized to
+local JSONL before any optional remote transmission.
+
+``installation_id`` is a pseudonymous identifier (a sanitized project-directory
+name), NOT an anonymized one — it is stable per project and could in principle
+be correlated back to a project by someone who knows the directory name. It
+carries no other PII. (Migrating it to an opaque UUID would make it truly
+anonymous but is a behavior change for the operator to decide — see the FR05
+truthfulness note in the analytics/telemetry review lane.)
 """
 
 from __future__ import annotations
@@ -22,8 +28,9 @@ def _utc_now() -> datetime:
 class TelemetryEvent(BaseModel):
     """Base telemetry event.
 
-    All telemetry events share these fields. ``installation_id`` is an
-    anonymized identifier — no PII is stored here.
+    All telemetry events share these fields. ``installation_id`` is a
+    pseudonymous identifier (a sanitized project-directory name) — stable per
+    project, not anonymized. No other PII is stored here.
     """
 
     model_config = ConfigDict(use_enum_values=True)
@@ -69,3 +76,15 @@ class SessionEndEvent(TelemetryEvent):
     total_duration_ms: int = 0
     tools_invoked: int = 0
     ceremony_score: int = 0
+
+
+class FirstSessionEvent(TelemetryEvent):
+    """PRD-INFRA-142 FR02 — emitted once per installation on the first
+    ``trw_session_start``. Marks the install→first-session funnel conversion.
+
+    ``profile`` is the resolved client profile (target_platforms[0]); it rides
+    the telemetry ``payload`` JSON column on the backend (not a mapped column).
+    """
+
+    event_type: str = EventType.FIRST_SESSION
+    profile: str = "unknown"

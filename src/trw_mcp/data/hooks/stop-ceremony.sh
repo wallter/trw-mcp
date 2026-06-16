@@ -15,8 +15,8 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 init_hook_timer
 
 # trw-loop worker bypass — explicit seam with trw-loop's worker runtime.
-# trw-loop sets TRW_LOOP_WORKER on every worker subprocess (see
-# trw_loop/clients.py::worker_subprocess_env). Loop workers complete via the
+# trw-loop sets TRW_LOOP_WORKER on every worker subprocess via its worker
+# runtime's subprocess-env seam. Loop workers complete via the
 # MCP-unavailable receipt contract, often with TRW MCP tools absent, so a
 # trw_deliver Stop reminder cannot be acted on and only wastes worker turns.
 # Non-loop (interactive) sessions never set this marker, so normal enforcement

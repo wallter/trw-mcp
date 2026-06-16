@@ -19,16 +19,30 @@ Defense-in-depth layers (v1):
 
 Non-Linux platforms run in **degraded mode**: subprocess + RLIMIT + timeout
 only. Network isolation and seccomp are unavailable; a warning is emitted.
+
+Environment hygiene (CORE-144 §7.6): the child runs with a MINIMAL sanitized
+env by default (``_SAFE_ENV_KEYS`` only — see :func:`_sanitize_env`) so an
+agent-authored, untrusted probe cannot read parent secrets (API keys, tokens)
+and exfiltrate them via stdout. A consequence is that probes which depend on
+``PYTHONPATH`` or a virtualenv (``VIRTUAL_ENV`` + the venv's ``bin`` on
+``PATH``) DEGRADE to inconclusive — imports fail because those variables are
+stripped. A probe that legitimately needs them opts in by name via
+``env_allowlist=["PYTHONPATH"]`` (extends the minimal env). Callers that need
+FULL parent inheritance — the SAFE-001 candidate-replay dispatch runs an
+operator-approved candidate through the project's real venv/harness — pass an
+explicit ``env=os.environ.copy()`` dict, which is forwarded verbatim.
 """
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +53,30 @@ from trw_mcp.meta_tune.errors import MetaTuneSafetyUnavailableError
 logger = structlog.get_logger(__name__)
 
 _IS_LINUX: bool = platform.system() == "Linux"
+
+#: PRD-CORE-144 §7.6 (env exfiltration control): the probe command is
+#: agent-authored, untrusted input. Inheriting the full parent environment
+#: would let a probe read API keys / tokens / platform secrets out of
+#: ``os.environ`` and print them on stdout (which is returned to the agent as
+#: evidence). The sandbox therefore runs with a MINIMAL env by default — only
+#: the variables a generic interpreter needs to start — plus an explicit
+#: caller-supplied allowlist (defaulting empty). Callers that genuinely need
+#: full inheritance (SAFE-001 candidate replay) pass an explicit ``env`` dict.
+_SAFE_ENV_KEYS: tuple[str, ...] = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
+
+
+def _sanitize_env(env_allowlist: tuple[str, ...] = ()) -> dict[str, str]:
+    """Build a minimal subprocess environment (CORE-144 §7.6).
+
+    Returns only ``_SAFE_ENV_KEYS`` (when present in the parent) plus any keys
+    named in ``env_allowlist``. Secrets in the parent environment (API keys,
+    tokens) are NOT inherited, so an agent-authored probe cannot exfiltrate
+    them via stdout. The allowlist defaults empty: a caller must opt in to any
+    additional variable by name.
+    """
+    keys = set(_SAFE_ENV_KEYS) | set(env_allowlist)
+    return {k: os.environ[k] for k in keys if k in os.environ}
+
 
 try:  # pragma: no cover - import guard
     import resource as _resource
@@ -90,6 +128,8 @@ class SandboxRunner:
         writable_paths: tuple[Path, ...],
         degraded: bool,
         strict: bool,
+        env_allowlist: tuple[str, ...] = (),
+        env: dict[str, str] | None = None,
     ) -> None:
         self.timeout_s = timeout_s
         self.memory_cap_mb = memory_cap_mb
@@ -98,6 +138,12 @@ class SandboxRunner:
         self.writable_paths = writable_paths
         self.degraded = degraded
         self.strict = strict
+        # CORE-144 §7.6: when ``env`` is None (the default), the child runs with
+        # a sanitized minimal env so an untrusted probe cannot read parent
+        # secrets. An explicit ``env`` dict (SAFE-001 candidate replay) is
+        # passed through verbatim for callers that need inheritance.
+        self.env_allowlist = env_allowlist
+        self.env: dict[str, str] = env if env is not None else _sanitize_env(env_allowlist)
 
     def _path_is_writable(self, path: Path) -> bool:
         """Return True when ``path`` falls under the writable allowlist."""
@@ -125,30 +171,22 @@ class SandboxRunner:
         """Executed in the forked child before ``execve``."""
         if _HAS_RESOURCE and _resource is not None:
             cap_bytes = self.memory_cap_mb * 1024 * 1024
-            try:
+            # preexec_fn runs after fork; avoid logging and continue with the
+            # remaining isolation layers when a platform rejects a limit.
+            with suppress(ValueError, OSError):
                 _resource.setrlimit(_resource.RLIMIT_AS, (cap_bytes, cap_bytes))
-            except (ValueError, OSError):
-                pass
-            try:
+            with suppress(ValueError, OSError, AttributeError):
                 _resource.setrlimit(_resource.RLIMIT_NPROC, (64, 64))
-            except (ValueError, OSError, AttributeError):
-                pass
         if _HAS_SECCOMP and pyseccomp is not None and _IS_LINUX:
-            try:
+            with suppress(Exception):
                 flt = pyseccomp.SyscallFilter(pyseccomp.ALLOW)
                 for denied in ("ptrace", "mount", "reboot", "init_module"):
-                    try:
+                    with suppress(Exception):
                         flt.add_rule(pyseccomp.ERRNO(1), denied)
-                    except Exception:
-                        pass
                 if not self.allow_network:
-                    try:
+                    with suppress(Exception):
                         flt.add_rule(pyseccomp.ERRNO(1), "socket")
-                    except Exception:
-                        pass
                 flt.load()
-            except Exception:
-                pass
 
     def _wrap_cmd(self, cmd: list[str]) -> list[str]:
         """Optionally prefix the command with ``unshare -n`` for netns isolation.
@@ -238,6 +276,9 @@ class SandboxRunner:
                 timeout=self.timeout_s,
                 preexec_fn=self._preexec if _IS_LINUX else None,
                 check=False,
+                # CORE-144 §7.6: minimal sanitized env (no parent secrets) so
+                # an agent-authored probe cannot exfiltrate via stdout.
+                env=self.env,
             )
             exit_code = proc.returncode
             stdout_b = proc.stdout

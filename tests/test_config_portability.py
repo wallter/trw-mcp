@@ -8,7 +8,6 @@ _check_mcp_json_portability warns on stale absolute paths.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,20 +31,26 @@ class TestTrwMcpServerEntryPortable:
             entry = _trw_mcp_server_entry()
 
         assert entry["command"] == "trw-mcp"
-        assert entry["args"] == ["--debug"]
+        # PRD-SEC-006: --debug is no longer a baked-in default.
+        assert entry["args"] == []
         # Must NOT contain any absolute path
         assert not str(entry["command"]).startswith("/")
 
-    def test_returns_sys_executable_fallback_when_not_on_path(self) -> None:
-        """When trw-mcp is not on PATH, return sys.executable -m trw_mcp.server."""
+    def test_returns_portable_python_fallback_when_not_on_path(self) -> None:
+        """When trw-mcp is not on PATH, return portable ``python3 -m``.
+
+        PRD-SEC-006 / audit installer-client-12: must NOT embed the
+        build-machine-absolute ``sys.executable`` into a portable .mcp.json.
+        """
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = None
             entry = _trw_mcp_server_entry()
 
-        assert entry["command"] == sys.executable
-        assert entry["args"] == ["-m", "trw_mcp.server", "--debug"]
+        assert entry["command"] == "python3"
+        assert not str(entry["command"]).startswith("/")
+        assert entry["args"] == ["-m", "trw_mcp.server"]
 
     def test_on_path_returns_bare_command_not_absolute(self) -> None:
         """When trw-mcp is on PATH, command is bare name (not the resolved absolute path)."""
@@ -57,19 +62,19 @@ class TestTrwMcpServerEntryPortable:
         assert entry["command"] == "trw-mcp"
         assert not str(entry["command"]).startswith("/")
 
-    def test_entry_always_has_debug_arg(self) -> None:
-        """Both paths include --debug in args."""
+    def test_entry_never_has_debug_default(self) -> None:
+        """PRD-SEC-006: neither path bakes --debug into the default entry."""
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = "/usr/bin/trw-mcp"
             entry = _trw_mcp_server_entry()
-        assert "--debug" in entry["args"]  # type: ignore[operator]
+        assert "--debug" not in entry["args"]  # type: ignore[operator]
 
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = None
             entry = _trw_mcp_server_entry()
-        assert "--debug" in entry["args"]  # type: ignore[operator]
+        assert "--debug" not in entry["args"]  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------

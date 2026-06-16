@@ -209,14 +209,14 @@ class TestGenerateCursorIdeCommands:
 
     def test_commands_idempotent_produces_updated(self, tmp_path: Path) -> None:
         """Second call marks files as updated."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_commands
+        from trw_mcp.bootstrap._cursor_ide import _TRW_COMMANDS, generate_cursor_ide_commands
 
         first = generate_cursor_ide_commands(tmp_path)
-        assert len(first["created"]) == 5
+        assert len(first["created"]) == len(_TRW_COMMANDS)
 
         second = generate_cursor_ide_commands(tmp_path)
         assert len(second["created"]) == 0
-        assert len(second["updated"]) == 5
+        assert len(second["updated"]) == len(_TRW_COMMANDS)
 
 
 # ---------------------------------------------------------------------------

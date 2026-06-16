@@ -122,6 +122,25 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 - Use `reset_backend()` autouse fixture for SQLite singleton isolation
 - Coverage: 80% enforced (`fail_under`); 90% target for new code
 
+## Contribution licensing
+
+By submitting a contribution to this project you agree to the following:
+
+- **Developer Certificate of Origin (DCO).** All commits must be signed off
+  to certify the [Developer Certificate of Origin](https://developercertificate.org/).
+  Add a `Signed-off-by` line to each commit using your real name and email:
+
+  ```bash
+  git commit -s -m "fix(state): correct ceremony nudge weight"
+  ```
+
+  The `-s` flag appends `Signed-off-by: Your Name <you@example.com>`.
+
+- **Inbound license.** Your contributions are provided under, and will be
+  licensed as part of the project under, the project's license (Business
+  Source License 1.1 — see [`LICENSE`](LICENSE)). You confirm you have the
+  right to submit the work under that license.
+
 ## Questions?
 
 Open an issue on [GitHub](https://github.com/wallter/trw-mcp/issues) or start a discussion.

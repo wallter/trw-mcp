@@ -77,6 +77,7 @@ async def test_push_unreachable_returns_failed() -> None:
         api_key="test",
         timeout=1.0,
         client_id="sync-test",
+        learning_sharing_enabled=True,
     )
     entries = [_make_mock_entry(f"L-{i}") for i in range(3)]
     result = await pusher.push_learnings(entries)
@@ -215,6 +216,7 @@ async def test_push_outcomes_unreachable_returns_failed() -> None:
         api_key="test",
         timeout=1.0,
         client_id="sync-test",
+        platform_telemetry_enabled=True,
     )
     result = await pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
     assert result.failed > 0
@@ -224,7 +226,12 @@ async def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None
     """Learning push boundary failures log warning + traceback and stay fail-open."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-test",
+        learning_sharing_enabled=True,
+    )
     entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
 
     mock_client_cls = _build_async_httpx_mock(MagicMock())
@@ -250,7 +257,12 @@ async def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> N
     """Outcome push boundary failures log warning + traceback and stay fail-open."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-test",
+        platform_telemetry_enabled=True,
+    )
     outcomes = [{"session_id": "s1", "learning_ids": ["L-1"]}]
 
     mock_client_cls = _build_async_httpx_mock(MagicMock())
@@ -281,6 +293,7 @@ async def test_push_outcomes_batches_requests() -> None:
         api_key="key",
         batch_size=2,
         client_id="sync-test",
+        platform_telemetry_enabled=True,
     )
     outcomes = [
         {"session_id": "s1", "learning_ids": ["L-1"]},
@@ -318,6 +331,7 @@ async def test_push_uses_stable_configured_client_id() -> None:
         backend_url="http://example.com",
         api_key="key",
         client_id="sync-claude-code-inst-123",
+        learning_sharing_enabled=True,
     )
 
     response = MagicMock()
@@ -338,7 +352,12 @@ async def test_push_treats_backend_reported_errors_as_batch_failure() -> None:
     from trw_mcp.sync.push import SyncPusher
 
     entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        learning_sharing_enabled=True,
+    )
 
     response = MagicMock()
     response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "errors": 1}
@@ -358,7 +377,12 @@ async def test_push_logs_structured_start_and_complete_events() -> None:
     from trw_mcp.sync.push import SyncPusher
 
     entry = _make_mock_entry("L-1")
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        learning_sharing_enabled=True,
+    )
 
     response = MagicMock()
     response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}

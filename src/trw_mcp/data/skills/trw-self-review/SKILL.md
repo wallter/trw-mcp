@@ -1,9 +1,7 @@
 ---
 name: trw-self-review
-description: >
-  Pre-audit self-review checklist. Run BEFORE requesting formal adversarial audit
-  to catch 60%+ of typical findings. Covers assertion verification, wiring checks,
-  NFR mini-checklist, and test quality spot-check.
+description: >-
+  Run trw-self-review as a mandatory pre-audit step to identify 60%+ of potential issues early. Trigger this skill to verify assertions, validate wiring, complete the NFR mini-checklist, and assess test quality before requesting a formal adversarial audit.
 user-invocable: true
 argument-hint: "[PRD-ID]"
 ---

@@ -19,6 +19,10 @@ from trw_mcp.tools._ceremony_helpers import (
     _read_run_yaml,
     check_delivery_gates,
 )
+from trw_mcp.tools._delivery_build_gates import (
+    _build_evidence_is_stale,
+    _check_build_and_work_events,
+)
 
 
 def _write_run_yaml(
@@ -263,3 +267,116 @@ class TestCheckDeliveryGatesComplexityDrift:
         result = check_delivery_gates(run_dir, reader)
 
         assert "complexity_drift_warning" not in result
+
+
+# ── codex cross-model review #2: stale build evidence ──────────────────────
+
+
+def _build_pass(ts: str) -> dict[str, object]:
+    return {"ts": ts, "event": "build_check_complete", "tests_passed": True, "static_checks_clean": True}
+
+
+def _edit(ts: str) -> dict[str, object]:
+    return {"ts": ts, "event": "file_modified", "data": {"path": "src/x.py"}}
+
+
+@pytest.mark.integration
+class TestStaleBuildEvidence:
+    """FRAMEWORK.md §'Build evidence MUST postdate the last change it covers'.
+
+    A passing build followed by a later edit is STALE — the recorded build no
+    longer covers the current tree (codex cross-model review).
+    """
+
+    def test_pass_then_edit_is_stale(self) -> None:
+        events = [_build_pass("2026-06-11T00:00:00Z"), _edit("2026-06-11T00:00:05Z")]
+        assert _build_evidence_is_stale(events) is True
+
+    def test_edit_then_pass_is_not_stale(self) -> None:
+        events = [_edit("2026-06-11T00:00:00Z"), _build_pass("2026-06-11T00:00:05Z")]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_equal_timestamps_not_stale(self) -> None:
+        # An edit at the SAME ts as the build did not happen strictly after it.
+        events = [_build_pass("2026-06-11T00:00:00Z"), _edit("2026-06-11T00:00:00Z")]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_no_passing_build_not_stale_here(self) -> None:
+        # Missing-build is handled by the no-passing-build branch, not staleness.
+        events = [_edit("2026-06-11T00:00:00Z")]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_no_edits_not_stale(self) -> None:
+        events = [_build_pass("2026-06-11T00:00:00Z")]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_latest_pass_wins_when_re_run_after_edit(self) -> None:
+        # pass(t0) -> edit(t1) -> pass(t2): the LATEST passing build postdates the
+        # edit, so evidence is fresh again.
+        events = [
+            _build_pass("2026-06-11T00:00:00Z"),
+            _edit("2026-06-11T00:00:05Z"),
+            _build_pass("2026-06-11T00:00:10Z"),
+        ]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_stale_sets_build_warning(self) -> None:
+        events = [_build_pass("2026-06-11T00:00:00Z"), _edit("2026-06-11T00:00:05Z")]
+        build_warning, _premature = _check_build_and_work_events(events)
+        assert build_warning is not None
+        assert "Stale build evidence" in build_warning
+
+    def test_fresh_evidence_no_build_warning(self) -> None:
+        events = [_edit("2026-06-11T00:00:00Z"), _build_pass("2026-06-11T00:00:05Z")]
+        build_warning, _premature = _check_build_and_work_events(events)
+        assert build_warning is None
+
+    def test_stale_blocks_under_block_coding_mode(
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """A stale build on a coding-task run promotes to delivery_blocked (block_coding)."""
+        run_dir = tmp_path / "run"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        (meta / "run.yaml").write_text(
+            "run_id: r\nstatus: active\nphase: deliver\ntask_type: coding\ncomplexity_class: MINIMAL\n",
+            encoding="utf-8",
+        )
+        lines = [
+            json.dumps({"ts": "2026-06-11T00:00:00Z", "event": "session_start"}),
+            json.dumps(_build_pass("2026-06-11T00:00:01Z")),
+            json.dumps(_edit("2026-06-11T00:00:05Z")),
+        ]
+        (meta / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = check_delivery_gates(run_dir, reader, tmp_path / ".trw")
+
+        assert "delivery_blocked" in result
+        assert "build_check" == result.get("missing_gate")
+
+    def test_fresh_evidence_does_not_block(
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """edit-then-pass on a coding-task run is clean (no delivery_blocked)."""
+        run_dir = tmp_path / "run"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        (meta / "run.yaml").write_text(
+            "run_id: r\nstatus: active\nphase: deliver\ntask_type: coding\ncomplexity_class: MINIMAL\n",
+            encoding="utf-8",
+        )
+        lines = [
+            json.dumps({"ts": "2026-06-11T00:00:00Z", "event": "session_start"}),
+            json.dumps(_edit("2026-06-11T00:00:01Z")),
+            json.dumps(_build_pass("2026-06-11T00:00:05Z")),
+        ]
+        (meta / "events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = check_delivery_gates(run_dir, reader, tmp_path / ".trw")
+
+        assert "delivery_blocked" not in result
+        assert "build_gate_warning" not in result

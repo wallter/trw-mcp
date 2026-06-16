@@ -93,9 +93,7 @@ class TestReadSettingsForMerge:
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({"mcpServers": {"x": {}}}), encoding="utf-8")
         result = _new_result()
-        assert read_settings_for_merge(path, rel_path="settings.json", result=result) == {
-            "mcpServers": {"x": {}}
-        }
+        assert read_settings_for_merge(path, rel_path="settings.json", result=result) == {"mcpServers": {"x": {}}}
         assert result.get("warnings", []) == []
         assert result["errors"] == []
 
@@ -175,9 +173,7 @@ class TestMergeMcpJsonStructuralSafety:
         assert "trw" in data["mcpServers"]
 
     def test_valid_user_server_preserved(self, tmp_path: Path) -> None:
-        (tmp_path / ".mcp.json").write_text(
-            json.dumps({"mcpServers": {"other": {"command": "foo"}}}), encoding="utf-8"
-        )
+        (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "foo"}}}), encoding="utf-8")
         result = _new_result()
         _merge_mcp_json(tmp_path, result)
         data = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))

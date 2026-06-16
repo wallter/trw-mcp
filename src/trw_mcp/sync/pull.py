@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import structlog
@@ -21,12 +21,13 @@ if TYPE_CHECKING:
 # source=company_sync (in each entry's metadata) so the client can distinguish
 # them from team learnings while merging via the same path. Team learnings carry
 # no source tag and default to team_sync (existing behavior unchanged).
-_TEAM_SYNC_SOURCE = "team_sync"
-_COMPANY_SYNC_SOURCE = "company_sync"
-_KNOWN_SYNC_SOURCES = frozenset({_TEAM_SYNC_SOURCE, _COMPANY_SYNC_SOURCE})
+SyncSource = Literal["team_sync", "company_sync"]
+_TEAM_SYNC_SOURCE: SyncSource = "team_sync"
+_COMPANY_SYNC_SOURCE: SyncSource = "company_sync"
+_KNOWN_SYNC_SOURCES: frozenset[SyncSource] = frozenset({_TEAM_SYNC_SOURCE, _COMPANY_SYNC_SOURCE})
 
 
-def _resolve_sync_source(metadata: dict[str, str]) -> str:
+def _resolve_sync_source(metadata: dict[str, str]) -> SyncSource:
     """Return the sync source tag from server metadata, defaulting to team_sync."""
     raw = metadata.get("source", "")
     return raw if raw in _KNOWN_SYNC_SOURCES else _TEAM_SYNC_SOURCE

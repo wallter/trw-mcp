@@ -153,11 +153,10 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener(self) -> None:
-        """Imperative opener defines orchestrator role and names ceremony tools."""
+        """Imperative opener carries the v26 delegation framing and names ceremony tools."""
         result = render_imperative_opener()
-        # Orchestrator role identity
-        assert "orchestration" in result.lower()
-        assert "delegate" in result.lower()
+        # v26 delegation posture (delegation is optional, not mandated — 86da33ef0)
+        assert "delegation is an optimization, not a dependency" in result.lower()
         # Ceremony tools mentioned (brief — ceremony_quick_ref has the full table)
         assert "trw_session_start()" in result
         assert "trw_checkpoint()" in result
@@ -268,8 +267,8 @@ class TestCeremonyRendering:
         assert "## Rationalization Watchlist" not in content
         # Quick ref card present with skill pointer
         assert "/trw-ceremony-guide" in content
-        # Strong session_start trigger in opener
-        assert "orchestration" in content.lower()
+        # Strong session_start trigger in opener (v26 delegation framing — 86da33ef0)
+        assert "delegation is an optimization, not a dependency" in content.lower()
         assert "trw_session_start()" in content
         assert "first action" in content.lower()
         # Memory routing section present

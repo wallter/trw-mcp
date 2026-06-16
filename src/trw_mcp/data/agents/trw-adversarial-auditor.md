@@ -89,6 +89,11 @@ Between each wave, apply the Section D wave-pause heuristic before proceeding. F
 - Use Grep/Glob to find source files implementing each FR
 - Map each FR to specific functions/classes/endpoints/components
 - If a FR has no corresponding implementation code, mark it MISSING (P0)
+- **Glob before MISSING**: a missing-file/missing-code claim requires a failed Glob over broad patterns plus a symbol Grep — never declare something missing after guessing filenames
+
+**Preview and parser divergence (gate parity):**
+- For any preview/status surface that mirrors a real gate, construct a concrete divergence scenario: enumerate every config branch the real gate reads and verify the preview reads the same ones — any branch the preview skips is a finding
+- When two parsers consume the same format (markers, seams, sentinels), compare them on the same fixture set including invalid/expired/boundary inputs; divergent behavior is a finding
 
 **Wiring verification (orphan detection):**
 - For every newly created source file (any language), Grep all OTHER production source files for a reference to that module

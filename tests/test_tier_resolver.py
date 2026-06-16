@@ -58,10 +58,13 @@ class TestResolveTier:
         ["opencode", "codex", "copilot", "cursor-cli", "gemini", "aider"],
     )
     def test_resolve_passthrough_for_unadapted_clients(self, client: str) -> None:
-        """Clients without an adapter map fall through (return tier unchanged).
+        """Clients without an adapter map but in KNOWN_CLIENTS fall through
+        (return tier unchanged).
 
-        This is the "do no harm" default — FR-02 explicitly does not adapt
-        these client profiles in this PRD.
+        These are profiles whose harness is known to accept the tier
+        vocabulary (or ``inherit``) directly — FR-02 explicitly does not
+        adapt them in this PRD. The capability-tier token is intentionally
+        surfaced at the destination unchanged.
         """
         for tier in KNOWN_TIERS:
             assert resolve_tier(tier, client=client) == tier
@@ -70,6 +73,30 @@ class TestResolveTier:
         """Passthrough clients accept ANY tier name; validation only fires
         for clients with a defined map."""
         assert resolve_tier("anything-goes", client="opencode") == "anything-goes"
+
+    # --- Unknown-client degradation (Potemkin sub_zAfRqZYYq2KtF72d defect A) ---
+
+    @pytest.mark.parametrize("tier", sorted(KNOWN_TIERS))
+    def test_unknown_client_degrades_known_tier_to_safe_default(self, tier: str) -> None:
+        """A KNOWN capability tier must NEVER leak raw to an unrecognised
+        client.
+
+        Potemkin-Gate submission sub_zAfRqZYYq2KtF72d defect A: bundled
+        agents shipped ``model: balanced`` and reached a client whose harness
+        rejected the tier token outright ("issue with the selected model
+        (balanced)"), instantly disabling trw-adversarial-auditor /
+        trw-requirement-reviewer. When the client is neither adapted nor a
+        recognised passthrough profile, degrade a known tier to the
+        universally-safe ``inherit`` rather than emitting an unresolvable
+        capability token.
+        """
+        assert resolve_tier(tier, client="some-unknown-harness") == "inherit"
+
+    def test_unknown_client_passes_through_non_tier_value(self) -> None:
+        """A concrete model id (not one of KNOWN_TIERS) on an unknown client
+        is still passed through unchanged — we only degrade the deliberate
+        capability-tier vocabulary, never an explicit override."""
+        assert resolve_tier("gpt-4o", client="some-unknown-harness") == "gpt-4o"
 
     # --- Vocabulary invariants ------------------------------------------------
 

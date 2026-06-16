@@ -45,18 +45,13 @@ def _iso_ago(hours: float) -> str:
     return (datetime.now(tz=timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
-def _make_memory_db(
-    trw_dir: Path, *, corpus: int = 0, edges: int = 0, vec: int | None = None
-) -> Path:
+def _make_memory_db(trw_dir: Path, *, corpus: int = 0, edges: int = 0, vec: int | None = None) -> Path:
     db_path = trw_dir / "memory" / "memory.db"
     conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0)")
     conn.execute("CREATE TABLE IF NOT EXISTS vec_memories (id TEXT PRIMARY KEY)")
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS memory_graph_edges "
-        "(id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
+        "CREATE TABLE IF NOT EXISTS memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
     )
     for i in range(corpus):
         conn.execute("INSERT INTO memories (id, recall_count) VALUES (?, ?)", (f"m{i}", 1))
@@ -68,7 +63,7 @@ def _make_memory_db(
     for i in range(edges):
         conn.execute(
             "INSERT INTO memory_graph_edges (source_id, target_id) VALUES (?, ?)",
-            (f"m{i}", f"m{i+1}"),
+            (f"m{i}", f"m{i + 1}"),
         )
     conn.commit()
     conn.close()
@@ -111,9 +106,7 @@ def test_gate_fails_on_push_staleness_consecutive_failures(tmp_path: Path) -> No
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(0.5)})
     _make_memory_db(trw_dir, corpus=10)
 
-    result = check_pipeline_health(
-        trw_dir, _make_config(platform_urls=["https://api.trwframework.com"])
-    )
+    result = check_pipeline_health(trw_dir, _make_config(platform_urls=["https://api.trwframework.com"]))
 
     assert result["healthy"] is False
     assert result["status"] == "degraded"
@@ -129,9 +122,7 @@ def test_gate_fails_on_push_staleness_stale_last_push(tmp_path: Path) -> None:
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(72)})
     _make_memory_db(trw_dir, corpus=10)
 
-    result = check_pipeline_health(
-        trw_dir, _make_config(platform_urls=["https://api.trwframework.com"])
-    )
+    result = check_pipeline_health(trw_dir, _make_config(platform_urls=["https://api.trwframework.com"]))
 
     assert result["healthy"] is False
     assert any("sync" in r.lower() or "push" in r.lower() for r in result["reasons"])
@@ -305,15 +296,11 @@ def test_gate_silent_with_remote_platform_url(tmp_path: Path) -> None:
 
     trw_dir = _make_trw_dir(tmp_path)
     _healthy_pipeline(trw_dir)
-    config = _make_config(
-        platform_urls=["http://localhost:8100", "https://api.trwframework.com"]
-    )
+    config = _make_config(platform_urls=["http://localhost:8100", "https://api.trwframework.com"])
 
     result = check_pipeline_health(trw_dir, config)
 
-    assert not any(
-        "localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"]
-    )
+    assert not any("localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"])
 
 
 def test_gate_silent_when_no_platform_urls_configured(tmp_path: Path) -> None:
@@ -331,9 +318,7 @@ def test_gate_silent_when_no_platform_urls_configured(tmp_path: Path) -> None:
 
     result = check_pipeline_health(trw_dir, config)
 
-    assert not any(
-        "localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"]
-    )
+    assert not any("localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"])
 
 
 # ---------------------------------------------------------------------------
@@ -508,27 +493,19 @@ def test_cli_exits_1_when_degraded(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 def test_cli_exits_0_when_healthy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A healthy verdict => CLI exit code 0."""
-    gate_mod = _stub_cli_env(
-        monkeypatch, tmp_path, {"healthy": True, "status": "healthy", "reasons": []}
-    )
+    gate_mod = _stub_cli_env(monkeypatch, tmp_path, {"healthy": True, "status": "healthy", "reasons": []})
     assert gate_mod.run_gate_cli() == 0
 
 
 def test_cli_exits_0_on_probe_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """probe_error (fail-open) => CLI exit code 0; a crash must never wedge CI."""
-    gate_mod = _stub_cli_env(
-        monkeypatch, tmp_path, {"healthy": True, "status": "probe_error", "reasons": []}
-    )
+    gate_mod = _stub_cli_env(monkeypatch, tmp_path, {"healthy": True, "status": "probe_error", "reasons": []})
     assert gate_mod.run_gate_cli() == 0
 
 
-def test_cli_exits_0_on_disabled_kill_switch(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_exits_0_on_disabled_kill_switch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Kill switch off (status='disabled', healthy True) => CLI exit code 0."""
-    gate_mod = _stub_cli_env(
-        monkeypatch, tmp_path, {"healthy": True, "status": "disabled", "reasons": []}
-    )
+    gate_mod = _stub_cli_env(monkeypatch, tmp_path, {"healthy": True, "status": "disabled", "reasons": []})
     assert gate_mod.run_gate_cli() == 0
 
 

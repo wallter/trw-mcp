@@ -161,9 +161,7 @@ def test_read_state_wrong_schema_returns_none(tmp_path: Path) -> None:
     assert result is None
 
 
-def test_read_state_never_raises_on_permission_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_state_never_raises_on_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """read_state must never raise even if read_text raises."""
     path = tmp_path / "perm-state.json"
     path.write_text("{}", encoding="utf-8")
@@ -181,9 +179,7 @@ def test_read_state_never_raises_on_permission_error(
 # ---------------------------------------------------------------------------
 
 
-def test_write_atomic_no_partial_file_on_rename_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_atomic_no_partial_file_on_rename_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If os.rename fails, the target should not be corrupted."""
     state = _make_state("ch-atomic")
     path = tmp_path / "ch-atomic-state.json"

@@ -118,6 +118,7 @@ _SUPPORTED_IDES = [
     "copilot",
     "gemini",
     "aider",
+    "antigravity-cli",
 ]
 
 

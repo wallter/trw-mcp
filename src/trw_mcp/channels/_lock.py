@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import time
+from contextlib import suppress
 from pathlib import Path
 from types import TracebackType
 
@@ -125,8 +126,6 @@ class ChannelLock:
 
     def _close_fd(self) -> None:
         if self._fd is not None:
-            try:
+            with suppress(Exception):
                 self._file_obj.close()
-            except Exception:
-                pass
             self._fd = None

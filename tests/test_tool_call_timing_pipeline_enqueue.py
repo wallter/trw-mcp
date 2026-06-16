@@ -58,9 +58,7 @@ def captured_enqueues(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]
 
 
 class TestWrapToolEnqueuesToPipeline:
-    def test_success_call_enqueues_flat_projection(
-        self, captured_enqueues: list[dict[str, object]]
-    ) -> None:
+    def test_success_call_enqueues_flat_projection(self, captured_enqueues: list[dict[str, object]]) -> None:
         def my_tool(x: int) -> int:
             return x + 1
 
@@ -94,9 +92,7 @@ class TestWrapToolEnqueuesToPipeline:
         # No error on success.
         assert "error_type" not in event
 
-    def test_error_call_enqueues_and_reraises(
-        self, captured_enqueues: list[dict[str, object]]
-    ) -> None:
+    def test_error_call_enqueues_and_reraises(self, captured_enqueues: list[dict[str, object]]) -> None:
         def boom() -> None:
             raise ValueError("kaboom")
 
@@ -122,9 +118,7 @@ class TestWrapToolEnqueuesToPipeline:
         assert event["error_type"] == "ValueError"
         assert event["session_id"] == "sess-err"
 
-    def test_enqueue_failure_does_not_break_wrapped_call(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_enqueue_failure_does_not_break_wrapped_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A pipeline-enqueue error must NOT break the wrapped tool (fail-open)."""
 
         class _ExplodingPipeline:

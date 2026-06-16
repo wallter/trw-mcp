@@ -114,8 +114,8 @@ def generate_vscode_mcp_config(
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, lock cleanup must not mask C3 result
+            log.debug("copilot_vscode_mcp_lock_release_failed", exc_info=True)
 
 
 def _generate_under_lock(
@@ -204,5 +204,5 @@ def _emit_event(event_type: str, outcome: str) -> None:
             event_type=event_type,
             extra={"outcome": outcome},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, C3 config path already completed
+        log.debug("copilot_vscode_mcp_event_failed", event_type=event_type, exc_info=True)

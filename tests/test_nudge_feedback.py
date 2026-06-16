@@ -100,9 +100,7 @@ def test_bug_learning_threshold(trw_dir: Path) -> None:
     record_bug_learning("sess-A", tags=["trw-internal"], trw_dir=trw_dir)
     assert maybe_emit_feedback_nudge("sess-A", trw_dir, cfg) is None
     # Both tags -> threshold (1) met.
-    record_bug_learning(
-        "sess-A", tags=["bug", "trw-internal"], trw_dir=trw_dir
-    )
+    record_bug_learning("sess-A", tags=["bug", "trw-internal"], trw_dir=trw_dir)
     assert maybe_emit_feedback_nudge("sess-A", trw_dir, cfg) == FEEDBACK_NUDGE_TEXT
 
 

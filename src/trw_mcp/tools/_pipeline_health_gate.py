@@ -167,10 +167,7 @@ def _check_empty_graph(health: GateResult, config: TRWConfig | None) -> str | No
     corpus_count = int(corpus_raw) if isinstance(corpus_raw, (int, float)) else 0
 
     if edge_count == 0 and corpus_count > min_corpus:
-        return (
-            f"knowledge graph dead: 0 edges for {corpus_count} memories "
-            f"(min corpus {min_corpus})"
-        )
+        return f"knowledge graph dead: 0 edges for {corpus_count} memories (min corpus {min_corpus})"
     return None
 
 

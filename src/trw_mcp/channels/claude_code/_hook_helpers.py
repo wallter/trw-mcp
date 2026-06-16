@@ -116,8 +116,8 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
         if "cc03_hook_enabled" in raw:
             defaults["cc03_hook_enabled"] = bool(raw["cc03_hook_enabled"])
 
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("cc03_config_read_failed", config_path=str(config_path), error=str(exc))
 
     return defaults
 

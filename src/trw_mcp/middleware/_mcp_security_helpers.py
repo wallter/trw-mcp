@@ -110,11 +110,22 @@ def _resolve_runtime_run_dir(
         from trw_mcp.state._paths import TRWCallContext, find_active_run, get_pinned_run, resolve_pin_key
 
         if fastmcp_context is not None:
-            pin_key = resolve_pin_key(fastmcp_context, explicit=session_id or None)
+            # PRD-CORE-141 pin-key precedence (round-2 transport e2e F2): the
+            # *session_id* the middleware receives is the transport-extracted
+            # ``ctx.session_id`` (a per-connection UUID). It must NOT be forced
+            # in as the Layer-1 ``explicit`` override — doing so shadowed the
+            # documented Layer-2 ``TRW_SESSION_ID`` precedence that the tool
+            # layer honors when WRITING pins, so phase resolution read a pin
+            # keyed on the UUID that was never written and stayed in RESEARCH
+            # forever. Pass ``explicit=None`` so ``resolve_pin_key`` applies its
+            # full layering (env → ctx-probe → process), matching the tool
+            # layer's key exactly.
+            pin_key = resolve_pin_key(fastmcp_context, explicit=None)
             call_ctx = TRWCallContext(
                 session_id=pin_key,
                 client_hint=None,
-                explicit=bool(session_id),
+                # Auto-resolved (env → ctx-probe → process), not caller-supplied.
+                explicit=False,
                 fastmcp_session=getattr(fastmcp_context, "session_id", None)
                 if isinstance(getattr(fastmcp_context, "session_id", None), str)
                 else None,

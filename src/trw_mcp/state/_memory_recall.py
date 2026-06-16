@@ -21,6 +21,7 @@ project-only recall on any error (never breaks recall).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, cast
 
 import structlog
@@ -76,6 +77,8 @@ def _federate_user_tier(
     max_results: int,
     is_wildcard: bool,
     allow_cold_embedding_init: bool,
+    as_of: datetime | None = None,
+    include_superseded: bool = False,
 ) -> list[MemoryEntry]:
     """Append capped, de-duped user-tier hits to the project hits.
 
@@ -115,6 +118,8 @@ def _federate_user_tier(
             max_results=max_results,
             is_wildcard=is_wildcard,
             allow_cold_embedding_init=allow_cold_embedding_init,
+            as_of=as_of,
+            include_superseded=include_superseded,
         )
         merged = list(project_entries)
         added = 0
@@ -144,6 +149,8 @@ def _query_user_backend(
     max_results: int,
     is_wildcard: bool,
     allow_cold_embedding_init: bool,
+    as_of: datetime | None = None,
+    include_superseded: bool = False,
 ) -> list[MemoryEntry]:
     """Query the user store for ``user:`` entries (namespace=None = all tiers there)."""
     if is_wildcard:
@@ -164,7 +171,78 @@ def _query_user_backend(
         min_impact=min_impact,
         allow_cold_embedding_init=allow_cold_embedding_init,
         namespace=None,
+        as_of=as_of,
+        include_superseded=include_superseded,
     )
+
+
+def _user_store_tampered() -> bool:
+    """core185-3: return True when the USER store's canary signals tamper.
+
+    The project-tier recall path halt-checks the project canary, but the user
+    store is a SEPARATE database whose canaries were never probed before its
+    entries were federated into the result. A tampered user store would
+    otherwise flow malicious/corrupted entries into recall.
+
+    Prefers a live user backend WITHOUT constructing one (``peek_user_backend``)
+    so the session_start hot path pays nothing when no user store exists. When no
+    backend has been built yet BUT the user DB file exists on disk, the backend
+    is constructed and probed here -- this closes core185-TOCTOU-1: previously the
+    peek returned ``None`` on a fresh process, this gate reported "not tampered",
+    and ``_federate_user_tier`` then constructed + queried the backend itself with
+    NO canary check, leaking a tampered store on the very first federation call.
+    The construct-when-present condition mirrors ``_federate_user_tier``'s own
+    construction gate so the canary is checked exactly when federation would build
+    and query the backend.
+
+    The canary seams are resolved through the ``memory_adapter`` facade so the
+    established ``memory_adapter.should_halt_recalls`` / ``.initialize_canaries``
+    patch points apply. Fails OPEN (returns False): a probe error must not break
+    recall -- it just leaves federation enabled, matching the project path's
+    fail-open posture.
+    """
+    user_backend = peek_user_backend()
+    if user_backend is None:
+        try:
+            from trw_mcp.state._user_paths import resolve_user_memory_dir
+
+            if not (resolve_user_memory_dir(create=False) / "memory.db").exists():
+                return False
+            from trw_mcp.state._user_tier import get_user_backend
+
+            user_backend = get_user_backend()
+        except Exception:  # justified: fail-open — a probe/construct error must not break recall
+            logger.debug("user_store_canary_construct_failed", exc_info=True)
+            return False
+    try:
+        from trw_mcp.state import memory_adapter as _facade
+        from trw_mcp.state._user_paths import resolve_user_memory_dir
+
+        user_sec_cfg = MemoryConfig(storage_path=str(resolve_user_memory_dir(create=False)))
+        _facade.initialize_canaries(user_sec_cfg, backend=user_backend)
+        return bool(_facade.should_halt_recalls(user_sec_cfg, backend=user_backend))
+    except Exception:  # justified: fail-open — a canary-probe error must not break recall
+        logger.debug("user_store_canary_probe_failed", exc_info=True)
+        return False
+
+
+def _parse_as_of(as_of: str | None) -> datetime | None:
+    """PRD-CORE-194 FR03: parse an ISO-8601 ``as_of`` to a tz-aware UTC datetime.
+
+    Returns ``None`` for ``None`` (the default, open-only behavior). Accepts a
+    trailing ``Z`` (UTC). A naive parse is assumed UTC so the comparison against
+    tz-aware entry windows never raises. Raises ``ValueError`` on a malformed
+    string so the boundary can surface a clean validation error rather than crash.
+    """
+    if as_of is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"as_of must be an ISO-8601 datetime, got {as_of!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def recall_learnings(
@@ -178,6 +256,8 @@ def recall_learnings(
     compact: bool = False,
     allow_cold_embedding_init: bool = True,
     include_tiers: list[str] | None = None,
+    as_of: str | None = None,
+    include_superseded: bool = False,
 ) -> list[dict[str, object]]:
     """Search learnings, federating project ∪ user tiers (PRD-CORE-185 FR06/FR07).
 
@@ -186,11 +266,21 @@ def recall_learnings(
     merged in (capped, de-duped); otherwise behavior is project-only and
     byte-identical to the pre-federation path.
 
-    ``include_tiers`` (FR07) scopes the federation: ``None`` (default) includes
-    the user tier when present; ``["project"]`` excludes it (project-only);
-    ``["project", "user"]`` includes it explicitly. ``project`` is always
-    implicitly included.
+    ``include_tiers`` (FR07) scopes ONLY the user-tier federation; project
+    entries are ALWAYS included (the project tier is the local source of truth
+    and is never excluded). ``None`` (default) and any list containing ``"user"``
+    federate the user tier when present; ``["project"]`` (no ``"user"``) yields
+    project-only. A user-only query is intentionally not expressible -- passing
+    ``["user"]`` still returns project entries plus the federated user tier.
+
+    ``as_of`` / ``include_superseded`` (PRD-CORE-194 FR03) thread the bi-temporal
+    validity prior. ``as_of`` is an ISO-8601 string ("what was believed true as of
+    T"); a malformed value raises ``ValueError`` (the boundary surfaces it as a
+    clean validation error). ``include_superseded=True`` appends superseded records
+    AFTER every open one rather than dropping them. The defaults (``as_of=None``,
+    ``include_superseded=False``) are byte-identical to the pre-194 path.
     """
+    as_of_dt = _parse_as_of(as_of)
     federate_user = include_tiers is None or "user" in include_tiers
     is_wildcard = query.strip() in ("*", "")
     namespace = _project_namespace()
@@ -214,11 +304,13 @@ def recall_learnings(
     if _facade._memory_recovery_in_progress():
         _facade.logger.warning("memory_recall_skipped_recovery_in_progress", query=query[:80])
         return []
+    # core185-7: built ONCE before the loop. ``trw_dir`` is loop-invariant so
+    # re-constructing inside the loop was dead work; this single binding feeds
+    # the canary calls AND the post-loop recall filter.
     sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
     for attempt in range(2):
         try:
             backend = _facade.get_backend(trw_dir)
-            sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
             _facade.initialize_canaries(sec_cfg, backend=backend)
             if _facade.should_halt_recalls(sec_cfg, backend=backend):
                 from trw_memory.exceptions import CanaryTamperError
@@ -241,6 +333,8 @@ def recall_learnings(
                     mem_status=mem_status,
                     min_impact=min_impact,
                     allow_cold_embedding_init=allow_cold_embedding_init,
+                    as_of=as_of_dt,
+                    include_superseded=include_superseded,
                 )
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
@@ -262,15 +356,18 @@ def recall_learnings(
                 _facade._schedule_deferred_recovery(trw_dir, reason="recall_corruption", context={"query": query[:80]})
                 return []
             if isinstance(exc, StorageError):
-                _facade.logger.warning(
-                    "memory_recall_storage_error", query=query[:80], error=str(exc), exc_info=True
-                )
+                _facade.logger.warning("memory_recall_storage_error", query=query[:80], error=str(exc), exc_info=True)
                 return []
             raise
 
     # FR06: federate user-tier hits (capped, de-duped, fail-open) BEFORE the
     # canary filter + transform so user entries flow through the same pipeline.
     # FR07: skip federation entirely when the caller excluded the user tier.
+    # core185-3: a tampered USER store DISABLES federation (rather than aborting
+    # recall) so its entries never enter the result -- project recall survives.
+    if federate_user and _user_store_tampered():
+        logger.warning("user_tier_federation_disabled_canary_tamper", query=query[:80])
+        federate_user = False
     if federate_user:
         entries = _federate_user_tier(
             entries,
@@ -281,7 +378,20 @@ def recall_learnings(
             max_results=max_results,
             is_wildcard=is_wildcard,
             allow_cold_embedding_init=allow_cold_embedding_init,
+            as_of=as_of_dt,
+            include_superseded=include_superseded,
         )
+
+    # PRD-CORE-194 FR03: apply the validity prior on the MCP recall path so a
+    # superseded record is EXCLUDED by default here too (the wildcard list_entries
+    # branch and the keyword fallback do not pass through hybrid_search's prior).
+    # This is the same in-memory post-fetch field compare used by hybrid_search,
+    # so the MCP and MemoryClient defaults agree. The ``trw_recall`` tool threads
+    # its ``as_of`` / ``include_superseded`` kwargs here (parsed above), reaching
+    # parity with ``MemoryClient.recall``'s time-travel surface.
+    from trw_memory.retrieval.validity_prior import apply_validity_prior
+
+    entries = apply_validity_prior(entries, as_of=as_of_dt, include_superseded=include_superseded)
 
     public_entries = [entry for entry in entries if entry.metadata.get("system_canary") != "true"]
     filter_result = (

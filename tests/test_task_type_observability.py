@@ -91,7 +91,5 @@ def test_trw_report_model_has_task_type_default() -> None:
 
     report = RunReport(run_id="r", task="t", status="active", phase="research", generated_at="now")
     assert report.task_type == "unknown"
-    report2 = RunReport(
-        run_id="r", task="t", status="active", phase="research", generated_at="now", task_type="coding"
-    )
+    report2 = RunReport(run_id="r", task="t", status="active", phase="research", generated_at="now", task_type="coding")
     assert report2.task_type == "coding"

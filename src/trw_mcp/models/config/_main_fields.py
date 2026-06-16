@@ -20,11 +20,15 @@ from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
 from trw_mcp.models.config._fields_feedback import _FeedbackFields
+from trw_mcp.models.config._fields_instruction_surfaces import _InstructionSurfaceFields
 from trw_mcp.models.config._fields_memory import _MemoryFields
 from trw_mcp.models.config._fields_orchestration import _OrchestrationFields
 from trw_mcp.models.config._fields_paths import _PathsFields
+from trw_mcp.models.config._fields_phase_exposure import _PhaseExposureFields
 from trw_mcp.models.config._fields_prd import _PRDFields
+from trw_mcp.models.config._fields_profile import _ProfileFields
 from trw_mcp.models.config._fields_scoring import _ScoringFields
+from trw_mcp.models.config._fields_scout import _ScoutFields
 from trw_mcp.models.config._fields_sync import _SyncFields
 from trw_mcp.models.config._fields_telemetry import _TelemetryFields
 from trw_mcp.models.config._fields_tools import _ToolsFields
@@ -37,6 +41,7 @@ class _TRWConfigFields(
     _OrchestrationFields,
     _TelemetryFields,
     _CeremonyFields,
+    _InstructionSurfaceFields,
     _FeedbackFields,
     _BanditFields,
     _BuildFields,
@@ -45,6 +50,9 @@ class _TRWConfigFields(
     _SyncFields,
     _PathsFields,
     _PRDFields,
+    _PhaseExposureFields,
+    _ProfileFields,
+    _ScoutFields,
     BaseSettings,
 ):
     """All TRW configuration fields.

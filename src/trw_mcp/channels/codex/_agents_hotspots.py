@@ -395,8 +395,8 @@ def render_and_inject(
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, lock cleanup must not mask render result
+            log.debug("codex_agents_md_hotspots_lock_release_failed", channel_id=entry.id, exc_info=True)
 
 
 def _render_and_inject_under_lock(
@@ -504,8 +504,8 @@ def _render_and_inject_under_lock(
             bytes_emitted=bytes_written,
             extra={"outcome": "written"},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, render path already completed
+        log.debug("codex_agents_md_hotspots_event_failed", channel_id=entry.id, exc_info=True)
 
     log.debug(
         "codex_agents_md_hotspots_render",

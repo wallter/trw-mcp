@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -35,7 +35,59 @@ from trw_mcp.tools._orchestration_phase import (
 
 logger = structlog.get_logger(__name__)
 
+if TYPE_CHECKING:
+    from trw_mcp.models.run import (
+        ComplexityClass,
+        ComplexityOverride,
+        ComplexitySignals,
+        PhaseRequirements,
+    )
+
 _events = FileEventLogger(FileStateWriter())
+
+
+def _resolve_init_complexity(
+    complexity_hint: str | None,
+    complexity_signals: dict[str, object] | None,
+) -> tuple[
+    ComplexitySignals | None,
+    ComplexityClass | None,
+    ComplexityOverride | None,
+    PhaseRequirements | None,
+]:
+    """Resolve complexity class/override/phase-reqs from a hint or signals.
+
+    Extracted from ``trw_init`` (PRD-CORE-060 / PRD-CORE-134) to keep the
+    orchestration facade under the 350-effective-LOC gate. A ``complexity_hint``
+    takes precedence over ``complexity_signals``; when neither is supplied every
+    element of the returned tuple is ``None``.
+    """
+    from trw_mcp.models.run import ComplexityClass, ComplexitySignals
+    from trw_mcp.scoring import classify_complexity, get_phase_requirements
+
+    parsed_signals: ComplexitySignals | None = None
+    complexity_class_val: ComplexityClass | None = None
+    complexity_override_val: ComplexityOverride | None = None
+    phase_reqs_val: PhaseRequirements | None = None
+
+    if complexity_hint is not None:
+        hint_map = {
+            "EASY": ComplexityClass.MINIMAL,
+            "STANDARD": ComplexityClass.STANDARD,
+            "HARD": ComplexityClass.COMPREHENSIVE,
+        }
+        complexity_class_val = hint_map.get(complexity_hint)
+        if complexity_class_val:
+            phase_reqs_val = get_phase_requirements(complexity_class_val)
+
+    if complexity_class_val is None and complexity_signals is not None:
+        parsed_signals = ComplexitySignals.model_validate(complexity_signals)
+        tier, _raw, override = classify_complexity(parsed_signals)
+        complexity_class_val = tier
+        complexity_override_val = override
+        phase_reqs_val = get_phase_requirements(tier)
+
+    return parsed_signals, complexity_class_val, complexity_override_val, phase_reqs_val
 
 
 def _scan_init_artifacts(

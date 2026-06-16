@@ -178,6 +178,7 @@ def test_apply_throttle_down_updates_manifest(tmp_path: Path) -> None:
 
     # Reload and verify tier changed from T2 → T1
     from trw_mcp.channels._manifest_loader import load
+
     updated = load(manifest_path)
     ch = next(e for e in updated.channels if e.id == "ch-01")
     assert ch.tier_default == "T1"
@@ -185,6 +186,7 @@ def test_apply_throttle_down_updates_manifest(tmp_path: Path) -> None:
 
 def test_apply_throttle_missing_manifest_returns_false(tmp_path: Path) -> None:
     from trw_mcp.channels.meta_tune._throttle import ThrottleDecision, ThrottleVerdict
+
     decision = ThrottleDecision(
         channel_id="ch-01",
         client="claude-code",
@@ -202,6 +204,7 @@ def test_apply_throttle_missing_manifest_returns_false(tmp_path: Path) -> None:
 def test_apply_throttle_channel_not_found_returns_false(tmp_path: Path) -> None:
     manifest_path = _make_manifest(tmp_path, channel_id="other-ch")
     from trw_mcp.channels.meta_tune._throttle import ThrottleDecision, ThrottleVerdict
+
     decision = ThrottleDecision(
         channel_id="ch-01",  # different from manifest
         client="claude-code",
@@ -220,6 +223,7 @@ def test_apply_throttle_already_at_floor_no_change(tmp_path: Path) -> None:
     """Tier already at T0 — apply should succeed but not corrupt manifest."""
     manifest_path = _make_manifest(tmp_path, tier="T0")
     from trw_mcp.channels.meta_tune._throttle import ThrottleDecision, ThrottleVerdict
+
     decision = ThrottleDecision(
         channel_id="ch-01",
         client="claude-code",
@@ -234,6 +238,7 @@ def test_apply_throttle_already_at_floor_no_change(tmp_path: Path) -> None:
     # Returns True (no-op success) or False (no change); either is acceptable;
     # important: manifest must still be valid
     from trw_mcp.channels._manifest_loader import load
+
     updated = load(manifest_path)
     ch = next(e for e in updated.channels if e.id == "ch-01")
     assert ch.tier_default == "T0"
@@ -246,6 +251,7 @@ def test_apply_throttle_emits_telemetry_event(tmp_path: Path) -> None:
     tel_path.parent.mkdir(parents=True, exist_ok=True)
 
     from trw_mcp.channels.meta_tune._throttle import ThrottleDecision, ThrottleVerdict
+
     decision = ThrottleDecision(
         channel_id="ch-01",
         client="claude-code",
@@ -282,6 +288,7 @@ def test_apply_throttle_t4_default_recovers_to_t4_after_clear(tmp_path: Path) ->
     # Inject tier_default=T4 by rewriting the manifest with T4 as the default.
     # We write a manifest where current tier IS T3 and default IS T4.
     from ruamel.yaml import YAML
+
     yaml = YAML(typ="rt")
     yaml.default_flow_style = False
     data = {
@@ -311,8 +318,7 @@ def test_apply_throttle_t4_default_recovers_to_t4_after_clear(tmp_path: Path) ->
     # _tier_up(T3, T4) must return T4 (one step up from T3, bounded by T4)
     recovered = _tier_up("T3", "T4")
     assert recovered == "T4", (
-        f"Expected T4 recovery from T3 with default T4, got {recovered!r}. "
-        f"_TIER_LADDER={_TIER_LADDER}"
+        f"Expected T4 recovery from T3 with default T4, got {recovered!r}. _TIER_LADDER={_TIER_LADDER}"
     )
 
 
@@ -345,6 +351,7 @@ def test_apply_throttle_pydantic_validation_preserved(tmp_path: Path) -> None:
     # The persisted manifest must reflect the new tier
     from trw_mcp.channels._manifest_loader import load
     from trw_mcp.channels._manifest_models import ChannelEntry
+
     updated = load(manifest_path)
     ch = next(e for e in updated.channels if e.id == "ch-01")
 

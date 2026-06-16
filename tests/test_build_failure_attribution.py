@@ -29,9 +29,7 @@ class TestAttributeFailures:
     def test_untouched_file_is_pre_existing(self) -> None:
         """A failure in a file NOT in the diff -> likely_pre_existing."""
         with patch(f"{_MOD}.changed_files", return_value={"foo.py", "src/foo.py"}):
-            result = fa.attribute_failures(
-                ["tests/test_bar.py::TestBar::test_thing FAILED"]
-            )
+            result = fa.attribute_failures(["tests/test_bar.py::TestBar::test_thing FAILED"])
         assert result is not None
         assert result["likely_pre_existing"] == 1
         assert result["likely_introduced"] == 0
@@ -46,9 +44,7 @@ class TestAttributeFailures:
             f"{_MOD}.changed_files",
             return_value={"tests/test_bar.py", "test_bar.py"},
         ):
-            result = fa.attribute_failures(
-                ["tests/test_bar.py::TestBar::test_thing FAILED"]
-            )
+            result = fa.attribute_failures(["tests/test_bar.py::TestBar::test_thing FAILED"])
         assert result is not None
         assert result["likely_introduced"] == 1
         assert result["likely_pre_existing"] == 0
@@ -61,9 +57,7 @@ class TestAttributeFailures:
             f"{_MOD}.changed_files",
             return_value={"src/trw_mcp/widget.py", "widget.py"},
         ):
-            result = fa.attribute_failures(
-                ["tests/test_widget.py::test_renders FAILED"]
-            )
+            result = fa.attribute_failures(["tests/test_widget.py::test_renders FAILED"])
         assert result is not None
         assert result["likely_introduced"] == 1
         assert result["per_failure"][0]["classification"] == "likely_introduced"
@@ -71,9 +65,7 @@ class TestAttributeFailures:
     def test_git_unavailable_degrades_to_unknown(self) -> None:
         """changed_files() returning None -> every failure tagged unknown, no raise."""
         with patch(f"{_MOD}.changed_files", return_value=None):
-            result = fa.attribute_failures(
-                ["tests/test_bar.py::test_thing FAILED"]
-            )
+            result = fa.attribute_failures(["tests/test_bar.py::test_thing FAILED"])
         assert result is not None
         assert result["unknown"] == 1
         assert result["likely_introduced"] == 0
@@ -195,9 +187,7 @@ class TestBuildCheckIntegration:
     ) -> dict[str, object]:
         (tmp_path / ".trw" / "context").mkdir(parents=True)
         config = TRWConfig(build_check_enabled=True)
-        monkeypatch.setattr(
-            "trw_mcp.tools.build._registration.get_config", lambda: config
-        )
+        monkeypatch.setattr("trw_mcp.tools.build._registration.get_config", lambda: config)
         server = make_test_server("build")
         with (
             patch(
@@ -219,9 +209,7 @@ class TestBuildCheckIntegration:
                 scope="full",
             )
 
-    def test_failure_surfaces_attribution_pre_existing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_failure_surfaces_attribution_pre_existing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(f"{_MOD}.changed_files", return_value={"other.py"}):
             result = self._run_tool(
                 tmp_path,
@@ -234,9 +222,7 @@ class TestBuildCheckIntegration:
         assert attribution["likely_pre_existing"] == 1
         assert "pre-existing on this tree" in str(result["summary"])
 
-    def test_failure_surfaces_attribution_introduced(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_failure_surfaces_attribution_introduced(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             f"{_MOD}.changed_files",
             return_value={"tests/test_mine.py", "test_mine.py"},
@@ -252,13 +238,9 @@ class TestBuildCheckIntegration:
         assert attribution["likely_introduced"] == 1
         assert "likely yours" in str(result["summary"])
 
-    def test_passing_build_has_no_attribution(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_passing_build_has_no_attribution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """No failures -> no failure_attribution / summary key clutter."""
-        result = self._run_tool(
-            tmp_path, monkeypatch, failures=[], tests_passed=True
-        )
+        result = self._run_tool(tmp_path, monkeypatch, failures=[], tests_passed=True)
         assert "failure_attribution" not in result
         assert "summary" not in result
 

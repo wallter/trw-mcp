@@ -165,9 +165,7 @@ def test_resolve_kill_switch_path_uses_upward_search(tmp_path: Path) -> None:
     assert resolved == repo_root / ".trw" / "config.yaml"
 
 
-def test_resolve_kill_switch_path_raises_without_anchor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resolve_kill_switch_path_raises_without_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Isolation: _resolve_repo_root walks tmp_path's parents looking for a
     # ``.trw`` anchor, then falls back to ``git rev-parse``. Other suites can
     # leak stray ``.trw`` dirs into the shared /tmp ancestry (e.g. /tmp/.trw),

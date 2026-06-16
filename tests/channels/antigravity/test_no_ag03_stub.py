@@ -29,9 +29,7 @@ def test_before_edit_hook_is_importable() -> None:
     import importlib.util
 
     spec = importlib.util.find_spec("trw_mcp.channels.antigravity._before_edit_hook")
-    assert spec is not None, (
-        "_before_edit_hook.py must exist in channels/antigravity/"
-    )
+    assert spec is not None, "_before_edit_hook.py must exist in channels/antigravity/"
 
     # Must NOT raise NotImplementedError — it's now a real implementation.
     try:
@@ -100,6 +98,7 @@ def test_install_before_edit_hook_creates_files(tmp_path: Path) -> None:
     assert hooks_json.exists(), "hooks.json must be created"
 
     import json
+
     content = json.loads(hooks_json.read_text(encoding="utf-8"))
     assert "PreToolUse" in content, "hooks.json must have PreToolUse key"
     pre_hooks = content["PreToolUse"]
@@ -118,14 +117,13 @@ def test_install_before_edit_hook_idempotent(tmp_path: Path) -> None:
     install_before_edit_hook(tmp_path, overwrite=True)
 
     import json
+
     hooks_json = tmp_path / ".antigravitycli" / "hooks.json"
     content = json.loads(hooks_json.read_text(encoding="utf-8"))
     pre_hooks = content.get("PreToolUse", [])
     # No duplicate entries for the same command
     commands = [h.get("command") for h in pre_hooks]
-    assert len(commands) == len(set(commands)), (
-        "Duplicate hook entries found — install is not idempotent"
-    )
+    assert len(commands) == len(set(commands)), "Duplicate hook entries found — install is not idempotent"
 
 
 def test_install_before_edit_hook_skips_if_exists(tmp_path: Path) -> None:

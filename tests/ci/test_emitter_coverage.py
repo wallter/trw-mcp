@@ -119,6 +119,7 @@ class TestEventTypeLiteralsAreStable:
             "ceremony_compliance",
             "h1_observe_mode_warning",
             "surface_registered",
+            "probe",
         }
     )
 

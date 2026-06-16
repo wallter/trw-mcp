@@ -61,3 +61,18 @@ class _ScoringFields:
     outcome_weight_velocity: float = 0.5
     outcome_weight_learning_rate: float = 0.3
     proximal_reward_weight: float = 0.3
+
+    # -- Skill lifecycle (PRD-QUAL-111) --
+    # DEFAULT-OFF / no-op (NFR01): with every field at its default,
+    # discover_meta_skills output is byte-for-byte identical to pre-change.
+    # The contribution score is an invoked-after-surface + recency signal,
+    # NOT a causal skill->task-success signal (NFR05) -- the causal term is an
+    # enumerated stub.
+    skill_surface_tracking_enabled: bool = False  # FR01 side-write gate (default OFF)
+    skill_contribution_half_life_days: int = 90  # FR02 Ebbinghaus half-life (mirrors impact_decay)
+    skill_contribution_cold_start: float = 0.5  # FR02 never-surfaced score (above floor)
+    skill_active_cap: int = 3  # FR03 default cap WHEN enabled (Library-Drift 2-3 band)
+    skill_retirement_floor: float = 0.15  # FR04 strict-less-than floor
+    skill_retirement_windows: int = 3  # FR04 consecutive sub-floor windows to retire
+    skill_duplicate_similarity_threshold: float = 0.85  # FR05 cosine flag threshold
+    skill_duplicate_max_skills: int = 200  # FR05 O(n^2) pairwise hard cap

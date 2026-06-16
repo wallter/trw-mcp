@@ -323,9 +323,7 @@ class TestCorrelateRecallsSkippedRowObservability:
     line contents, matched learning IDs, or receipt payloads.
     """
 
-    def test_corrupt_row_skipped_emits_event_and_preserves_valid(
-        self, tmp_path: Path
-    ) -> None:
+    def test_corrupt_row_skipped_emits_event_and_preserves_valid(self, tmp_path: Path) -> None:
         """A corrupt JSONL row is skipped (with an event) but valid receipts remain."""
         from trw_mcp.scoring import correlate_recalls
 
@@ -360,9 +358,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         assert all("L-corrupt-secret" not in str(v) for v in evt.values())
         assert all("not valid json" not in str(v) for v in evt.values())
 
-    def test_non_object_json_row_skipped_emits_event_and_preserves_valid(
-        self, tmp_path: Path
-    ) -> None:
+    def test_non_object_json_row_skipped_emits_event_and_preserves_valid(self, tmp_path: Path) -> None:
         """A bare JSON array/scalar row is skipped gracefully (no AttributeError crash)."""
         from trw_mcp.scoring import correlate_recalls
 
@@ -374,9 +370,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         # Line 1: valid JSON but a non-object (would crash record.get pre-fix).
         # Line 2: a valid receipt that must still be correlated.
         log_path.write_text(
-            '["L-bare-list-secret"]\n'
-            + json.dumps({"ts": now_ts, "matched_ids": ["L-ok"]})
-            + "\n",
+            '["L-bare-list-secret"]\n' + json.dumps({"ts": now_ts, "matched_ids": ["L-ok"]}) + "\n",
             encoding="utf-8",
         )
 
@@ -390,9 +384,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         assert skipped[0]["line_number"] == 1
         assert all("L-bare-list-secret" not in str(v) for v in skipped[0].values())
 
-    def test_invalid_iso_ts_emits_timestamp_invalid_event(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_invalid_iso_ts_emits_timestamp_invalid_event(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """An unparseable ISO ``ts`` emits a timestamp-invalid event tagged ``ts``."""
         from trw_mcp.scoring import correlate_recalls
 
@@ -438,9 +430,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         assert evt["error_class"]
         assert all("L-bad-epoch" not in str(v) for v in evt.values())
 
-    def test_missing_timestamp_row_emits_no_observability_event(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_missing_timestamp_row_emits_no_observability_event(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """An outcome-only row (empty ts, no timestamp) is normal -> no skip event."""
         from trw_mcp.scoring import correlate_recalls
 
@@ -456,9 +446,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         assert result == []
         assert not [e for e in logs if str(e["event"]).startswith("correlate_recalls.receipt_")]
 
-    def test_valid_receipt_emits_no_skip_event(
-        self, tmp_path: Path, writer: FileStateWriter
-    ) -> None:
+    def test_valid_receipt_emits_no_skip_event(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """A clean valid receipt produces results and no skipped-row events."""
         from trw_mcp.scoring import correlate_recalls
 

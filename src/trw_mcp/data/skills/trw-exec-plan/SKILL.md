@@ -1,9 +1,7 @@
 ---
 name: trw-exec-plan
-description: >
-  Internal phase: Generate an execution plan from a groomed PRD. Decomposes FRs
-  into micro-tasks with file paths, test names, verification commands, and dependency graphs.
-  Called automatically by /trw-prd-ready and /trw-prd-new.
+description: >-
+  Decompose a groomed PRD into an execution plan with micro-tasks, file paths, test names, verification commands, and dependency graphs. Invoke this skill during the internal phase of plan generation, which is automatically triggered by /trw-prd-ready and /trw-prd-new.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 ---

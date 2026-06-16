@@ -7,6 +7,47 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"  # 3.12+ excluded: sqlite-vec C extension segfaults on GH Actions runners
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Lint (ruff check)
+        run: ruff check src/
+      - name: Format check (ruff format --check)
+        run: ruff format --check src/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"  # 3.12+ excluded: sqlite-vec C extension segfaults on GH Actions runners
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      # fastmcp >=3.2 ships py.typed (inline types) so --strict resolves on CI runners.
+      - name: Type check (mypy --strict)
+        run: mypy --strict src/trw_mcp/
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -23,11 +64,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Lint
-        run: ruff check src/
-      # Type check disabled — fastmcp.tools.tool stubs missing on CI runners
-      # - name: Type check
-      #   run: mypy --strict src/trw_mcp/
-      # Tests disabled to save CI minutes — re-enable once test suite stabilizes
-      # - name: Test
-      #   run: pytest tests/ -x --timeout=120 -q
+      # Unit tier only (no filesystem I/O) keeps CI fast; the full suite + the
+      # 80% --cov-fail-under gate run in the monorepo's mcp-ci workflow where the
+      # slower integration/e2e tiers are affordable. Coverage is reported here
+      # (unit-tier subset) for visibility but not hard-gated, since a unit-only
+      # run cannot reach the whole-package 80% threshold.
+      - name: Test (unit tier) with coverage
+        run: >-
+          pytest tests/ -m unit -q
+          --cov=trw_mcp
+          --cov-report=term-missing

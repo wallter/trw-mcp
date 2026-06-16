@@ -62,11 +62,7 @@ def test_distill_markers_sequential_after_trw_end(tmp_path: Path) -> None:
     )
 
     agents_md_path = tmp_path / "AGENTS.md"
-    agents_md_path.write_text(
-        "# Project\n\n"
-        "<!-- trw:start -->\nCeremony content\n<!-- trw:end -->\n\n"
-        "## Other\n"
-    )
+    agents_md_path.write_text("# Project\n\n<!-- trw:start -->\nCeremony content\n<!-- trw:end -->\n\n## Other\n")
 
     sidecar = _make_sidecar()
     render_and_inject(
@@ -83,9 +79,7 @@ def test_distill_markers_sequential_after_trw_end(tmp_path: Path) -> None:
 
     assert trw_end_pos != -1
     assert begin_pos != -1
-    assert begin_pos > trw_end_pos, (
-        "Codex distill markers are not placed AFTER trw:end (L-99085348 regression)"
-    )
+    assert begin_pos > trw_end_pos, "Codex distill markers are not placed AFTER trw:end (L-99085348 regression)"
 
 
 def test_dry_run_contains_markers(tmp_path: Path) -> None:

@@ -157,27 +157,34 @@ class TestMcpInstance:
         tool_names = {t.name for t in tools}
         assert {"trw_review"} <= tool_names
 
-    async def test_mcp_registers_ceremony_feedback_tools(self) -> None:
-        """FIX-051: the ceremony de-escalation kill-switch tools must be wired
-        into the *production* server, not just conftest's test factory.
+    async def test_mcp_registers_probe_tools(self) -> None:
+        """PRD-CORE-144: the empirical probe harness tools are wired into the
+        production server surface (consumer-wiring proof for the harness)."""
+        from trw_mcp.server._app import mcp
 
-        These are the human-in-the-loop ceremony-tier status / approve / revert
-        tools (PRD-CORE-069-FR06/FR08). Prior to FIX-051 they were registered
-        only in ``tests/conftest.py``, so in prod they were dead and phantom in
-        the inventory. This asserts against the real ``trw_mcp.server._app.mcp``
-        instance that ``_register_tools()`` populates at import.
+        tools = await mcp._list_tools()
+        tool_names = {t.name for t in tools}
+        assert {"trw_probe", "trw_probe_budget_status"} <= tool_names
+
+    async def test_mcp_does_not_register_ceremony_feedback_tools(self) -> None:
+        """PRD-FIX-076: the ceremony de-escalation kill-switch tools were
+        deregistered from the MCP surface (dead — zero skill/agent/hook
+        callers). The underlying state logic in
+        ``trw_mcp.state.ceremony_feedback`` remains internal-only. Prior to
+        FIX-076 (and FIX-051 before it) these were registered tools; this now
+        asserts the inverse against the real production ``mcp`` instance.
         """
         from trw_mcp.server._app import mcp
 
         tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
-        expected = {
+        removed = {
             "trw_ceremony_status",
             "trw_ceremony_approve",
             "trw_ceremony_revert",
         }
-        missing = expected - tool_names
-        assert not missing, f"Ceremony-feedback tools not wired into prod server: {missing}"
+        leaked = removed & tool_names
+        assert not leaked, f"FIX-076 removed ceremony-feedback tools still registered: {leaked}"
 
 
 # ── .mcp.json command resolution ─────────────────────────────────────
@@ -194,13 +201,17 @@ class TestMcpJsonCommand:
         assert "command" in entry
         assert "args" in entry
 
-    def test_fallback_uses_absolute_python(self) -> None:
+    def test_fallback_uses_portable_python(self) -> None:
+        # PRD-SEC-006 / audit installer-client-12: the fallback must be a
+        # PORTABLE ``python3`` (resolved per-machine via PATH), never the
+        # build-machine-absolute ``sys.executable``, so .mcp.json stays portable.
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
         with patch("shutil.which", return_value=None):
             entry = _trw_mcp_server_entry()
         cmd = str(entry["command"])
-        assert cmd == sys.executable, f"Fallback should use sys.executable ({sys.executable}), got {cmd}"
+        assert cmd == "python3", f"Fallback should be portable python3, got {cmd}"
+        assert not cmd.startswith("/")
 
     def test_fallback_uses_module_invocation(self) -> None:
         from trw_mcp.bootstrap._utils import _trw_mcp_server_entry

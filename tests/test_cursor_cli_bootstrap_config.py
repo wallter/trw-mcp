@@ -218,9 +218,7 @@ class TestCliConfigMalformed:
 
         cursor_dir = tmp_path / ".cursor"
         cursor_dir.mkdir()
-        (cursor_dir / "cli.json").write_text(
-            json.dumps({"permissions": {"allow": "Shell(git)", "deny": []}})
-        )
+        (cursor_dir / "cli.json").write_text(json.dumps({"permissions": {"allow": "Shell(git)", "deny": []}}))
 
         result = generate_cursor_cli_config(tmp_path)
         assert ".cursor/cli.json" in result["updated"]

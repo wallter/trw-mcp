@@ -56,9 +56,7 @@ def test_project_overrides_machine(home_dir: Path, project_dir: Path) -> None:
     assert get_config().task_root == "from-project"
 
 
-def test_env_overrides_both(
-    home_dir: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_overrides_both(home_dir: Path, project_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``TRW_*`` env overrides both the project and machine layers."""
     (home_dir / ".trw" / "config.yaml").write_text("task_root: from-machine\n", encoding="utf-8")
     (project_dir / ".trw" / "config.yaml").write_text("task_root: from-project\n", encoding="utf-8")
@@ -66,9 +64,7 @@ def test_env_overrides_both(
     assert get_config().task_root == "from-env"
 
 
-def test_machine_only_key_merges_with_project_only_key(
-    home_dir: Path, project_dir: Path
-) -> None:
+def test_machine_only_key_merges_with_project_only_key(home_dir: Path, project_dir: Path) -> None:
     """Keys unique to each layer both survive the deep merge."""
     (home_dir / ".trw" / "config.yaml").write_text("recall_user_tier_cap: 7\n", encoding="utf-8")
     (project_dir / ".trw" / "config.yaml").write_text("task_root: from-project\n", encoding="utf-8")
@@ -77,9 +73,7 @@ def test_machine_only_key_merges_with_project_only_key(
     assert cfg.task_root == "from-project"
 
 
-def test_no_machine_file_is_backward_compatible(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_machine_file_is_backward_compatible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With NO ``~/.trw/config.yaml`` present, behavior is today's loader.
 
     Home is pointed at an empty directory so the machine layer is absent; the
@@ -121,9 +115,7 @@ def test_populated_project_no_machine_matches_project_values(
     assert cfg.recall_user_tier_cap == 9
 
 
-def test_user_tier_fields_exist_with_defaults(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_user_tier_fields_exist_with_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """FR04 introduces ``user_tier_enabled`` + ``recall_user_tier_cap``.
 
     Isolated so neither the machine layer (``~/.trw/config.yaml``) nor an

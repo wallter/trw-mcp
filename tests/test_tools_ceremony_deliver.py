@@ -269,6 +269,53 @@ class TestDeliverPartialFailure:
         assert log_entry["results"]["index_sync"]["status"] == "skipped"
         assert log_entry["success"] is True
 
+    def test_prd_local_049_fr01_session_changelog_written_on_deliver(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FR01: deliver writes the session changelog artifact + result path."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "reflections").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        run_dir = tmp_path / "docs" / "task" / "runs" / "20260609T000000Z-test"
+        (run_dir / "meta").mkdir(parents=True)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+            patch(
+                "trw_mcp.tools.ceremony._do_instruction_sync",
+                return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
+            ),
+            patch(
+                "trw_mcp.tools._deferred_delivery._do_index_sync",
+                return_value={"status": "success", "index": {}, "roadmap": {}},
+            ),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+        ):
+            result = tools["trw_deliver"].fn(
+                allow_unverified=True,
+                unverified_reason="test fixture: no build_check recorded for this synthetic run",
+            )
+
+        report_path = run_dir / "reports" / "session-changelog.md"
+        assert report_path.is_file(), "deliver must write the session changelog artifact"
+        assert result["session_changelog_path"] == str(report_path)
+        # The changelog step is fail-open and must not have recorded a failure.
+        assert "session_changelog" not in result
+        body = report_path.read_text(encoding="utf-8")
+        assert "# Session Changelog" in body
+        assert "No commits were recorded for this session." in body
+
     def test_event_logging_during_delivery(
         self,
         tmp_path: Path,

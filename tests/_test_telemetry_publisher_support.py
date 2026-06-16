@@ -14,9 +14,11 @@ def _make_config(
     platform_url: str = "https://api.example.com",
     platform_urls: list[str] | None = None,
     platform_telemetry_enabled: bool = True,
+    learning_sharing_enabled: bool = True,
 ) -> TRWConfig:
     kwargs: dict[str, object] = {
         "platform_telemetry_enabled": platform_telemetry_enabled,
+        "learning_sharing_enabled": learning_sharing_enabled,
     }
     if platform_urls is not None:
         kwargs["platform_urls"] = platform_urls

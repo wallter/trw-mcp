@@ -336,9 +336,7 @@ class TestAuditRecallEffectiveness:
         receipts_dir.mkdir(parents=True, exist_ok=True)
         log_path = receipts_dir / "recall_log.jsonl"
         sentinel = "SENSITIVE-IN-FILE-CONTENT-42"
-        log_path.write_text(
-            json.dumps({"query": sentinel, "matched_ids": []}), encoding="utf-8"
-        )
+        log_path.write_text(json.dumps({"query": sentinel, "matched_ids": []}), encoding="utf-8")
 
         real_read_text = Path.read_text
 

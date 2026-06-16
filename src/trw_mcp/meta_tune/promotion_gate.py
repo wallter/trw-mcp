@@ -26,7 +26,7 @@ from trw_mcp.meta_tune.audit import (
     AuditIntegrityError,
     append_audit_entry,
 )
-from trw_mcp.telemetry.event_base import MetaTuneEvent
+from trw_mcp.meta_tune.promotion_telemetry import emit_promotion_gate_decision
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
@@ -358,6 +358,9 @@ class PromotionGate:
                     "human_signoff": decision.human_signoff,
                     "promotion_gate_vote_count": decision.vote_count,
                     "eval_gaming_flags": list(proposal.eval_gaming_flags),
+                    # Persisted so the Goodhart lookback window can be reconstructed
+                    # from the durable audit log on subsequent promotions (SAFE-001 FR-2).
+                    "declared_metric_delta": proposal.declared_metric_delta,
                 },
                 promotion_session_id=promotion_session_id,
                 reviewer_id=reviewer_id,
@@ -380,31 +383,13 @@ class PromotionGate:
                 human_signoff=decision.human_signoff,
                 vote_count=decision.vote_count,
             )
-        try:
-            from trw_mcp.telemetry.unified_events import emit as _emit_unified
-
-            event = MetaTuneEvent(
-                session_id=proposal.proposal_id,
-                payload={
-                    "action": "promotion_gate_evaluate",
-                    "proposal_id": proposal.proposal_id,
-                    "decision": decision.decision,
-                    "reason": decision.reason,
-                    "promotion_gate_vote_count": decision.vote_count,
-                    "surface_classification_result": proposal.surface_classification,
-                },
-            )
-            # PRD-HPO-SAFE-001 telemetry dispatch — emit via unified writer.
-            # fallback_dir=None leaves emission best-effort when no run is
-            # pinned; the audit log is the authoritative record either way.
-            _emit_unified(event, run_dir=None, fallback_dir=None)
-        except Exception:  # justified: telemetry_best_effort, gate must not raise
-            logger.warning(
-                "promotion_gate_telemetry_failed",
-                component="meta_tune.promotion_gate",
-                op="_record",
-                outcome="degraded",
-            )
+        emit_promotion_gate_decision(
+            proposal_id=proposal.proposal_id,
+            decision=decision.decision,
+            reason=decision.reason,
+            vote_count=decision.vote_count,
+            surface_classification=proposal.surface_classification,
+        )
         logger.info(
             "promotion_gate_decision",
             component="meta_tune.promotion_gate",

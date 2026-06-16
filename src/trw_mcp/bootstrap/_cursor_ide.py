@@ -97,6 +97,7 @@ _IDE_CURATED_SKILLS: list[str] = [
     "trw-sprint-init",
     "trw-project-health",
     "trw-memory-audit",
+    "trw-reflect",
     # "trw-release" — skill directory does not exist yet (PRD-CORE-137)
 ]
 
@@ -124,6 +125,10 @@ _TRW_COMMANDS: list[tuple[str, str]] = [
     (
         "trw-framework-check",
         "Check TRW framework compliance for the current or specified work.",
+    ),
+    (
+        "trw-reflect",
+        "End-of-session reflection — route process improvements to quick-fixes, PRDs, learnings, or backlog.",
     ),
 ]
 

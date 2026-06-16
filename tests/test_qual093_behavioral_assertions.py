@@ -126,13 +126,7 @@ class TestTemplateGuidance:
     """PRD-QUAL-093-FR03."""
 
     def _template_text(self) -> str:
-        template = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "prd_template.md"
-        )
+        template = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "prd_template.md"
         return template.read_text(encoding="utf-8")
 
     def test_template_has_behavioral_guidance(self) -> None:
@@ -162,14 +156,12 @@ class TestScoreInvariance:
 
     def test_behavioral_and_existence_score_equally(self) -> None:
         """Both produce the same _has_assertion_evidence verdict (no weight delta)."""
-        assert _has_assertion_evidence(_BEHAVIORAL_FR) == _has_assertion_evidence(
-            _EXISTENCE_FR
-        )
+        assert _has_assertion_evidence(_BEHAVIORAL_FR) == _has_assertion_evidence(_EXISTENCE_FR)
 
     def test_adding_behavioral_does_not_double_count_evidence(self) -> None:
         """The predicate stays boolean — adding a behavioral line alongside an
         existence line yields the same True verdict, no escalated signal."""
-        both = _EXISTENCE_FR + "\n- asserts_value: \"x == 1 in tests/test_x.py\""
+        both = _EXISTENCE_FR + '\n- asserts_value: "x == 1 in tests/test_x.py"'
         assert _has_assertion_evidence(both) is True
         assert _has_assertion_evidence(_EXISTENCE_FR) is True
 
@@ -208,8 +200,7 @@ class TestScoreInvariance:
                     "---",
                     "## Functional Requirements",
                     "### PRD-CORE-994-FR01: Wiring",
-                    "When a request arrives, the system shall persist the record "
-                    "in `a.py` verified by `tests/t.py`.",
+                    "When a request arrives, the system shall persist the record in `a.py` verified by `tests/t.py`.",
                     "**Assertions**:",
                     f"- {assertion_line}",
                 ]
@@ -218,7 +209,4 @@ class TestScoreInvariance:
         existence_prd = _prd('grep_present: "handle in a.py and tests/t.py"')
         behavioral_prd = _prd('asserts_value: "out.x == 1 in a.py and tests/t.py"')
 
-        assert (
-            validate_prd_quality_v2(existence_prd).total_score
-            == validate_prd_quality_v2(behavioral_prd).total_score
-        )
+        assert validate_prd_quality_v2(existence_prd).total_score == validate_prd_quality_v2(behavioral_prd).total_score

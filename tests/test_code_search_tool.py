@@ -57,9 +57,7 @@ def test_trw_code_symbol_returns_exact_match_with_disambiguating_location(tmp_pa
 
 
 def test_trw_code_search_skill_has_valid_frontmatter_and_usage_text() -> None:
-    skill_path = (
-        Path(__file__).parents[1] / "src" / "trw_mcp" / "data" / "skills" / "trw-code-search" / "SKILL.md"
-    )
+    skill_path = Path(__file__).parents[1] / "src" / "trw_mcp" / "data" / "skills" / "trw-code-search" / "SKILL.md"
 
     content = skill_path.read_text(encoding="utf-8")
 

@@ -147,10 +147,10 @@ class TestInferDomainTags:
         # sklearn alias also resolves.
         assert "scikit-learn" in infer_domain_tags(["sklearn/cluster/_kmeans.py"])
 
-    def test_featurebench_repo_paths_get_tags(self) -> None:
-        """FeatureBench corpus repos (pandas/transformers/mlflow/etc.)
-        also resolve to non-empty tags so trw-eval Lv1/Lv2 problems
-        benefit from the relevance ranker.
+    def test_benchmark_corpus_repo_paths_get_tags(self) -> None:
+        """Additional benchmark-corpus repos (pandas/transformers/mlflow/etc.)
+        also resolve to non-empty tags so downstream eval problems benefit
+        from the relevance ranker.
         """
         from trw_mcp.state.learning_injection import infer_domain_tags
 

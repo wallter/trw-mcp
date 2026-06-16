@@ -9,8 +9,6 @@ import pytest
 import structlog
 import tomllib
 
-import structlog
-
 from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals

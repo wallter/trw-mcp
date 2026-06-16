@@ -8,9 +8,11 @@ PRD-DIST-124 (2026-04-30): migrated from urllib to httpx.
 from __future__ import annotations
 
 import json
+import os
 
 import httpx
 import structlog
+from trw_memory.security.pii import redact_paths, strip_pii
 from typing_extensions import TypedDict
 
 from trw_mcp.models.config import get_config
@@ -41,11 +43,22 @@ def fetch_shared_learnings(query: str = "", limit: int = 5) -> list[RemoteShared
     if not urls or not cfg.platform_telemetry_enabled:
         return []
 
+    # PRD-SEC-004 redaction parity: the recall query is raw user-supplied text
+    # that egresses off-machine to /v1/learnings/search. Run it through the same
+    # PII/path chokepoint that sync/push.py applies to learning content so that
+    # an email/secret/absolute-path typed into a recall query never leaves the
+    # box verbatim. The consent gate above (platform_telemetry_enabled, default
+    # False) already prevents any default egress; this is the content-redaction
+    # belt behind that gate. The embedding is computed from the SANITIZED query
+    # so the vector cannot reconstruct the redacted tokens either.
+    project_root = os.getenv("TRW_PROJECT_ROOT", os.getcwd())
+    safe_query = redact_paths(strip_pii(query), project_root) if query.strip() else query
+
     # Generate embedding for query
-    embedding = embed(query) if query.strip() else None
+    embedding = embed(safe_query) if safe_query.strip() else None
 
     payload: _RecallSearchPayload = {
-        "query": query,
+        "query": safe_query,
         "embedding": embedding,
         "limit": limit,
     }

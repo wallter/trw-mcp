@@ -35,6 +35,51 @@ def _build_passed(ev: dict[str, object]) -> bool:
     return True
 
 
+def _event_ts(ev: dict[str, object]) -> str:
+    """Return the event's ISO timestamp string, or '' when absent."""
+    return str(ev.get("ts", ""))
+
+
+def _latest_ts_for(events: list[dict[str, object]], predicate: object) -> str:
+    """Max ISO ``ts`` among events matching ``predicate`` (callable); '' if none.
+
+    ISO-8601 UTC timestamps from ``FileEventLogger.log_event`` are
+    lexicographically orderable, so ``max`` over the string form is a correct
+    chronological comparison without parsing.
+    """
+    from collections.abc import Callable
+    from typing import cast
+
+    pred = cast("Callable[[dict[str, object]], bool]", predicate)
+    stamps = [_event_ts(ev) for ev in events if pred(ev) and _event_ts(ev)]
+    return max(stamps) if stamps else ""
+
+
+def _build_evidence_is_stale(events: list[dict[str, object]]) -> bool:
+    """True when a ``file_modified`` postdates the latest PASSING build check.
+
+    FRAMEWORK.md §"Build evidence MUST postdate the last change it claims to
+    cover: edit after the check -> re-run the check. Stale evidence is no
+    evidence." (codex cross-model review). The deliver build gate previously
+    accepted ANY passing ``build_check_complete`` in run history regardless of
+    whether a file was edited AFTER it, so a pass-then-edit sequence slipped the
+    gate with stale evidence.
+
+    Compares the max ``ts`` of passing build events against the max ``ts`` of
+    ``file_modified`` events. Returns True only when BOTH exist and the latest
+    edit strictly postdates the latest passing build. No passing build (handled
+    elsewhere) or no edits -> not stale here. Equal timestamps are NOT stale
+    (the edit did not happen strictly after the build).
+    """
+    latest_build_ts = _latest_ts_for(events, _build_passed)
+    if not latest_build_ts:
+        return False
+    latest_edit_ts = _latest_ts_for(events, lambda ev: str(ev.get("event", "")) == "file_modified")
+    if not latest_edit_ts:
+        return False
+    return latest_edit_ts > latest_build_ts
+
+
 def _check_build_and_work_events(
     events: list[dict[str, object]],
 ) -> tuple[str | None, str | None]:
@@ -45,8 +90,31 @@ def _check_build_and_work_events(
     build_warning: str | None = None
     premature_warning: str | None = None
 
+    # When build-check is intentionally disabled (``config.build_check_enabled``
+    # is False), ``trw_build_check`` returns early without ever logging a
+    # ``build_check_complete`` event. Without this guard the delivery gate would
+    # then fire ``build_gate_warning`` for the missing event — both SKIPPING the
+    # build check AND blocking delivery on its absence. Mirror the
+    # ``phase_gates_build.py`` convention: a disabled build-check means no build
+    # gate. The premature-delivery (work-events) guard below still applies.
+    #
+    # codex cross-model review (REFUTE/DOCUMENT): ``build_check_enabled=False`` is
+    # the FRAMEWORK's SANCTIONED config-level gate override, not a loophole —
+    # FRAMEWORK.md §"Quality gates" lets a project opt out of the build gate
+    # explicitly via config. Skipping it here honors that sanctioned opt-out.
     try:
-        if not events:
+        from trw_mcp.models.config import get_config
+
+        build_check_disabled = not get_config().build_check_enabled
+    except Exception:  # justified: fail-open, never let config read block delivery
+        logger.warning("build_gate_config_read_failed", exc_info=True)
+        build_check_disabled = False
+
+    try:
+        if build_check_disabled:
+            # Skip the build gate entirely; still evaluate the work-events guard.
+            pass
+        elif not events:
             # A-P1-07: empty/truncated events.jsonl = NO build evidence. Treat it
             # like "events present but no passing build" (symmetry) so the delivery
             # gate requires evidence — the allow_unverified override still applies,
@@ -58,11 +126,24 @@ def _check_build_and_work_events(
                 None,
             )
 
-        # Build gate (RC-003 + RC-006)
-        if not any(_build_passed(e) for e in events):
+        # Build gate (RC-003 + RC-006) — skipped when build-check is disabled.
+        if not build_check_disabled and not any(_build_passed(e) for e in events):
             build_warning = (
                 "No successful build check found before delivery. "
                 "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check()."
+            )
+        # Stale-evidence gate (codex cross-model review; FRAMEWORK.md §"Build
+        # evidence MUST postdate the last change it claims to cover"). A passing
+        # build exists, but a file was edited AFTER it -> the evidence no longer
+        # covers the current tree. Treated identically to a missing build:
+        # build_warning is set, so the caller's _apply_deliver_gate_mode promotes
+        # it to a hard delivery_blocked under block_* modes and leaves it a
+        # warning under advisory mode. The allow_unverified override still applies.
+        elif not build_check_disabled and _build_evidence_is_stale(events):
+            build_warning = (
+                "Stale build evidence: a file was modified AFTER the last passing trw_build_check. "
+                "The recorded build no longer covers the current changes — re-run project-native "
+                "validation and record it with trw_build_check() before delivering."
             )
 
         # Premature delivery guard.
@@ -115,6 +196,32 @@ def _check_no_active_run_build_gate(trw_dir: Path | None, reader: FileStateReade
 
     state_path = trw_dir / "context" / "ceremony-state.json"
     try:
+        # trw:intentional fail-open for unpinned sessions without ceremony state.
+        # No ceremony-state.json (or no ``session_started``) means no TRW session
+        # ever began in this project (e.g. a brand-new project or a quick-task
+        # flow that never ran trw_session_start). There is no session-local
+        # evidence to gate against, and the gate's job is specifically to catch a
+        # STARTED session that recorded no passing build — NOT to force ceremony
+        # onto delivery paths that never opted in. Returning a warning here would
+        # over-block legitimate new-project/quick-task delivery. The gate only
+        # fires below when session_started=True and the recorded build did NOT
+        # pass; the allow_unverified override still applies on top of that.
+        #
+        # PATH-3 layered defense (codex cross-model review): "no run + no ceremony
+        # state -> no build gate fires" was flagged as a bypass. It is by-design,
+        # and defended in DEPTH, not left open:
+        #   (1) Upstream, CeremonyMiddleware.on_call_tool BLOCKS every trw_* tool
+        #       (including trw_deliver) with a ``session_start_required`` error
+        #       whenever a post-compaction recovery marker is pending — so a
+        #       deliver after a dropped/compacted session cannot reach here.
+        #   (2) The deliver_gate_mode task-type taxonomy classifies a delivery
+        #       with no run.yaml as task_type=unknown, which
+        #       _BUILD_ARTIFACT_TASK_TYPES intentionally EXCLUDES (unknown never
+        #       hard-blocks). A no-run/no-ceremony delivery is therefore an
+        #       unknown-typed delivery the framework deliberately treats as
+        #       advisory — blocking it would over-block legitimate quick-tasks.
+        # The fail-closed posture is reserved for STARTED sessions (below), where
+        # there IS evidence that a build was expected but did not pass.
         if not reader.exists(state_path):
             return None
         state = json.loads(state_path.read_text(encoding="utf-8"))

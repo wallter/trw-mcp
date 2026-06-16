@@ -89,6 +89,7 @@ def _session_start_writer_pressure(config: TRWConfig, trw_dir: Path) -> tuple[bo
         return should_defer_memory_side_effects(
             trw_dir,
             threshold=config.session_start_writer_pressure_threshold,
+            pin_ttl_hours=config.pin_ttl_hours,
         )
     except Exception:  # justified: pressure detection is advisory and fail-open
         logger.warning("session_start_response_pressure_check_failed", exc_info=True)
@@ -106,6 +107,7 @@ def _session_start_optional_work_pressure(config: TRWConfig, trw_dir: Path) -> t
         return should_defer_session_start_optional_work(
             trw_dir,
             threshold=config.session_start_writer_pressure_threshold,
+            pin_ttl_hours=config.pin_ttl_hours,
         )
     except Exception:  # justified: optional-work pressure detection is advisory and fail-open
         logger.warning("session_start_optional_pressure_check_failed", exc_info=True)
@@ -197,6 +199,7 @@ def record_session_start_surfaces(trw_dir: Path, learning_ids: list[str]) -> lis
         defer_tracking, writer_pids = should_defer_memory_side_effects(
             trw_dir,
             threshold=config.session_start_writer_pressure_threshold,
+            pin_ttl_hours=config.pin_ttl_hours,
         )
     if defer_tracking:
         logger.warning(

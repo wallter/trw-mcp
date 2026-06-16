@@ -155,6 +155,12 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
     Returns:
         Total line count of the written file.
     """
+    # A blank-line separator is inserted before the TRW section whenever there is
+    # preceding user content. ``before`` is rstripped and ``trw_section`` is
+    # left-stripped of newlines, so the join can never glue the leading
+    # ``<!-- TRW AUTO-GENERATED -->`` comment onto the end of a prose line — the
+    # exact defect that corrupted AGENTS.md, whose section (unlike the CLAUDE.md
+    # renderer's) does not start with a newline (PRD-QUAL-112).
     if target.exists():
         existing = target.read_text(encoding="utf-8")
         if TRW_MARKER_START in existing and TRW_MARKER_END in existing:
@@ -165,9 +171,12 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
             before = existing[:cut_start].rstrip()
             after_marker = existing.index(TRW_MARKER_END) + len(TRW_MARKER_END)
             after = existing[after_marker:].lstrip("\n")
-            new_content = before + trw_section + "\n" + after
+            separator = "\n\n" if before else ""
+            new_content = before + separator + trw_section.lstrip("\n") + "\n" + after
         else:
-            new_content = existing.rstrip() + "\n" + trw_section + "\n"
+            before = existing.rstrip()
+            separator = "\n\n" if before else ""
+            new_content = before + separator + trw_section.lstrip("\n") + "\n"
     else:
         new_content = trw_section.lstrip() + "\n"
 

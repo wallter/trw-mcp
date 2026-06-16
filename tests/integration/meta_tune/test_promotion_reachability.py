@@ -239,9 +239,253 @@ def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: 
     assert target.read_text(encoding="utf-8") == "after-from-tool\n"
 
 
-def test_concurrent_promotes_serialize_via_target_write_lock(
+def _sandbox_with_delta(delta: float) -> SandboxResult:
+    return SandboxResult(
+        exit_code=0,
+        stdout=json.dumps(
+            {
+                "declared_metric_delta": delta,
+                "outcome_trace": [
+                    {"task": "t1", "score": 0.4},
+                    {"task": "t2", "score": 0.5},
+                    {"task": "t3", "score": 0.7},
+                    {"task": "t4", "score": 0.6},
+                    {"task": "t5", "score": 0.8},
+                ],
+            }
+        ),
+        stderr="",
+        wall_ms=12.0,
+        rss_peak_mb=1.0,
+        network_attempted=False,
+        writes_outside_tmp=[],
+        timed_out=False,
+    )
+
+
+def test_goodhart_gate_rejects_spike_once_history_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SAFE-001 FR-2: the Goodhart detector is re-armed by loading recent
+    promotion history from the durable audit log. Once a baseline of small
+    deltas exists, an implausible spike delta is rejected (goodhart-spike)."""
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("v0\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+
+    # Build a baseline of >= _GOODHART_MIN_HISTORY small-delta promotions so the
+    # lookback window is populated when the next candidate is evaluated.
+    small_deltas = [0.02, 0.03, 0.025]
+    for i, d in enumerate(small_deltas):
+        monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
+        res = dispatch.promote_candidate(
+            target_path=target,
+            candidate_content=f"v{i + 1}\n",
+            proposer_id="agent-baseline",
+            reviewer_id="alice",
+            approval_ts=datetime.now(timezone.utc),
+            sandbox_command=["python", "-c", "print('unused')"],
+            _config=cfg,
+            state_dir=state_dir,
+        )
+        assert res.decision == "approve", f"baseline promotion {i} should approve"
+
+    # Now a candidate declaring a delta far above the spike ratio (10x max prior
+    # ~= 0.3) must be rejected as a Goodhart spike — proving the history is loaded.
+    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(5.0))
+    spike = dispatch.promote_candidate(
+        target_path=target,
+        candidate_content="v-spike\n",
+        proposer_id="agent-hacker",
+        reviewer_id="alice",
+        approval_ts=datetime.now(timezone.utc),
+        sandbox_command=["python", "-c", "print('unused')"],
+        _config=cfg,
+        state_dir=state_dir,
+    )
+
+    assert spike.promoted is False
+    assert spike.decision == "reject"
+    assert spike.reason == "goodhart-flag"
+    # The live surface must retain the last legitimate promotion, not the spike.
+    assert target.read_text(encoding="utf-8") == "v3\n"
+
+
+def test_goodhart_gate_allows_legitimate_delta_within_band_after_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The re-armed Goodhart gate must NOT block legitimate promotions whose
+    delta sits within the normal band relative to recent history."""
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("v0\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+
+    for i, d in enumerate([0.05, 0.06, 0.05]):
+        monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
+        res = dispatch.promote_candidate(
+            target_path=target,
+            candidate_content=f"v{i + 1}\n",
+            proposer_id="agent-baseline",
+            reviewer_id="alice",
+            approval_ts=datetime.now(timezone.utc),
+            sandbox_command=["python", "-c", "print('unused')"],
+            _config=cfg,
+            state_dir=state_dir,
+        )
+        assert res.decision == "approve"
+
+    # A modest improvement (well within 10x the max prior 0.06 = 0.6) approves.
+    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(0.1))
+    ok = dispatch.promote_candidate(
+        target_path=target,
+        candidate_content="v-legit\n",
+        proposer_id="agent-honest",
+        reviewer_id="alice",
+        approval_ts=datetime.now(timezone.utc),
+        sandbox_command=["python", "-c", "print('unused')"],
+        _config=cfg,
+        state_dir=state_dir,
+    )
+
+    assert ok.promoted is True
+    assert ok.decision == "approve"
+    assert target.read_text(encoding="utf-8") == "v-legit\n"
+
+
+def test_load_recent_history_parses_promoted_deltas(tmp_path: Path) -> None:
+    """_load_recent_history extracts declared_metric_delta from promoted events
+    only, ignoring other event types and bounding to max_rows."""
+    audit_log = tmp_path / "audit.jsonl"
+    cfg = _config(tmp_path).meta_tune.model_copy(update={"audit_log_path": str(audit_log)})
+    full_cfg = _config(tmp_path).model_copy(update={"meta_tune": cfg})
+
+    from trw_mcp.meta_tune.audit import append_audit_entry
+
+    # A non-promoted event (must be ignored).
+    append_audit_entry(
+        audit_log,
+        edit_id="e0",
+        event="proposed",
+        surface_classification="advisory",
+        gate_decision="pending",
+        payload={"declared_metric_delta": 99.0},
+        _config=full_cfg,
+    )
+    # Three promoted events with known deltas.
+    for i, d in enumerate([0.01, 0.02, 0.03]):
+        append_audit_entry(
+            audit_log,
+            edit_id=f"e{i + 1}",
+            event="promoted",
+            surface_classification="advisory",
+            gate_decision="approve",
+            payload={"declared_metric_delta": d},
+            _config=full_cfg,
+        )
+
+    history = dispatch._load_recent_history(audit_log, max_rows=2)
+    # Only promoted events, bounded to the most recent 2.
+    assert [row["declared_metric_delta"] for row in history] == [0.02, 0.03]
+
+
+def test_rejected_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round-2 fix: a rejected (sandbox-policy-violation) dispatch must not leak
+    a staging directory to disk. The staging dir is a transient sandbox
+    workspace cleaned up on every exit path, not just approve."""
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("before\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+
+    monkeypatch.setattr(
+        dispatch,
+        "run_sandboxed",
+        lambda *args, **kwargs: _sandbox_escape(
+            writes_outside_tmp=["/repo/outside-allowlist.txt"],
+            network_attempted=False,
+        ),
+    )
+
+    result = dispatch.promote_candidate(
+        target_path=target,
+        candidate_content="after\n",
+        proposer_id="agent-escape",
+        reviewer_id="alice",
+        approval_ts=datetime.now(timezone.utc),
+        sandbox_command=["python", "-c", "print('unused in test')"],
+        _config=cfg,
+        state_dir=state_dir,
+    )
+
+    assert result.decision == "reject"
+    staging_root = state_dir / "staging"
+    # The per-edit staging dir must be gone; nothing left under staging/.
+    assert not (staging_root / result.edit_id).exists()
+    assert not staging_root.exists() or not any(staging_root.iterdir())
+
+
+def test_sandbox_failed_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sandbox-replay-failed (non-zero exit) dispatch also cleans up staging."""
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("before\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+
+    failed = SandboxResult(
+        exit_code=1,
+        stdout="",
+        stderr="boom",
+        wall_ms=5.0,
+        rss_peak_mb=1.0,
+        network_attempted=False,
+        writes_outside_tmp=[],
+        timed_out=False,
+    )
+    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: failed)
+
+    result = dispatch.promote_candidate(
+        target_path=target,
+        candidate_content="after\n",
+        proposer_id="agent-fail",
+        reviewer_id="alice",
+        approval_ts=datetime.now(timezone.utc),
+        sandbox_command=["python", "-c", "print('unused in test')"],
+        _config=cfg,
+        state_dir=state_dir,
+    )
+
+    assert result.decision == "reject"
+    assert result.reason == "sandbox-replay-failed"
+    assert not (state_dir / "staging" / result.edit_id).exists()
+
+
+def test_approved_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An approved dispatch writes the live target + snapshot but still cleans up
+    the transient staging dir (the staged copy is not needed afterward)."""
+    cfg = _config(tmp_path)
+    target = tmp_path / "CLAUDE.md"
+    target.write_text("before\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+
+    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+
+    result = dispatch.promote_candidate(
+        target_path=target,
+        candidate_content="after\n",
+        proposer_id="agent-ok",
+        reviewer_id="alice",
+        approval_ts=datetime.now(timezone.utc),
+        sandbox_command=["python", "-c", "print('unused in test')"],
+        _config=cfg,
+        state_dir=state_dir,
+    )
+
+    assert result.promoted is True
+    assert target.read_text(encoding="utf-8") == "after\n"
+    assert not (state_dir / "staging" / result.edit_id).exists()
+
+
+def test_concurrent_promotes_serialize_via_target_write_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Round-2 fix: concurrent promotes against the same target must not corrupt it.
 
     The read-modify-write of the live target is guarded by a per-target advisory
@@ -276,7 +520,7 @@ def test_concurrent_promotes_serialize_via_target_write_lock(
                 state_dir=state_dir,
             )
             results.append(res)
-        except Exception as exc:  # noqa: BLE001 — surface to assertion
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=_promote, args=(c,)) for c in candidates]

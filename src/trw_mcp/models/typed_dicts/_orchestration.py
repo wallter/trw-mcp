@@ -109,6 +109,19 @@ class WaveProgressDict(TypedDict):
     wave_details: list[WaveDetailDict]
 
 
+class DeliverGateScanDict(TypedDict):
+    """Return shape of ``compute_deliver_gate_status()`` (PRD-QUAL-105).
+
+    Computed by ``_orchestration_gate_scan.py`` and merged into ``TrwStatusDict``
+    by ``trw_status``. All three keys are always present on a successful scan;
+    the orchestration wrapper omits them entirely on a fail-open scan error.
+    """
+
+    build_gate_ready: bool
+    review_gate_ready: bool
+    deliver_gate_summary: str
+
+
 class TrwStatusDict(TypedDict, total=False):
     """Internal construction type for the ``trw_status`` MCP tool.
 
@@ -141,3 +154,8 @@ class TrwStatusDict(TypedDict, total=False):
     stale_count: int
     stale_runs_advisory: str
     stale_count_error: bool
+    # PRD-QUAL-105: deliver-gate audit trail surfaced at status-check time.
+    # Omitted entirely (not None) when the gate scan fails open (FR04).
+    build_gate_ready: bool
+    review_gate_ready: bool
+    deliver_gate_summary: str

@@ -201,30 +201,18 @@ def execute_learn(
         except (ImportError, OSError, ValueError, TypeError):
             logger.debug("learning_migration_failed", exc_info=True)
 
-    # PRD-CORE-110: Auto-detect phase_origin if not explicitly provided
-    if not phase_origin:
-        try:
-            from trw_mcp.state._paths import detect_current_phase
+    # PRD-CORE-110 / PRD-FIX-052-FR05: typed metadata defaults.
+    from trw_mcp.tools._learn_metadata import prepare_nudge_line, prepare_tags, resolve_phase_origin
 
-            detected = detect_current_phase()
-            if detected:
-                phase_origin = detected.upper()
-            else:
-                logger.warning("phase_origin_no_active_run")
-        except Exception:  # justified: fail-open
-            logger.warning("phase_origin_detection_failed", exc_info=True)
-
-    # PRD-CORE-110: Auto-generate nudge_line from summary if not provided
-    from trw_mcp.tools._learning_helpers import truncate_nudge_line
-
-    nudge_line = truncate_nudge_line(nudge_line if nudge_line else summary)
-
-    # PRD-FIX-052-FR05: Pattern tag auto-suggestion for solution summaries
-    safe_tags = list(tags or [])
-    _is_sol = is_solution_fn if callable(is_solution_fn) else _default_is_solution
-    if _is_sol(summary) and "pattern" not in safe_tags:
-        safe_tags.append("pattern")
-        logger.debug("pattern_tag_auto_added", summary=summary[:60])
+    phase_origin = resolve_phase_origin(phase_origin, logger)
+    nudge_line = prepare_nudge_line(nudge_line, summary)
+    safe_tags = prepare_tags(
+        tags,
+        summary=summary,
+        is_solution_fn=is_solution_fn,
+        default_is_solution=_default_is_solution,
+        log=logger,
+    )
 
     # PRD-QUAL-056-FR06: audit-originated learnings must carry typed metadata
     # even when the caller only supplied the audit-finding tags.

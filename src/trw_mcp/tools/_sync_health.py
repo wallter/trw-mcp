@@ -56,9 +56,7 @@ def step_sync_health(trw_dir: Path, config: TRWConfig) -> dict[str, object]:
         consecutive_failures = int(failures_raw) if isinstance(failures_raw, (int, float)) else 0
 
         last_push_at_raw = raw.get("last_push_at")
-        last_push_at: str | None = (
-            last_push_at_raw if isinstance(last_push_at_raw, str) and last_push_at_raw else None
-        )
+        last_push_at: str | None = last_push_at_raw if isinstance(last_push_at_raw, str) and last_push_at_raw else None
 
         # Age computation — absent/unparseable timestamp is treated as "never".
         last_push_age_hours: float | None = None

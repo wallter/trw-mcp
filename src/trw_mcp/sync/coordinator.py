@@ -148,9 +148,7 @@ class SyncCoordinator:
         cursor advances on its own high-water mark and never regresses.
         """
         state = self._read_state()
-        state["last_company_pull_seq"] = max(
-            self._int_field(state, "last_company_pull_seq"), company_seq or 0
-        )
+        state["last_company_pull_seq"] = max(self._int_field(state, "last_company_pull_seq"), company_seq or 0)
         state["version"] = 1
         self._write_state(state)
 

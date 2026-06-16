@@ -70,8 +70,7 @@ def _make_trw_dir(tmp_path: Path, *, build_passed: bool, coverage_pct: float) ->
     (trw_dir / "logs").mkdir(parents=True, exist_ok=True)
     (trw_dir / "context").mkdir(parents=True, exist_ok=True)
     build_status = (
-        f"tests_passed: {'true' if build_passed else 'false'}\n"
-        f"mypy_clean: true\ncoverage_pct: {coverage_pct}\n"
+        f"tests_passed: {'true' if build_passed else 'false'}\nmypy_clean: true\ncoverage_pct: {coverage_pct}\n"
     )
     (trw_dir / "context" / "build-status.yaml").write_text(build_status, encoding="utf-8")
     return trw_dir
@@ -93,9 +92,7 @@ def _stub_non_target_steps() -> dict[str, Any]:
         "_step_trust_increment",
         "_step_delivery_metrics",
     ]
-    return {
-        n: patch(f"trw_mcp.tools._deferred_delivery.{n}", return_value=noop) for n in names
-    }
+    return {n: patch(f"trw_mcp.tools._deferred_delivery.{n}", return_value=noop) for n in names}
 
 
 def _read_recorded_scores(trw_dir: Path) -> list[float]:
@@ -186,8 +183,7 @@ class TestDeferredCeremonyScoreGradient:
         assert scores[-1] > 0.0, f"expected a real non-zero ceremony_score, got {scores[-1]}"
         # Full compliance should land near the top of the 0-100 band.
         assert scores[-1] >= 50.0, (
-            f"full-ceremony run scored unexpectedly low ({scores[-1]}); "
-            "telemetry score did not reach the feedback step"
+            f"full-ceremony run scored unexpectedly low ({scores[-1]}); telemetry score did not reach the feedback step"
         )
 
     def test_bare_run_records_lower_score(self, tmp_path: Path) -> None:

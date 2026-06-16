@@ -24,10 +24,7 @@ from trw_mcp.tools._session_start_trim import (
 
 
 def _make_results(n_learnings: int) -> SessionStartResultDict:
-    learnings = [
-        {"id": f"L-{i:03d}", "summary": f"learning {i}", "impact": 0.9 - i * 0.01}
-        for i in range(n_learnings)
-    ]
+    learnings = [{"id": f"L-{i:03d}", "summary": f"learning {i}", "impact": 0.9 - i * 0.01} for i in range(n_learnings)]
     return cast(
         "SessionStartResultDict",
         {

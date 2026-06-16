@@ -192,9 +192,7 @@ class TestRunStateResource:
         assert "run-001" in result
         assert "active" in result
 
-    def test_deletion_race_does_not_crash(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_deletion_race_does_not_crash(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A run.yaml deleted between glob and read must fail open, not raise.
 
         Simulates the concurrent-deletion race: the file exists when globbed

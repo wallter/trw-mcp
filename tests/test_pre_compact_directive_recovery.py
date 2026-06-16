@@ -71,9 +71,7 @@ def test_omitted_directive_not_persisted(tmp_path: Path) -> None:
     assert "last_checkpoint" in state
 
 
-def test_recovery_surfaces_directive_and_anchor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recovery_surfaces_directive_and_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path)
     run_yaml = run_dir / "meta" / "run.yaml"
     run_yaml.write_text("phase: implement\nstatus: active\ntask: fr01\n", encoding="utf-8")
@@ -99,9 +97,7 @@ def test_recovery_surfaces_directive_and_anchor(
     assert status["context_anchor"] == "readback added, verifying"
 
 
-def test_recovery_omits_keys_when_no_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recovery_omits_keys_when_no_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No pre-compact state -> readback emits no directive/anchor keys."""
     run_dir = _make_run(tmp_path)
     run_yaml = run_dir / "meta" / "run.yaml"
@@ -124,16 +120,12 @@ def _tool_run_dir(tmp_path: Path) -> Path:
     d = tmp_path / "docs" / "task" / "runs" / "20260529T120000Z-test"
     meta = d / "meta"
     meta.mkdir(parents=True)
-    (meta / "run.yaml").write_text(
-        "run_id: t\nstatus: active\nphase: implement\ntask: t\n", encoding="utf-8"
-    )
+    (meta / "run.yaml").write_text("run_id: t\nstatus: active\nphase: implement\ntask: t\n", encoding="utf-8")
     (meta / "events.jsonl").write_text("", encoding="utf-8")
     return d
 
 
-def test_tool_persists_and_echoes_directive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tool_persists_and_echoes_directive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """trw_pre_compact_checkpoint persists directive/anchor and echoes them back."""
     run_dir = _tool_run_dir(tmp_path)
     tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -155,9 +147,7 @@ def test_tool_persists_and_echoes_directive(
     assert state["context_anchor"] == "readback wired, running tests"
 
 
-def test_tool_backward_compatible_without_args(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tool_backward_compatible_without_args(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Calling the tool with no new args still works; no directive keys emitted."""
     run_dir = _tool_run_dir(tmp_path)
     tools = make_ceremony_server(monkeypatch, tmp_path)
@@ -174,9 +164,7 @@ def test_tool_backward_compatible_without_args(
     assert "context_anchor" not in state
 
 
-def test_recovery_omits_keys_when_state_lacks_directive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_recovery_omits_keys_when_state_lacks_directive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """State written without the new params -> no keys surfaced (backward-compat)."""
     run_dir = _make_run(tmp_path)
     run_yaml = run_dir / "meta" / "run.yaml"

@@ -198,8 +198,12 @@ class TestSessionScopedFileCounting:
         ]
         assert _count_file_modified_current_session(events) == 3
 
-    def test_events_since_last_session_start_boundary(self) -> None:
-        """Should return events from and including the last session_start."""
+    def test_events_since_last_session_start_excludes_boundary(self) -> None:
+        """Should return events STRICTLY AFTER the last session_start (boundary excluded).
+
+        The session_start event is the boundary marker, not current-session work,
+        so it must not appear in the returned window.
+        """
         events: list[dict[str, object]] = [
             {"event": "file_modified", "ts": "T0"},
             {"event": "session_start", "ts": "T1"},
@@ -208,9 +212,18 @@ class TestSessionScopedFileCounting:
             {"event": "file_modified", "ts": "T4"},
         ]
         result = _events_since_last_session_start(events)
-        assert len(result) == 2  # session_start at T3 + file_modified at T4
-        assert result[0]["ts"] == "T3"
-        assert result[1]["ts"] == "T4"
+        assert len(result) == 1  # only file_modified at T4 (T3 session_start excluded)
+        assert result[0]["ts"] == "T4"
+        assert all(str(ev["event"]) != "session_start" for ev in result)
+
+    def test_events_since_last_session_start_no_boundary_returns_all(self) -> None:
+        """Without any session_start, all events are returned (backward compat)."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "T0"},
+            {"event": "file_modified", "ts": "T1"},
+        ]
+        result = _events_since_last_session_start(events)
+        assert len(result) == 2
 
     def test_stale_run_70_files_current_session_1_file(
         self,

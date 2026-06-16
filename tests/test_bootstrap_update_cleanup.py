@@ -5,9 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.bootstrap import init_project, update_project
-from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
-
-from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 

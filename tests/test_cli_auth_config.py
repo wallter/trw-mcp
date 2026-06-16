@@ -166,7 +166,12 @@ class TestRunAuthLoginPersistence:
 
         assert exit_code == 0
         content = cfg.read_text(encoding="utf-8")
-        assert 'platform_api_key: "trw_dk_test123"' in content
+        # PRD-SEC-005-FR01: the bearer credential now lands in the ignored,
+        # 0600 credentials.yaml — never in the git-tracked config.yaml.
+        assert "trw_dk_test123" not in content
+        creds = cfg.parent / "credentials.yaml"
+        assert 'platform_api_key: "trw_dk_test123"' in creds.read_text(encoding="utf-8")
+        # Non-secret metadata still goes to config.yaml for `auth status`.
         assert 'platform_org_name: "acme-corp"' in content
         assert 'platform_user_email: "dev@acme.com"' in content
 

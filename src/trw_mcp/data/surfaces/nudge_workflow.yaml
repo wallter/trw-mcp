@@ -1,20 +1,26 @@
 # Workflow nudge pool — engineering best practices from SWE-bench research.
 # PRD-CORE-129: Selected via weighted random by the nudge pool system.
+# Content guidance (nudge-deep-dive 2026-06-14): each message points at a
+# CONCRETE artifact (the failing test, the originating file/function, the diff,
+# the edge value) rather than abstract process-text. Evidence: AGENTS.md
+# (arXiv:2602.11988) + TDAD (2603.17973) — procedural process-text in the
+# execution loop hurts coding agents while structural pointers help. Keep the
+# fact -> value -> consequence shape. Do NOT remove entries.
 messages:
   - id: read_test_first
-    text: "Read the failing test to understand expected behavior before writing the fix."
+    text: "Open the failing test file to inspect the expected behavior before implementing the fix."
     phase_hint: early
   - id: verify_with_targeted_check
-    text: "Run the targeted project-native check to verify your fix before moving on."
+    text: "Re-run the specific test that was failing (not the whole suite) — green there is your proof the fix landed before you move on."
     phase_hint: validate
   - id: minimize_changes
-    text: "Make minimal changes to non-test files — smaller patches are more likely correct."
+    text: "Touch only the files the failing test exercises; diff every other edit back out — smaller patches regress less and review faster."
     phase_hint: implement
   - id: explain_root_cause
-    text: "If you can't explain the root cause in one sentence, revisit your analysis."
+    text: "Name the file and function where the bug originates before editing — if you can't point to it, you're patching a symptom, not the cause."
     phase_hint: implement
   - id: check_edge_cases
-    text: "Check edge cases: empty input, None, boundary values."
+    text: "Check edge cases for the input this code handles: empty, None, and boundary values at the exact limits in the spec."
     phase_hint: implement
   - id: dont_modify_tests
     text: "Do not modify existing test files — only change the source code under test."

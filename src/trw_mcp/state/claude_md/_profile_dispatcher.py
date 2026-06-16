@@ -22,6 +22,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts._ceremony import ClaudeMdSyncResultDict, ReviewMdResultDict
 from trw_mcp.state.claude_md._agents_md import (
     _determine_write_target_decision,
+    _enforce_size_gate,
+    _resolve_size_gate_mode,
     _sync_agents_md_if_needed,
     _sync_instruction_targets,
 )
@@ -168,9 +170,18 @@ def dispatch_for_profile(
 
     trw_section = render_template(template, tpl_context)
 
-    # PRD-CORE-061-FR04: Enforce max_auto_lines gate before writing
+    # PRD-CORE-061-FR04 + PRD-QUAL-104-FR01: enforce the size gate before
+    # writing CLAUDE.md. The brownfield resolver decides warn-vs-block; only
+    # ``block`` aborts the render (warn logs and proceeds, no regression).
     auto_gen_lines = trw_section.count("\n")
-    if auto_gen_lines > config.max_auto_lines:
+    gate_mode = _resolve_size_gate_mode(config, project_root)
+    oversized = _enforce_size_gate(
+        file_label="CLAUDE.md",
+        lines=auto_gen_lines,
+        limit=config.max_auto_lines,
+        mode=gate_mode,
+    )
+    if oversized is not None:
         msg = (
             f"Auto-gen section is {auto_gen_lines} lines, "
             f"exceeds max_auto_lines={config.max_auto_lines}. "

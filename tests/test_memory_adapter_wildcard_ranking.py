@@ -79,8 +79,7 @@ class TestWildcardRanksByImpact:
 
         ids = [str(r.get("id")) for r in results]
         assert ids == ["tribal", "mid", "trivial"], (
-            "wildcard recall must order by impact/utility, not updated_at DESC "
-            f"(got {ids})"
+            f"wildcard recall must order by impact/utility, not updated_at DESC (got {ids})"
         )
 
     def test_wildcard_top_result_is_high_impact_entry(self, trw_dir: Path) -> None:

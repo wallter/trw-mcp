@@ -5,8 +5,10 @@ back-compat and a single import point.
 
 Implements the ``deliver_gate_mode`` (advisory | block_coding | block_all)
 dispatch that conditions a missing-build-check block on the run's
-``task_type``. Default (``advisory``) never blocks — zero behavior change for
-existing deployments. All logic here is pure/fail-open; the override path
+``task_type``. Default is ``block_coding`` (flipped from ``advisory``
+2026-06-10): coding/rca/eval runs with work events and no recorded build
+check are blocked; docs/research/planning/unknown never block. All logic
+here is pure/fail-open on unknown modes; the override path
 (``allow_unverified`` + ``unverified_reason``) always remains open at the
 ``trw_deliver`` call site.
 """

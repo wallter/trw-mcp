@@ -304,9 +304,7 @@ def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
     # Check only distill-channel marker strings (ceremony markers excluded —
     # see MED-7 rationale in the docstring).  Exclude the entry's own markers.
     foreign_markers = [
-        MARKER_REGISTRY[k]
-        for k in DISTILL_MARKER_KEYS
-        if MARKER_REGISTRY[k] and MARKER_REGISTRY[k] not in own_markers
+        MARKER_REGISTRY[k] for k in DISTILL_MARKER_KEYS if MARKER_REGISTRY[k] and MARKER_REGISTRY[k] not in own_markers
     ]
 
     collisions: list[str] = []

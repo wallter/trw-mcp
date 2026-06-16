@@ -117,11 +117,10 @@ def test_sync_under_350() -> None:
 # tools/ coverage was added. Each may stay AT (not exceed) its recorded count;
 # new files must come in under 350. Decompose to shrink — do NOT raise an entry.
 _TOOLS_EFF_LOC_BASELINE: dict[str, int] = {
-    "_ceremony_status.py": 369,
     "_deferred_delivery.py": 352,
     "_delivery_helpers.py": 394,
     "_learn_impl.py": 357,
-    "learning.py": 360,
+    "learning.py": 359,
     "orchestration.py": 414,
     "requirements.py": 418,
 }
@@ -150,8 +149,7 @@ def test_tools_package_effective_loc_ratchet() -> None:
         "(decompose, do not raise the baseline): " + ", ".join(grown)
     )
     assert not new_over, (
-        f"new tools/ files exceed the {_MAX_LINES} effective-LOC gate "
-        "(split before merge): " + ", ".join(new_over)
+        f"new tools/ files exceed the {_MAX_LINES} effective-LOC gate (split before merge): " + ", ".join(new_over)
     )
 
 

@@ -50,6 +50,12 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-sprint-finish" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
+    def test_reflect_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
+        """Bundled trw-reflect skill stays byte-for-byte aligned with root source."""
+        assert (skills_dir / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8") == (
+            root_skills_dir / "trw-reflect" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
     def test_skill_variants_include_preflight_logging_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Root and bundled skill variants retain the pre-implementation checklist/self-review contract.
 

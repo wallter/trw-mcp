@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+# Compute the fixture's created timestamp relative to "now" so the recency-decay
+# factor stays non-degenerate over time. A hardcoded 2026-01-01 timestamp decays
+# toward zero as months pass, which collapses the base combined_score into the
+# float-precision floor and breaks the boost-ratio assertions. One day ago is
+# recent enough that decay is ~1.0 yet still a valid past timestamp.
+_RECENT_CREATED = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+
 
 def _base_entry(
     entry_id: str = "L-001",
@@ -13,7 +22,7 @@ def _base_entry(
         "id": entry_id,
         "summary": summary,
         "impact": impact,
-        "created": "2026-01-01T00:00:00Z",
+        "created": _RECENT_CREATED,
         **extra,
     }
 

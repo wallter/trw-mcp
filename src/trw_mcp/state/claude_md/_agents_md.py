@@ -11,6 +11,13 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.entries import mark_promoted
+from trw_mcp.state.claude_md._agents_md_size_gate import SizeGateMode
+from trw_mcp.state.claude_md._agents_md_size_gate import (
+    enforce_size_gate as _enforce_size_gate_impl,
+)
+from trw_mcp.state.claude_md._agents_md_size_gate import (
+    resolve_instruction_size_gate_mode as _resolve_size_gate_mode_impl,
+)
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
     TRW_MARKER_END,
@@ -35,6 +42,15 @@ def detect_ide(target_dir: Path) -> list[str]:
     from trw_mcp.bootstrap._utils import detect_ide as _detect_ide
 
     return _detect_ide(target_dir)
+
+
+def _resolve_size_gate_mode(config: TRWConfig, project_root: Path) -> SizeGateMode:
+    """Resolve the effective instruction-surface size-gate mode (PRD-QUAL-104 FR01)."""
+    return _resolve_size_gate_mode_impl(project_root=project_root, configured_mode=config.instruction_size_gate_mode)
+
+
+# Re-export the enforcer under the parent facade so callers keep one patch point.
+_enforce_size_gate = _enforce_size_gate_impl
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,12 +305,16 @@ def _sync_agents_md_if_needed(
 
     agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
     agents_lines = agents_section.count("\n")
-    if agents_lines > config.max_auto_lines:
-        logger.warning(
-            "agents_md_section_oversized",
-            lines=agents_lines,
-            limit=config.max_auto_lines,
-        )
+
+    # PRD-QUAL-104 FR01: promote the former warn-only oversize check to a
+    # configurable gate. Look the gate helpers up via the parent module so
+    # monkeypatches on ``_agents_md`` propagate (decomposition pattern).
+    from trw_mcp.state.claude_md import _agents_md as _am
+
+    gate_mode = _am._resolve_size_gate_mode(config, project_root)
+    if _am._enforce_size_gate(str(agents_target), agents_lines, config.max_auto_lines, gate_mode) is not None:
+        return False, None  # block mode: oversize already logged by the gate; abort the write.
+
     merge_trw_section(agents_target, agents_section, config.max_auto_lines)
     return True, str(agents_target)
 

@@ -29,9 +29,7 @@ def test_trw_user_dir_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert result == (tmp_path / "u" / "memory").resolve()
 
 
-def test_xdg_data_home_used_when_no_override(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_xdg_data_home_used_when_no_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """With XDG set and no TRW_USER_DIR → ``$XDG_DATA_HOME/trw/memory``."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     result = resolve_user_memory_dir()

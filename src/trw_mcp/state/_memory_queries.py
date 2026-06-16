@@ -13,9 +13,12 @@ through the facade.
 
 from __future__ import annotations
 
+import math
 import re
+from datetime import datetime
 
 import structlog
+from trw_memory.exceptions import MemoryError as TRWMemoryError
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
@@ -74,17 +77,25 @@ def _search_intersect_keywords(
     min_impact: float,
     namespace: str | None = _NAMESPACE,
 ) -> list[MemoryEntry]:
-    """Search for entries matching keyword tokens (union with match-count ranking).
+    """Search for entries matching keyword tokens (union with IDF-weighted ranking).
 
-    Entries matching more tokens rank higher.  Falls back gracefully when some
-    tokens match nothing (unlike strict AND which returns empty on any miss).
+    Entries matching more *informative* tokens rank higher: each token's
+    contribution is weighted by its inverse document frequency over the
+    candidate set, so a discriminating term (matched by few entries) outweighs a
+    high-frequency filler token (matched as a substring by most entries). Falls
+    back gracefully when some tokens match nothing (unlike strict AND which
+    returns empty on any miss). Closes the PRD-DIST-254 MCP-path Recall@5 gap
+    where stopword substrings ("I"/"for") let topically-irrelevant entries
+    outrank the on-topic record — federation-neutral (no namespace/pool change).
 
     ``namespace`` defaults to the project namespace; pass ``None`` to search all
     namespaces in a backend (used to query the user-tier store, whose entries
     live under ``user:<id>`` -- PRD-CORE-185 FR06).
     """
     entry_map: dict[str, MemoryEntry] = {}
-    match_counts: dict[str, int] = {}
+    # Per-token postings: token -> set of entry ids it matched. The set size is
+    # the token's document frequency over the candidate set, which drives IDF.
+    token_postings: dict[str, set[str]] = {}
 
     for token in kw_tokens:
         token_results = backend.search(
@@ -95,17 +106,39 @@ def _search_intersect_keywords(
             min_importance=min_impact,
             namespace=namespace,
         )
+        matched_ids: set[str] = set()
         for e in token_results:
             if e.id not in entry_map:
                 entry_map[e.id] = e
-                match_counts[e.id] = 0
-            match_counts[e.id] += 1
+            matched_ids.add(e.id)
+        token_postings[token] = matched_ids
 
     if not entry_map:
         return []
 
-    # Sort by match count descending (most tokens matched first)
-    ranked_ids = sorted(match_counts, key=lambda eid: match_counts[eid], reverse=True)
+    # IDF over the candidate set: tokens matched by FEW entries are
+    # discriminating (high weight); tokens matched by MANY entries (stopword
+    # substrings like "I"/"for") are uninformative (low weight). This mirrors
+    # the BM25 IDF term the MemoryClient path uses, so the LIKE-substring MCP
+    # path stops letting filler-token matches outrank the on-topic record.
+    n_candidates = len(entry_map)
+    scores: dict[str, float] = dict.fromkeys(entry_map, 0.0)
+    for matched_ids in token_postings.values():
+        df = len(matched_ids)
+        if df == 0:
+            continue
+        # smoothed IDF, always > 0 so every genuine match still contributes.
+        weight = math.log((n_candidates + 1) / (df + 1)) + 1.0
+        for eid in matched_ids:
+            scores[eid] += weight
+
+    # Sort by IDF-weighted score desc; tie-break on importance then id for a
+    # deterministic order across processes.
+    ranked_ids = sorted(
+        scores,
+        key=lambda eid: (scores[eid], entry_map[eid].importance, eid),
+        reverse=True,
+    )
     return [entry_map[eid] for eid in ranked_ids[:top_k]]
 
 
@@ -202,12 +235,28 @@ def _search_entries(
     min_impact: float = 0.0,
     allow_cold_embedding_init: bool = True,
     namespace: str | None = _NAMESPACE,
+    as_of: datetime | None = None,
+    include_superseded: bool = False,
 ) -> list[MemoryEntry]:
-    """Search entries using hybrid (keyword + vector RRF) or keyword fallback.
+    """Search entries using hybrid (BM25 + vector RRF) or keyword fallback.
 
-    When embedder is available, runs keyword search and sqlite-vec vector search
-    in parallel, then fuses via Reciprocal Rank Fusion. Otherwise falls back to
-    multi-token intersection keyword search.
+    When an embedder is available this delegates to the SAME
+    ``trw_memory.retrieval.pipeline.hybrid_search`` (BM25 + dense + RRF with
+    importance blend) the ``MemoryClient.recall`` path uses, ranking the full
+    candidate pool (``hybrid_search_candidate_pool_size`` entries). Otherwise it
+    falls back to the multi-token intersection keyword search.
+
+    PRD-DIST-254 §FR03 follow-up (2026-06-10): the previous hybrid branch
+    hand-rolled a divergent fusion -- it ranked only the ≤``top_k``
+    LIKE-substring keyword hits + ``hybrid_vector_candidates`` vector hits, and
+    fused a LIKE keyword ranking (near-noise on a natural-language query) against
+    the vector ranking with pure-position RRF. On the 226-record operator gold
+    set this collapsed embeddings-ON Recall@5 to 0.583 (vs MemoryClient 0.9375):
+    a gold record at vector rank 0 was demoted to fused rank 5-7 because ~10 junk
+    LIKE hits leapfrogged it. Routing through ``hybrid_search`` (BM25 down-weights
+    high-frequency filler tokens; the pool spans the whole namespace) closes the
+    gap to parity. The fusion logic now lives in exactly one place (DRY), so the
+    two paths can no longer drift.
 
     Cycle 148: ``allow_cold_embedding_init`` (default True for backward
     compat) routes between :func:`get_embedder` (may trigger cold model
@@ -217,21 +266,26 @@ def _search_entries(
     path passes ``True`` so the canary fixture's first vector recall
     triggers the embed step. Closes the cycle-147 cross-package API
     mismatch that broke 3 tests in tests/eval/test_retrieval_connector.py.
-    """
-    # Always run keyword search
-    keyword_results = _keyword_search(
-        backend,
-        query,
-        top_k=top_k,
-        tags=tags,
-        mem_status=mem_status,
-        min_impact=min_impact,
-        namespace=namespace,
-    )
 
-    # Try vector search when embedder is available. Route between cold-init
-    # and skip-cold-init variants based on caller's tolerance for the hot
-    # model-load latency.
+    ``namespace`` defaults to the project namespace; pass ``None`` to rank
+    across all namespaces in a backend (user-tier federation, PRD-CORE-185 FR06).
+    """
+
+    # Keyword path is always available as the graceful-degradation fallback
+    # (no embedder, no vector hits, BM25 absent, or any hybrid error).
+    def _keyword_fallback() -> list[MemoryEntry]:
+        return _keyword_search(
+            backend,
+            query,
+            top_k=top_k,
+            tags=tags,
+            mem_status=mem_status,
+            min_impact=min_impact,
+            namespace=namespace,
+        )
+
+    # Route between cold-init and skip-cold-init embedder variants based on the
+    # caller's tolerance for the hot model-load latency.
     if allow_cold_embedding_init:
         from trw_mcp.state._memory_connection import get_embedder
 
@@ -241,68 +295,85 @@ def _search_entries(
 
         embedder = get_initialized_embedder()
     if embedder is None:
-        return keyword_results
+        return _keyword_fallback()
 
     try:
-        query_vec = embedder.embed(query)
-        if query_vec is None:
-            return keyword_results
+        from trw_memory.retrieval.pipeline import hybrid_search
 
         from trw_mcp.models.config import get_config
 
         cfg = get_config()
-        vector_hits = backend.search_vectors(query_vec, top_k=cfg.hybrid_vector_candidates)
-        if not vector_hits:
-            return keyword_results
 
-        # RRF fusion: merge keyword and vector rankings
-        keyword_ranking = [(e.id, 1.0 / (i + 1)) for i, e in enumerate(keyword_results)]
-        vector_ranking = [(eid, score) for eid, score in vector_hits]
-
-        from trw_memory.retrieval.fusion import rrf_fuse
-
-        # Build id->entry map from keyword results + vector-matched entries
-        # FIRST so the importances mapping below can read each candidate's
-        # impact/importance.
-        entry_map: dict[str, MemoryEntry] = {e.id: e for e in keyword_results}
-        # Fetch any vector-only hits not already in keyword results
-        for eid, _ in vector_hits:
-            if eid not in entry_map:
-                entry = backend.get(eid)
-                if entry is not None and _apply_entry_filters(entry, tags, mem_status, min_impact):
-                    entry_map[eid] = entry
-
-        # F15 / R-FUSION-001: blend learning importance into the position-only
-        # RRF score, mirroring the MemoryClient path
-        # (trw_memory.retrieval.pipeline.hybrid_search). Pure-position fusion
-        # ignores impact, so impact-0.95 tribal knowledge tied at the same rank
-        # as impact-0.2 noise. Only pass importances when alpha < 1.0; alpha=1.0
-        # keeps the legacy pure-position behaviour bit-for-bit (back-compat).
-        importance_alpha = cfg.hybrid_rrf_importance_alpha
-        importances: dict[str, float] | None = (
-            {eid: e.importance for eid, e in entry_map.items()} if importance_alpha < 1.0 else None
+        # Widen the candidate pool to the whole namespace (capped) so BM25 +
+        # dense can rank every entry -- matching the MemoryClient pool. Apply the
+        # status/min_impact filters at the DB level; the tag filter is applied
+        # after ranking (mirrors the MemoryClient post-rank tag narrow).
+        candidate_pool_size = max(top_k * 5, cfg.hybrid_search_candidate_pool_size)
+        all_entries = backend.list_entries(
+            status=mem_status,
+            namespace=namespace,
+            min_importance=min_impact,
+            limit=candidate_pool_size,
         )
+        if not all_entries:
+            return _keyword_fallback()
 
-        fused = rrf_fuse(
-            [keyword_ranking, vector_ranking],
-            k=cfg.hybrid_rrf_k,
-            importances=importances,
-            alpha=importance_alpha,
+        query_vec = embedder.embed(query)
+        if query_vec is None:
+            return _keyword_fallback()
+        stored_embeddings = backend.get_stored_embeddings([e.id for e in all_entries])
+
+        # Auto-scale BM25/vector candidate caps to namespace size so the
+        # configured 50-defaults act as FLOORS not CEILINGS (MemoryClient parity).
+        namespace_size = len(all_entries)
+        effective_bm25 = max(cfg.hybrid_bm25_candidates, namespace_size)
+        effective_vector = max(cfg.hybrid_vector_candidates, namespace_size)
+
+        ranked = hybrid_search(
+            query=query,
+            entries=all_entries,
+            embedder=embedder,
+            query_embedding=query_vec,
+            stored_embeddings=stored_embeddings or None,
+            bm25_candidates=effective_bm25,
+            vector_candidates=effective_vector,
+            rrf_k=cfg.hybrid_rrf_k,
+            # F15 / R-FUSION-001: blend learning importance into the position-only
+            # RRF score (alpha=0.7 default), mirroring the MemoryClient path.
+            importance_alpha=cfg.hybrid_rrf_importance_alpha,
+            top_k=top_k if not tags else max(top_k, namespace_size),
+            # PRD-CORE-194 FR03: thread the bi-temporal validity prior into the
+            # SAME hybrid pass so superseded records are excluded (or, with
+            # ``as_of`` / ``include_superseded``, time-travelled) BEFORE the top_k
+            # cut -- otherwise the prior could never re-include a record the hybrid
+            # pass had already dropped.
+            as_of=as_of,
+            include_superseded=include_superseded,
         )
+        if not ranked:
+            return _keyword_fallback()
 
-        results: list[MemoryEntry] = []
-        for eid, _ in fused[:top_k]:
-            if eid in entry_map:
-                results.append(entry_map[eid])
+        if tags:
+            tag_set = set(tags)
+            ranked = [e for e in ranked if tag_set.issubset(set(e.tags))]
 
         logger.debug(
             "hybrid_recall_complete",
-            keyword_hits=len(keyword_results),
-            vector_hits=len(vector_hits),
-            fused=len(results),
+            namespace_size=namespace_size,
+            candidate_pool=candidate_pool_size,
+            fused=len(ranked),
         )
-        return results
+        return ranked[:top_k]
 
-    except (OSError, ValueError, RuntimeError):
-        logger.debug("vector_search_failed_fallback_to_keyword", query=query[:80])
-        return keyword_results
+    except (OSError, ValueError, RuntimeError, ImportError, TypeError, TRWMemoryError):
+        # Hardening (verifier note, 2026-06-10): the original tuple missed two
+        # real failure modes that would let an exception ESCAPE this hybrid path
+        # and crash recall instead of degrading to keyword:
+        #   - ``trw_memory.exceptions.MemoryError`` (TRWMemoryError) family, incl.
+        #     ``LocalOnlyViolationError`` raised by the local embedder when network
+        #     access is blocked, and ``DimensionMismatchError`` from upsert/search.
+        #   - ``TypeError`` from a misconfigured embedder returning a non-vector or
+        #     an upstream signature mismatch inside ``hybrid_search``.
+        # Recall must always survive to the keyword fallback.
+        logger.debug("hybrid_search_failed_fallback_to_keyword", query=query[:80])
+        return _keyword_fallback()

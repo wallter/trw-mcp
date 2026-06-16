@@ -10,6 +10,7 @@ Heavy business logic is delegated to ``_learn_impl.execute_learn`` and
 closures, backward-compat shim, and module-level imports that test suites
 patch at ``trw_mcp.tools.learning.*``.
 """
+# ruff: noqa: I001 - facade imports stay grouped for monkeypatch seams and LOC ratchet.
 
 from __future__ import annotations
 
@@ -33,17 +34,9 @@ from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
     get_backend,
     list_active_learnings,
-)
-from trw_mcp.state.memory_adapter import (
     recall_learnings as adapter_recall,
-)
-from trw_mcp.state.memory_adapter import (
     store_learning as adapter_store,
-)
-from trw_mcp.state.memory_adapter import (
     update_access_tracking as adapter_update_access,
-)
-from trw_mcp.state.memory_adapter import (
     update_learning as adapter_update,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -54,14 +47,9 @@ from trw_mcp.state.recall_search import (
 from trw_mcp.tools._learning_helpers import (
     check_and_handle_dedup,
 )
-from trw_mcp.tools._learning_module_helpers import (
-    _annotate_injected_learnings,
-    _build_call_ctx,
-    _coerce_tags,
-    _create_llm_client,
-    _is_solution_summary,
-    _read_injected_ids,
-)
+from trw_mcp.tools._learning_module_helpers import _annotate_injected_learnings, _build_call_ctx, _coerce_tags
+from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _is_solution_summary, _validate_learn_enums
+from trw_mcp.tools._learning_module_helpers import _create_llm_client, _read_injected_ids
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -72,7 +60,6 @@ def __getattr__(name: str) -> object:
     from trw_mcp.state._helpers import _compat_getattr
 
     return _compat_getattr(name)
-
 
 
 def register_learning_tools(server: FastMCP) -> None:
@@ -149,6 +136,19 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
         from trw_mcp.tools._learn_impl import execute_learn
 
+        # Potemkin defect C: coerce advertised type aliases (e.g. 'gotcha',
+        # presented as first-class in the docstring + trw-deliver skill) to a
+        # valid MemoryType BEFORE enum validation — genuine nonsense still
+        # falls through to an honest rejection below.
+        type = _coerce_learn_type(type)
+
+        # core185-ENUM-UNGUARDED-3: validate enum args BEFORE forwarding so an
+        # invalid value returns a structured rejection rather than an unhandled
+        # ValueError from the downstream enum construction (mirrors trw_learn_update).
+        _enum_reject = _validate_learn_enums(type=type, confidence=confidence, protection_tier=protection_tier)
+        if _enum_reject is not None:
+            return _enum_reject
+
         if client_profile is None:
             client_profile = detect_client_profile()
         if model_id is None:
@@ -220,6 +220,7 @@ def register_learning_tools(server: FastMCP) -> None:
         protection_tier: str | None = None,
         feedback: str | None = None,
         tags: list[str] | None = None,
+        supersedes: str | None = None,
     ) -> dict[str, str]:
         """Update an existing learning — status, fields, or feedback signal.
 
@@ -249,12 +250,17 @@ def register_learning_tools(server: FastMCP) -> None:
             protection_tier: Updated protection tier.
             feedback: Signal whether this learning was helpful or unhelpful — "helpful" or "unhelpful". Affects recall ranking via feedback-aware decay (PRD-CORE-132).
             tags: Replace the entry's tag set. Passing `[]` clears all tags. Callers are responsible for dedup/normalization.
+            supersedes: id of a PRIOR learning that THIS learning replaces/corrects (PRD-CORE-194 FR04). Closes the prior record's validity window (sets its invalid_from + invalidated_by=this id) and RETAINS it — never a delete. Fires ONLY when explicitly passed; a routine field edit never closes a window.
         """
         config = get_config()
         writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
 
-        # PRD-CORE-110: Validate enum fields before forwarding to adapter
+        # PRD-CORE-110: Validate enum fields before forwarding to adapter.
+        # Potemkin defect C: coerce advertised type aliases (e.g. 'gotcha')
+        # the same way trw_learn does, so the two tools share a type vocabulary.
+        if type is not None:
+            type = _coerce_learn_type(type)
         _valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
         if type is not None and type not in _valid_types:
             return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
@@ -331,6 +337,7 @@ def register_learning_tools(server: FastMCP) -> None:
             team_origin=team_origin,
             protection_tier=protection_tier,
             tags=tags,
+            supersedes=supersedes,
         )
 
         # Dual-write: also update YAML backup for rollback safety
@@ -416,6 +423,9 @@ def register_learning_tools(server: FastMCP) -> None:
         token_budget: int | None = None,
         # PRD-CORE-185 FR07: tier-scoping.
         include_tiers: list[str] | None = None,
+        # PRD-CORE-194 FR03: bi-temporal validity time-travel.
+        as_of: str | None = None,
+        include_superseded: bool = False,
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task.
 
@@ -455,9 +465,18 @@ def register_learning_tools(server: FastMCP) -> None:
             token_budget: Optional max token ceiling for the serialized result.
                 Must be > 0. When omitted, a sane default cap is applied so a
                 recall can never overflow the context window (anti-collapse guard).
-            include_tiers: Optional tier scope (PRD-CORE-185). None (default)
-                includes the machine-local user tier when a user-scope store is
-                present; ["project"] restricts to project-only.
+            include_tiers: Optional tier scope (PRD-CORE-185). Project entries
+                are ALWAYS included; this flag only controls whether machine-local
+                USER-tier entries are added on top. None (default) and any list
+                containing "user" federate the user tier when a user-scope store
+                is present; ["project"] (no "user") restricts to project-only.
+                A user-only query is intentionally not expressible -- the project
+                tier is the local source of truth and is never excluded.
+            as_of: Optional ISO-8601 instant (PRD-CORE-194). Time-travel recall —
+                returns records whose validity window contained T. Malformed values
+                raise a clean validation error. Default None = open records only.
+            include_superseded: When True, also return superseded records, ranked
+                strictly below open ones (each flagged superseded/invalidated_by).
 
         See Also: trw_learn
         """
@@ -485,6 +504,8 @@ def register_learning_tools(server: FastMCP) -> None:
             topic=topic,
             call_ctx=call_ctx,
             include_tiers=include_tiers,
+            as_of=as_of,
+            include_superseded=include_superseded,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
             _adapter_update_access=adapter_update_access,

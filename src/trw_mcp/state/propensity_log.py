@@ -118,8 +118,13 @@ def log_selection(
         trw_version: Framework version. Auto-detected if empty.
     """
     try:
+        from trw_mcp.state._paths_permissions import harden_dir_mode
+
         log_dir = trw_dir / _LOG_DIR
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # PRD-QUAL-110-FR02 follow-up: .trw/logs/ holds session state; create
+        # 0700 (also tightens .trw root if first-touched here).
+        harden_dir_mode(trw_dir, create=True)
+        harden_dir_mode(log_dir, create=True)
         log_path = log_dir / _PROPENSITY_FILE
 
         _rotate_jsonl(log_path)
@@ -145,7 +150,7 @@ def log_selection(
                 if not trw_version:
                     trw_version = cfg.framework_version or ""
             except Exception:  # justified: fail-open, auto-detection is best-effort
-                pass
+                logger.debug("propensity_log_config_probe_failed", exc_info=True)
 
         # Ensure model_family is never an empty string in propensity logs (P1-A)
         if not model_family:

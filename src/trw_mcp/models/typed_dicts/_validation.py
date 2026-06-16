@@ -109,6 +109,11 @@ class ValidateResultDict(TypedDict, total=False):
     risk_scaled: bool
     status_drift_warnings: list[str]
     integrity_warnings: list[str]
+    # Wiring gate (PRD-CORE-190 FR03): advisory wiring_gate_warning /
+    # seam_schema_warning strings for public-surface FRs lacking consumer/
+    # wiring_test/seam coverage. Always present (possibly empty); block-mode
+    # failures additionally appear in `failures` with rule WIRING_GATE_FAIL.
+    wiring_gate_warnings: list[str]
     # Ceremony
     ceremony_status: str
     # Substrate-First gate (PRD-DIST-218 FR-2)

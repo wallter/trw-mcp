@@ -569,3 +569,75 @@ prd:
     )
 
     assert any("Duplicate overlap scan was truncated" in warning for warning in warnings)
+
+
+# --- Multi-repo workspace path resolution (Potemkin defect B) -----------------
+# Submission sub_zAfRqZYYq2KtF72d defect B: trw_prd_validate resolved
+# repo_path_exists from the current repo root ONLY. In a multi-repo workspace
+# (research/PRD repo + sibling code repo), key-file paths living in the sibling
+# repo registered as hard errors, dragging a structurally-perfect PRD to grade
+# D / valid:false. Fix: resolve a referenced path against project_root first,
+# then against any configured ``additional_repo_roots``.
+
+
+def test_path_exists_resolves_against_extra_root(tmp_path: Path) -> None:
+    """A path that exists ONLY in a sibling repo resolves when that sibling is
+    supplied as an extra root — the single-repo false-negative is fixed."""
+    prd_repo = tmp_path / "research-repo"
+    code_repo = tmp_path / "code-repo"
+    (code_repo / "src").mkdir(parents=True)
+    (code_repo / "src" / "feature.py").write_text("", encoding="utf-8")
+    prd_repo.mkdir()
+
+    # Single-root behaviour: not found in the PRD repo.
+    assert _path_exists(prd_repo, "src/feature.py") is False
+    # Multi-root behaviour: found via the sibling code repo.
+    assert _path_exists(prd_repo, "src/feature.py", extra_roots=[code_repo]) is True
+
+
+def test_path_exists_extra_root_preserves_traversal_guard(tmp_path: Path) -> None:
+    """Extra roots must NOT widen the path-escape guard: a token that escapes
+    every supplied root still resolves False."""
+    prd_repo = tmp_path / "research-repo"
+    code_repo = tmp_path / "code-repo"
+    prd_repo.mkdir()
+    code_repo.mkdir()
+    (tmp_path / "outside.py").write_text("", encoding="utf-8")
+    # ".." is already rejected by the normalizer; here we confirm _path_exists
+    # itself refuses a path that would resolve outside all roots.
+    assert _path_exists(prd_repo, "outside.py", extra_roots=[code_repo]) is False
+
+
+def test_check_repo_path_references_clean_with_sibling_repo(tmp_path: Path) -> None:
+    """End-to-end: a PRD referencing a sibling-repo key file produces ZERO
+    repo_path_exists errors once the sibling is configured as an extra root."""
+    prd_repo = tmp_path / "research-repo"
+    code_repo = tmp_path / "code-repo"
+    (code_repo / "src" / "widgetsvc").mkdir(parents=True)
+    (code_repo / "src" / "widgetsvc" / "authz.py").write_text("", encoding="utf-8")
+    prd_repo.mkdir()
+
+    content = "Implementation lives at `src/widgetsvc/authz.py` in the sibling repo."
+
+    # Without the extra root: a hard error (reproduces the defect).
+    before = _check_repo_path_references(content, prd_repo)
+    assert any(f.rule == "repo_path_exists" and f.severity == "error" for f in before)
+
+    # With the extra root: clean.
+    after = _check_repo_path_references(content, prd_repo, extra_roots=[code_repo])
+    assert not [f for f in after if f.rule == "repo_path_exists"]
+
+
+def test_check_repo_path_references_bare_filename_resolves_in_extra_root(tmp_path: Path) -> None:
+    """A bare filename (no slash) that lives only in a sibling repo resolves
+    when that sibling is supplied as an extra root."""
+    prd_repo = tmp_path / "research-repo"
+    code_repo = tmp_path / "code-repo"
+    (code_repo / "pkg").mkdir(parents=True)
+    (code_repo / "pkg" / "registry.py").write_text("", encoding="utf-8")
+    prd_repo.mkdir()
+
+    content = "See `registry.py` for the implementation."
+
+    after = _check_repo_path_references(content, prd_repo, extra_roots=[code_repo])
+    assert not [f for f in after if f.rule == "repo_path_exists"]

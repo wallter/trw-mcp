@@ -277,6 +277,7 @@ class TestSkills:
         "trw-prd-ready",
         "trw-prd-review",
         "trw-project-health",
+        "trw-reflect",
         "trw-security-check",
         "trw-self-review",
         "trw-simplify",
@@ -288,7 +289,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 25 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 26 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 
@@ -356,9 +357,7 @@ class TestSkills:
         assert not (canonical / "email-template").exists(), (
             "email-template leaked back into the canonical bundled skills dir"
         )
-        assert not (codex / "email-template").exists(), (
-            "email-template leaked back into the codex bundled skills dir"
-        )
+        assert not (codex / "email-template").exists(), "email-template leaked back into the codex bundled skills dir"
 
     def test_every_shipped_skill_is_a_trw_framework_skill(self, fake_git_repo: Path) -> None:
         """Allowlist guard: every shipped skill must be a TRW framework skill.
@@ -374,9 +373,7 @@ class TestSkills:
 
         # Every shipped skill carries the framework `trw-` namespace.
         non_framework = [name for name in deployed if not name.startswith("trw-")]
-        assert not non_framework, (
-            f"non-TRW-framework skills leaked into the installer bundle: {non_framework}"
-        )
+        assert not non_framework, f"non-TRW-framework skills leaked into the installer bundle: {non_framework}"
 
         # The shipped set matches the curated allowlist exactly — a new
         # skill (stray or intentional) forces this assertion to be updated,

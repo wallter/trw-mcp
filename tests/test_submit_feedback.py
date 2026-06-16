@@ -618,9 +618,7 @@ def test_submit_feedback_redacts_pii_before_post(monkeypatch: pytest.MonkeyPatch
     sent_metadata = captured["json"]["metadata"]
     assert "dbpw" not in sent_metadata["trace"], f"metadata leaked: {sent_metadata!r}"
     assert "<REDACTED:credentials>" in sent_metadata["trace"]
-    assert "sk_live_noteSecretABCDEF" not in sent_metadata["note"], (
-        f"metadata leaked: {sent_metadata!r}"
-    )
+    assert "sk_live_noteSecretABCDEF" not in sent_metadata["note"], f"metadata leaked: {sent_metadata!r}"
     assert "<REDACTED:api_key>" in sent_metadata["note"]
     # Auto-attached metadata (known-safe, locally generated) must NOT be
     # mangled by redaction — it carries no secrets and a redaction pass risks

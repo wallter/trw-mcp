@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -205,6 +206,38 @@ class PRDFrontmatter(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Wiring gate — seam registry (PRD-CORE-190 FR01)
+# ---------------------------------------------------------------------------
+
+
+class SeamEntry(BaseModel):
+    """A declared, not-yet-wired public surface with an owner and expiry.
+
+    Belongs to the requirements.py model module; parsed from PRD frontmatter
+    ``seams:`` list by the wiring-gate parser (``_prd_scoring_wiring.py``).
+    Backs FR01/FR03/FR04 of PRD-CORE-190.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    kind: Literal["unimplemented", "unfederated", "deferred", "placeholder"]
+    target_prd: str = Field(..., min_length=1)
+    owner: str = Field(..., min_length=1)
+    expiry_date: str  # ISO-8601 date string (YYYY-MM-DD); validated below
+    description: str | None = None
+
+    @field_validator("expiry_date")
+    @classmethod
+    def _validate_iso_date(cls, v: str) -> str:
+        # date.fromisoformat raises ValueError on a malformed date, which
+        # Pydantic surfaces as a validation error. The string is retained
+        # (not coerced to date) so it round-trips back to YAML byte-identically;
+        # FR04's expiry comparison re-parses the string at check time.
+        date.fromisoformat(v)
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Requirement model
 # ---------------------------------------------------------------------------
 
@@ -315,7 +348,9 @@ class ValidationResultV2(BaseModel):
     ambiguity_rate: float = 0.0
     completeness_score: float = 0.0  # deprecated: use total_score (V2) as the authoritative quality metric
     traceability_coverage: float = 0.0
-    measured_traceability_coverage: float = 0.0  # PRD-QUAL-096: informational ratio (FRs with impl+test refs / total FRs); NOT a gate
+    measured_traceability_coverage: float = (
+        0.0  # PRD-QUAL-096: informational ratio (FRs with impl+test refs / total FRs); NOT a gate
+    )
     consistency_score: float = 0.0  # reserved — not enforced (consistency scorer not implemented)
 
     # V2 scoring

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
 import sys
 import threading
 import time
@@ -19,6 +18,27 @@ from pathlib import Path
 from typing import TextIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from trw_mcp.models.config._credentials import (
+    credentials_path_for,
+    read_key_from_file,
+    write_credentials_key,
+)
+
+# Config-file helpers extracted to a sibling (PRD-SEC-005, 350-eLOC gate);
+# re-exported here so existing callers/tests keep importing from ``auth``.
+from ._auth_config import (
+    _read_config_lines as _read_config_lines,
+)
+from ._auth_config import (
+    _save_api_key as _save_api_key,
+)
+from ._auth_config import (
+    _save_config_field as _save_config_field,
+)
+from ._auth_config import (
+    device_auth_logout as device_auth_logout,
+)
 
 # Spinner extracted to ``_auth_spinner.py`` (PRD-DIST-243 Phase 1,
 # cycle 22) to keep this module under the 350-effective-LOC threshold.
@@ -321,48 +341,8 @@ def select_organization(
 
 
 # ── Config helpers ────────────────────────────────────────────────────
-
-_YAML_KEY_RE = re.compile(r"^(\s*)(platform_api_key)\s*:\s*(.*)$")
-
-
-def _read_config_lines(config_path: Path) -> list[str] | None:
-    """Read config file lines, or None if file doesn't exist."""
-    try:
-        return config_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def device_auth_logout(config_path: Path) -> bool:
-    """Remove ``platform_api_key`` from ``.trw/config.yaml``.
-
-    Returns True if a key was found and removed.
-    """
-    lines = _read_config_lines(config_path)
-    if lines is None:
-        return False
-
-    new_lines: list[str] = []
-    removed = False
-    for line in lines:
-        m = _YAML_KEY_RE.match(line.rstrip("\n"))
-        if m:
-            value = m.group(3).strip().strip('"').strip("'")
-            if value:
-                # Non-empty key present: clear it
-                indent = m.group(1)
-                new_lines.append(f'{indent}platform_api_key: ""\n')
-                removed = True
-            else:
-                # Already empty: keep as-is
-                new_lines.append(line if line.endswith("\n") else line + "\n")
-        else:
-            new_lines.append(line if line.endswith("\n") else line + "\n")
-
-    if removed:
-        config_path.write_text("".join(new_lines), encoding="utf-8")
-
-    return removed
+# Extracted to ``_auth_config.py`` (PRD-SEC-005) to keep this module under the
+# 350-effective-LOC gate; re-exported here for back-compat with callers/tests.
 
 
 def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
@@ -371,21 +351,26 @@ def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     Returns ``{"authenticated": True, "key_prefix": "trw_dk_...", "org_name": ..., "user_email": ...}``
     if a platform API key is configured, otherwise ``{"authenticated": False}``.
     """
+    # PRD-SEC-005: the bearer credential now lives in the ignored
+    # credentials.yaml; fall back to config.yaml for legacy installs.
+    key_value = read_key_from_file(credentials_path_for(config_path))
+    if not key_value:
+        key_value = read_key_from_file(config_path)
+
     lines = _read_config_lines(config_path)
-    if lines is None:
+    if lines is None and not key_value:
         return {"authenticated": False}
 
     key_prefix = ""
+    if key_value:
+        key_prefix = key_value[:10] + "..." if len(key_value) > 10 else key_value
+
     org_name = ""
     user_email = ""
 
-    for line in lines:
+    for line in lines or []:
         stripped = line.rstrip("\n").lstrip()
-        if stripped.startswith("platform_api_key:"):
-            value = stripped.partition(":")[2].strip().strip('"').strip("'")
-            if value and value != '""':
-                key_prefix = value[:10] + "..." if len(value) > 10 else value
-        elif stripped.startswith("platform_org_name:"):
+        if stripped.startswith("platform_org_name:"):
             org_name = stripped.partition(":")[2].strip().strip('"').strip("'")
         elif stripped.startswith("platform_user_email:"):
             user_email = stripped.partition(":")[2].strip().strip('"').strip("'")
@@ -422,11 +407,15 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
         if selected:
             print(f"  {DIM}Organization ID: {selected.get('id', 'unknown')}{NC}")
 
-    # Save API key + metadata to config
+    # Save API key + metadata. The bearer credential goes to the ignored,
+    # 0600 credentials.yaml (PRD-SEC-005-FR01) \u2014 never to the git-tracked
+    # config.yaml. Non-secret metadata (org_name, user_email) stays in
+    # config.yaml so `auth status` keeps working.
     api_key = result.get("api_key", "")
     if api_key and isinstance(api_key, str):
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        _save_api_key(config_path, api_key)
+        credentials_path = credentials_path_for(config_path)
+        write_credentials_key(credentials_path, api_key)
         # Also save org_name and user_email for `auth status`
         org_name = str(result.get("org_name", ""))
         user_email = str(result.get("user_email", ""))
@@ -434,7 +423,7 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
             _save_config_field(config_path, "platform_org_name", org_name)
         if user_email:
             _save_config_field(config_path, "platform_user_email", user_email)
-        print(f"\n  {GREEN}\u2713{NC} API key saved to {config_path}")
+        print(f"\n  {GREEN}\u2713{NC} API key saved to {credentials_path} (mode 0600)")
     else:
         print(f"\n  {YELLOW}No API key in response{NC}")
 
@@ -444,10 +433,11 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
 def run_auth_logout(config_path: Path) -> int:
     """CLI handler for ``trw-mcp auth logout``. Returns exit code."""
     removed = device_auth_logout(config_path)
+    creds_path = credentials_path_for(config_path)
     if removed:
-        print(f"  {GREEN}\u2713{NC} API key removed from {config_path}")
+        print(f"  {GREEN}\u2713{NC} API key removed ({creds_path} + {config_path})")
         return 0
-    print(f"  {YELLOW}No API key found in {config_path}{NC}")
+    print(f"  {YELLOW}No API key found ({creds_path} or {config_path}){NC}")
     return 0
 
 
@@ -468,56 +458,3 @@ def run_auth_status(config_path: Path, api_url: str) -> int:
         print(f"  {YELLOW}Not authenticated{NC}")
         print("    Run: trw-mcp auth login")
     return 0
-
-
-def _save_config_field(config_path: Path, key: str, value: str) -> None:
-    """Write or update a single field in config YAML."""
-    field_re = re.compile(rf"^(\s*)({re.escape(key)})\s*:\s*(.*)$")
-    lines = _read_config_lines(config_path)
-    if lines is None:
-        config_path.write_text(f'{key}: "{value}"\n', encoding="utf-8")
-        return
-
-    new_lines: list[str] = []
-    replaced = False
-    for line in lines:
-        m = field_re.match(line.rstrip("\n"))
-        if m:
-            indent = m.group(1)
-            new_lines.append(f'{indent}{key}: "{value}"\n')
-            replaced = True
-        else:
-            new_lines.append(line if line.endswith("\n") else line + "\n")
-
-    if not replaced:
-        new_lines.append(f'{key}: "{value}"\n')
-
-    config_path.write_text("".join(new_lines), encoding="utf-8")
-
-
-def _save_api_key(config_path: Path, api_key: str) -> None:
-    """Write or update ``platform_api_key`` in config YAML."""
-    lines = _read_config_lines(config_path)
-    if lines is None:
-        # Create minimal config
-        config_path.write_text(
-            f'platform_api_key: "{api_key}"\n',
-            encoding="utf-8",
-        )
-        return
-
-    new_lines: list[str] = []
-    replaced = False
-    for line in lines:
-        m = _YAML_KEY_RE.match(line.rstrip("\n"))
-        if m:
-            indent = m.group(1)
-            new_lines.append(f'{indent}platform_api_key: "{api_key}"\n')
-            replaced = True
-        else:
-            new_lines.append(line if line.endswith("\n") else line + "\n")
-
-    if not replaced:
-        new_lines.append(f'platform_api_key: "{api_key}"\n')
-
-    config_path.write_text("".join(new_lines), encoding="utf-8")

@@ -1,9 +1,7 @@
 ---
 name: trw-prd-groom
-description: >
-  Internal phase: Groom a PRD to sprint-ready quality. Researches codebase,
-  drafts missing sections, iterates until validation passes.
-  Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
+description: >-
+  Refine Product Requirement Documents (PRDs) to sprint-ready quality by researching the codebase, drafting missing sections, and iterating until validation passes. This skill is triggered exclusively by the /trw-prd-ready or /trw-prd-new commands. Do not invoke directly by users.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 ---

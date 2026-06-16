@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -24,6 +25,49 @@ logger = structlog.get_logger(__name__)
 
 # Cache duration: check at most once per 24h
 _VERSION_CACHE_HOURS = 24
+
+# Hosts for which an http:// (cleartext) URL is acceptable in dev. Everything
+# else MUST be https before the platform bearer is attached.
+_DEV_LOCALHOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _bearer_allowed_for(url: str, *, platform_host: str | None) -> bool:
+    """Return True iff it is safe to attach the platform bearer to *url*.
+
+    Security floor (sweep-4 credential-egress): the platform bearer API key must
+    never leave the box to a non-platform / cleartext host.
+
+    Rules:
+      - Scheme must be https, EXCEPT http is allowed for loopback dev hosts
+        (localhost / 127.0.0.1 / ::1).
+      - When *platform_host* is provided (the artifact-download path), the URL's
+        hostname MUST case-insensitively equal it. A presigned-S3 URL is a
+        different host (and carries its own query-string auth), so it correctly
+        does NOT receive the platform bearer. An attacker-named artifact_url
+        likewise fails the match.
+      - When *platform_host* is None (the version-check path, whose target IS
+        the configured platform base URL) only the scheme floor is enforced.
+    """
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    scheme = parts.scheme.lower()
+    if scheme != "https" and not (scheme == "http" and host in _DEV_LOCALHOSTS):
+        return False
+    return not (platform_host is not None and host != platform_host.strip().lower())
+
+
+def _trusted_platform_host() -> str | None:
+    """Return the hostname of the configured platform base URL, or None.
+
+    Used as the trusted-host allowlist for the artifact download: the bearer is
+    only attached when the artifact URL's host matches this.
+    """
+    cfg = get_config()
+    for base_url in cfg.effective_platform_urls:
+        host = (urlsplit(base_url).hostname or "").lower()
+        if host:
+            return host
+    return None
 
 
 def get_installed_version() -> str:
@@ -62,8 +106,13 @@ def check_for_update() -> dict[str, object]:
             url = f"{base_url.rstrip('/')}/v1/releases/latest"
             headers: dict[str, str] = {}
             _key = cfg.platform_api_key.get_secret_value()
+            # Only attach the bearer over https (or loopback http for dev). A
+            # poisoned platform_url over http://attacker.host must NOT receive it.
             if _key:
-                headers["Authorization"] = f"Bearer {_key}"
+                if _bearer_allowed_for(url, platform_host=None):
+                    headers["Authorization"] = f"Bearer {_key}"
+                else:
+                    logger.warning("credential_withheld_untrusted_host", url=url, reason="version_check_scheme")
             with httpx.Client(timeout=3.0) as client:
                 response = client.get(url, headers=headers, params={"channel": cfg.update_channel})
             if 200 <= response.status_code < 300:
@@ -142,13 +191,26 @@ def download_release_artifact(
         tmp_dir = Path(tempfile.mkdtemp(prefix="trw-upgrade-"))
         archive_path = tmp_dir / "release.tar.gz"
 
-        # Download. artifact_url comes from the backend API response (operator-
-        # controlled platform); checksum is verified post-download below.
+        # Download. artifact_url comes from the backend API response and may be
+        # the platform host itself OR a presigned-S3 URL on a DIFFERENT host
+        # (which carries its own query-string auth). The platform bearer is
+        # attached ONLY when artifact_url's host matches the configured platform
+        # host over https — never to S3 or an attacker-named host. Checksum is
+        # verified post-download below regardless.
         cfg = get_config()
         headers: dict[str, str] = {}
         _key = cfg.platform_api_key.get_secret_value()
         if _key:
-            headers["Authorization"] = f"Bearer {_key}"
+            platform_host = _trusted_platform_host()
+            if platform_host is not None and _bearer_allowed_for(artifact_url, platform_host=platform_host):
+                headers["Authorization"] = f"Bearer {_key}"
+            else:
+                logger.warning(
+                    "credential_withheld_untrusted_host",
+                    url=artifact_url,
+                    platform_host=platform_host,
+                    reason="artifact_host_mismatch",
+                )
         with httpx.Client(timeout=30.0, follow_redirects=True) as client:
             response = client.get(artifact_url, headers=headers)
         response.raise_for_status()
@@ -301,7 +363,10 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
             headers: dict[str, str] = {}
             _key = cfg.platform_api_key.get_secret_value()
             if _key:
-                headers["Authorization"] = f"Bearer {_key}"
+                if _bearer_allowed_for(url, platform_host=None):
+                    headers["Authorization"] = f"Bearer {_key}"
+                else:
+                    logger.warning("credential_withheld_untrusted_host", url=url, reason="artifact_info_scheme")
             with httpx.Client(timeout=5.0) as client:
                 response = client.get(url, headers=headers)
             if 200 <= response.status_code < 300:

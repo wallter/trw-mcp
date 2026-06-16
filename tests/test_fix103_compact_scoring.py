@@ -65,9 +65,7 @@ prd:
 
 # CORE clone of the table-FR PRD: identical body, only the category (and id)
 # differ. Used to prove table-FR counting is FIX-variant-gated.
-_TABLE_FR_PRD_CORE = _TABLE_FR_PRD.replace("category: FIX", "category: CORE").replace(
-    "PRD-FIX-900", "PRD-CORE-900"
-)
+_TABLE_FR_PRD_CORE = _TABLE_FR_PRD.replace("category: FIX", "category: CORE").replace("PRD-FIX-900", "PRD-CORE-900")
 
 _HEADING_FR_PRD = """\
 ---
@@ -122,8 +120,7 @@ def test_fix102_false_negative_materially_reduced() -> None:
     assert _count_planned_requirements(content) >= 4
     score = validate_prd_quality_v2(content).total_score
     assert score > 25.11, (
-        f"FIX-102 total_score must be materially above the pre-fix SKELETON "
-        f"score (25.11); got {score}"
+        f"FIX-102 total_score must be materially above the pre-fix SKELETON score (25.11); got {score}"
     )
 
 
@@ -139,7 +136,9 @@ def test_table_fr_rows_excluded_from_other_tables() -> None:
 
     A Traceability Matrix that lists the same FRs must not double-count them.
     """
-    prd_with_matrix = _TABLE_FR_PRD + """
+    prd_with_matrix = (
+        _TABLE_FR_PRD
+        + """
 
 ## 8. Traceability Matrix
 
@@ -148,6 +147,7 @@ def test_table_fr_rows_excluded_from_other_tables() -> None:
 | FR-1 | `a.py` | `test_a.py` |
 | FR-2 | `b.py` | `test_b.py` |
 """
+    )
     # Still 4 FRs (matrix rows must not push it to 6).
     assert _count_planned_requirements(prd_with_matrix) == 4
 
@@ -230,8 +230,7 @@ def test_sources_credit() -> None:
     score_no = score_traceability_v2(fm_no, _FIX_NO_SOURCES)
     score_yes = score_traceability_v2(fm_yes, _FIX_WITH_SOURCES)
     assert score_yes.score > score_no.score, (
-        f"expected sources to raise traceability score: "
-        f"no={score_no.score} yes={score_yes.score}"
+        f"expected sources to raise traceability score: no={score_no.score} yes={score_yes.score}"
     )
     # And the no-sources empty-traceability case is still effectively zero.
     assert score_no.score == pytest.approx(0.0, abs=1e-6)
@@ -244,7 +243,7 @@ def test_sources_credit_does_not_exceed_populated_traceability() -> None:
 
     populated = _FIX_WITH_SOURCES.replace(
         "traceability:\n  implements: []\n  depends_on: []\n  enables: []",
-        "traceability:\n  implements: [\"docs/x.md\"]\n  depends_on: [\"PRD-Y\"]\n  enables: [\"Z\"]",
+        'traceability:\n  implements: ["docs/x.md"]\n  depends_on: ["PRD-Y"]\n  enables: ["Z"]',
     )
     fm_pop = parse_frontmatter(populated)
     score_pop = score_traceability_v2(fm_pop, populated)
@@ -293,12 +292,10 @@ _FIX_SOURCES_GATE_NO_SOURCES = _FIX_SOURCES_GATE.replace(
 )
 
 # CORE clones of both (identical body, only category + id differ).
-_CORE_SOURCES_GATE = _FIX_SOURCES_GATE.replace("category: FIX", "category: CORE").replace(
+_CORE_SOURCES_GATE = _FIX_SOURCES_GATE.replace("category: FIX", "category: CORE").replace("PRD-FIX-910", "PRD-CORE-910")
+_CORE_SOURCES_GATE_NO_SOURCES = _FIX_SOURCES_GATE_NO_SOURCES.replace("category: FIX", "category: CORE").replace(
     "PRD-FIX-910", "PRD-CORE-910"
 )
-_CORE_SOURCES_GATE_NO_SOURCES = _FIX_SOURCES_GATE_NO_SOURCES.replace(
-    "category: FIX", "category: CORE"
-).replace("PRD-FIX-910", "PRD-CORE-910")
 
 
 def _trace_score(prd: str) -> float:
@@ -310,8 +307,7 @@ def test_fix_evidence_sources_credited() -> None:
     with_sources = _trace_score(_FIX_SOURCES_GATE)
     without_sources = _trace_score(_FIX_SOURCES_GATE_NO_SOURCES)
     assert with_sources > without_sources, (
-        f"FIX evidence.sources must raise traceability: "
-        f"with={with_sources} without={without_sources}"
+        f"FIX evidence.sources must raise traceability: with={with_sources} without={without_sources}"
     )
 
 
@@ -325,8 +321,7 @@ def test_non_fix_evidence_sources_not_credited() -> None:
     with_sources = _trace_score(_CORE_SOURCES_GATE)
     without_sources = _trace_score(_CORE_SOURCES_GATE_NO_SOURCES)
     assert with_sources == without_sources, (
-        f"CORE evidence.sources must NOT affect traceability: "
-        f"with={with_sources} without={without_sources}"
+        f"CORE evidence.sources must NOT affect traceability: with={with_sources} without={without_sources}"
     )
 
 
@@ -362,8 +357,7 @@ _REGRESSION_SAMPLE = _sample_passing_feature_infra_prds()
 def test_no_regression_sample_has_enough_prds() -> None:
     """FR03 guard: at least 10 real passing feature/infra PRDs are available."""
     assert len(_REGRESSION_SAMPLE) >= 10, (
-        f"need >=10 passing feature/infra PRDs for the regression guard, "
-        f"found {len(_REGRESSION_SAMPLE)}"
+        f"need >=10 passing feature/infra PRDs for the regression guard, found {len(_REGRESSION_SAMPLE)}"
     )
 
 
@@ -379,9 +373,7 @@ def test_no_regression_sample_stays_passing() -> None:
     for path in _REGRESSION_SAMPLE:
         result = validate_prd_quality_v2(path.read_text(encoding="utf-8"))
         # The change must not knock a passing PRD below the -2.0 floor.
-        assert result.total_score >= 58.0, (
-            f"{path.name} regressed below the +/-2.0 floor: {result.total_score}"
-        )
+        assert result.total_score >= 58.0, f"{path.name} regressed below the +/-2.0 floor: {result.total_score}"
 
 
 # ---------------------------------------------------------------------------

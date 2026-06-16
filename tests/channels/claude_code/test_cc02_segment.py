@@ -50,11 +50,7 @@ class TestMarkers:
         claude_md = tmp_path / "CLAUDE.md"
         # Create CLAUDE.md with existing TRW ceremony section
         claude_md.write_text(
-            "# Instructions\n\n"
-            "<!-- trw:start -->\n"
-            "Ceremony content.\n"
-            "<!-- trw:end -->\n"
-            "\nOther content.\n",
+            "# Instructions\n\n<!-- trw:start -->\nCeremony content.\n<!-- trw:end -->\n\nOther content.\n",
             encoding="utf-8",
         )
         install_cc02_segment(repo_root=tmp_path, sha=_SHA, force=True)
@@ -65,9 +61,7 @@ class TestMarkers:
 
         if distill_start_pos != -1:
             # Distill segment must appear AFTER <!-- trw:end -->
-            assert distill_start_pos > trw_end_pos, (
-                "CC-02 segment must be placed AFTER <!-- trw:end -->, not inside it"
-            )
+            assert distill_start_pos > trw_end_pos, "CC-02 segment must be placed AFTER <!-- trw:end -->, not inside it"
 
 
 class TestRenderCc02Segment:

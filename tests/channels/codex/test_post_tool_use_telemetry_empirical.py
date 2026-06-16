@@ -146,14 +146,14 @@ def test_hook_script_reads_stdin_as_primary(tmp_path: Path) -> None:
     assert hook_path.exists(), "Hook script not installed"
 
     # Deliver input via stdin (the confirmed Codex delivery mechanism)
-    stdin_payload = json.dumps({
-        "tool_name": "apply_patch",
-        "tool_input": {
-            "patch": "--- a/src/x.py\n+++ b/src/x.py\n@@ -1 +1 @@\n-old\n+new"
-        },
-        "turn_id": "t-empirical-001",
-        "tool_use_id": "u-empirical-001",
-    })
+    stdin_payload = json.dumps(
+        {
+            "tool_name": "apply_patch",
+            "tool_input": {"patch": "--- a/src/x.py\n+++ b/src/x.py\n@@ -1 +1 @@\n-old\n+new"},
+            "turn_id": "t-empirical-001",
+            "tool_use_id": "u-empirical-001",
+        }
+    )
 
     # Explicitly do NOT set CODEX_HOOK_INPUT — simulate actual Codex behavior
     env = {"PATH": "/usr/bin:/bin"}
@@ -180,9 +180,7 @@ def test_hook_script_reads_stdin_as_primary(tmp_path: Path) -> None:
     )
     events = [json.loads(line) for line in telemetry_path.read_text().splitlines() if line.strip()]
     assert len(events) == 1, f"Expected 1 event, got {len(events)}"
-    assert events[0]["turn_id"] == "t-empirical-001", (
-        f"turn_id not captured from stdin: {events[0]}"
-    )
+    assert events[0]["turn_id"] == "t-empirical-001", f"turn_id not captured from stdin: {events[0]}"
 
 
 def test_hook_script_does_not_require_codex_hook_input_env_var(tmp_path: Path) -> None:
@@ -227,14 +225,14 @@ def test_hook_script_env_var_fallback_still_works(tmp_path: Path) -> None:
     install_hook_script(tmp_path)
     hook_path = tmp_path / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
 
-    env_payload = json.dumps({
-        "tool_name": "apply_patch",
-        "tool_input": {
-            "patch": "--- a/y.py\n+++ b/y.py\n@@ -1 +1 @@\n-old\n+new"
-        },
-        "turn_id": "t-env-fallback-001",
-        "tool_use_id": "u-env-fallback-001",
-    })
+    env_payload = json.dumps(
+        {
+            "tool_name": "apply_patch",
+            "tool_input": {"patch": "--- a/y.py\n+++ b/y.py\n@@ -1 +1 @@\n-old\n+new"},
+            "turn_id": "t-env-fallback-001",
+            "tool_use_id": "u-env-fallback-001",
+        }
+    )
 
     # No stdin, but set env var — tests the fallback path
     env = {"PATH": "/usr/bin:/bin", "CODEX_HOOK_INPUT": env_payload}
@@ -272,9 +270,7 @@ def test_hook_script_documents_stdin_as_primary() -> None:
     """
     from trw_mcp.channels.codex._post_tool_use_telemetry import HOOK_SCRIPT_CONTENT
 
-    assert "stdin" in HOOK_SCRIPT_CONTENT.lower(), (
-        "Hook script content must mention stdin as the delivery mechanism."
-    )
+    assert "stdin" in HOOK_SCRIPT_CONTENT.lower(), "Hook script content must mention stdin as the delivery mechanism."
     # Verify the ordering: stdin mentioned before CODEX_HOOK_INPUT in docstring
     stdin_idx = HOOK_SCRIPT_CONTENT.lower().find("primary: reads stdin")
     fallback_idx = HOOK_SCRIPT_CONTENT.lower().find("fallback: codex_hook_input")
@@ -319,6 +315,7 @@ def test_codex_version_matches_verified_version() -> None:
         )
         # Not a hard failure — mechanism may be unchanged — but flag for re-verification
         import warnings
+
         warnings.warn(
             f"Codex version changed from verified {verified_version} to "
             f"'{version_output}'. Re-run scripts/verify-codex-hook-input.sh "

@@ -73,6 +73,9 @@ def execute_recall(
     call_ctx: TRWCallContext | None = None,
     # PRD-CORE-185 FR07: tier-scoping (None -> include user when present).
     include_tiers: list[str] | None = None,
+    # PRD-CORE-194 FR03: bi-temporal validity time-travel surface.
+    as_of: str | None = None,
+    include_superseded: bool = False,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _adapter_update_access: Any = None,
@@ -167,6 +170,13 @@ def execute_recall(
     }
     if include_tiers is not None:
         recall_kwargs["include_tiers"] = include_tiers
+    # PRD-CORE-194 FR03: forward the validity-prior kwargs only when the caller set
+    # them, so injected recall doubles without the params stay back-compatible and
+    # the no-as_of / superseded-excluded default is byte-identical to pre-194.
+    if as_of is not None:
+        recall_kwargs["as_of"] = as_of
+    if include_superseded:
+        recall_kwargs["include_superseded"] = include_superseded
     matching_learnings = recall_fn(trw_dir, **recall_kwargs)
 
     # Topic-scoped pre-filter (PRD-CORE-021-FR07)

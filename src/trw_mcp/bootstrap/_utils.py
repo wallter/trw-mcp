@@ -57,15 +57,19 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 def _trw_mcp_server_entry() -> dict[str, object]:
     """Build the ``trw`` MCP server entry for .mcp.json.
 
-    Uses the absolute path to the Python interpreter that installed
-    trw-mcp so the correct venv is always used (PRD-FIX-037).
-    Falls back to ``python3`` if ``trw-mcp`` console script isn't on PATH.
+    Prefers the ``trw-mcp`` console script when it is on PATH (the normal
+    install). Falls back to a PORTABLE ``python3 -m trw_mcp.server`` invocation
+    rather than the machine-absolute ``sys.executable`` (PRD-SEC-006, audit
+    installer-client-12): committing a build-machine interpreter path into a
+    project's ``.mcp.json`` breaks the config on every other machine and leaks
+    a host-specific path. The default ``--debug`` flag is dropped — verbose
+    logging is opt-in, not a baked-in default.
     """
     if shutil.which("trw-mcp"):
-        return {"command": "trw-mcp", "args": ["--debug"]}
-    # Use the absolute path to the current interpreter -- ensures
-    # the correct venv is used even when PATH varies.
-    return {"command": sys.executable, "args": ["-m", "trw_mcp.server", "--debug"]}
+        return {"command": "trw-mcp", "args": []}
+    # Portable fallback: a bare ``python3`` resolves per-machine via PATH and is
+    # not flagged as a user-customized entry (which would block refresh).
+    return {"command": "python3", "args": ["-m", "trw_mcp.server"]}
 
 
 # ---------------------------------------------------------------------------

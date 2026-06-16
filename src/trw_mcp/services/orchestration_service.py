@@ -85,6 +85,16 @@ def scaffold_run_directory(
 
     run_root = resolved_runs / task_name / run_id
 
+    # PRD-QUAL-110-FR02 follow-up: harden the .trw root + standard state
+    # subdirs (runs/, learnings/, logs/ …) to 0700 BEFORE scaffolding the run
+    # tree, so a fresh install matches the README "0700" security claim. The
+    # run subdirs created below inherit the hardened parent; harden the .trw
+    # root explicitly since it may have been created at the default umask.
+    from trw_mcp.state._paths_permissions import harden_dir_mode, harden_trw_tree
+
+    harden_trw_tree(resolved_trw, create_subdirs=True)
+    harden_dir_mode(resolved_runs, create=True)
+
     # Scaffold subdirectories (matches MCP tool layout)
     for subdir in ("meta", "reports", "scratch/_orchestrator", "shards"):
         (run_root / subdir).mkdir(parents=True, exist_ok=True)

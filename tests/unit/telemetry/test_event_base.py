@@ -22,6 +22,7 @@ from trw_mcp.telemetry.event_base import (
     MetaTuneEvent,
     ObserverEvent,
     PhaseExposureEvent,
+    ProbeEvent,
     SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
@@ -43,6 +44,7 @@ ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
     HPOCeremonyComplianceEvent,
     H1ObserveModeWarning,
     SurfaceRegistered,
+    ProbeEvent,
 ]
 
 

@@ -17,6 +17,10 @@ from trw_mcp.security.mcp_registry import (
     AllowedTool,
     MCPRegistry,
     MCPSecurityConfigError,
+    MCPServer,
+)
+from trw_mcp.security.mcp_registry import (
+    _overlay_is_not_weaker as _overlay_is_not_weaker,
 )
 
 
@@ -272,3 +276,82 @@ def test_allowed_tool_model_parses_prd_shape() -> None:
     assert tool.name == "read_file"
     assert tool.allowed_phases == ("research", "implement")
     assert tool.allowed_scopes == ("read",)
+
+
+def _server_with_tools(*tool_names: str) -> MCPServer:
+    return MCPServer(
+        name="fs",
+        url_or_command="npx server",
+        public_key_fingerprint="sha256:abc",
+        allowed_tools=tuple(AllowedTool(name=n) for n in tool_names),
+    )
+
+
+def test_overlay_dropping_canonical_tool_is_rejected_as_weaker() -> None:
+    """An overlay that omits a canonical tool silently shrinks the surface."""
+    canonical = _server_with_tools("read_file", "write_file")
+    overlay = _server_with_tools("read_file")  # drops write_file
+    assert _overlay_is_not_weaker(canonical, overlay) is False
+
+
+def test_overlay_retaining_all_canonical_tools_is_accepted() -> None:
+    """An overlay keeping every canonical tool (same phases/scopes) is allowed."""
+    canonical = _server_with_tools("read_file", "write_file")
+    overlay = _server_with_tools("read_file", "write_file")
+    assert _overlay_is_not_weaker(canonical, overlay) is True
+
+
+def test_overlay_narrowing_phases_is_accepted_while_keeping_all_tools() -> None:
+    """Tool-set preserved + phases narrowed is a legal tightening."""
+    canonical = MCPServer(
+        name="fs",
+        url_or_command="npx server",
+        public_key_fingerprint="sha256:abc",
+        allowed_tools=(AllowedTool(name="read_file", allowed_phases=("research", "implement")),),
+    )
+    overlay = MCPServer(
+        name="fs",
+        url_or_command="npx server",
+        public_key_fingerprint="sha256:abc",
+        allowed_tools=(AllowedTool(name="read_file", allowed_phases=("research",)),),
+    )
+    assert _overlay_is_not_weaker(canonical, overlay) is True
+
+
+def test_mcpserver_rejects_unknown_field() -> None:
+    """extra='forbid': a typo'd/unknown allowlist field must surface, not vanish."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        MCPServer(
+            name="fs",
+            url_or_command="npx server",
+            public_key_fingerprint="sha256:abc",
+            allowd_tools=[],  # typo for allowed_tools
+        )
+
+
+def test_mcpserver_still_upgrades_legacy_capabilities_under_forbid() -> None:
+    """Legacy ``capabilities`` key is consumed by the upgrade validator and
+    does not trip extra='forbid'."""
+    server = MCPServer.model_validate(
+        {
+            "name": "fs",
+            "url_or_command": "npx server",
+            "public_key_fingerprint": "sha256:abc",
+            "capabilities": ["read_file", "write_file"],
+        }
+    )
+    assert server.tool_names() == {"read_file", "write_file"}
+
+
+def test_overlay_dropping_tool_rejected_even_when_remaining_tool_narrows() -> None:
+    """Dropping a tool is rejected regardless of how the kept tools narrow."""
+    canonical = _server_with_tools("read_file", "write_file", "delete_file")
+    overlay = MCPServer(
+        name="fs",
+        url_or_command="npx server",
+        public_key_fingerprint="sha256:abc",
+        allowed_tools=(AllowedTool(name="read_file", allowed_scopes=("read",)),),
+    )
+    assert _overlay_is_not_weaker(canonical, overlay) is False

@@ -92,9 +92,7 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
         consecutive_failures = int(failures_raw) if isinstance(failures_raw, (int, float)) else 0
 
         last_push_raw = raw.get("last_push_at")
-        last_push_at: str | None = (
-            last_push_raw if isinstance(last_push_raw, str) and last_push_raw else None
-        )
+        last_push_at: str | None = last_push_raw if isinstance(last_push_raw, str) and last_push_raw else None
 
         last_push_age_hours: float | None = None
         if last_push_at is not None:
@@ -113,10 +111,7 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
         advisory = ""
         if degraded:
             push_desc = "never" if last_push_at is None else last_push_at
-            advisory = (
-                f"sync_push degraded: {consecutive_failures} consecutive failures; "
-                f"last push: {push_desc}"
-            )
+            advisory = f"sync_push degraded: {consecutive_failures} consecutive failures; last push: {push_desc}"
 
         return {
             "degraded": degraded,
@@ -153,10 +148,7 @@ def probe_graph_edges(trw_dir: Path) -> SignalResult:
         degraded = edge_count == 0 and corpus_count >= _GRAPH_MIN_CORPUS
         advisory = ""
         if degraded:
-            advisory = (
-                f"graph_edges degraded: 0 edges for {corpus_count} memories — "
-                "knowledge graph is empty"
-            )
+            advisory = f"graph_edges degraded: 0 edges for {corpus_count} memories — knowledge graph is empty"
 
         return {
             "degraded": degraded,
@@ -214,10 +206,7 @@ def probe_embedding_coverage(trw_dir: Path) -> SignalResult:
         degraded = coverage_ratio < _EMBED_COVERAGE_THRESHOLD
         advisory = ""
         if degraded:
-            advisory = (
-                f"embedding_coverage degraded: {embedded}/{total} entries embedded "
-                f"({coverage_ratio:.1%})"
-            )
+            advisory = f"embedding_coverage degraded: {embedded}/{total} entries embedded ({coverage_ratio:.1%})"
 
         return {
             "degraded": degraded,
@@ -390,9 +379,7 @@ def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
     advisory = ""
     if degraded:
         signals_str = ", ".join(degraded_signals)
-        advisory = (
-            f"pipeline degraded: {signals_str} — call trw_pipeline_health() for details"
-        )
+        advisory = f"pipeline degraded: {signals_str} — call trw_pipeline_health() for details"
         logger.warning(
             "pipeline_health_degraded",
             signals=degraded_signals,

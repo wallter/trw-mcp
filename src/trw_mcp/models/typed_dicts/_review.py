@@ -63,13 +63,37 @@ class ManualReviewResult(ReviewResultBase, total=False):
 
 
 class CrossModelReviewResult(ReviewResultBase, total=False):
-    """Return shape of ``handle_cross_model_mode()``."""
+    """Return shape of ``handle_cross_model_mode()``.
+
+    Cross-family coverage fields (PRD-QUAL-108):
+
+    - ``review_family_coverage``: ``"cross_family"`` iff cross-family review was
+      both available AND returned realized findings; otherwise ``"single_family"``
+      (NFR02 truthfulness invariant — coverage reflects realized evidence, never
+      configuration intent).
+    - ``single_family_caveat``: when single_family, a fixed-template string naming
+      a closed-set reason token (``cross_model_disabled`` | ``provider_unreachable``
+      | ``provider_returned_empty`` | ``no_diff``) and the configured provider
+      name. Empty/absent when cross_family. Never embeds provider response bodies
+      or secrets (NFR03).
+    - ``honeypots_present``: whether the same-family fallback pass included any
+      honeypot findings (FR03 — presence only; corpus authoring is out of scope).
+    - ``same_family_findings_count``: count of REALIZED same-family fallback
+      findings when degraded. ``total_findings`` counts only cross-family
+      findings (0 on the degraded path), so a consumer seeing ``verdict='block'``
+      with ``total_findings=0`` reads this field to find the findings the verdict
+      was actually computed from. 0 on the cross-family path.
+    """
 
     mode: str
     cross_model_skipped: bool
     cross_model_provider: str
     run_path: str | None
     review_yaml: str
+    review_family_coverage: str
+    single_family_caveat: str
+    honeypots_present: bool
+    same_family_findings_count: int
 
 
 class ReconcileReviewResult(TypedDict, total=False):
@@ -142,3 +166,7 @@ class AutoReviewResult(TypedDict, total=False):
     review_yaml: str
     auto_analysis_limited: bool
     limited_reason: str
+    # Cross-family coverage stamp (PRD-QUAL-108). Auto mode is same-family
+    # today, so coverage is always ``single_family`` (OQ1 resolution).
+    review_family_coverage: str
+    single_family_caveat: str

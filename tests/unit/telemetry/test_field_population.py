@@ -37,6 +37,7 @@ from trw_mcp.telemetry.event_base import (
     MetaTuneEvent,
     ObserverEvent,
     PhaseExposureEvent,
+    ProbeEvent,
     SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
@@ -124,7 +125,7 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
         session_id="s1",
         run_id="r1",
         surface_snapshot_id="snap_a",
-        payload={"learnings_loaded": 42, "framework_version": "v25_TRW"},
+        payload={"learnings_loaded": 42, "framework_version": "v26_TRW"},
     ),
     "session_end": HPOSessionEndEvent(
         session_id="s1",
@@ -155,6 +156,21 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
             "content_hash": "ff" * 32,
             "source_path": "agents/trw-implementer.md",
             "category": "agents",
+        },
+    ),
+    "probe": ProbeEvent(
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
+        payload={
+            "verdict": "supports",
+            "hypothesis_id": "hyp-7",
+            "wall_ms": 320,
+            "timed_out": True,
+            "cache_hit": True,
+            "planning_mode": "deep",
+            "confidence": 0.82,
+            "decisive": True,
         },
     ),
 }

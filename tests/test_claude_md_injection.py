@@ -487,3 +487,58 @@ class TestMergeReplacesTrwSection:
         assert "Old Section 2" not in result
         assert "Old content line 2" not in result
         assert "Footer content" in result
+
+
+class TestMergeTrwSectionNeverGluesMarker:
+    """PRD-QUAL-112 regression: the AUTO-GENERATED comment must never be glued
+    onto the end of a preceding prose line.
+
+    The AGENTS.md section (``_agents_md.py``) starts directly with
+    ``TRW_AUTO_COMMENT`` (no leading newline), unlike the CLAUDE.md renderer's
+    section. Before the fix, ``before.rstrip() + section`` produced
+    ``...prose.<!-- TRW AUTO-GENERATED -->`` on one line, which broke whole-line
+    marker parsing. merge_trw_section must insert a blank-line separator.
+    """
+
+    def _section_no_leading_newline(self) -> str:
+        return (
+            f"{TRW_AUTO_COMMENT}\n"
+            f"{TRW_MARKER_START}\n"
+            "\n"
+            "TRW body.\n"
+            f"{TRW_MARKER_END}\n"
+        )
+
+    def test_append_path_no_glue(self, tmp_path: Path) -> None:
+        target = tmp_path / "AGENTS.md"
+        # Prose with NO trailing blank line and NO existing TRW markers.
+        target.write_text("# Repo Guidelines\nLast prose line before review.", encoding="utf-8")
+
+        merge_trw_section(target, self._section_no_leading_newline(), max_lines=500)
+
+        result = target.read_text(encoding="utf-8")
+        assert f"before review.{TRW_AUTO_COMMENT}" not in result  # not glued
+        # The AUTO-GENERATED comment sits on its own line, blank-line separated.
+        assert f"\n\n{TRW_AUTO_COMMENT}\n" in result
+        assert any(line.strip() == TRW_AUTO_COMMENT for line in result.splitlines())
+
+    def test_replace_path_no_glue(self, tmp_path: Path) -> None:
+        target = tmp_path / "AGENTS.md"
+        original = (
+            "# Repo Guidelines\n"
+            "Last prose line before review.\n"
+            "\n"
+            f"{TRW_AUTO_COMMENT}\n"
+            f"{TRW_MARKER_START}\n"
+            "stale body\n"
+            f"{TRW_MARKER_END}\n"
+        )
+        target.write_text(original, encoding="utf-8")
+
+        merge_trw_section(target, self._section_no_leading_newline(), max_lines=500)
+
+        result = target.read_text(encoding="utf-8")
+        assert f"before review.{TRW_AUTO_COMMENT}" not in result  # not glued
+        assert "stale body" not in result  # block replaced
+        assert "TRW body." in result
+        assert any(line.strip() == TRW_AUTO_COMMENT for line in result.splitlines())

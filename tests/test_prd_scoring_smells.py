@@ -60,7 +60,15 @@ def test_ears_classification_patterns() -> None:
         ]
     )
     by_pattern = {row["pattern"] for row in classify_ears(content)}
-    assert {"event-driven", "state-driven", "unwanted-behavior", "optional-feature", "ubiquitous", "complex", "non-ears"} <= by_pattern
+    assert {
+        "event-driven",
+        "state-driven",
+        "unwanted-behavior",
+        "optional-feature",
+        "ubiquitous",
+        "complex",
+        "non-ears",
+    } <= by_pattern
 
 
 def test_ears_ignores_non_requirement_lines() -> None:
@@ -102,7 +110,17 @@ def test_smell_detection_does_not_change_total_score(config) -> None:
     from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
 
     clean = "\n".join(
-        ["---", "id: PRD-CORE-998", "title: t", "version: 1.0.0", "status: draft", "priority: P2", "---", "## Functional Requirements", "FR01: The system shall persist the record."]
+        [
+            "---",
+            "id: PRD-CORE-998",
+            "title: t",
+            "version: 1.0.0",
+            "status: draft",
+            "priority: P2",
+            "---",
+            "## Functional Requirements",
+            "FR01: The system shall persist the record.",
+        ]
     )
     result = validate_prd_quality_v2(clean, config)
     # smell dimension is never added to the scored dimensions list.

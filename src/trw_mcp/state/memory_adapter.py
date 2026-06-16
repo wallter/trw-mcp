@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import cast
 
 import structlog
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
@@ -97,6 +96,11 @@ set_embed_failure_count_for_testing = _memory_recovery.set_embed_failure_count_f
 
 # update_learning extracted to _memory_update (PRD-DIST-243 batch 59).
 from trw_mcp.state._memory_update import update_learning as update_learning
+
+# PRD-CORE-185 core185-2: re-exported so the user-tier corruption-recovery
+# branch in ``store_learning`` (and tests patching ``memory_adapter.<name>``)
+# resolve the user-backend singleton reset through this facade.
+from trw_mcp.state._user_tier import reset_user_backend as reset_user_backend
 
 # ---------------------------------------------------------------------------
 # CRUD operations (return shapes match original YAML tools)
@@ -247,7 +251,7 @@ def store_learning(
             if attempt == 0 and not is_user_write and _is_corruption_error(exc):
                 # Corruption recovery resets the PROJECT singleton (keyed on
                 # trw_dir). The user store is a distinct file; a user-write
-                # corruption falls through to the StorageError seam below rather
+                # corruption is handled by the symmetric branch below rather
                 # than resetting the unrelated project backend.
                 logger.warning(
                     "memory_store_retry_after_corruption",
@@ -256,6 +260,21 @@ def store_learning(
                     exc_info=True,
                 )
                 _recover_and_reset_backend(trw_dir)
+                continue
+            if attempt == 0 and is_user_write and _is_corruption_error(exc):
+                # core185-2: a user-tier write hit corruption. Reset the
+                # machine-local USER singleton (a distinct file from the project
+                # store) and retry once -- symmetric to the project recovery
+                # above. Without this branch a corrupted user store would be
+                # surfaced as a silent store error and every subsequent
+                # user-tier write in the session would fail identically.
+                logger.warning(
+                    "memory_store_user_retry_after_corruption",
+                    learning_id=learning_id,
+                    attempt=attempt + 1,
+                    exc_info=True,
+                )
+                reset_user_backend()
                 continue
             # Seam: translate a non-corruption StorageError into a stable error
             # dict rather than leaking the exception to MCP callers. The
@@ -341,6 +360,13 @@ update_access_tracking = _memory_lookups.update_access_tracking
 # extracted to _memory_recall.py (project ∪ user federation + the 350 eff-LOC
 # gate, NFR07). This re-export is THE recall path — it supersedes the historical
 # inline recall_learnings, adding the user-tier federation step.
+# F5 root-cause B: forced (non-deferrable) knowledge-graph backfill over the
+# EXISTING corpus, extracted to a focused sibling so the facade stays under the
+# 350 eff-LOC gate. Runs update_entry_graph on the singleton's own connection
+# (NEVER schedule_graph_update — that hits a divergent per-namespace DB file).
+from trw_mcp.state._graph_backfill import (
+    backfill_graph as backfill_graph,
+)
 from trw_mcp.state._memory_recall import (
     _rank_wildcard_by_utility as _rank_wildcard_by_utility,
 )

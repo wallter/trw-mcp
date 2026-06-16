@@ -63,6 +63,7 @@ def test_shared_lock_skip_on_concurrent_hold(tmp_path: Path) -> None:
         lock.__enter__()
         barrier.set()  # signal that lock is held
         import time
+
         time.sleep(0.2)  # hold for 200ms
         lock.__exit__(None, None, None)
 

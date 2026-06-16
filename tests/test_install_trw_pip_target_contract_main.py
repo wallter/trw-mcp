@@ -98,7 +98,7 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
     monkeypatch.setattr(
         module,
         "phase_project_setup",
-        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": (
+        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="", **_kwargs: (
             observed.update(
                 {
                     "step": step,
@@ -166,7 +166,7 @@ def test_main_parses_multi_client_ide_argument_for_project_setup(
     monkeypatch.setattr(
         module,
         "phase_project_setup",
-        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="": (
+        lambda ui, step, total, python, target_dir, upgrade_only, interactive=False, ide=None, pip_target="", **_kwargs: (
             observed.update(
                 {
                     "step": step,
@@ -264,7 +264,9 @@ def test_upgrade_preserves_prior_identity_platform_urls_and_clients(
     assert observed == {
         "project_name": "trw-framework-dev",
         "api_key": "trw_key_123",
-        "telemetry_enabled": True,
+        # Telemetry consent is independent from API key presence; a mocked
+        # prior config with no recorded telemetry choice must remain off.
+        "telemetry_enabled": False,
         "target_platforms": None,
         "rewrite_platform_urls": False,
     }

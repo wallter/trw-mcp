@@ -46,9 +46,7 @@ class TestEmitToolCall:
         log_path = tmp_path / "channel-events.jsonl"
         monkeypatch.delenv(_ENV_VAR, raising=False)
 
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ) as mock_append:
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
             emit_tool_call(tool_name="trw_before_edit_hint", file_path="backend/app.py")
             mock_append.assert_called_once()
             call_kwargs = mock_append.call_args.kwargs
@@ -57,27 +55,21 @@ class TestEmitToolCall:
 
     def test_uses_provided_client(self, monkeypatch):
         monkeypatch.delenv(_ENV_VAR, raising=False)
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ) as mock_append:
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
             emit_tool_call(tool_name="trw_entity_risk_map", client="cursor-ide")
             call_kwargs = mock_append.call_args.kwargs
             assert call_kwargs["client"] == "cursor-ide"
 
     def test_resolves_client_from_env_when_not_provided(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "opencode")
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ) as mock_append:
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
             emit_tool_call(tool_name="trw_codebase_risk_report")
             call_kwargs = mock_append.call_args.kwargs
             assert call_kwargs["client"] == "opencode"
 
     def test_includes_tool_name_in_extra(self, monkeypatch):
         monkeypatch.delenv(_ENV_VAR, raising=False)
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ) as mock_append:
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
             emit_tool_call(tool_name="trw_before_edit_hint")
             call_kwargs = mock_append.call_args.kwargs
             extra = call_kwargs.get("extra", {})
@@ -86,9 +78,7 @@ class TestEmitToolCall:
     def test_passes_record_ids(self, monkeypatch):
         monkeypatch.delenv(_ENV_VAR, raising=False)
         ids = ["hotspot:backend/app.py@a1b2c3d4", "convention:yaml-safe"]
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ) as mock_append:
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
             emit_tool_call(tool_name="trw_entity_risk_map", record_ids=ids)
             call_kwargs = mock_append.call_args.kwargs
             assert call_kwargs["record_ids"] == ids
@@ -124,9 +114,7 @@ class TestEmitToolCallFailOpen:
             emit_tool_call(tool_name="trw_entity_risk_map")
 
     def test_returns_none(self, monkeypatch):
-        with patch(
-            "trw_mcp.channels._distill_telemetry.append_channel_event"
-        ):
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event"):
             result = emit_tool_call(tool_name="trw_before_edit_hint")
         assert result is None
 

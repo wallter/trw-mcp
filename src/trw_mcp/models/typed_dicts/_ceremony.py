@@ -52,6 +52,7 @@ class AutoMaintenanceDict(TypedDict, total=False):
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
     embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01: background backfill on low coverage
+    embedder_warmup_scheduled: dict[str, object]  # Option A+ (2026-06-10): first-recall download warm-up guard
     embeddings_coverage_ratio: float  # PRD-FIX-COMPOUNDING-3-FR02: vector coverage ratio (0.0-1.0)
     wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
     wal_checkpoint_deferred: dict[str, object]
@@ -67,6 +68,8 @@ class DeliveryGatesDict(TypedDict, total=False):
     review_block: str
     review_warning: str
     review_advisory: str
+    # PRD-CORE-192-FR04: pre-deliver REVIEW nudge for a STANDARD+ run with no review.
+    review_nudge: str
     review_scope_block: str
     integration_review_block: str
     integration_review_warning: str

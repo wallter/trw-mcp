@@ -89,8 +89,20 @@ def render_rationalization_watchlist() -> str:
 def render_agents_trw_section(
     exposed_tools: frozenset[str] | set[str] | None = None,
 ) -> str:
-    """Render the complete TRW section for AGENTS.md — platform-generic."""
+    """Render the complete TRW section for AGENTS.md — platform-generic.
+
+    PRD-QUAL-104 (third bypass instance, 2026-06-11): the deliver-gate line is
+    sourced from the canonical ``render_deliver_gate_statement()`` (bundled
+    tool-lifecycle derived, FR02/FR04) rather than a hand-copied inline string
+    that interjected "for coding/rca/eval tasks" and so failed the exact-phrase
+    lint, leaving this full-ceremony AGENTS.md root path reporting missing_gate.
+    The loader is imported function-locally to avoid a ``sections`` <->
+    ``_renderer`` module-import cycle (established pattern, ``_renderer.py``).
+    """
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+        render_deliver_gate_statement,
+    )
 
     sessions_tracked, total_learnings = _load_analytics_counts()
     session_label = "session" if sessions_tracked == 1 else "sessions"
@@ -112,7 +124,7 @@ def render_agents_trw_section(
         "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
         "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
         "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"
-        "\n"
+        "\n" + render_deliver_gate_statement() + "\n"
         "## Session Boundaries\n"
         "\n" + _SESSION_BOUNDARY_TEXT
     )
@@ -121,8 +133,18 @@ def render_agents_trw_section(
 def render_codex_trw_section(
     exposed_tools: frozenset[str] | set[str] | None = None,
 ) -> str:
-    """Render a Codex-specific TRW section for AGENTS.md."""
+    """Render a Codex-specific TRW section for AGENTS.md.
+
+    PRD-QUAL-104 (third bypass instance, 2026-06-11): like
+    ``render_agents_trw_section``, the deliver-gate line now routes through the
+    canonical ``render_deliver_gate_statement()`` instead of a hand-copied
+    inline string, so the Codex AGENTS.md root path can never report
+    missing_gate / stale_sync. Function-local import avoids a module cycle.
+    """
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+        render_deliver_gate_statement,
+    )
 
     tool_list = render_tool_list(exposed_tools)
 
@@ -144,7 +166,7 @@ def render_codex_trw_section(
         "3. Run project-native validation and review the diff before completion\n"
         "4. Use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
         "5. Finish with `trw_deliver()` so future sessions inherit the result\n"
-        "\n"
+        "\n" + render_deliver_gate_statement() + "\n"
         "## Runtime Notes\n"
         "\n"
         "- Codex reads `AGENTS.md` files from global/project/current-directory scope in precedence order, subject to runtime size limits\n"

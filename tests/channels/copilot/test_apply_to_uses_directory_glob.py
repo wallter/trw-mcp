@@ -18,6 +18,7 @@ import pytest
 @pytest.fixture()
 def compute_glob() -> type:
     from trw_mcp.channels.copilot._path_instructions import compute_apply_to_glob
+
     return compute_apply_to_glob  # type: ignore[return-value]
 
 

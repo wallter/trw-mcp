@@ -13,15 +13,12 @@ from fastmcp import Context, FastMCP
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.models.run import (
-    ComplexitySignals,
     Confidence,
     Phase,
     RunState,
     RunStatus,
 )
-from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.typed_dicts import TrwStatusDict
-from trw_mcp.scoring import classify_complexity, get_phase_requirements
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
@@ -31,7 +28,11 @@ from trw_mcp.state._paths import (
 )
 from trw_mcp.state.analytics._stale_runs import count_stale_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.tools import _orchestration_scaling as _scaling
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
+from trw_mcp.tools._orchestration_gate_scan import (
+    apply_deliver_gate_status as _apply_deliver_gate_status,
+)
 from trw_mcp.tools._orchestration_helpers import (
     _deploy_frameworks,
     _deploy_templates,
@@ -87,6 +88,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         artifacts: list[str] | None = None,
         complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
         protected: bool = False,
+        planning_mode: str | None = None,
     ) -> dict[str, str]:
         """Create a run directory and register it as the active run.
 
@@ -102,8 +104,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         Output: dict with run_id, run_path, task_dir, phase, and status fields.
         """
-
-        from trw_mcp.models.run import ComplexityClass
 
         # Input validation (PRD-QUAL-042-FR01). ``task_name`` defaults to "" only
         # so FastMCP can inject ``ctx`` first (PRD-CORE-141 FR03); empty is rejected.
@@ -187,52 +187,22 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "RUNS_ROOT": config.runs_root,
         }
 
-        # PRD-CORE-060: Classify complexity if signals provided
-        parsed_signals = None
-        complexity_class_val = None
-        complexity_override_val = None
-        phase_reqs_val = None
-
-        if complexity_hint is not None:
-            # PRD-CORE-134: Map complexity_hint to class
-            hint_map = {
-                "EASY": ComplexityClass.MINIMAL,
-                "STANDARD": ComplexityClass.STANDARD,
-                "HARD": ComplexityClass.COMPREHENSIVE,
-            }
-            complexity_class_val = hint_map.get(complexity_hint)
-            if complexity_class_val:
-                phase_reqs_val = get_phase_requirements(complexity_class_val)
-
-        if complexity_class_val is None and complexity_signals is not None:
-            # Parse dict[str, object] via model_validate for type safety
-            parsed_signals = ComplexitySignals.model_validate(complexity_signals)
-            tier, _raw, override = classify_complexity(parsed_signals)
-            complexity_class_val = tier
-            complexity_override_val = override
-            phase_reqs_val = get_phase_requirements(tier)
-
-        # PRD-CORE-184-FR02: heuristic task-type detection (no LLM call — that
-        # would re-introduce the iter-6 classification-as-priming harm). The
-        # result drives the deliver-gate mode, nudge weights, and recall policy.
-        from trw_mcp.tools._task_type_detection import detect_task_type
-
-        detection = detect_task_type(
+        # PRD-CORE-060/134 + PRD-CORE-184: complexity + task-type + task_profile
+        # resolution (extracted to the scaling sibling to keep this module under
+        # the 350 eLOC gate when SCALE-001 FR13 wiring landed).
+        prof = _scaling.resolve_init_profile(
+            config,
             task_name=task_name,
             run_type=run_type,
             prd_scope=prd_scope,
             task_type=task_type,
+            complexity_hint=complexity_hint,
+            complexity_signals=complexity_signals,
         )
-        resolved_task_type = detection.task_type
-
-        task_profile_tier = complexity_class_val or ComplexityClass.STANDARD
-        task_profile = resolve_task_profile(
-            client_profile=config.client_profile,
-            model_tier=config.client_profile.default_model_tier,
-            complexity_class=task_profile_tier,
-            complexity_signals=parsed_signals,
-            task_type=resolved_task_type,
-        )
+        complexity_class_val = prof.complexity_class
+        resolved_task_type = prof.task_type
+        task_profile = prof.task_profile
+        detection = prof.detection
 
         resolved_artifacts = [str(p) for p in (artifacts or [])]
         run_state = RunState(
@@ -249,9 +219,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
             task_type=resolved_task_type,
             recall_policy=task_profile.recall_policy,
             complexity_class=complexity_class_val,
-            complexity_signals=parsed_signals,
-            complexity_override=complexity_override_val,
-            phase_requirements=phase_reqs_val,
+            complexity_signals=prof.parsed_signals,
+            complexity_override=prof.complexity_override,
+            phase_requirements=prof.phase_requirements,
             task_profile=task_profile,
             artifacts=resolved_artifacts,
             protected=protected,
@@ -271,9 +241,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # ctx-resolved session (not the process UUID) on shared-HTTP deployments.
         pin_active_run(run_root, context=_build_call_context(ctx))
 
-        events_jsonl_path = run_root / "meta" / "events.jsonl"
         _log_init_events(
-            events_jsonl_path,
+            run_root / "meta" / "events.jsonl",
             task_name=task_name,
             framework_version=config.framework_version,
             task_type=resolved_task_type,
@@ -283,9 +252,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
         )
 
         logger.info(
-            "run_init_ok",
+            "trw_init_complete",
             run_id=run_id,
             task=task_name,
+            run_path=str(run_root),
             complexity_class=complexity_class_val.value if complexity_class_val else None,
         )
         logger.info(
@@ -293,12 +263,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
             run_id=run_id,
             from_phase="none",
             to_phase=initial_phase.value,
-        )
-        logger.info(
-            "trw_init_complete",
-            task=task_name,
-            run_id=run_id,
-            run_path=str(run_root),
         )
 
         result: dict[str, str] = {
@@ -312,8 +276,24 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
-
         result["task_profile_hash"] = task_profile.profile_hash
+
+        # PRD-SCALE-001 FR13/FR03: run the Cognitive Scaling Scout (honoring a
+        # --planning-mode override) and write meta/session_profile.yaml — the H2
+        # profile resolver reads it as the session-layer overlay on the next
+        # trw_session_start, making ceremony dynamic per task. Surfaces the mode
+        # + tier onto ``result``. Fail-open.
+        _scaling.run_scout_for_init(
+            config,
+            task_name=task_name,
+            objective=objective,
+            prd_scope=prd_scope,
+            run_root=run_root,
+            project_root=project_root,
+            trw_dir=trw_dir,
+            planning_mode=planning_mode,
+            result=result,
+        )
 
         _apply_ceremony_status(
             cast("dict[str, object]", result),
@@ -415,6 +395,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         reversion_metrics = _compute_reversion_metrics(events)
         result["reversions"] = reversion_metrics
+
+        # PRD-QUAL-105: surface deliver-gate readiness at status-check time so an
+        # agent can answer "can I deliver now?" without a deliver-then-fail-then-
+        # retry cycle. Reuses the already-read ``events`` list (FR01 build gate)
+        # plus ceremony_state.json (FR02 review gate). Fail-open per FR04 inside
+        # the helper — the three fields are simply omitted on any scan error.
+        _apply_deliver_gate_status(cast("dict[str, object]", result), events, resolved_path)
 
         last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
         if last_ts:

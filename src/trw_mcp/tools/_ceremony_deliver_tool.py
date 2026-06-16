@@ -25,6 +25,7 @@ from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,
     step_clear_score,
     step_knowledge_sync,
+    step_session_changelog,
     unpack_gate_result,
 )
 from trw_mcp.tools._deferred_delivery import _launch_deferred
@@ -105,10 +106,12 @@ def run_trw_deliver(
     if _block_delivery_for_gate(gate_result, results, errors):
         return results
     if _block_or_record_review_override(
-        gate_result, results, errors, resolved_run, allow_unverified, unverified_reason
+        gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
         return results
-    if _block_or_record_missing_build(gate_result, results, errors, resolved_run, allow_unverified, unverified_reason):
+    if _block_or_record_missing_build(
+        gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
+    ):
         return results
 
     results_view: dict[str, object] = cast("dict[str, object]", results)
@@ -141,6 +144,10 @@ def run_trw_deliver(
     if resolved_run is not None:
         step_clear_score(resolved_run, results)
     step_knowledge_sync(trw_dir, results)
+    # PRD-LOCAL-049: durable session changelog artifact. Only runs with an
+    # active run dir; fail-open inside the step so it never blocks deliver.
+    if resolved_run is not None:
+        step_session_changelog(resolved_run, results)
 
     deferred_status = _launch_deferred(trw_dir, resolved_run, results_view, skip_index_sync=skip_index_sync)
     results["deferred"] = deferred_status
@@ -150,6 +157,7 @@ def run_trw_deliver(
     results["deferred_steps"] = 11
     _ceremony._aggregate_advisory_warnings(results)
     _mark_deliver_and_reflect_learning(trw_dir, results)
+    _write_nudge_analysis_artifact(trw_dir, results)
     _log_deliver_event(trw_dir, resolved_run, results, errors, deferred_status, critical_elapsed)
     log_deliver_complete(
         resolved_run=resolved_run,
@@ -166,12 +174,101 @@ def _block_delivery_for_gate(
     results: DeliverResultDict,
     errors: list[str],
 ) -> bool:
-    for key in ("integration_review_block", "review_scope_block"):
-        if gate_result.get(key):
-            errors.append(str(gate_result[key]))
-            results["errors"] = errors
-            results["success"] = False
-            return True
+    """Hard-block delivery on integration-review / review-scope gate failures.
+
+    F1 rationale (deliver-gate governance review lane) — WHY there is no
+    ``allow_unverified`` escape here, unlike the human ``review_block`` (handled
+    downstream by ``_block_or_record_review_override`` via the structured
+    acceptable-failure path of CONSTITUTION §1.a Deliver Gate Path 3):
+
+    ``integration_review_block`` and ``review_scope_block`` are deliberately
+    HARDER than a human review-block. They fire on objective, machine-checkable
+    facts — an integration-review.yaml verdict of ``block`` (INFRA-027), or
+    >5 files modified with NO review at all (R-01). There is no judgment call to
+    sanction away: the remedy is to run the missing review, not to assert an
+    acceptable failure. Withholding the override path is a deliberate hardening
+    ABOVE Constitution §1.a Path 3, not an oversight. Do NOT add an override
+    branch here without an explicit governance decision to soften the gate.
+    # trw:intentional no allow_unverified escape — hardened above CONSTITUTION §1.a Path 3
+
+    F4 fix (deliver-gate governance review lane) — when one of these
+    non-overridable gates fires, collect ALL active hard-block messages
+    (integration_review_block, review_scope_block, AND a simultaneously-active
+    human review_block) into ``errors`` before returning. Pre-fix this returned
+    on the FIRST match, so a co-firing ``review_block`` was silently dropped:
+    the agent would fix the surfaced gate, retry, and only then discover the
+    hidden second block — misattributing the cause across two deliver attempts.
+
+    A co-firing ``review_block`` is surfaced (errors + ``results['review_block']``)
+    but NOT routed through its override handler here: delivery is already and
+    unconditionally blocked by the non-overridable gate, so the structured
+    acceptable-failure escape would be moot. Once the agent clears the hard gate,
+    the next deliver attempt routes ``review_block`` through
+    ``_block_or_record_review_override`` as normal.
+    """
+    non_overridable_keys = ("integration_review_block", "review_scope_block")
+    if not any(gate_result.get(key) for key in non_overridable_keys):
+        return False
+    # A non-overridable hard gate fired — collect EVERY active hard-block message
+    # so a co-firing review_block is not silently dropped. The block keys are
+    # already promoted onto ``results`` by ``unpack_gate_result``; here we only
+    # surface their messages into the errors list the agent reads.
+    for key in ("integration_review_block", "review_scope_block", "review_block"):
+        message = gate_result.get(key)
+        if message:
+            errors.append(str(message))
+    results["errors"] = errors
+    results["success"] = False
+    return True
+
+
+def _hard_block_override(
+    *,
+    results: DeliverResultDict,
+    errors: list[str],
+    resolved_run: Path | None,
+    trw_dir: Path,
+    allow_unverified: bool,
+    unverified_reason: str,
+    block_reason: str,
+    gate_type: str,
+    result_block_key: str,
+) -> bool:
+    """PRD-CORE-191 — gate a HARD block behind a structured acceptable-failure record.
+
+    Returns True when delivery must be BLOCKED (no/invalid/expired override),
+    False when a structurally valid, unexpired record lets delivery proceed.
+    Used for both ``review_block`` (CORE-192 escalation) and ``delivery_blocked``
+    (deliver_gate_mode). The structured record is REQUIRED here — a hard block
+    can only be overridden via the auditable acceptable-failure path.
+    """
+    from trw_mcp.tools._acceptable_failure_validation import apply_structured_override
+
+    if not (allow_unverified and unverified_reason.strip()):
+        results[result_block_key] = block_reason  # type: ignore[literal-required]
+        errors.append(block_reason)
+        results["errors"] = errors
+        results["success"] = False
+        logger.warning("deliver_hard_block", gate_type=gate_type, run=str(resolved_run))
+        return True
+
+    results_view = cast("dict[str, object]", results)
+    proceed, error = apply_structured_override(
+        results=results_view,
+        resolved_run=resolved_run,
+        trw_dir=trw_dir,
+        unverified_reason=unverified_reason,
+        gate_type=gate_type,
+    )
+    if not proceed:
+        # Override attempted but the record was prose / missing fields / expired:
+        # the hard block stands.
+        results[result_block_key] = block_reason  # type: ignore[literal-required]
+        errors.append(str(error))
+        results["errors"] = errors
+        results["success"] = False
+        return True
+    _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
     return False
 
 
@@ -180,23 +277,24 @@ def _block_or_record_review_override(
     results: DeliverResultDict,
     errors: list[str],
     resolved_run: Path | None,
+    trw_dir: Path,
     allow_unverified: bool,
     unverified_reason: str,
 ) -> bool:
     review_block = gate_result.get("review_block")
     if not review_block:
         return False
-    reason = unverified_reason.strip()
-    if not (allow_unverified and reason):
-        errors.append(str(review_block))
-        results["errors"] = errors
-        results["success"] = False
-        logger.warning("deliver_review_block", run=str(resolved_run))
-        return True
-    results["truthfulness_gate_bypassed"] = reason
-    logger.warning("review_block_override_used", reason=reason, review_block=str(review_block), run=str(resolved_run))
-    _log_gate_override(resolved_run, {"reason": reason, "review_block": str(review_block)})
-    return False
+    return _hard_block_override(
+        results=results,
+        errors=errors,
+        resolved_run=resolved_run,
+        trw_dir=trw_dir,
+        allow_unverified=allow_unverified,
+        unverified_reason=unverified_reason,
+        block_reason=str(review_block),
+        gate_type="review_block",
+        result_block_key="review_block",
+    )
 
 
 def _block_or_record_missing_build(
@@ -204,22 +302,31 @@ def _block_or_record_missing_build(
     results: DeliverResultDict,
     errors: list[str],
     resolved_run: Path | None,
+    trw_dir: Path,
     allow_unverified: bool,
     unverified_reason: str,
 ) -> bool:
     delivery_blocked = gate_result.get("delivery_blocked")
-    if delivery_blocked and not (allow_unverified and unverified_reason.strip()):
-        results["delivery_blocked"] = str(delivery_blocked)
+    if delivery_blocked:
         results["missing_gate"] = str(gate_result.get("missing_gate", "build_check"))
-        errors.append(str(delivery_blocked))
-        results["errors"] = errors
-        results["success"] = False
-        logger.warning(
-            "deliver_gate_mode_blocked",
-            task_type=str(gate_result.get("blocked_task_type", "unknown")),
-            run=str(resolved_run),
-        )
-        return True
+        if _hard_block_override(
+            results=results,
+            errors=errors,
+            resolved_run=resolved_run,
+            trw_dir=trw_dir,
+            allow_unverified=allow_unverified,
+            unverified_reason=unverified_reason,
+            block_reason=str(delivery_blocked),
+            gate_type="delivery_blocked",
+            result_block_key="delivery_blocked",
+        ):
+            logger.warning(
+                "deliver_gate_mode_blocked",
+                task_type=str(gate_result.get("blocked_task_type", "unknown")),
+                run=str(resolved_run),
+            )
+            return True
+        return False
 
     build_gate_warning = gate_result.get("build_gate_warning")
     if not build_gate_warning:
@@ -235,12 +342,40 @@ def _block_or_record_missing_build(
         results["errors"] = errors
         results["success"] = False
         return True
-    results["build_gate_override"] = reason
-    results["truthfulness_gate_bypassed"] = reason
+    # PRD-CORE-191-FR05: the SOFT build_gate_warning override remains
+    # backward-compatible with a free-text reason — but if the reason parses as a
+    # structured AcceptableFailureRecord we record + ledger it; otherwise we honor
+    # the free-text bypass and emit a deprecation advisory pointing at the schema.
+    # codex cross-model review (REFUTE/DOCUMENT): free-text on a SOFT build warning
+    # is the SANCTIONED FR05 deprecation path (a graceful migration window), not an
+    # un-gated bypass — FRAMEWORK.md §Deliver Gate Path 3 permits a documented
+    # acceptable-failure, and the advisory below actively steers callers to the
+    # structured schema. The HARD blocks (review_block / delivery_blocked) do NOT
+    # accept free text — they require the structured record via _hard_block_override.
+    from trw_mcp.tools._acceptable_failure_validation import apply_structured_override, parse_acceptable_failure
+
+    record, _parse_error = parse_acceptable_failure(reason)
+    if record is not None:
+        apply_structured_override(
+            results=cast("dict[str, object]", results),
+            resolved_run=resolved_run,
+            trw_dir=trw_dir,
+            unverified_reason=reason,
+            gate_type="build_gate_warning",
+        )
+        results["build_gate_override"] = reason
+    else:
+        results["build_gate_override"] = reason
+        results["truthfulness_gate_bypassed"] = reason
+        results["acceptable_failure_advisory"] = (
+            "Free-text unverified_reason is deprecated. Provide a structured "
+            "acceptable-failure record (failed_command, residual_risk, owner, expiry_iso) "
+            "as JSON so the override is auditable. See PRD-CORE-191."
+        )
+        _log_gate_override(resolved_run, {"reason": reason, "build_gate_warning": str(build_gate_warning)})
     logger.warning(
         "build_gate_override_used", reason=reason, build_gate_warning=str(build_gate_warning), run=str(resolved_run)
     )
-    _log_gate_override(resolved_run, {"reason": reason, "build_gate_warning": str(build_gate_warning)})
     return False
 
 
@@ -278,6 +413,37 @@ def _mark_deliver_and_reflect_learning(trw_dir: Path, results: DeliverResultDict
         )
     except Exception:  # justified: fail-open — reflection must not block deliver
         logger.debug("learning_reflection_failed", exc_info=True)
+
+
+def _write_nudge_analysis_artifact(trw_dir: Path, results: DeliverResultDict) -> None:
+    """Write the live nudge-effectiveness artifact and surface a compact summary.
+
+    Nudge-deep-dive work target #1/#2: computes responsiveness, per-step
+    resistance, recall-pull, and timing-validity from this session's own
+    ceremony-state + surface stream, writes ``.trw/context/nudge-analysis.json``,
+    and attaches a summary (incl. flagged resistance steps) to the deliver
+    result so an operator/loop can read the structural signal directly.
+
+    Runs AFTER ``mark_deliver`` so the deliver step counts toward responsiveness.
+    Fail-open: analysis is observability and must never block deliver.
+    """
+    try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
+        from trw_mcp.state.nudge_analysis import (
+            analysis_summary,
+            compute_nudge_analysis,
+            persist_nudge_analysis,
+        )
+
+        session_id = resolve_effective_session_id(trw_dir)
+        analysis = compute_nudge_analysis(trw_dir, session_id=session_id)
+        path = persist_nudge_analysis(trw_dir, analysis)
+        if path is not None:
+            summary = analysis_summary(analysis)
+            summary["artifact"] = str(path)
+            results["nudge_analysis"] = summary
+    except Exception:  # justified: fail-open — nudge analysis must not block deliver
+        logger.debug("nudge_analysis_artifact_failed", exc_info=True)
 
 
 def _log_deliver_event(

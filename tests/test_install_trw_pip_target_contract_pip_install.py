@@ -152,7 +152,7 @@ def test_wheel_runtime_dependencies_satisfied_parses_requires_dist(
                 "Metadata-Version: 2.1\n"
                 "Name: demo\n"
                 "Version: 0.1.0\n"
-                "Requires-Dist: fastmcp>=3.0.0\n"
+                "Requires-Dist: fastmcp>=3.2.0\n"
                 "Requires-Dist: platformdirs>=4.0.0; python_version >= '3.10'\n"
             ),
         )
@@ -192,7 +192,7 @@ def test_wheel_runtime_dependencies_satisfied_returns_false_when_packaging_is_un
     with zipfile.ZipFile(wheel_path, "w") as wheel:
         wheel.writestr(
             "demo-0.1.0.dist-info/METADATA",
-            ("Metadata-Version: 2.1\nName: demo\nVersion: 0.1.0\nRequires-Dist: fastmcp>=3.0.0\n"),
+            ("Metadata-Version: 2.1\nName: demo\nVersion: 0.1.0\nRequires-Dist: fastmcp>=3.2.0\n"),
         )
 
     real_import = __import__

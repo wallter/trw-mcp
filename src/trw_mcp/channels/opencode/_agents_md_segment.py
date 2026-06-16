@@ -339,8 +339,8 @@ def install_opencode_agents_md_distill_segment(
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, lock cleanup must not mask segment result
+            log.debug("opencode_agents_md_lock_release_failed", channel_id=channel_id, exc_info=True)
 
 
 def _render_and_inject_under_lock(
@@ -459,5 +459,5 @@ def _emit_event(
             bytes_emitted=bytes_written,
             extra={"outcome": outcome},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, channel writes already finished
+        log.debug("opencode_agents_md_event_failed", channel_id=channel_id, event_type=event_type, exc_info=True)

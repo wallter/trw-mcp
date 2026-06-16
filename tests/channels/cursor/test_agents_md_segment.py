@@ -24,16 +24,12 @@ def _make_sidecar(sha: str = "abc12345") -> dict[str, Any]:
         "sha": sha,
         "payload": {
             "generated_at": "2026-05-28T00:00:00Z",
-            "conventions": [
-                {"slug": "yaml-safe", "title": "YAML Safety", "body": "Use safe loader"}
-            ],
+            "conventions": [{"slug": "yaml-safe", "title": "YAML Safety", "body": "Use safe loader"}],
             "hotspots": [
                 {"file_path": "backend/main.py", "risk_score": 0.9, "reason": "high churn"},
                 {"file_path": "trw_mcp/state.py", "risk_score": 0.7, "reason": "complex"},
             ],
-            "edge_case_survivors": [
-                {"file_path": "backend/auth.py", "description": "JWT bypass survived"}
-            ],
+            "edge_case_survivors": [{"file_path": "backend/auth.py", "description": "JWT bypass survived"}],
             "edge_case_undocumented": [],
         },
     }
@@ -72,8 +68,7 @@ class TestRenderCursorCliT1:
                 "generated_at": "ts",
                 "conventions": [],
                 "hotspots": [
-                    {"file_path": f"file{i}.py", "risk_score": 0.9 - i * 0.01, "reason": ""}
-                    for i in range(10)
+                    {"file_path": f"file{i}.py", "risk_score": 0.9 - i * 0.01, "reason": ""} for i in range(10)
                 ],
                 "edge_case_survivors": [],
                 "edge_case_undocumented": [],
@@ -133,9 +128,7 @@ class TestAgentsMdSegmentWriter:
 
     def test_idempotency_same_sidecar(self, tmp_path: Path) -> None:
         agents_md = tmp_path / "AGENTS.md"
-        agents_md.write_text(
-            f"{TRW_DISTILL_BEGIN}\n_old_\n{TRW_DISTILL_END}\n", encoding="utf-8"
-        )
+        agents_md.write_text(f"{TRW_DISTILL_BEGIN}\n_old_\n{TRW_DISTILL_END}\n", encoding="utf-8")
 
         writer = AgentsMdSegmentWriter(tmp_path)
         sidecar = _make_sidecar()

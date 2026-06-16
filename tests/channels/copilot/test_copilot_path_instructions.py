@@ -19,6 +19,7 @@ import pytest
 
 def _make_renderer() -> CopilotPathInstructionsRenderer:
     from trw_mcp.channels.copilot._path_instructions import CopilotPathInstructionsRenderer
+
     return CopilotPathInstructionsRenderer()
 
 
@@ -29,12 +30,7 @@ def _make_sidecar(hotspot_paths: list[str] | None = None) -> dict[str, object]:
             "backend/routers/admin.py",
             "trw-memory/src/trw_memory/models/memory.py",
         ]
-    return {
-        "hotspots": [
-            {"file": p, "risk_score": 0.85, "reason": "high churn"}
-            for p in hotspot_paths
-        ]
-    }
+    return {"hotspots": [{"file": p, "risk_score": 0.85, "reason": "high churn"} for p in hotspot_paths]}
 
 
 # ---------------------------------------------------------------------------

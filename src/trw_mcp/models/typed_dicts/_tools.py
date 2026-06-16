@@ -72,6 +72,7 @@ class SessionStartResultDict(TypedDict, total=False):
     side_effects_deferred: dict[str, object]
     recall_degraded: dict[str, object]
     run: RunStatusDict
+    first_session_emitted: bool
     embeddings_advisory: str
     errors: list[str]
     success: bool
@@ -118,6 +119,25 @@ class SessionStartResultDict(TypedDict, total=False):
     # unavailable or fails open. Every HPOTelemetryEvent emitted during the
     # session is expected to carry this id (post Wave-2 wiring).
     surface_snapshot_id: str
+    # PRD-HPO-PROF-001 FR-4: Resolved hierarchical profile for the session.
+    # ``resolved_profile`` is the effective (merged) surface; ``profile_snapshot_id``
+    # is the PERSISTENT-surface content hash (distinct from the MEAS-001
+    # artifact-registry ``surface_snapshot_id`` above); ``session_override_hash``
+    # is the session-layer delta hash (FR-13). All omitted when the profile
+    # system is disabled or resolution fails open.
+    resolved_profile: dict[str, object]
+    profile_layers_applied: list[str]
+    profile_snapshot_id: str
+    session_override_hash: str
+    profile_explanation: dict[str, object]
+    # PRD-HPO-PROF-001 FR-12 (audit F-02): when a persistent profile layer
+    # (org/domain/task-type) is malformed/schema-invalid, the resolver fails
+    # CLOSED rather than silently degrading to defaults — but session start
+    # still succeeds. The structured error is surfaced here with ``{path,
+    # reason}`` so the operator can fix the offending layer file. Present ONLY
+    # on a LayerLoadError; absent on success and when the profile system is
+    # disabled.
+    profile_resolution_error: dict[str, str]
     # PRD-HPO-MEAS-001 NFR-12: Boot-audit failures surfaced to the caller.
     # Absent on success; populated with ``{key, expected, actual, remediation}``
     # entries when any Phase-1 default cannot be resolved.
@@ -305,6 +325,7 @@ class KnowledgeSyncResultDict(TypedDict, total=False):
     clusters: list[str]
     errors: list[str]
     elapsed_seconds: float
+    graph_backfill: dict[str, int]
 
 
 class DeliverResultDict(TypedDict, total=False):
@@ -316,6 +337,8 @@ class DeliverResultDict(TypedDict, total=False):
     review_block: str
     review_warning: str
     review_advisory: str
+    # PRD-CORE-192-FR04: pre-deliver REVIEW nudge surfaced before the gate result.
+    review_nudge: str
     review_scope_block: str
     integration_review_block: str
     integration_review_warning: str
@@ -324,6 +347,14 @@ class DeliverResultDict(TypedDict, total=False):
     build_gate_block: str
     build_gate_override: str
     truthfulness_gate_bypassed: str
+    # PRD-CORE-191: structured acceptable-failure override.
+    #   acceptable_failure_record  — parsed schema dict when the override was accepted.
+    #   acceptable_failure_error   — validation error (prose/missing field/expired) when rejected.
+    #   acceptable_failure_advisory — deprecation advisory when a soft-gate override
+    #                                 used a free-text (non-schema) reason.
+    acceptable_failure_record: dict[str, object]
+    acceptable_failure_error: str
+    acceptable_failure_advisory: str
     # PRD-CORE-184-FR03: task-type-aware deliver gate mode block.
     delivery_blocked: str
     missing_gate: str
@@ -356,6 +387,9 @@ class DeliverResultDict(TypedDict, total=False):
     # PRD-FIX-COMPOUNDING-2 FR03: knowledge-graph topic-sync result. Populated
     # post-deliver (fail-open); below threshold reports threshold_met=False.
     knowledge_sync: dict[str, object]
+    # F5 suggestion 2: opportunistic time-boxed graph backfill result on deliver.
+    # Shape: {"processed": int, "edges_built": int, "skipped": int, "failed": int}.
+    graph_backfill: dict[str, int]
     # PRD-INFRA-067 (C2): Integrity-on-delivery probe result
     # Shape: {"ok": bool, "detail": str, "db_path": str, "checked_at": str}
     db_integrity: dict[str, object]
@@ -366,6 +400,23 @@ class DeliverResultDict(TypedDict, total=False):
     # session. Populated when load_and_score_run produces a record.
     # Shape matches ``ClearScore.model_dump(mode="json")``.
     clear_score: dict[str, object]
+    # PRD-LOCAL-049 FR01: absolute path to the session changelog markdown
+    # artifact written under ``<run>/reports/session-changelog.md``. Present
+    # whenever a run dir exists and the (fail-open) write succeeded.
+    session_changelog_path: str
+    # PRD-LOCAL-049 FR02 fail-open marker: present only when the changelog
+    # step failed — ``{"status": "failed", "error": str}`` (never blocks deliver).
+    session_changelog: dict[str, object]
+    # PRD-LOCAL-049 FR03: advisory package-changelog coverage. Present only when
+    # ``changelog_advisory_enabled`` policy is on. Each entry:
+    # ``{package_root, changed_files, changelog_path, changelog_updated}``.
+    package_changelog_advisory: list[dict[str, object]]
+    # Nudge-deep-dive work target #1/#2: live nudge-effectiveness summary
+    # computed on deliver from this session's ceremony-state + surface stream.
+    # Full artifact at ``.trw/context/nudge-analysis.json``; this is the compact
+    # summary — {applicable, total_nudges, responsiveness, recall_pull_rate,
+    # resistance_steps, resistance_flagged, timing_validity_rate, artifact}.
+    nudge_analysis: dict[str, object]
 
 
 class ToolEventDataDict(TypedDict, total=False):

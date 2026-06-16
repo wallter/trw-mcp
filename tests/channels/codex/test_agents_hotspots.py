@@ -32,13 +32,9 @@ def _make_sidecar(
         for i in range(hotspot_count)
     ]
     conventions = [
-        f"Always validate input with Pydantic v2 before processing (convention {i})"
-        for i in range(convention_count)
+        f"Always validate input with Pydantic v2 before processing (convention {i})" for i in range(convention_count)
     ]
-    edge_cases = [
-        f"Edge case {i}: concurrent write to shared state file"
-        for i in range(edge_case_count)
-    ]
+    edge_cases = [f"Edge case {i}: concurrent write to shared state file" for i in range(edge_case_count)]
     return {
         "schema_version": "risk-report-sidecar/v0",
         "hotspots": hotspots,
@@ -130,9 +126,7 @@ def test_segment_appended_at_eof_when_no_trw_section(tmp_path: Path) -> None:
         "Already has some content\n\n",
     ],
 )
-def test_render_idempotency_with_placement(
-    initial_content: str, tmp_path: Path
-) -> None:
+def test_render_idempotency_with_placement(initial_content: str, tmp_path: Path) -> None:
     """FR02: render(render(c, s)) == render(c, s) via placement function."""
     from trw_mcp.channels.codex._agents_hotspots import (
         _content_for_tier_factory,
@@ -168,8 +162,7 @@ def test_quota_tier_down_with_200_hotspots(tmp_path: Path) -> None:
         content = cb(tier)
         encoded_bytes = len(content.encode("utf-8"))
         assert encoded_bytes <= DEFAULT_QUOTA_BYTES, (
-            f"Tier {tier} segment ({encoded_bytes} bytes) exceeds quota "
-            f"({DEFAULT_QUOTA_BYTES} bytes)"
+            f"Tier {tier} segment ({encoded_bytes} bytes) exceeds quota ({DEFAULT_QUOTA_BYTES} bytes)"
         )
 
 
@@ -247,10 +240,7 @@ def test_prune_preserves_empty_markers() -> None:
         HOTSPOTS_END,
     )
 
-    content = (
-        f"# Project\n\n"
-        f"{HOTSPOTS_BEGIN}\nSome hotspot content.\n{HOTSPOTS_END}\n"
-    )
+    content = f"# Project\n\n{HOTSPOTS_BEGIN}\nSome hotspot content.\n{HOTSPOTS_END}\n"
     markers = MarkersConfig(start=HOTSPOTS_BEGIN, end=HOTSPOTS_END)
     # Clear_segment: replace with empty interior
     result = replace_distill_segment(content, "", markers=markers)
@@ -387,14 +377,13 @@ def test_token_count_fallback_when_tiktoken_absent() -> None:
         import importlib
 
         import trw_mcp.channels.codex._agents_hotspots as mod
+
         importlib.reload(mod)
 
         # Fallback: char/4 * 1.2; 1200/4 = 300, * 1.2 = 360
         expected_fallback = int(len(test_text) // 4 * 1.2)
         estimate = mod._count_tokens_estimate(test_text)
-        assert estimate == expected_fallback, (
-            f"Expected fallback estimate {expected_fallback}, got {estimate}"
-        )
+        assert estimate == expected_fallback, f"Expected fallback estimate {expected_fallback}, got {estimate}"
     finally:
         if original == "NOT_PRESENT":
             del sys.modules["tiktoken"]
@@ -404,6 +393,7 @@ def test_token_count_fallback_when_tiktoken_absent() -> None:
         import importlib
 
         import trw_mcp.channels.codex._agents_hotspots as restore_mod
+
         importlib.reload(restore_mod)
 
 

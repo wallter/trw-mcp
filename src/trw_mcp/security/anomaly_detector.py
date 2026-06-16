@@ -30,11 +30,11 @@ import hashlib
 import json
 import math
 import statistics
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 import yaml
@@ -48,6 +48,14 @@ logger = structlog.get_logger(__name__)
 SHADOW_WINDOW_DAYS = 21
 DEFAULT_SIGMA_THRESHOLD = 5.0
 DEFAULT_WINDOW_SECONDS = 60
+# Per-(server, tool) cap on remembered novel arg-hashes. Bounds in-memory
+# growth and (via the persisted store) on-disk growth so an attacker cannot
+# DoS the detector by flooding novel args. Mirrors the maxlen=32 discipline
+# already applied to ``_baseline_rates``.
+DEFAULT_MAX_ARG_HASHES_PER_PAIR = 1024
+# Roll the baseline store file once it exceeds this many lines, keeping the
+# most recent tail. Prevents unbounded disk growth from the append-only log.
+DEFAULT_MAX_BASELINE_STORE_LINES = 100_000
 
 
 class AnomalyObservation(BaseModel):
@@ -71,11 +79,13 @@ class AnomalyDetectorConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    mode: str = "shadow"
+    mode: Literal["shadow", "enforce"] = "shadow"
     sigma_threshold: float = Field(default=DEFAULT_SIGMA_THRESHOLD, gt=0.0)
     window_seconds: int = Field(default=DEFAULT_WINDOW_SECONDS, gt=0)
     shadow_clock_path: Path
     baseline_store_path: Path | None = None
+    max_arg_hashes_per_pair: int = Field(default=DEFAULT_MAX_ARG_HASHES_PER_PAIR, gt=0)
+    max_baseline_store_lines: int = Field(default=DEFAULT_MAX_BASELINE_STORE_LINES, gt=0)
 
 
 def _hash_args(args: dict[str, Any]) -> str:
@@ -181,9 +191,31 @@ class AnomalyDetector:
         self._rate_window: dict[tuple[str, str], deque[datetime]] = defaultdict(deque)
         self._baseline_rates: dict[tuple[str, str], deque[float]] = defaultdict(lambda: deque(maxlen=32))
         self._baseline_pairs: set[tuple[str, str]] = set()
-        self._baseline_arg_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
+        # Bounded LRU set per (server, tool): an OrderedDict keyed by arg-hash
+        # acts as an insertion-ordered set; oldest entries are evicted once the
+        # per-pair cap is reached so novel-arg flooding cannot grow memory
+        # without bound.
+        self._baseline_arg_hashes: dict[tuple[str, str], OrderedDict[str, None]] = defaultdict(OrderedDict)
         _ensure_shadow_clock(config.shadow_clock_path, now=self._now_fn())
         self._load_arg_hash_baseline()
+
+    def _remember_arg_hash(self, key: tuple[str, str], args_hash: str) -> None:
+        """Record ``args_hash`` for ``key``, evicting the oldest beyond the cap."""
+        bucket = self._baseline_arg_hashes[key]
+        bucket.pop(args_hash, None)
+        bucket[args_hash] = None
+        cap = self._config.max_arg_hashes_per_pair
+        while len(bucket) > cap:
+            bucket.popitem(last=False)
+
+    @property
+    def mode(self) -> Literal["shadow", "enforce"]:
+        """Detector operating mode (``shadow`` = observe-only, ``enforce`` = blocks).
+
+        Public accessor so callers (e.g. the security middleware) do not reach
+        into the private ``_config`` to decide whether to act on a fired anomaly.
+        """
+        return self._config.mode
 
     def _load_arg_hash_baseline(self) -> None:
         path = self._config.baseline_store_path
@@ -205,7 +237,7 @@ class AnomalyDetector:
             tool = row.get("tool")
             args_hash = row.get("arg_hash")
             if isinstance(server, str) and isinstance(tool, str) and isinstance(args_hash, str):
-                self._baseline_arg_hashes[(server, tool)].add(args_hash)
+                self._remember_arg_hash((server, tool), args_hash)
 
     def _persist_arg_hash_baseline(self, obs: AnomalyObservation) -> None:
         path = self._config.baseline_store_path
@@ -223,6 +255,35 @@ class AnomalyDetector:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        self._roll_baseline_store(path)
+
+    def _roll_baseline_store(self, path: Path) -> None:
+        """Truncate the append-only baseline store to its most recent tail.
+
+        Without this the file grows without bound (novel-arg flooding DoS).
+        Keeps the last ``max_baseline_store_lines`` lines.
+        """
+        cap = self._config.max_baseline_store_lines
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:  # justified: boundary, skip roll rather than crash the observe path
+            return
+        if len(lines) <= cap:
+            return
+        tail = lines[-cap:]
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_text("\n".join(tail) + "\n")
+            tmp.replace(path)
+        except OSError:  # justified: boundary, leave original file intact on roll failure
+            logger.warning("mcp_arg_baseline_roll_failed", path=str(path), outcome="skipped")
+            return
+        logger.info(
+            "mcp_arg_baseline_rolled",
+            path=str(path),
+            kept_lines=len(tail),
+            outcome="truncated",
+        )
 
     def seed_baseline(
         self,
@@ -246,9 +307,8 @@ class AnomalyDetector:
                     bucket.append(float(val))
         if historical_arg_hashes:
             for pair, arg_hashes in historical_arg_hashes.items():
-                arg_bucket = self._baseline_arg_hashes[pair]
                 for arg_hash in arg_hashes:
-                    arg_bucket.add(str(arg_hash))
+                    self._remember_arg_hash(pair, str(arg_hash))
 
     def _prune(self, key: tuple[str, str], now: datetime) -> None:
         window = self._rate_window[key]
@@ -357,7 +417,7 @@ class AnomalyDetector:
             )
             fired.append("namespace_mismatch")
         if obs.args_hash and obs.args_hash not in self._baseline_arg_hashes[(obs.server, obs.tool)]:
-            self._baseline_arg_hashes[(obs.server, obs.tool)].add(obs.args_hash)
+            self._remember_arg_hash((obs.server, obs.tool), obs.args_hash)
             self._persist_arg_hash_baseline(obs)
             _emit_anomaly(
                 anomaly_type="novel_arg_pattern",

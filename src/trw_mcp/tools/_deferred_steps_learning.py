@@ -386,7 +386,7 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         result["client_profile"] = cfg.client_profile.client_id if hasattr(cfg.client_profile, "client_id") else ""
         result["model_family"] = getattr(cfg, "model_family", "") or ""
     except Exception:  # justified: fail-open, metadata enrichment is best-effort
-        pass
+        logger.debug("delivery_metric_client_metadata_failed", exc_info=True)
 
     logger.info(
         "delivery_metrics_computed",

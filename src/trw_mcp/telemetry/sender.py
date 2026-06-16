@@ -20,6 +20,39 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
+# PRD-SEC-004-FR01 (pre-consent backlog exclusion): every telemetry record
+# written to the local upload queue is stamped with the consent state in effect
+# AT WRITE TIME. The sender uploads ONLY records recorded under consent; records
+# written while platform_telemetry_enabled was False are excluded and dropped on
+# the first consented flush so a later opt-in can never upload the pre-consent
+# backlog wholesale. The marker is a LOCAL-ONLY field stripped before any POST.
+_CONSENT_FIELD = "_trw_consent"
+
+
+def stamp_consent(record: dict[str, object], *, consented: bool) -> dict[str, object]:
+    """Stamp a telemetry record with the consent state in effect at write time.
+
+    Returns the same dict (mutated in place) for call-site convenience. Records
+    are stamped at the durable-write boundary so the sender can later honor the
+    consent that applied when the event was actually recorded.
+    """
+    record[_CONSENT_FIELD] = bool(consented)
+    return record
+
+
+def _record_consented(record: dict[str, object]) -> bool:
+    """True only when a record was explicitly stamped as recorded under consent.
+
+    Fail-closed: an untagged record (no marker) is treated as pre-consent and is
+    NOT eligible for upload — a legacy/un-stamped backlog can never leak.
+    """
+    return record.get(_CONSENT_FIELD) is True
+
+
+def _strip_consent_marker(record: dict[str, object]) -> dict[str, object]:
+    """Return a copy of *record* without the local-only consent marker."""
+    return {k: v for k, v in record.items() if k != _CONSENT_FIELD}
+
 
 class BatchSender:
     """Transmit local telemetry events to the platform backend.
@@ -38,6 +71,7 @@ class BatchSender:
         batch_size: int = 100,
         max_retries: int = 3,
         backoff_base: float = 1.0,
+        platform_telemetry_enabled: bool = False,
     ) -> None:
         self._platform_urls = platform_urls
         self._platform_api_key = platform_api_key
@@ -45,6 +79,10 @@ class BatchSender:
         self._batch_size = batch_size
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        # PRD-SEC-004-FR01: the documented opt-out flag gates every off-machine
+        # send. Default False is fail-closed for egress — a sender built without
+        # an explicit flag never transmits.
+        self._platform_telemetry_enabled = platform_telemetry_enabled
         self._reader = FileStateReader()
         self._writer = FileStateWriter()
 
@@ -58,6 +96,7 @@ class BatchSender:
             platform_urls=cfg.effective_platform_urls,
             platform_api_key=cfg.platform_api_key.get_secret_value(),
             input_path=input_path,
+            platform_telemetry_enabled=cfg.platform_telemetry_enabled,
         )
 
     def send(self) -> BatchSendResult:
@@ -68,6 +107,13 @@ class BatchSender:
         Returns dict with: sent, failed, remaining, skipped_reason.
         Fail-open: network errors do NOT raise exceptions.
         """
+        # PRD-SEC-004-FR01: single choke point — honor the documented opt-out
+        # flag before any off-machine send. Zero POST when disabled; the local
+        # JSONL queue is left untouched (no rewrite/truncation), so opt-out
+        # suppresses only the network transmission.
+        if not self._platform_telemetry_enabled:
+            return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "platform_telemetry_disabled"}
+
         if not self._platform_urls:
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode"}
 
@@ -78,24 +124,50 @@ class BatchSender:
         if not records:
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "empty_queue"}
 
+        # PRD-SEC-004-FR01 (pre-consent backlog exclusion): partition the queue
+        # by the consent stamped AT WRITE TIME. Only records recorded under
+        # consent are eligible for upload; pre-consent records (written while
+        # telemetry was disabled, or legacy un-stamped rows) are dropped so a
+        # later opt-in cannot upload the historical backlog wholesale. The drop
+        # is intentional and permanent — the queue is rewritten without them.
+        eligible = [r for r in records if _record_consented(r)]
+        pre_consent_dropped = len(records) - len(eligible)
+        if pre_consent_dropped:
+            logger.info(
+                "telemetry_pre_consent_backlog_dropped",
+                dropped=pre_consent_dropped,
+                eligible=len(eligible),
+            )
+        if not eligible:
+            # Drop the pre-consent backlog from the on-disk queue so it can never
+            # be reconsidered after a later opt-in, then report nothing to send.
+            self._rewrite_queue([])
+            return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "no_consented_events"}
+
         total_sent = 0
         total_failed = 0
         unsent: list[dict[str, object]] = []
 
-        for i in range(0, len(records), self._batch_size):
-            batch = records[i : i + self._batch_size]
-            any_success = self._send_batch_fanout(batch)
+        for i in range(0, len(eligible), self._batch_size):
+            batch = eligible[i : i + self._batch_size]
+            # Strip the local-only consent marker before the off-machine POST.
+            outgoing = [_strip_consent_marker(r) for r in batch]
+            any_success = self._send_batch_fanout(outgoing)
             if any_success:
                 total_sent += len(batch)
             else:
                 total_failed += len(batch)
                 # FR04: Track the actual failed batch events so they remain
                 # in the queue — records[total_sent:] would skip interleaved
-                # failed batches between successful ones.
+                # failed batches between successful ones. Keep the consent marker
+                # on retained rows so a retry stays consent-correct.
                 unsent.extend(batch)
 
-        if total_sent > 0:
-            self._rewrite_queue(unsent)
+        # Rewrite the queue with only the still-pending consented records. This
+        # also removes any pre-consent backlog that was excluded above (it was
+        # never added to `unsent`), satisfying the drop-on-first-consented-flush
+        # contract even when some consented batches succeeded.
+        self._rewrite_queue(unsent)
 
         return {
             "sent": total_sent,

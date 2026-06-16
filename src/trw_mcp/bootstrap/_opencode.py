@@ -518,8 +518,8 @@ def generate_agents_md(
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, lock cleanup must not mask write results
+            logger.debug("opencode_agents_md_lock_release_failed", exc_info=True)
 
     logger.debug(
         "generate_agents_md",

@@ -270,6 +270,7 @@ def test_install_copilot_distill_channels_installs_vscode_mcp(tmp_path: Path) ->
     vscode_mcp = tmp_path / ".vscode" / "mcp.json"
     assert vscode_mcp.exists(), f".vscode/mcp.json not found at {vscode_mcp}"
     import json
+
     data = json.loads(vscode_mcp.read_text(encoding="utf-8"))
     assert "servers" in data
     assert "trw" in data["servers"]

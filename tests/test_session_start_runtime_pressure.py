@@ -74,6 +74,163 @@ def test_live_memory_writer_pids_ignores_stale_locks(tmp_path: Path) -> None:
     assert optional_reason == ""
 
 
+def _write_pins(trw_dir: Path, entries: dict[str, dict[str, Any]]) -> None:
+    """Write ``.trw/runtime/pins.json`` with the given pin entries."""
+    import json
+
+    runtime_dir = trw_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "pins.json").write_text(json.dumps(entries), encoding="utf-8")
+
+
+def _iso_ago(hours: float) -> str:
+    """Return an ISO8601 ``Z``-suffixed timestamp *hours* in the past."""
+    from datetime import datetime, timedelta, timezone
+
+    ts = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return ts.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+def test_live_memory_writer_pids_excludes_stale_heartbeat_pid(tmp_path: Path) -> None:
+    """F5 root-cause A: a live-but-abandoned writer (stale heartbeat) is dropped.
+
+    A PID whose freshest pins.json heartbeat is older than ``pin_ttl_hours``
+    must NOT count as an active writer, even though its process is still alive.
+    Fresh-heartbeat PIDs and PIDs with no pin entry stay counted (fail-open).
+    """
+    trw_dir = _minimal_trw_dir(tmp_path)
+    live_pid = os.getpid()
+    parent_pid = os.getppid()
+
+    _write_lock(trw_dir, "stale.lock", live_pid)
+    _write_lock(trw_dir, "fresh.lock", parent_pid)
+
+    # live_pid has only a stale heartbeat (5h old, well past the 1h TTL);
+    # parent_pid has a fresh heartbeat (well within TTL).
+    _write_pins(
+        trw_dir,
+        {
+            "session-stale": {
+                "run_path": str(trw_dir),
+                "pid": live_pid,
+                "last_heartbeat_ts": _iso_ago(5.0),
+            },
+            "session-fresh": {
+                "run_path": str(trw_dir),
+                "pid": parent_pid,
+                "last_heartbeat_ts": _iso_ago(0.1),
+            },
+        },
+    )
+
+    pids = live_memory_writer_pids(trw_dir, pin_ttl_hours=1)
+    assert live_pid not in pids  # stale heartbeat → excluded
+    assert parent_pid in pids  # fresh heartbeat → counted
+
+
+def test_live_memory_writer_pids_counts_pid_without_pin_entry(tmp_path: Path) -> None:
+    """F5 root-cause A fail-open: a writer PID with no pin entry stays counted.
+
+    Non-ceremony writers (no pins.json record) must never be dropped by the
+    heartbeat-age filter — that would under-report pressure and let a real
+    concurrent writer go undetected.
+    """
+    trw_dir = _minimal_trw_dir(tmp_path)
+    live_pid = os.getpid()
+    _write_lock(trw_dir, "nopin.lock", live_pid)
+    # pins.json names a DIFFERENT pid only.
+    _write_pins(
+        trw_dir,
+        {
+            "session-other": {
+                "run_path": str(trw_dir),
+                "pid": 999_999_998,
+                "last_heartbeat_ts": _iso_ago(0.1),
+            }
+        },
+    )
+
+    pids = live_memory_writer_pids(trw_dir, pin_ttl_hours=1)
+    assert pids == [live_pid]
+
+
+def test_live_memory_writer_pids_uses_freshest_heartbeat_for_pid(tmp_path: Path) -> None:
+    """A pid with multiple pins is judged by its FRESHEST heartbeat."""
+    trw_dir = _minimal_trw_dir(tmp_path)
+    live_pid = os.getpid()
+    _write_lock(trw_dir, "multi.lock", live_pid)
+    _write_pins(
+        trw_dir,
+        {
+            "session-old": {
+                "run_path": str(trw_dir),
+                "pid": live_pid,
+                "last_heartbeat_ts": _iso_ago(9.0),
+            },
+            "session-new": {
+                "run_path": str(trw_dir),
+                "pid": live_pid,
+                "last_heartbeat_ts": _iso_ago(0.2),
+            },
+        },
+    )
+
+    pids = live_memory_writer_pids(trw_dir, pin_ttl_hours=1)
+    assert pids == [live_pid]  # freshest heartbeat is fresh → counted
+
+
+def test_live_memory_writer_pids_none_ttl_skips_heartbeat_filter(tmp_path: Path) -> None:
+    """When pin_ttl_hours is None the heartbeat filter is disabled (back-compat)."""
+    trw_dir = _minimal_trw_dir(tmp_path)
+    live_pid = os.getpid()
+    _write_lock(trw_dir, "stale.lock", live_pid)
+    _write_pins(
+        trw_dir,
+        {
+            "session-stale": {
+                "run_path": str(trw_dir),
+                "pid": live_pid,
+                "last_heartbeat_ts": _iso_ago(99.0),
+            }
+        },
+    )
+
+    assert live_memory_writer_pids(trw_dir) == [live_pid]
+    assert live_memory_writer_pids(trw_dir, pin_ttl_hours=None) == [live_pid]
+
+
+def test_should_defer_optional_work_drops_stale_writer_via_ttl(tmp_path: Path) -> None:
+    """A peer writer with a stale heartbeat no longer triggers deferral."""
+    trw_dir = _minimal_trw_dir(tmp_path)
+    _write_lock(trw_dir, "self.lock", os.getpid())
+    _write_lock(trw_dir, "peer.lock", os.getppid())
+    # Self fresh, peer stale → peer should be excluded, leaving self-only (no defer).
+    _write_pins(
+        trw_dir,
+        {
+            "self": {
+                "run_path": str(trw_dir),
+                "pid": os.getpid(),
+                "last_heartbeat_ts": _iso_ago(0.1),
+            },
+            "peer": {
+                "run_path": str(trw_dir),
+                "pid": os.getppid(),
+                "last_heartbeat_ts": _iso_ago(5.0),
+            },
+        },
+    )
+
+    should_defer, pids, reason = should_defer_session_start_optional_work(
+        trw_dir,
+        threshold=2,
+        pin_ttl_hours=1,
+    )
+    assert os.getppid() not in pids
+    assert should_defer is False
+    assert reason == ""
+
+
 def test_should_defer_session_start_optional_work_triggers_on_peer_pid(tmp_path: Path) -> None:
     """A live peer pid (other than self) is the actual pressure signal."""
 

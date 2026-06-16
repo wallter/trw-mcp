@@ -62,11 +62,16 @@ def _make_entry(
     )
 
 
-def _write_events(path: Path, events: list[dict[str, object]]) -> None:
+def _write_events(path: Path, events: list[dict[str, object]], *, consented: bool = True) -> None:
+    # PRD-SEC-004-FR01: BatchSender uploads only records stamped as recorded
+    # under consent. These transport tests presume consented data, so stamp the
+    # marker by default; pass consented=False to simulate a pre-consent backlog.
+    from trw_mcp.telemetry.sender import stamp_consent
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for event in events:
-            fh.write(json.dumps(event) + "\n")
+            fh.write(json.dumps(stamp_consent(dict(event), consented=consented)) + "\n")
 
 
 def _make_sender(
@@ -76,6 +81,7 @@ def _make_sender(
     batch_size: int = 100,
     max_retries: int = 1,
     backoff_base: float = 0.0,
+    platform_telemetry_enabled: bool = True,
 ) -> tuple[Any, Path]:
     from trw_mcp.telemetry.sender import BatchSender
 
@@ -87,5 +93,6 @@ def _make_sender(
         batch_size=batch_size,
         max_retries=max_retries,
         backoff_base=backoff_base,
+        platform_telemetry_enabled=platform_telemetry_enabled,
     )
     return sender, input_path

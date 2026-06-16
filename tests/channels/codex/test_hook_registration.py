@@ -52,6 +52,7 @@ def test_install_creates_hooks_json_with_distill_entry(tmp_path: Path) -> None:
     """install_codex_distill_channels writes .codex/hooks.json referencing trw_post_edit_telemetry."""
     # git init so bootstrap_codex_channel_manifest can write manifest
     import subprocess
+
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
 
     from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
@@ -71,15 +72,14 @@ def test_install_creates_hooks_json_with_distill_entry(tmp_path: Path) -> None:
     )
 
     # Result should list hooks.json as updated (not in errors)
-    assert ".codex/hooks.json" in result["updated"], (
-        f"hooks.json not in result['updated']: {result}"
-    )
+    assert ".codex/hooks.json" in result["updated"], f"hooks.json not in result['updated']: {result}"
     assert not result["errors"], f"Unexpected errors: {result['errors']}"
 
 
 def test_install_idempotent_no_double_add(tmp_path: Path) -> None:
     """Running install_codex_distill_channels twice does not duplicate the distill hook."""
     import subprocess
+
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
 
     from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
@@ -89,10 +89,7 @@ def test_install_idempotent_no_double_add(tmp_path: Path) -> None:
 
     data = _read_hooks_json(tmp_path)
     groups = _get_post_tool_groups(data)
-    commands = [
-        cmd for cmd in _distill_group_commands(groups)
-        if "trw_post_edit_telemetry" in cmd
-    ]
+    commands = [cmd for cmd in _distill_group_commands(groups) if "trw_post_edit_telemetry" in cmd]
     assert len(commands) == 1, (
         f"Expected exactly 1 trw_post_edit_telemetry command after 2 installs, got {len(commands)}: {commands}"
     )
@@ -101,6 +98,7 @@ def test_install_idempotent_no_double_add(tmp_path: Path) -> None:
 def test_install_preserves_existing_ceremony_entries(tmp_path: Path) -> None:
     """install_codex_distill_channels preserves pre-existing ceremony hooks.json entries."""
     import subprocess
+
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
 
     # Write a pre-existing hooks.json with a ceremony PostToolUse entry
@@ -122,7 +120,12 @@ def test_install_preserves_existing_ceremony_entries(tmp_path: Path) -> None:
             "PreToolUse": [
                 {
                     "description": "TRW managed: PreToolUse",
-                    "hooks": [{"type": "command", "command": '/bin/sh "$(git rev-parse --show-toplevel)/.claude/hooks/pre-tool-deliver-gate.sh"'}],
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '/bin/sh "$(git rev-parse --show-toplevel)/.claude/hooks/pre-tool-deliver-gate.sh"',
+                        }
+                    ],
                 }
             ],
         }
@@ -138,12 +141,8 @@ def test_install_preserves_existing_ceremony_entries(tmp_path: Path) -> None:
     commands = _distill_group_commands(groups)
 
     # Both ceremony and distill entries must be present
-    assert any("post-tool-event.sh" in cmd for cmd in commands), (
-        f"Ceremony hook lost after merge: {commands}"
-    )
-    assert any("trw_post_edit_telemetry" in cmd for cmd in commands), (
-        f"Distill hook not added: {commands}"
-    )
+    assert any("post-tool-event.sh" in cmd for cmd in commands), f"Ceremony hook lost after merge: {commands}"
+    assert any("trw_post_edit_telemetry" in cmd for cmd in commands), f"Distill hook not added: {commands}"
 
     # PreToolUse entry must also be preserved
     pre_groups = data.get("hooks", {}).get("PreToolUse", [])
@@ -354,9 +353,7 @@ def test_install_codex_distill_channels_hook_install_error(tmp_path: Path) -> No
     ):
         result = install_codex_distill_channels(tmp_path)
 
-    assert any("hook" in e.lower() for e in result["errors"]), (
-        f"Expected hook error in errors: {result['errors']}"
-    )
+    assert any("hook" in e.lower() for e in result["errors"]), f"Expected hook error in errors: {result['errors']}"
 
 
 def test_install_codex_distill_channels_hooks_json_error_from_merge(tmp_path: Path) -> None:
@@ -370,8 +367,12 @@ def test_install_codex_distill_channels_hooks_json_error_from_merge(tmp_path: Pa
 
     with patch(
         "trw_mcp.bootstrap._codex_distill_channels.merge_distill_hook_into_hooks_json",
-        return_value={"written": False, "path": str(tmp_path / ".codex/hooks.json"),
-                      "skipped": False, "error": "disk full"},
+        return_value={
+            "written": False,
+            "path": str(tmp_path / ".codex/hooks.json"),
+            "skipped": False,
+            "error": "disk full",
+        },
     ):
         result = install_codex_distill_channels(tmp_path)
 
@@ -494,9 +495,7 @@ def test_install_result_contains_hooks_approval_notice(tmp_path: Path) -> None:
     assert len(warnings) >= 1, "Expected at least one warning (hook approval notice)"
     full_warning = " ".join(warnings)
     # The notice should mention hooks review — reuse codex_hooks_review_warning content
-    assert "hooks" in full_warning.lower(), (
-        f"Hook approval notice not found in warnings: {warnings}"
-    )
+    assert "hooks" in full_warning.lower(), f"Hook approval notice not found in warnings: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -516,12 +515,8 @@ def test_install_adds_gitignore_entries_for_state_files(tmp_path: Path) -> None:
     install_codex_distill_channels(tmp_path)
 
     entries = list_gitignore_entries(tmp_path)
-    assert any("codex-*.state.json" in e for e in entries), (
-        f"codex-*.state.json not in gitignore entries: {entries}"
-    )
-    assert any("codex-*.lock" in e for e in entries), (
-        f"codex-*.lock not in gitignore entries: {entries}"
-    )
+    assert any("codex-*.state.json" in e for e in entries), f"codex-*.state.json not in gitignore entries: {entries}"
+    assert any("codex-*.lock" in e for e in entries), f"codex-*.lock not in gitignore entries: {entries}"
     assert any("channel-events.jsonl" in e for e in entries), (
         f"channel-events.jsonl not in gitignore entries: {entries}"
     )

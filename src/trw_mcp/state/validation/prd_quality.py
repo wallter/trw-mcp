@@ -251,9 +251,7 @@ def validate_prd_quality_v2(
     smell_advisory = _smells.summarize_smells(smell_findings)
     if smell_advisory is not None:
         priority = "high" if len([f for f in smell_findings if f.severity == "warning"]) >= 5 else "medium"
-        suggestions.append(
-            ImprovementSuggestion(dimension="smell", priority=priority, message=smell_advisory)
-        )
+        suggestions.append(ImprovementSuggestion(dimension="smell", priority=priority, message=smell_advisory))
 
     # V1-compatible fields -- use pre-computed result if provided (GAP-FR-007)
     if v1_result is not None:
@@ -296,17 +294,45 @@ def validate_prd_quality_v2(
         try:
             from pathlib import Path as _Path
 
+            _pr = _Path(project_root)
+            # Multi-repo workspace support (Potemkin defect B): resolve any
+            # configured sibling roots (absolute or relative to project root).
+            _extra_roots = [
+                (r if (r := _Path(raw)).is_absolute() else _pr / r)
+                for raw in getattr(_config, "additional_repo_roots", []) or []
+            ]
             integrity_failures, integrity_warnings = run_prd_integrity_checks(
                 content,
                 frontmatter,
-                project_root=_Path(project_root),
+                project_root=_pr,
                 prds_relative_path=_config.prds_relative_path,
+                extra_roots=_extra_roots,
             )
         except Exception:  # justified: fail-open, validation must still return scoring output
             logger.warning("prd_integrity_check_failed", exc_info=True)
 
-    combined_failures = [*v1_failures, *integrity_failures]
-    is_valid = is_valid and not integrity_failures
+    # PRD-CORE-190 FR03: wiring gate. In warn mode (default) this only ADDS
+    # advisory wiring_gate_warning / seam_schema_warning suggestions — it never
+    # flips valid or alters failures (FR05 backward-compat guarantee). In block
+    # mode (opt-in via config.wiring_gate_mode) an unwired public-surface FR
+    # adds a WIRING_GATE_FAIL failure and sets valid=False. Looked up via the
+    # module so test monkeypatches propagate; fail-open so a gate error never
+    # blocks scoring output.
+    wiring_failures: list[ValidationFailure] = []
+    try:
+        from trw_mcp.state.validation._prd_scoring_wiring import check_wiring_gate
+
+        _wiring_mode = str(getattr(_config, "wiring_gate_mode", "warn") or "warn")
+        wiring_warnings, wiring_failures = check_wiring_gate(
+            content, frontmatter, mode=_wiring_mode, project_root=_proj_root_path
+        )
+        for _wmsg in wiring_warnings:
+            suggestions.append(ImprovementSuggestion(dimension="wiring", priority="medium", message=_wmsg))
+    except Exception:  # justified: fail-open, advisory gate must not block scoring
+        logger.warning("wiring_gate_check_failed", exc_info=True)
+
+    combined_failures = [*v1_failures, *integrity_failures, *wiring_failures]
+    is_valid = is_valid and not integrity_failures and not wiring_failures
 
     # PRD-QUAL-096 FR01: informational measured traceability coverage ratio
     # (FRs with both impl + test refs / total FRs). Additive only — does NOT affect

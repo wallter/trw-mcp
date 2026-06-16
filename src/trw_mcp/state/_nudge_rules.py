@@ -11,6 +11,7 @@ decisions (step names, booleans, tuples). They never read or write the filesyste
 from __future__ import annotations
 
 import random
+from contextlib import suppress
 
 import structlog
 
@@ -395,7 +396,7 @@ def _select_nudge_pool(
                 reason="cooldown",
                 until=state.pool_cooldown_until.get(pool, 0),
             )
-            try:
+            with suppress(Exception):  # justified: fail-open per NFR02
                 structlog.get_logger(__name__).debug(
                     "nudge_skipped",
                     reason="pool_cooldown",
@@ -410,8 +411,6 @@ def _select_nudge_pool(
                     learning_id="",
                     client_id=_resolve_client_id(),
                 )
-            except Exception:  # justified: fail-open per NFR02
-                pass
             continue
         eligible[pool] = weight
 

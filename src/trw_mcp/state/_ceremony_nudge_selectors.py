@@ -13,6 +13,7 @@ Four helpers:
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 
 import structlog
@@ -80,7 +81,7 @@ def _select_learning_injection_candidate(
             if skip_phase_duplicates and learning_id in state.nudge_history:
                 phases_shown = state.nudge_history[learning_id].get("phases_shown", [])
                 if state.phase in phases_shown:
-                    try:
+                    with suppress(Exception):  # justified: fail-open per NFR02
                         from trw_mcp.state._nudge_rules import _resolve_client_id
 
                         structlog.get_logger(__name__).debug(
@@ -97,8 +98,6 @@ def _select_learning_injection_candidate(
                             learning_id=learning_id,
                             client_id=_resolve_client_id(),
                         )
-                    except Exception:  # justified: fail-open per NFR02
-                        pass
                     continue
             selected_learning = learning
             break

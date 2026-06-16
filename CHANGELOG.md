@@ -2,6 +2,536 @@
 
 All notable changes to the TRW MCP server package.
 
+## [Unreleased]
+
+## [0.55.14] — 2026-06-14
+
+### Security
+
+- auto_upgrade never attaches the platform bearer API key to an untrusted or cleartext host. A poisoned platform_url or attacker-named artifact URL no longer receives the bearer; an https-only floor plus host-match gate confine it to the trusted platform host (presigned-S3 and any non-platform host get no bearer). (3533270bc)
+- The recall query is now run through strip_pii + redact_paths before it is POSTed to the shared-learnings search endpoint, matching the sync/push content chokepoint. The consent gate (default no-egress) is unchanged. Telemetry-consent invariants are pinned by new behavior tests (PRD-SEC-004). (89670f5d5)
+- The entire .trw directory tree is hardened to mode 0700 on init-project (root, learnings, logs, context, channels, telemetry), making the documented 0700 claim true; previously only memory/ was hardened. (d872185cd)
+- Dependency lock refreshed: authlib 1.7.0 to 1.7.2 (GHSA), pip 26.1 to 26.1.2. Lock-only; the published wheel does not ship uv.lock. (6750ed934)
+
+### Changed
+
+- uninstall now prints an explicit blast-radius warning (naming memory.db and the learning count, with an export nudge) before destroying a project's learning corpus, and adds a new --keep-memory flag that preserves .trw/memory, memory.db (and sidecars), and learnings/ while removing other state. (dbc31fdf1)
+
+### Notes
+
+- torch CVE-2025-3000 is documented as scoped to the optional embeddings extra (not reachable in the base install; no upstream fix available). (f386da8d3)
+
+### Added
+
+- **`/trw-reflect` end-of-session reflection skill (PRD-CORE-187).** A new
+  bundled, user-invocable skill that runs before `trw_deliver`: it examines
+  the session's external signals (run events, git diffs, build records, user
+  corrections, tool friction — never ungrounded introspection), synthesizes
+  improvement opportunities across a six-category taxonomy with
+  impact-to-effort scoring and dedup against learnings + the improvement
+  backlog, gates persistent writes behind explicit approval, and routes each
+  accepted item to implementation (inline quick-fix, PRD pipeline, `trw_learn`,
+  or backlog). Every invocation appends a follow-through ledger under
+  `.trw/reflections/` that the next reflection scores for recurrence
+  (recurred-but-unimplemented items escalate). Guardrails: canon documents
+  (FRAMEWORK / AARE-F / VISION / CONSTITUTION) are never modified by a
+  reflection run; instruction-file edits require approval; mechanical
+  error/repeated-op extraction stays with the delivery ceremony. Distributed
+  to all skill-bearing clients: bundled `data/skills/`, Codex
+  (`.agents/skills/` — skills are Codex's canonical mechanism; custom prompts
+  are deprecated upstream), Copilot (`.github/skills/` + plugin — the only
+  Copilot mechanism that spans IDE, CLI, and coding agent), OpenCode
+  (portable variant + inventory entry), and the cursor-IDE curated list.
+  Native slash-command surfaces also ship where the bootstrap installs them:
+  `.opencode/commands/trw-reflect.md` and `.cursor/commands/trw-reflect.md`
+  (via `_TRW_COMMANDS` + template). Byte-alignment and cross-client parity
+  tests guard drift. Gemini TOML commands and Antigravity workflows have no
+  bootstrap surface yet — tracked in the improvement backlog as PRD-routed
+  follow-ups; aider has no custom-command mechanism upstream. Refined (v1.1)
+  after four field runs across concurrent instances: explicit ledger-only mode
+  (operator "document, don't implement" — suspends the `trw_learn` exemption,
+  rows marked `recorded-only`), mtime-ordered prior-ledger discovery (filename
+  dates race under concurrency), a Status enum
+  (shipped/recorded-only/deferred/rejected), a concurrent-ownership check
+  before quick-fixes, and a codified "Next reflection — verify" ledger section
+  (all four field runs had independently invented it). v1.2 (fifth field run,
+  first to execute the v1.1 contract end-to-end): added `action` mode
+  (`/trw-reflect action` routes accumulated recorded-only/deferred ledger
+  items through approval + implementation without a new reflection) and a
+  Step 0 open-debt tally — repeated ledger-only runs were accruing
+  follow-through debt with no drain mechanic.
+
+### Fixed
+
+- **Package metadata now tracks the 0.55.12 release and optional tokenizer
+  policy.** The editable `trw-mcp` stanza in `uv.lock` no longer lags
+  `pyproject.toml`, and the guarded `tiktoken` hotspot estimator import is
+  classified as optional/transitive for `deptry`, restoring package metadata
+  guards after the latest release bump.
+
+- **Eval-gaming lockstep detector off-by-one (`mcp-scoring-metatune-8`).**
+  `_is_lockstep` required `len(xs) > 4` (>=5), so an exactly-4-entry all-`1.0`
+  outcome trace never tripped the `lockstep_correlation` flag. The floor is now
+  `>=4`, aligned with the `_is_outlier_burst` floor and the docstring. This only
+  adds detections and cannot weaken the safety gate.
+
+- **Delivery build gate no longer falsely blocks when build-check is disabled
+  (`mcp-ceremony-10`).** With `config.build_check_enabled = False`,
+  `trw_build_check` returns early without logging a `build_check_complete`
+  event, yet the delivery gate then fired `build_gate_warning` for the missing
+  event — both skipping the check AND blocking delivery. The gate now skips the
+  build check when it is disabled (mirroring `phase_gates_build.py`); the
+  premature-delivery work-events guard still applies.
+
+- **`verify_signature` renamed to `fingerprint_format_valid` (`mcp-security-1`).**
+  The `verify_*` name over-promised a cryptographic contract: it accepted any
+  `sha256:`-prefixed fingerprint with no signature math. Renamed to the honest
+  `fingerprint_format_valid` (structural shape check only; real Ed25519
+  verification lives in `MCPRegistry.load`), with `# trw:intentional` markers.
+  `verify_signature` is retained as a deprecated back-compat alias.
+
+- **Unpinned-session build gate fail-open marked intentional (`mcp-ceremony-7`).**
+  `_check_no_active_run_build_gate` returns no gate when no `ceremony-state.json`
+  / no `session_started` exists — a deliberate fail-open (no TRW session began,
+  so there is no session-local evidence to gate, and blocking would over-block
+  legitimate new-project/quick-task delivery). Documented with a
+  `# trw:intentional` marker; the gate still fires for a started session that
+  recorded no passing build.
+
+- **Tool-exposure filter no longer fails OPEN under a restrictive mode.**
+  `_apply_tool_exposure_filter` previously caught every exception and left ALL
+  tools registered, so a config or `list_tools()` failure under a non-`all`
+  exposure mode (standard/minimal/core/custom) would silently expose the
+  privileged tools the operator meant to hide. The filter now resolves the mode
+  first, and once a restrictive mode is known any subsequent failure (unknown
+  preset, empty allow-set, or a `list_tools` error) fails to the SAFE `core`
+  subset and logs at WARNING — never widening exposure. `mode='all'`/unset
+  remains a no-op.
+
+- **Telemetry PII scrubbing is now recursive.** `TelemetryPipeline._scrub_pii`
+  only walked top-level string fields, so PII buried inside nested
+  dict/list values (e.g. `args`/`payload` structures) shipped raw. Scrubbing
+  now recurses through nested dicts and lists; the `_PII_SAFE_KEYS` allowlist
+  applies only to top-level keys.
+
+- **Unified events no longer silently dropped when a run's `meta/` is absent.**
+  `resolve_unified_events_path` returned the fallback dir (wrong location) or
+  `None` (silent drop) when `run_dir` was set but `meta/` did not yet exist. It
+  now auto-creates `run_dir/meta/` (matching `FileStateWriter.append_jsonl`) so
+  the event lands under the intended run directory.
+
+- **Codex `enabled_tools` reflects the full tool set, not the filtered server.**
+  The Codex `config.toml` generator listed tools from the live MCP server, which
+  has already had the exposure filter applied at import — so a restrictive
+  `tool_exposure_mode` would truncate the Codex config and hide privileged tools
+  from Codex (which manages its own exposure). `_registered_trw_tool_names` now
+  unions the live tools with the canonical `TOOL_PRESETS["all"]` set.
+
+- **SAFE-001 staging directories no longer leak to disk on non-approve paths.**
+  `promote_candidate` now cleans up its transient per-edit sandbox staging dir
+  on every exit path (rejected, sandbox-policy-violation, sandbox-replay-failed,
+  exceptions, and approve) via a try/finally around the sandbox/gate flow.
+  Previously the staging dir was created but never removed, accumulating one
+  directory per candidate.
+
+- **eval-gaming detector no longer flags ordinary `scoring/` package diffs as
+  eval tampering.** The over-broad `(^|/)scoring/` and `(^|/)scorer\.py$`
+  artifact patterns matched any diff touching the production `scoring/` package
+  (e.g. `trw_mcp/scoring/`). They are now anchored to actual eval-rubric scoring
+  artifacts (`eval_corpus/.*scor`, `eval[_-]scor`, `scor*[_-]rubric`,
+  `rubric[_-]scor`, and a `scorer.py` only under an `eval/`/`rubric/` dir), so
+  legitimate self-improvement candidates are not spuriously rejected while real
+  eval-rubric tampering is still caught.
+
+- **Package lock version now matches the 0.55.10 package bump.** `uv.lock` no
+  longer records the previous editable self-package version, restoring the
+  package metadata guard.
+
+- **SAFE-001 meta-tune promotion modules are back under the effective-LOC gate.**
+  Dispatch Goodhart-history/locking helpers and promotion telemetry emission now
+  live behind focused helper modules, keeping the committed promotion dispatch
+  and gate modules below the 350 effective-LOC ratchet without changing their
+  public entry points.
+
+- **Static security scans no longer warn on invalid `noqa` comments.** PRD
+  rationale attached to pin-only run lookup fallbacks is now expressed as
+  ordinary comments instead of malformed lint directives, including regression
+  test comments that described the marker.
+
+- **SAFE-001 meta-tune silent-exception handling is documented or observable.**
+  Rollback attempt-counter update failures now emit a degraded warning, while
+  forked sandbox pre-exec fallbacks use explicit `contextlib.suppress(...)`
+  scopes with safety comments instead of unannotated `pass` blocks.
+- **Client-profile probing uses an explicit fail-open suppress scope.** FastMCP
+  context probing still falls back to environment detection, but the intentional
+  no-session/no-client-info path no longer appears as a silent `except: pass`.
+- **Channel-stats Git root fallback is observable.** A failed `git rev-parse`
+  probe now emits a debug event before returning the documented unresolved-root
+  result.
+- **Channel-doctor best-effort manifest loads use explicit suppress scopes.**
+  Scan/clean still proceed when a manifest cannot be parsed, but the fail-open
+  path is no longer represented as a silent `except: pass`.
+- **Claude Code channel fail-open paths are explicit.** ChannelLock close,
+  CC-03 config defaults, and CC-01 memory-writer telemetry/lock cleanup now use
+  explicit suppress scopes or debug events instead of silent `except: pass`
+  blocks.
+- **State-layer context probes now log best-effort failures.** Recall context,
+  surface tracking, and propensity logging still fail open, but git/config/PRD
+  metadata probe failures are now debug-observable.
+- **Ceremony nudge fail-open paths are explicit.** Session-start telemetry and
+  live ceremony nudge logging now use observable debug events or explicit
+  suppress scopes instead of silent `except: pass` blocks, preserving
+  non-blocking response decoration while reducing high-severity lint debt.
+- **Memory WAL-health compatibility imports are restored.** The post-split
+  memory connection facade again exposes the private WAL path resolver expected
+  by existing regression tests and monkeypatch-based diagnostics.
+- **Distill sidecar tool wrappers use explicit fail-open scopes.** Before-edit,
+  codebase-risk, and entity-risk tool telemetry/enrichment fallbacks now use
+  explicit suppress blocks instead of silent exception handlers, preserving base
+  responses while reducing static security-lint noise.
+- **Nudge and deferred-delivery diagnostics are no longer silent.** Best-effort
+  nudge debug-capture and delivery metric metadata enrichment now use explicit
+  fail-open handling, preserving ceremony behavior while making skipped
+  diagnostics auditable.
+- **OpenCode channel fail-open paths are observable.** Bootstrap lock cleanup
+  and OpenCode distill-channel telemetry fallbacks now emit debug diagnostics
+  instead of silently swallowing exceptions after the primary write path has
+  completed.
+- **Shared instruction-segment cleanup failures are observable.** The reusable
+  channel renderer now logs lock-release and telemetry failures after the
+  render result is decided, preserving fail-open behavior without silent
+  exception handlers.
+- **Cursor channel cleanup failures are observable.** Cursor AGENTS.md and MDC
+  writers now log lock-release and channel telemetry failures after writes are
+  completed instead of silently suppressing those diagnostics.
+- **Copilot channel fail-open paths are observable.** Copilot instruction,
+  path-scoped, tier-down, VS Code MCP, and postToolUse correlation fallbacks now
+  log best-effort failures while preserving the existing never-block channel
+  contract.
+- **Codex and Antigravity channel fallbacks are observable.** The remaining
+  channel-specific state, lock-cleanup, and telemetry fallbacks now log debug
+  diagnostics instead of using silent `except: pass` handlers.
+- **SAFE-001 dispatch stays under the effective-LOC ratchet.** Audit append
+  error handling and sandbox payload construction now live in focused
+  dispatch-helper seams, preserving the promotion gate behavior while restoring
+  the meta-tune maintainability gate.
+
+- **Core runtime imports now have direct dependency declarations.**
+  `cryptography`, `httpx`, `mcp`, `PyYAML`, and `starlette` are declared by
+  `trw-mcp` itself rather than relying on FastMCP or other transitive packages
+  to provide modules imported by the MCP server, middleware, security, sync,
+  and telemetry paths.
+- **Deptry static-analysis configuration now matches the package layout.**
+  The audit treats `src/trw_mcp` as first-party, marks `dev` as a development
+  extra, excludes the generated installer template, maps OpenTelemetry
+  distribution/exporter packages explicitly, and documents the remaining
+  intentional optional-import seams so `deptry .` reports actionable findings
+  instead of thousands of first-party false positives.
+
+## [0.55.13] — 2026-06-10
+
+### Changed (council-ratified Option A+ — MCP recall embeddings, PRD-DIST-254 §FR03)
+
+- **`embeddings_enabled` now defaults to `True`.** The MCP `recall_learnings`
+  path the live `trw_recall` tool takes degraded to keyword-only
+  AND-intersection when embeddings were off, collapsing Recall@5 to **0.125** on
+  a realistic 226-record corpus (vs **0.9375** for the full hybrid path) — agents
+  silently lost semantic recall. The council ratified the flip on 2026-06-10.
+  Option C (auto-enable on first vector hit) was rejected for a bootstrap
+  deadlock: a vector-less fresh store never produces a vector hit, so it would
+  never auto-enable. Operators can still opt out with `embeddings_enabled: false`.
+
+### Added
+
+- **Non-blocking first-recall embedder download warm-up.** With embeddings on by
+  default, the first `trw_recall` allowing cold init would pay the
+  all-MiniLM-L6-v2 *download* synchronously on a never-cached box, risking an
+  MCP-client timeout. `_schedule_embedder_warmup` runs the cold load on a
+  single-flight daemon thread kicked off at session_start; recall degrades to
+  keyword (`get_initialized_embedder` → `None`) until the warm-up completes. The
+  `trw_session_start` hot path itself stays cold-load-free.
+
+- **One-time low-vector-coverage backfill nudge.** A fresh store has 0% vector
+  coverage until the background self-heal finishes; the coverage advisory now
+  surfaces once per process (instead of every session) while the idempotent
+  background backfill still runs each session. Non-coverage advisories (deps
+  missing) are unaffected.
+
+### Fixed
+
+- **Hybrid-recall embed-failure fallback broadened.** The in-process hybrid
+  recall path (`state/_memory_queries._search_entries`) caught only
+  `(OSError, ValueError, RuntimeError, ImportError)`, so a
+  `trw_memory.exceptions.MemoryError` (incl. `LocalOnlyViolationError` raised by
+  the local embedder when network is blocked, `DimensionMismatchError`) or a
+  `TypeError` from a misconfigured embedder would ESCAPE and crash recall instead
+  of degrading to keyword. The tuple now includes the `MemoryError` family and
+  `TypeError`; recall always survives to the keyword fallback.
+
+### Notes (already shipped in prior releases — recorded here for the release trail)
+
+- **`trw-memory` floor was raised to `>=0.9.0,<1.0.0`** (commit `bccc0357f`,
+  shipped before 0.55.13). This is the defect-D correction: the v0.55.4 wheel
+  shipped `>=0.8.3` and crashes hybrid recall against an older `trw-memory`
+  (`rrf_fuse` cross-version signature skew). Any 0.55.x consumer MUST resolve
+  `trw-memory >= 0.9.0`.
+- **The MCP hybrid-parity fix** (route `_search_entries` through
+  `trw_memory.retrieval.pipeline.hybrid_search` over the full candidate pool,
+  commit `eb1f0e92c`) landed before this release; the embeddings-ON default flip
+  here is what makes that parity path the production default.
+
+## [0.55.12] — 2026-06-09
+
+### Fixed
+
+- **Deliver build-gate honesty (4 audit fixes).** The unpinned-session
+  build-gate fail-open path is now explicitly marked intentional, the gate is
+  skipped when `build_check_enabled` is `False`, the security helper
+  `verify_signature` was renamed to `fingerprint_format_valid` to stop
+  implying cryptographic verification it does not perform, and the meta-tune
+  `_is_lockstep` floor was lowered to `>=4` identical high scores.
+
+## [0.55.11] — 2026-06-09
+
+### Fixed
+
+- **Codex `enabled_tools` reflects the full tool set, not the filtered view.**
+- **Run `meta/` directory is auto-created** so unified-event writes no longer
+  fail silently when a run was scaffolded without it.
+- **Telemetry PII scrub is now recursive** over nested values, and the
+  tool-exposure filter fails closed under restrictive modes.
+- **Fail-open paths made explicit across the bootstrap/ceremony/channel
+  surfaces.** Claude-code, Codex, Copilot, Cursor, OpenCode, antigravity, and
+  instruction-segment cleanup fallbacks now log debug diagnostics instead of
+  silent `except: pass`, matching the meta-tune diagnostics pass.
+
+## [0.55.10] — 2026-06-09
+
+### Fixed
+
+- **Meta-tune eval-gaming scoring narrowed to eval-rubric patterns** to reduce
+  false positives on legitimate scoring code.
+- **Sandbox staging directory is cleaned up on all dispatch exit paths**, and
+  the meta-tune silent-fallback behaviors are now documented.
+- **Meta-tune promotion helpers split** to stay under the effective-LOC gate;
+  malformed `noqa` markers in tests were replaced.
+
+## [0.55.9] — 2026-06-09
+
+### Fixed (SAFE-001 meta-tune safety gates re-armed — trw-harden audit)
+
+- **[P0] Goodhart detector re-enabled (mcp-scoring-metatune-1, FR-2).** The
+  promotion dispatch path constructed `PromotionGate` with an empty history on
+  every call, so `goodhart_ok()` short-circuited `True` and a reward-hacking
+  proposer could declare any metric delta. Dispatch now reconstructs the
+  lookback window from the durable audit log (`_load_recent_history`) and the
+  gate persists `declared_metric_delta` in the `promoted` audit payload so the
+  window accumulates across promotions. An anomalous spike delta is rejected
+  once a baseline exists; legitimate in-band deltas still promote.
+- **[P0] Rollback tool no longer overrides the kill switch
+  (mcp-scoring-metatune-2, FR-7/FR-13).** `trw_meta_tune_rollback` forced
+  `meta_tune.enabled=True` before calling `rollback_proposal()` in both
+  branches, defeating the global kill switch. The override is removed; a
+  disabled subsystem now returns `status="disabled"` to the operator. The
+  audit-log path may still be redirected, but the enabled flag is never touched.
+- **[P1] Single transient I/O error no longer permanently locks rollback
+  (mcp-scoring-metatune-4).** `rollback_max_attempts` default raised from `1`
+  to `3` (I/O retry convention); the field now documents that it governs
+  operator retry count, not transient-failure tolerance, so a transient FS
+  error followed by a successful retry completes the rollback instead of
+  bricking the safety path.
+
+## [0.55.8] — 2026-06-09
+
+### Fixed (state-layer + deliver-gate hardening — trw-harden audit)
+
+- **[P1] `state/_memory_connection.py` (mcp-state-memory-1)** — the embed-failure
+  health counter (`_embed_failures`) was incremented whenever the embedder was
+  `None`, including the intentionally-disabled case (`embeddings_enabled=False`).
+  That conflated a config choice with an embedding *failure*, inflating the
+  `recent_failures` health metric on every store. `_embed_and_store_returning`
+  now only counts a `None` embedder as a failure when embeddings are ENABLED
+  (expected-but-unavailable), per the FR07 contract.
+- **[P1] `state/_memory_update.py` (mcp-state-memory-4)** — `update_learning`
+  queried ONLY the project backend, so a user-tier (portable) learning routed
+  to the box-wide user store returned `not_found` and could never be updated.
+  It now resolves the owning backend (project first, then the user store when a
+  user-scope store is present), mirroring `store_learning`'s `is_user_write`
+  dispatch. Project-tier updates remain byte-identical.
+- **[P1] `state/_memory_update.py` (mcp-state-memory-10)** — `update_learning`
+  accepted `confidence` and `protection_tier` as raw strings without validation,
+  so an internal caller bypassing the `trw_learn_update` tool could persist an
+  invalid enum. Added defense-in-depth validation blocks parallel to the
+  existing `status`/`type`/`impact` validators.
+- **[P1] `state/_tier_routing.py` (mcp-state-memory-7)** — the `_PATH_RE`
+  dotted-module alternative matched the bare prose abbreviations `e.g` / `i.e`
+  (and `e.g.` / `i.e.`), mis-classifying portable learnings as project-specific.
+  Added a negative-lookahead stop-list that rejects only the exact
+  one-char.one-char abbreviation token; real module paths (`a.b.c`, `pkg.mod`,
+  `e.go`, `i.eat`, `e.gc.foo`) still match.
+- **[P1] `tools/_ceremony_deliver_steps.py` (mcp-ceremony-1)** — removed the dead
+  `evaluate_blocking_gates()` duplicate of the live deliver gate cascade. The
+  canonical implementation (`_block_delivery_for_gate` +
+  `_block_or_record_review_override` + `_block_or_record_missing_build` in
+  `_ceremony_deliver_tool.py`) is unchanged; deleting the unused parallel copy
+  removes the divergence hazard without altering any gate behavior.
+- **[P1] `tools/_delivery_helpers.py` (mcp-ceremony-4)** — `_events_since_last_session_start`
+  included the `session_start` boundary event in the current-session window,
+  contradicting its docstring ("after"). The slice now starts strictly after the
+  boundary; since `session_start` is never a `file_modified` event this is a pure
+  correctness fix with no gate-decision change. The intentional session-global vs
+  session-local scope asymmetry between the build gate and the review-scope/drift
+  gates is now documented at the call site.
+
+## [0.55.7] — 2026-06-09
+
+### Fixed (MCP trust-boundary hardening — trw-harden audit)
+
+- **[P1] `security/anomaly_detector.py` (mcp-security-4)** — `_baseline_arg_hashes`
+  grew unbounded in memory (a `set` per `(server, tool)`) and the persisted
+  `mcp_arg_baseline.jsonl` store appended forever, enabling a DoS via novel-arg
+  flooding. The per-pair set is now a bounded LRU (`OrderedDict`, default cap
+  `max_arg_hashes_per_pair=1024`, oldest-evicted) and the store file rolls to its
+  tail at `max_baseline_store_lines=100000`. Both are operator-tunable on
+  `MCPSecurityAnomalyConfig` and wired through startup. Mirrors the existing
+  `maxlen=32` discipline on `_baseline_rates`.
+- **[P1] `security/mcp_registry.py` (mcp-security-5)** — `_overlay_is_not_weaker`
+  only iterated the overlay's tools, so an operator overlay that *omitted* a
+  canonical tool silently shrank the authorized surface and passed the weakness
+  check. The overlay tool set must now be a superset of the canonical set
+  (combined with the existing per-tool loop, this pins the overlay tool set to
+  canonical; phases/scopes may only narrow). A silent narrowing is rejected.
+- **[P1] `security/_mcp_registry_models.py` (mcp-security-7)** — `MCPServer` used
+  `extra="ignore"` while its sibling registry models use `extra="forbid"`, so a
+  typo'd/unknown field in a signed allowlist was silently dropped. Switched to
+  `extra="forbid"`; the legacy `capabilities` alias is now popped by
+  `_upgrade_legacy_capabilities` before validation so backward-compatible
+  allowlists still load.
+- **[P1] `middleware/mcp_security.py` (mcp-security-6, under-block)** — enforce-mode
+  rate-spike blocking read the detector's private `_config.mode`. Added a public
+  `AnomalyDetector.mode` property and made `mode` a `Literal["shadow","enforce"]`
+  on both `AnomalyDetectorConfig` and `MCPSecurityAnomalyConfig` so a typo'd mode
+  surfaces as a validation error. Enforcement behavior is unchanged.
+
+### Changed (maintainability + release hygiene)
+
+- **Memory connection lifecycle helpers were split into focused seams.**
+  `state/_memory_connection.py` now owns singleton orchestration while embedding status, WAL
+  advisory, and vector backfill implementation live in focused modules below the 350
+  effective-LOC gate.
+- **Ceremony/learning helper re-export imports were consolidated under their effective-LOC ratchets.**
+  `_ceremony_status.py` is now below the 350 effective-LOC gate and no longer needs a
+  grandfathered baseline entry; `bootstrap/_update_project.py` is also below the gate, and
+  `learning.py` / `sync/client.py` dropped below their previous baselines. Behavior and
+  monkeypatch-visible helper names are unchanged.
+
+### Fixed (dependency floors + lock hygiene)
+
+- **FastMCP install surfaces now require the patched 3.2.x floor.**
+  `pyproject.toml`, `uv.lock`, `requirements.lock`, and installer-contract
+  tests now agree on FastMCP >=3.2.0 so requirements-based installs cannot
+  pull known-vulnerable FastMCP 3.0/3.1 releases.
+- **Requirements-lock security floors were refreshed from the audit backlog.**
+  Vulnerable pins with available fixes (`Authlib`, `urllib3`, `cryptography`,
+  `ecdsa`, `idna`, `lxml`, `Mako`, `pyasn1`, `Pygments`, `PyJWT`, `pytest`,
+  `python-dotenv`, `python-multipart`, `requests`, `starlette`) now pin patched
+  versions and have regression guards. Stale ML/no-fix transitive pins (`lupa`,
+  `sentence-transformers`, `torch`, `transformers`) were removed from
+  `requirements.lock` because they are not present in the current `uv.lock`
+  dependency graph.
+- **Strict quality gates restored for current source/test surfaces.** The package-wide Ruff pass no
+  longer reports stale import ordering, unused `noqa`, or simplification drift, and
+  `sync/pull.py` now types sync-source provenance as the closed `team_sync`/`company_sync`
+  vocabulary expected by `trw-memory`'s `MemoryEntry.source`.
+- **Package lock version now matches the 0.55.8 package bump.** `uv.lock` no longer records the
+  previous editable self-package version, restoring the version-source guard.
+- **Package lock version now matches `pyproject.toml`.** `uv.lock` still recorded `trw-mcp`
+  0.54.0 after the package advanced to 0.55.6, breaking `tests/test_mcp_version_source.py::test_uv_lock_version_matches_pyproject`
+  and release lock hygiene. The editable self package stanza now matches the current project version.
+
+## [0.55.6] — 2026-06-09
+
+### Fixed (PRD-CORE-185 user-space memory tier — trw-harden ROUND-2 audit)
+
+Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent bugs.
+
+- **[P1] `state/_memory_recall.py` (core185-TOCTOU-1)** — the wave-1 user-store canary
+  check (`_user_store_tampered`) was BYPASSED on the first federation call of a fresh
+  process: `peek_user_backend()` returned `None` so the gate reported "not tampered", then
+  `_federate_user_tier` constructed + queried the backend itself with no canary probe,
+  leaking a tampered user store on the very first recall. `_user_store_tampered` now
+  constructs and probes the backend when the user DB file exists (mirroring
+  `_federate_user_tier`'s own construction gate), closing the TOCTOU window.
+
+- **[P1] `state/_tier_routing.py` (core185-URL-OVERMATCH-2 + core185-DOTTED-TWOSEG-4)** —
+  reconciled `_PATH_RE` holistically. The wave-1 narrowing over-matched URLs
+  (`trwframework.com/install.sh` tripped the file-path alternative, vetoing portable
+  directives to project) AND under-matched two-segment dotted modules (`os.path`,
+  `foo.bar`) because the dotted alternative required `>=3` segments — a false negative that
+  leaked repo-local symbols box-wide. The regex now (a) requires a dot-free first directory
+  segment so hostnames are rejected while `src/foo.py` matches, (b) excludes dotted tokens
+  embedded in a URL/path, and (c) relaxes the dotted alternative to `>=2` segments. The
+  alpha-led segment guard (not the segment count) keeps version strings (`3.11.5`, `v1.2.3`)
+  and YAML values (`timeout:30`) out. The `scope="user"` warn-and-honor path is unchanged.
+
+- **[P1] `tools/learning.py` + `tools/_learning_module_helpers.py` (core185-ENUM-UNGUARDED-3)**
+  — an invalid `confidence` / `type` / `protection_tier` passed to `trw_learn` raised a raw
+  `ValueError` from the unconditional enum construction in `_learning_to_memory_entry`,
+  escaping `store_learning` to the MCP caller as an unhandled exception and breaking the
+  stable `LearnResultDict` return-shape contract. Added `_validate_learn_enums`, called in
+  `trw_learn` before forwarding (mirrors the existing `trw_learn_update` guard); invalid
+  values now yield a structured `{"status": "rejected", "reason": ..., "message": ...}`.
+
+- **[P2] `state/_memory_transforms.py` (core185-METADATA-TIER-INJECT-5)** — a caller-supplied
+  `metadata={"tier": "user"}` survived the merge for project-routed entries, making
+  `tier_of_entry()` return `"user"` and diverting a project-classified learning into the user
+  backend. The routing decision is now authoritative: user routes stamp `"user"`, project
+  routes STRIP any caller-injected `tier` key (preserving the back-compat "project entries
+  carry no tier key" contract).
+
+## [0.55.5] — 2026-06-09
+
+### Fixed (PRD-CORE-185 user-space memory tier — trw-harden audit)
+
+- **[P1] `state/_tier_routing.py` (core185-1)** — `_PATH_RE` produced false PROJECT
+  signals on portable directive content: the `file:line` alternative matched any
+  colon-digit (`timeout:30`, `priority:1`) and the dotted-module alternative matched
+  version strings (`3.11.5`, `1.2.3`). Under `scope="auto"` such cross-cutting learnings
+  were silently routed to the project tier (no log). Narrowed the regex to require a file
+  extension before the colon and alpha-led dotted segments. The explicit `scope="user"`
+  warn-and-honor path is unchanged.
+
+- **[P1] `state/memory_adapter.py` (core185-2)** — a corruption-class error on a USER-tier
+  write skipped recovery entirely (the branch excluded `is_user_write`), surfacing a silent
+  store error while the corrupted user singleton stayed live. Added a symmetric branch that
+  resets the user backend and retries once, mirroring the project path.
+
+- **[P1] `state/_memory_recall.py` (core185-3)** — `recall_learnings` halt-checked only the
+  PROJECT canary; user-tier entries were federated in without ever probing the user store's
+  canary. Added a fail-open user-store tamper check that DISABLES federation (rather than
+  aborting recall) when the user canary signals tamper.
+
+- **[P2] `state/_user_tier_backfill.py` (core185-5)** — the backfill dedup fetch shared the
+  project-scan `limit`, so on a box-wide user store larger than `limit` an already-promoted
+  entry could be re-promoted (duplicate). Fetch all existing ids with `sys.maxsize`
+  (`limit=0` is `LIMIT 0` / zero rows in the backend, not "unlimited").
+
+- **[P2] `state/_memory_recall.py` (core185-7)** — removed a dead `sec_cfg`
+  double-construction (built before the recall loop then re-built identically inside it).
+
+- **[P2] `state/_tier_routing.py` (core185-8)** — memoized the `user_scope_present()` probe
+  (a boot-time condition) so the per-call config read + disk `Path.exists()` no longer run on
+  the `trw_learn` route + recall-federate hot paths. Cleared by `reset_user_scope_cache()`.
+
+- **[P2] `tools/learning.py` + `state/_memory_recall.py` (core185-9)** — clarified the
+  `include_tiers` docstrings: project entries are ALWAYS included; the flag only scopes
+  whether the USER tier is federated on top (a user-only query is intentionally not
+  expressible).
+
+- **[P2] `state/_memory_transforms.py` (core185-11)** — native user-tier entries now stamp
+  `metadata['tier']='user'` to match backfill-promoted entries; project-tier entries stay
+  unstamped (back-compat for exact-metadata callers).
+
 ## [0.55.4] — 2026-06-09
 
 ### Fixed (installer + bundled hook scripts — these run on end-user machines)
@@ -84,13 +614,7 @@ All notable changes to the TRW MCP server package.
 
 ## [0.55.2] — 2026-06-09
 
-### Changed
-
-- **`ENABLE_TOOL_SEARCH` removed from the shipped `settings.json` templates — reverted to harness auto-detection.** Forcing tool-search ON deferred every MCP tool on every client, so capable large-context clients needlessly hid tools like `trw_submit_feedback` (reported "not present"). Auto-detection defers only when tool descriptions exceed ~10% of the context window, restoring upfront visibility on roomy clients while preserving context discipline on constrained ones.
-
 ### Fixed
-
-- **`/trw-feedback` is now model-invocable** so agents and sub-agents — not just humans — can submit feedback. Removed `disable-model-invocation: true` from every bundled copy and added an agent-initiated usage note. Also bundled the skill for the `opencode` and `copilot-plugin` clients that lacked it, and added a proactive-feedback nudge to the injected CLAUDE.md / AGENTS.md section.
 
 - **[P1] `state/ceremony_nudge.py`** — `compute_nudge` selected the nudge pool using
   `config.client_profile.nudge_pool_weights` (the global active profile) instead of the resolved
@@ -421,25 +945,6 @@ All notable changes to the TRW MCP server package.
   `API_BASE = "https://api.trwframework.com"` constant and pointed
   `_device_auth_login` at it (matching the `trw-mcp` CLI default in
   `server/_subcommands_lifecycle.py`). `scripts/install-trw.template.py`.
-- **Installer works on a uv-managed CPython (python-build-standalone).** `install-trw.py`
-  previously assumed `python -m pip`; a uv-managed interpreter often ships without a usable
-  pip/ensurepip, so the install failed outright. A new backend resolver tries `python -m pip`
-  → bootstraps via `ensurepip` → falls back to `uv pip install`, with a dynamic override
-  (`TRW_INSTALL_BACKEND=auto|pip|uv`, `TRW_UV_BIN`). Every install site routes through it; pip
-  vs uv flags are translated (`--no-cache-dir`↔`--no-cache`; pip-only flags dropped under uv).
-- **`--with-proprietary` console scripts resolve under `--pip-target` / uv installs.** A
-  `--target` (or uv) install creates `<target>/bin/trw-distill` (+ `trw-loop`/`trw-swarm`)
-  with no PYTHONPATH setup, so the bare command raised `ModuleNotFoundError` or silently
-  imported a different on-PATH copy (e.g. an older `trw_distill`). The installer now rewrites
-  each installed proprietary CLI's `bin/<script>` as a PYTHONPATH wrapper (mirroring the
-  `bin/trw-mcp` wrapper), so the bare `trw-distill …` commands print as install remediation
-  run the correct target version.
-- **Release version-currency gate now gives actionable, anti-bypass guidance.** When the
-  publish gate fails (the box is not running the version it is about to publish), both
-  `publish-release.sh` and `assert_version_status_compatible` now explicitly instruct the
-  correct fix — install the publishing version locally + sync `.trw/frameworks/VERSION.yaml`,
-  then re-run — and explicitly warn against skipping the gate or `aws s3 cp`-ing the bundle by
-  hand. The safeguard exists so a version the apparatus has never run can never be published.
 
 ### Removed
 
@@ -1070,8 +1575,8 @@ All notable changes to the TRW MCP server package.
     client_id, turn}`. The existing JSONL `nudge_shown` event at
     `.trw/context/session-events.jsonl` is preserved additively: legacy
     `phase` / `learning_id` fields are kept alongside the canonical
-    `step` / `learning_ids[]` fields for back-compat with trw-eval
-    `test_proximal_reward` and `TraceAnalyzer`.
+    `step` / `learning_ids[]` fields for back-compat with downstream
+    eval consumers.
   - `nudge_skipped` DEBUG events from `_nudge_rules.py` (pool_cooldown)
     and `state/ceremony_nudge.py` (phase_dedup) with enumerated reasons.
 - **2026-04-22 — PRD-CORE-146: `nudge_density` config field** with the
@@ -1087,8 +1592,8 @@ All notable changes to the TRW MCP server package.
     {"nudge","recall"}` row shape.
   - `nudge_shown.example.jsonl` — authoritative session event shape
     (canonical + legacy fields together).
-  These are consumed by both trw-mcp contract tests and by trw-eval's
-  `test_nudge_contract.py` via a conftest-resolved absolute path.
+  These are consumed by both trw-mcp contract tests and by downstream eval
+  consumers via a conftest-resolved absolute path.
 - **2026-04-22 — PRD-CORE-146: new tests**
   `test_nudge_schema_contract.py`, `test_nudge_per_profile.py`
   (parameterized over all 8 client profiles),
@@ -1101,10 +1606,9 @@ All notable changes to the TRW MCP server package.
   design that no longer matched the code).
 - **2026-04-22 — PRD-CORE-146: per-profile nudge matrix** added to
   `docs/CLIENT-PROFILES.md`.
-- **2026-04-22 — PRD-CORE-146: new cross-package contract doc**
-  `docs/documentation/nudge-eval-contract.md` pins the trw-mcp ↔
-  trw-eval schema surface (fields, config flags, fixture location,
-  versioning rules).
+- **2026-04-22 — PRD-CORE-146: new cross-package contract doc** pins the
+  nudge event schema surface consumed by downstream eval consumers
+  (fields, config flags, fixture location, versioning rules).
 
 - **2026-04-19 — `trw_learn_update` now accepts `tags`** (commit `3be0d65cd`).
   The tool previously exposed summary/detail/impact/status/tags-resolution
@@ -1209,7 +1713,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Added
 
-- **2026-04-16 — Nudge telemetry now emits a `nudge_shown` event per impression** (PRD-QUAL-058-FR04). `record_nudge_shown()` in `_ceremony_progress_state.py` continues to update `ceremony-state.json` as before, but now also appends a discrete `{"event":"nudge_shown","learning_id":...,"phase":...,"data":{...}}` record to `.trw/context/session-events.jsonl`. This unblocks the trw-eval pipeline's event-based ceremony scoring path — previously ceremony scores for trw-full runs floored at 25/100 because only `session_start` detected via regex fallback. Emission is fail-open: the primary state update is never blocked by a session-event append failure. Event schema carries both top-level `learning_id`/`phase` (for the FR06 pre-analyzer JSONL matcher) and a nested `data` payload with `turn` + `surface_type` for downstream consumers (`proximal_reward.py`, `TraceAnalyzer`). A new `surface_type: str = "nudge"` keyword arg lets callers distinguish `phase_transition` vs `nudge` impressions. All existing positional callers are unaffected. Version bumped 0.44.7 → 0.45.0 (minor — additive feature).
+- **2026-04-16 — Nudge telemetry now emits a `nudge_shown` event per impression** (PRD-QUAL-058-FR04). `record_nudge_shown()` in `_ceremony_progress_state.py` continues to update `ceremony-state.json` as before, but now also appends a discrete `{"event":"nudge_shown","learning_id":...,"phase":...,"data":{...}}` record to `.trw/context/session-events.jsonl`. This unblocks the event-based ceremony scoring path in downstream eval consumers — previously ceremony scores for trw-full runs floored at 25/100 because only `session_start` was detected via regex fallback. Emission is fail-open: the primary state update is never blocked by a session-event append failure. Event schema carries both top-level `learning_id`/`phase` (for the FR06 pre-analyzer JSONL matcher) and a nested `data` payload with `turn` + `surface_type` for downstream eval consumers. A new `surface_type: str = "nudge"` keyword arg lets callers distinguish `phase_transition` vs `nudge` impressions. All existing positional callers are unaffected. Version bumped 0.44.7 → 0.45.0 (minor — additive feature).
 
 - **2026-04-13 — Per-connection run isolation is stronger** (PRD-CORE-141) — parallel clients sharing one repo are less likely to step on each other's active run, which makes session state, logging, and follow-up tool calls more trustworthy.
 

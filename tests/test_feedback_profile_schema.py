@@ -29,9 +29,7 @@ def test_feedback_skill_accepts_none_for_opt_out() -> None:
 
 def test_feedback_skill_accepts_custom_string() -> None:
     """Custom skill names parse cleanly (future-proofing for variants)."""
-    profile = ClientProfile(
-        client_id="test", display_name="Test", feedback_skill="trw-feedback-custom"
-    )
+    profile = ClientProfile(client_id="test", display_name="Test", feedback_skill="trw-feedback-custom")
     assert profile.feedback_skill == "trw-feedback-custom"
 
 

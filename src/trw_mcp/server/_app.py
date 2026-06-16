@@ -9,6 +9,7 @@ PRD-CORE-001: Base MCP tool suite.
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -22,6 +23,49 @@ from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
+
+# Minimum trw-memory version that includes the concurrent-writer corruption fix
+# (warm-tier sidecar lock + hot-tier sweep race shipped in 0.9.5).
+_TRW_MEMORY_MIN_VERSION = "0.9.5"
+
+
+def _parse_version(version_str: str) -> tuple[int, ...]:
+    """Parse a PEP-440-style version string into a comparable integer tuple.
+
+    Only the numeric prefix (MAJOR.MINOR.PATCH) is considered; pre/post/dev
+    suffixes are stripped so the comparison stays simple and dependency-free.
+    """
+    import re as _re
+
+    match = _re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", version_str)
+    if not match:
+        return (0,)
+    return tuple(int(g) for g in match.groups() if g is not None)
+
+
+def _check_memory_version() -> None:
+    """Emit a warning when the installed trw-memory is below the minimum safe version.
+
+    trw-memory <0.9.5 exposes a concurrent-write corruption bug (reference_memory_db_walreset_fix).
+    This check is fail-open — a missing or unparseable version is logged but does not abort startup.
+    """
+    try:
+        installed = importlib.metadata.version("trw-memory")
+        if _parse_version(installed) < _parse_version(_TRW_MEMORY_MIN_VERSION):
+            logger.warning(
+                "trw_memory_version_below_minimum",
+                installed=installed,
+                minimum=_TRW_MEMORY_MIN_VERSION,
+                action="upgrade trw-memory to avoid concurrent-write corruption",
+            )
+    except importlib.metadata.PackageNotFoundError:
+        logger.warning(
+            "trw_memory_version_check_failed",
+            reason="trw-memory package not found in environment",
+        )
+    except Exception:  # justified: fail-open, boot-time check must never abort startup
+        logger.debug("trw_memory_version_check_failed", reason="unexpected error during version check")
+
 
 _DEFAULT_INSTRUCTIONS = (
     "TRW turns session history into reusable engineering context. "
@@ -84,6 +128,25 @@ def _try_init_mcp_security(config: TRWConfig) -> object | None:
     return init_security(config.security.mcp)
 
 
+def _try_init_phase_exposure() -> object | None:
+    """Try to initialize PhaseExposureMiddleware. Returns None on failure (fail-open).
+
+    PRD-INTENT-002 FR08: inserted immediately after CeremonyMiddleware (session
+    state resolved first) and before ContextBudgetMiddleware (phase filtering
+    precedes context/observation masking). The middleware self-resolves its
+    ``enabled`` flag from ``phase_exposure_enabled`` config (default false for
+    the v1 rollout), so it is always appended — a disabled flag is a no-op
+    pass-through, not a missing chain entry.
+    """
+    try:
+        from trw_mcp.middleware.phase_exposure import PhaseExposureMiddleware
+
+        return PhaseExposureMiddleware()
+    except Exception:  # justified: fail-open, middleware init failure must not crash startup
+        logger.warning("middleware_init_failed", component="PhaseExposureMiddleware")
+        return None
+
+
 def _try_init_response_optimizer() -> object | None:
     """Try to initialize ResponseOptimizerMiddleware. Returns None on failure."""
     try:
@@ -108,6 +171,7 @@ def _build_middleware() -> list[object]:
     returns None on failure (fail-open). This keeps the orchestration
     logic readable while isolating error handling per component.
     """
+    _check_memory_version()
     config = _try_load_config()
     if config is None:
         config = TRWConfig()
@@ -123,6 +187,13 @@ def _build_middleware() -> list[object]:
     ceremony = _try_init_ceremony()
     if ceremony is not None:
         middleware.append(ceremony)
+
+    # PRD-INTENT-002 FR08: phase masking sits AFTER Ceremony (session state
+    # first) and BEFORE ContextBudget (phase filtering precedes context/
+    # observation masking). Appended here so the relative order holds.
+    phase_exposure = _try_init_phase_exposure()
+    if phase_exposure is not None:
+        middleware.append(phase_exposure)
 
     middleware.extend(
         mw
@@ -152,7 +223,18 @@ async def _build_sync_lifespan(_: FastMCP) -> AsyncIterator[None]:
                     source = "mixed"
                 else:
                     source = "platform_fallback"
-                logger.info("sync_config_resolved", source=source, url=backend_url)
+                # PRD-SEC-004-FR05/FR01: the sync client still starts (pull/intel
+                # is unaffected and credential resolution must keep working), but
+                # CONTENT egress is consent-gated downstream in
+                # BackendSyncClient._run_one_cycle. Surface the resolved consent
+                # state here so an operator can verify opt-out is honored.
+                logger.info(
+                    "sync_config_resolved",
+                    source=source,
+                    url=backend_url,
+                    learning_sharing_enabled=bool(getattr(config, "learning_sharing_enabled", False)),
+                    platform_telemetry_enabled=bool(getattr(config, "platform_telemetry_enabled", False)),
+                )
 
                 from trw_mcp.state._paths import resolve_trw_dir
                 from trw_mcp.sync.client import BackendSyncClient

@@ -20,6 +20,10 @@ skills:
     disposition: portable
     source: variant
     reason: Authenticated feedback channel is model-invocable and directly portable; agents/sub-agents can submit TRW bugs without a human present
+  trw-reflect:
+    disposition: portable
+    source: variant
+    reason: Client-agnostic end-of-session reflection; variant drops Claude-specific approval/sub-agent tool names
   trw-sprint-team:
     disposition: exclude
     source: shared

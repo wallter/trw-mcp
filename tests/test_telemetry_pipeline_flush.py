@@ -16,9 +16,6 @@ from tests._telemetry_pipeline_support import (
     _read_jsonl,
     make_configured_pipeline,
 )
-from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
-
-from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
 from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 

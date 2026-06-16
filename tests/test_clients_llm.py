@@ -253,3 +253,65 @@ class TestOpus47Migration:
         """FR09: arbitrary model strings pass through untouched."""
         assert _resolve_model("claude-opus-4-7") == "claude-opus-4-7"
         assert _resolve_model("some-future-model-5-0") == "some-future-model-5-0"
+
+
+# ---------------------------------------------------------------------------
+# Ollama integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestOllamaLLMClient:
+    """Tests for LLMClient's local Ollama model routing."""
+
+    @pytest.mark.asyncio
+    async def test_ask_routes_to_ollama_when_prefix_given(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ask() routes requests starting with 'ollama/' to Ollama API."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+
+            def json(self):
+                return {"response": "Hello from local Ollama"}
+
+        call_args = []
+
+        async def mock_post(self_client, url, json, **kwargs):
+            call_args.append((url, json))
+            return MockResponse()
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+        client = LLMClient(model="ollama/qwen2.5-coder")
+        assert client.available is True
+
+        result = await client.ask("Who are you?")
+        assert result == "Hello from local Ollama"
+        assert len(call_args) == 1
+        assert "api/generate" in call_args[0][0]
+        assert call_args[0][1]["model"] == "qwen2.5-coder"
+        assert call_args[0][1]["prompt"] == "Who are you?"
+
+    @pytest.mark.asyncio
+    async def test_ask_routes_to_ollama_via_env_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ask() falls back to Ollama when OLLAMA_HOST is set and Anthropic is unavailable."""
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+
+            def json(self):
+                return {"response": "Fallback Ollama response"}
+
+        async def mock_post(self_client, url, json, **kwargs):
+            return MockResponse()
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+        monkeypatch.setenv("OLLAMA_HOST", "http://localhost:11434")
+
+        # Create client where Anthropic is unavailable
+        client = _make_unavailable_client()
+        assert client.available is True  # Available because OLLAMA_HOST is set
+
+        result = await client.ask("Test prompt", model="some-model")
+        assert result == "Fallback Ollama response"

@@ -65,7 +65,7 @@ def _get_cached_run_dir(call_ctx: TRWCallContext | None = None) -> Path | None:
         try:
             return find_active_run(context=call_ctx)
         except TypeError:
-            return find_active_run()  # noqa: PRD-FIX-085 — TypeError compat for zero-arg test doubles
+            return find_active_run()  # compat: legacy zero-arg test doubles (PRD-FIX-085)
 
     global _cached_run_dir
     now = time.monotonic()
@@ -81,7 +81,7 @@ def _get_cached_run_dir(call_ctx: TRWCallContext | None = None) -> Path | None:
         # cache fallback is for legacy callers without ctx; since
         # find_active_run() is now pin-only by default, we get the pin
         # (or None) without a YAML scan. 60s cache amortizes any cost.
-        run_dir = find_active_run()  # noqa: PRD-FIX-085 — pin-only via cache, no scan
+        run_dir = find_active_run()  # compat: legacy pin-only cache fallback (PRD-FIX-085)
         _cached_run_dir = (now, run_dir)
         return run_dir
 
@@ -202,15 +202,18 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             except Exception:  # justified: fail-open telemetry, never blocks tool execution
                 logger.debug("telemetry_write_failed", tool=func.__name__)
 
-            # FR04: Session-level telemetry to tool-telemetry.jsonl
-            # config.telemetry is a TelemetryConfig Pydantic model (always
-            # truthy as an object).  Check its platform_telemetry_enabled
-            # field for proper two-tier gating: telemetry_enabled gates
-            # basic events (line 73), platform_telemetry_enabled gates
-            # detailed records here.  The getattr fallback handles tests
-            # that override config.telemetry to a plain bool.
+            # FR04 + PRD-SEC-004-FR01: detailed tool-telemetry records are richer
+            # than basic events and follow the platform consent gate. The single
+            # choke point is config.platform_telemetry_enabled (the authoritative
+            # root flag) — NOT the legacy 'telemetry' bool, which must not enable
+            # richer collection by itself. The TelemetryConfig-object fallback
+            # preserves tests that override config.telemetry with a model carrying
+            # its own platform_telemetry_enabled field.
             _tel = config.telemetry
-            _detailed = getattr(_tel, "platform_telemetry_enabled", False) if not isinstance(_tel, bool) else _tel
+            if isinstance(_tel, bool):
+                _detailed = bool(getattr(config, "platform_telemetry_enabled", False))
+            else:
+                _detailed = bool(getattr(_tel, "platform_telemetry_enabled", False))
             if _detailed:
                 try:
                     _write_telemetry_record(
@@ -296,7 +299,9 @@ def _write_tool_event(
     if error_type is not None:
         event_data["error_type"] = error_type
 
-    # OTEL span emission (fail-open, gated by config.otel_enabled)
+    # OTEL span emission (fail-open, gated by config.otel_enabled).
+    # PRD-INFRA-145-FR06: surface the error category to the gen_ai error.type
+    # attribute when present (no-op in legacy mode).
     emit_tool_span(
         tool_name,
         duration_ms,
@@ -304,6 +309,7 @@ def _write_tool_event(
             "agent_id": agent_id,
             "phase": phase,
         },
+        error_type=error_type,
     )
 
     # Pipeline enqueue — BEFORE any early return so events always reach the
@@ -344,9 +350,20 @@ def _write_telemetry_record(
     success: bool,
 ) -> None:
     """Write detailed telemetry record to .trw/logs/tool-telemetry.jsonl (FR04)."""
+    # Local imports preserve this module's import-safety contract (RISK-004):
+    # telemetry/anonymizer is stdlib-only and telemetry/sender imports only
+    # models/ + state/, so neither risks a circular import with tools/.
+    from trw_mcp.telemetry.anonymizer import strip_pii
+    from trw_mcp.telemetry.sender import stamp_consent
+
     args_repr = repr(args) + repr(kwargs)
     args_hash = hashlib.sha256(args_repr.encode()).hexdigest()[:8]
-    result_summary = repr(result)[:100] if result is not None else ""
+    # PRD-SEC-004 (telemetry-privacy-4): result_summary captures repr(result),
+    # which can contain user content (emails, tokens, paths embedded in tool
+    # output). Run it through the same strip_pii() chokepoint used by the
+    # pipeline before it is written to the upload queue so no raw PII can egress.
+    raw_summary = repr(result)[:100] if result is not None else ""
+    result_summary = strip_pii(raw_summary) if raw_summary else ""
 
     record: TelemetryRecordDict = {
         "tool": tool_name,
@@ -363,4 +380,9 @@ def _write_telemetry_record(
     logs_dir = trw_dir / config.logs_dir
     writer.ensure_dir(logs_dir)
     telemetry_path = logs_dir / config.telemetry_file
-    events.log_event(telemetry_path, "tool_call", cast("dict[str, object]", record))
+    # PRD-SEC-004-FR01 (pre-consent backlog exclusion): this writer only runs
+    # under platform consent (the _detailed gate in the decorator), so stamp the
+    # record as consented-at-write-time. The sender uploads only stamped rows.
+    record_dict = cast("dict[str, object]", record)
+    stamp_consent(record_dict, consented=bool(getattr(config, "platform_telemetry_enabled", False)))
+    events.log_event(telemetry_path, "tool_call", record_dict)

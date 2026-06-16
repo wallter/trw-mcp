@@ -19,8 +19,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-import pytest
 from pydantic import SecretStr
 
 from trw_mcp.models.config import TRWConfig

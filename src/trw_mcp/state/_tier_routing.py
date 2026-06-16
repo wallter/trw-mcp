@@ -72,11 +72,41 @@ _PROJECT_TAGS: frozenset[str] = frozenset(
 
 # A repo-relative file path or repo-local symbol reference in the content is a
 # strong PROJECT signal. Matches ``a/b.py``, ``src/x/y.ts``, ``foo/bar.md:42``,
-# dotted module paths like ``trw_mcp.state.foo``, etc.
+# dotted module paths like ``trw_mcp.state.foo`` AND two-segment ones like
+# ``os.path`` / ``foo.bar``, etc.
+#
+# The segments are deliberately narrow to avoid false positives on PORTABLE
+# directive content. The three alternatives jointly satisfy four constraints
+# (core185-1 / core185-URL-OVERMATCH-2 / core185-DOTTED-TWOSEG-4):
+#   * dotted-module: each segment starts with an ALPHA/underscore so version
+#     strings (``3.11.5``, ``18.20.3``, ``v1.2.3``) are NOT mistaken for modules
+#     (a digit-led segment breaks the chain). Repetition is ``{1,}`` so
+#     TWO-segment repo-local symbols (``os.path``, ``my_module.HelperClass``) are
+#     caught -- the alpha-led guard, NOT the segment count, is what excludes
+#     versions, so relaxing the count is safe (core185-DOTTED-TWOSEG-4). A
+#     leading ``(?<![\w./-])`` + trailing ``(?![\w-]*[./])`` reject dotted tokens
+#     that are part of a URL/path -- ``trwframework.com/install.sh`` (host
+#     ``trwframework.com`` is followed by ``/``; file ``install.sh`` is preceded
+#     by ``/``) is NOT a project signal (core185-URL-OVERMATCH-2).
+#   * path-with-segments: the FIRST directory segment must NOT contain a dot, so
+#     bare directory names (``src/x/y.ts``) match while a hostname-led URL path
+#     (``trwframework.com/install.sh``) does NOT (core185-URL-OVERMATCH-2). A
+#     leading ``(?<!/)`` keeps it from re-attaching to a URL tail.
+#   * file:line: requires a ``name.ext`` token BEFORE the colon so bare
+#     YAML-style values (``timeout:30``, ``priority:1``) do not trip it.
+#   * prose-abbreviation stop-list: the dotted-module alternative led to bare
+#     ``e.g`` / ``i.e`` (and trailing-dot ``e.g.`` / ``i.e.``) being read as a
+#     dotted module path, mis-classifying portable learnings as project-specific
+#     (core185-DOTTED-ABBREV-7). A leading negative lookahead rejects ONLY the
+#     exact one-char.one-char abbreviation token; the trailing ``(?![\w.])``
+#     keeps a real module that merely starts that way (``e.go``, ``i.eat``,
+#     ``e.gc.foo``) matching, and legit 1-char-segment paths (``a.b.c``) are
+#     unaffected.
 _PATH_RE = re.compile(
-    r"(?:[\w.-]+/){1,}[\w.-]+\.[A-Za-z0-9]{1,6}"  # path/with/segments.ext
-    r"|\b[\w]+(?:\.[\w]+){2,}\b"  # dotted.module.path (>=3 segments)
-    r"|:\d+\b"  # file:line reference
+    r"(?<![\w./-])[\w_-]+/(?:[\w.-]+/)*[\w.-]+\.[A-Za-z0-9]{1,6}"  # dir/.../file.ext (1st seg dot-free, not URL host)
+    r"|(?<![\w./-])(?![eiEI]\.[geGE]\.?(?![\w.]))"  # reject prose abbrevs e.g / i.e
+    r"[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*){1,}(?![\w-]*[./])"  # dotted.module (alpha-led, >=2 seg, not in URL/path)
+    r"|\b[\w-]+\.[A-Za-z]{1,6}:\d+\b"  # file.ext:line reference
 )
 
 
@@ -149,6 +179,22 @@ def classify_tier(
     return "project"
 
 
+# core185-8: cache the user-scope presence probe. The presence of a
+# machine-local user store is a BOOT-TIME condition (the config flag or the
+# on-disk DB) that does not change within a session, so the per-call config
+# read + ``Path.exists()`` on the hot path (every ``trw_learn`` route + every
+# ``recall_learnings`` federate) are redundant. ``None`` = not yet probed. The
+# cache is cleared by :func:`reset_user_scope_cache` (wired into
+# ``reset_user_backend`` for test isolation).
+_user_scope_cached: bool | None = None
+
+
+def reset_user_scope_cache() -> None:
+    """Clear the cached :func:`user_scope_present` result (test isolation)."""
+    global _user_scope_cached
+    _user_scope_cached = None
+
+
 def user_scope_present() -> bool:
     """Return True when a machine-local user-scope store is PRESENT/configured.
 
@@ -160,24 +206,35 @@ def user_scope_present() -> bool:
       * the user-space memory DB already exists on disk.
 
     Resolution never creates the directory (``create=False``) so a mere probe
-    does not provision a store. Fails closed (project-only) on any error.
+    does not provision a store. Fails closed (project-only) on any error. The
+    result is memoized (core185-8); call :func:`reset_user_scope_cache` to
+    re-probe (presence is otherwise a stable boot-time condition).
     """
+    global _user_scope_cached
+    if _user_scope_cached is not None:
+        return _user_scope_cached
+
+    result = False
     try:
         from trw_mcp.models.config import get_config
 
         if get_config().user_tier_enabled:
-            return True
+            result = True
     except Exception:  # justified: fail-closed to project-only on config error
         logger.debug("user_scope_config_probe_failed", exc_info=True)
 
-    try:
-        from trw_mcp.state._user_paths import resolve_user_memory_dir
+    if not result:
+        try:
+            from trw_mcp.state._user_paths import resolve_user_memory_dir
 
-        db_path = resolve_user_memory_dir(create=False) / "memory.db"
-        return db_path.exists()
-    except Exception:  # justified: fail-closed to project-only on path error
-        logger.debug("user_scope_path_probe_failed", exc_info=True)
-        return False
+            db_path = resolve_user_memory_dir(create=False) / "memory.db"
+            result = db_path.exists()
+        except Exception:  # justified: fail-closed to project-only on path error
+            logger.debug("user_scope_path_probe_failed", exc_info=True)
+            result = False
+
+    _user_scope_cached = result
+    return result
 
 
 def tier_of_entry(entry: object) -> Tier:

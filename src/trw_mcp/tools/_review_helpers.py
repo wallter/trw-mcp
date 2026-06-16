@@ -107,6 +107,24 @@ def _invoke_cross_model_review(
     return []
 
 
+def _cross_family_available(config: TRWConfig) -> bool:
+    """Single source of truth for cross-family review availability (QUAL-108-FR04).
+
+    Today this is config-only: a cross-family review is *available* iff the
+    cross-model review feature is enabled AND a provider is configured. It does
+    NOT assert the provider is reachable or that it returned findings — that
+    *realized* signal is computed by the caller (NFR02 truthfulness invariant).
+
+    # SEAM(PRD-DIST-2444): discovery-feed availability. A future discovered-model
+    # inventory (D18 / PRD-DIST-2444, the proprietary trw-distill ledger) may
+    # feed this predicate so availability reflects the realized fleet state
+    # rather than config alone. This PRD makes NO discovery call here; the
+    # inventory is read through a future thin adapter (QUAL-108 OQ2), never by
+    # importing trw-distill internals. Expiry: revisit when PRD-DIST-2444 lands.
+    """
+    return bool(config.cross_model_review_enabled) and bool(config.cross_model_provider)
+
+
 def _compute_verdict(findings: list[dict[str, str]]) -> str:
     """Compute review verdict from worst severity across findings."""
     critical_count = sum(1 for f in findings if f.get("severity") == "critical")

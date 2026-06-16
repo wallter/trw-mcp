@@ -9,13 +9,6 @@ from unittest.mock import patch
 from trw_mcp.state._paths import find_active_run, find_run_via_mtime_scan
 from trw_mcp.tools.ceremony import _do_reflect, _get_run_status
 from trw_mcp.tools.checkpoint import _do_checkpoint
-from ._tools_ceremony_support import trw_project  # noqa: F401
-from ._tools_ceremony_support import run_dir  # noqa: F401
-
-from ._tools_ceremony_support import (
-    run_dir,  # noqa: F401
-    trw_project,  # noqa: F401
-)
 
 from ._tools_ceremony_support import (
     run_dir,  # noqa: F401
@@ -135,7 +128,11 @@ class TestDoReflect:
         }
         # Middle line is a torn append: valid JSON prefix, truncated mid-object.
         events_path.write_text(
-            json.dumps(valid_before) + "\n" + '{"ts": "2026-02-11T12:01:00Z", "event": "tor\n' + json.dumps(valid_after) + "\n",
+            json.dumps(valid_before)
+            + "\n"
+            + '{"ts": "2026-02-11T12:01:00Z", "event": "tor\n'
+            + json.dumps(valid_after)
+            + "\n",
             encoding="utf-8",
         )
         trw_dir = trw_project / ".trw"

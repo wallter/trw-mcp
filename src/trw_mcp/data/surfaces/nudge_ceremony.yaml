@@ -9,6 +9,6 @@ messages:
   build_check:
     text: "Verify with trw_build_check() — catches issues before delivery."
   review:
-    text: "Independent review with trw_review() — catches what self-review misses."
+    text: "Invoke trw_review() on the current diff to surface logic gaps missed by self-review."
   deliver:
     text: "Persist session with trw_deliver() — your learnings become available to future sessions."

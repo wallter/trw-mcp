@@ -21,14 +21,15 @@ def _make_sidecar(
         path = f"src/module_{i}.py"
         if with_proprietary and i == 2:
             path = f"trw-distill/trw_distill/emit/cursor/module_{i}.py"
-        hotspots.append({
-            "file": path,
-            "composite_score": round(0.9 - i * 0.05, 2),
-            "risk_score": round(0.9 - i * 0.05, 2),
-        })
+        hotspots.append(
+            {
+                "file": path,
+                "composite_score": round(0.9 - i * 0.05, 2),
+                "risk_score": round(0.9 - i * 0.05, 2),
+            }
+        )
     conventions = [
-        f"Use Pydantic v2 validators for all input parsing (convention {i})"
-        for i in range(convention_count)
+        f"Use Pydantic v2 validators for all input parsing (convention {i})" for i in range(convention_count)
     ]
     return {
         "schema_version": "risk-report-sidecar/v0",
@@ -63,11 +64,7 @@ def test_distill_segment_placed_after_ceremony(tmp_path: Path) -> None:
     )
 
     agents_md = (
-        "# Project\n\n"
-        "<!-- trw:start -->\n"
-        "## TRW Section\nCeremony content.\n"
-        "<!-- trw:end -->\n"
-        "\n## Other Section\n"
+        "# Project\n\n<!-- trw:start -->\n## TRW Section\nCeremony content.\n<!-- trw:end -->\n\n## Other Section\n"
     )
     result = _ensure_sequential_placement(agents_md, "Distill content")
 
@@ -84,9 +81,7 @@ def test_ceremony_section_unchanged_after_distill_write(tmp_path: Path) -> None:
         install_opencode_agents_md_distill_segment,
     )
 
-    ceremony_section = (
-        "<!-- trw:start -->\n## TRW Section\nCeremony content.\n<!-- trw:end -->"
-    )
+    ceremony_section = "<!-- trw:start -->\n## TRW Section\nCeremony content.\n<!-- trw:end -->"
     agents_md_content = f"# Project\n\n{ceremony_section}\n"
     agents_md_path = tmp_path / "AGENTS.md"
     agents_md_path.write_text(agents_md_content, encoding="utf-8")
@@ -227,16 +222,12 @@ def test_shared_agents_md_lock_prevents_concurrent_writes(tmp_path: Path) -> Non
     results: list[str] = []
 
     def writer_a() -> None:
-        install_opencode_agents_md_distill_segment(
-            tmp_path, _make_sidecar(), "sha1", force=True
-        )
+        install_opencode_agents_md_distill_segment(tmp_path, _make_sidecar(), "sha1", force=True)
         if agents_md.exists():
             results.append("a_done")
 
     def writer_b() -> None:
-        install_opencode_agents_md_distill_segment(
-            tmp_path, _make_sidecar(hotspot_count=2), "sha2", force=True
-        )
+        install_opencode_agents_md_distill_segment(tmp_path, _make_sidecar(hotspot_count=2), "sha2", force=True)
         if agents_md.exists():
             results.append("b_done")
 
@@ -287,12 +278,10 @@ def test_quota_tier_down_on_overflow(tmp_path: Path) -> None:
     # Build large sidecar that would exceed quota
     large_sidecar: dict[str, Any] = {
         "hotspots": [
-            {"file": f"src/very_long_module_path_{i}_with_extra_words.py", "composite_score": 0.9}
-            for i in range(100)
+            {"file": f"src/very_long_module_path_{i}_with_extra_words.py", "composite_score": 0.9} for i in range(100)
         ],
         "conventions": [
-            f"Very long convention text that takes a lot of bytes to encode: number {i} " * 5
-            for i in range(50)
+            f"Very long convention text that takes a lot of bytes to encode: number {i} " * 5 for i in range(50)
         ],
     }
 
@@ -363,9 +352,7 @@ def test_lock_skip_emits_channel_lock_skip_event(tmp_path: Path) -> None:
     def fake_emit(**kwargs: object) -> None:
         emitted.append(str(kwargs.get("event_type", "")))
 
-    with patch(
-        "trw_mcp.channels.opencode._agents_md_segment.agents_md_lock"
-    ) as mock_lock_fn:
+    with patch("trw_mcp.channels.opencode._agents_md_segment.agents_md_lock") as mock_lock_fn:
         mock_lock = MagicMock()
         mock_lock.__enter__ = MagicMock(side_effect=ChannelLockSkip("held"))
         mock_lock_fn.return_value = mock_lock
@@ -374,9 +361,7 @@ def test_lock_skip_emits_channel_lock_skip_event(tmp_path: Path) -> None:
             "trw_mcp.channels.opencode._agents_md_segment.append_channel_event",
             side_effect=fake_emit,
         ):
-            result = install_opencode_agents_md_distill_segment(
-                tmp_path, None, None
-            )
+            result = install_opencode_agents_md_distill_segment(tmp_path, None, None)
 
     assert result.status == "skipped_lock"
     assert "channel_lock_skip" in emitted, f"Expected channel_lock_skip in {emitted}"
@@ -396,9 +381,7 @@ def test_error_emits_channel_error_event(tmp_path: Path) -> None:
     def fake_emit(**kwargs: object) -> None:
         emitted.append(str(kwargs.get("event_type", "")))
 
-    with patch(
-        "trw_mcp.channels.opencode._agents_md_segment.agents_md_lock"
-    ) as mock_lock_fn:
+    with patch("trw_mcp.channels.opencode._agents_md_segment.agents_md_lock") as mock_lock_fn:
         mock_lock = MagicMock()
         mock_lock.__enter__ = MagicMock(return_value=None)
         mock_lock.__exit__ = MagicMock(return_value=None)
@@ -412,9 +395,7 @@ def test_error_emits_channel_error_event(tmp_path: Path) -> None:
                 "trw_mcp.channels.opencode._agents_md_segment.append_channel_event",
                 side_effect=fake_emit,
             ):
-                result = install_opencode_agents_md_distill_segment(
-                    tmp_path, None, None
-                )
+                result = install_opencode_agents_md_distill_segment(tmp_path, None, None)
 
     assert result.status == "error"
     assert "channel_error" in emitted, f"Expected channel_error in {emitted}"
@@ -462,9 +443,7 @@ def test_ceremony_vs_distill_concurrent_write_no_corruption(tmp_path: Path) -> N
 
     def run_distill() -> None:
         try:
-            install_opencode_agents_md_distill_segment(
-                tmp_path, _make_sidecar(), "sha_race", force=True
-            )
+            install_opencode_agents_md_distill_segment(tmp_path, _make_sidecar(), "sha_race", force=True)
         except Exception as exc:
             errors.append(f"distill: {exc}")
 
@@ -527,8 +506,6 @@ def test_install_opencode_distill_channels_fail_soft_on_bad_manifest(tmp_path: P
     manifest_info = result.get("manifest")
     assert manifest_info is not None, "Result must contain 'manifest' key"
     assert isinstance(manifest_info, dict), f"manifest must be a dict, got {type(manifest_info)}"
-    assert manifest_info.get("status") == "error", (
-        f"Expected status='error', got: {manifest_info}"
-    )
+    assert manifest_info.get("status") == "error", f"Expected status='error', got: {manifest_info}"
     assert "error" in manifest_info, "manifest result must contain 'error' key"
     assert "invalid entry" in str(manifest_info["error"]).lower() or "missing" in str(manifest_info["error"]).lower()

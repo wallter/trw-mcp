@@ -14,6 +14,8 @@ Internal helpers (also re-exported for test access):
 - _check_complexity_drift, _check_review_gate, _check_integration_review_gate
 - _check_untracked_files, _check_review_file_count_gate
 - _check_checkpoint_blocker_gate, _check_build_and_work_events
+- _review_gate_mode_is_block, _review_nudge_for_run (re-exported from
+  _delivery_review_gate; PRD-CORE-192)
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.models.config import (
+    get_config as get_config,  # re-exported: _delivery_review_gate + tests resolve get_config through this facade
+)
 from trw_mcp.models.typed_dicts import (
     ComplianceArtifactsDict,
     DeliveryGatesDict,
@@ -43,6 +48,17 @@ from trw_mcp.tools._delivery_build_gates import (
 )
 from trw_mcp.tools._delivery_build_gates import (
     _check_no_active_run_build_gate as _check_no_active_run_build_gate,
+)
+
+# PRD-CORE-192: review_gate_mode escalation + pre-deliver REVIEW nudge helpers
+# live in a focused sibling. Re-exported here so callers/tests keep a single
+# import point (_delivery_helpers). The sibling resolves get_config /
+# _read_complexity_class through THIS facade so test monkeypatches propagate.
+from trw_mcp.tools._delivery_review_gate import (
+    _review_gate_mode_is_block as _review_gate_mode_is_block,
+)
+from trw_mcp.tools._delivery_review_gate import (
+    _review_nudge_for_run as _review_nudge_for_run,
 )
 
 logger = structlog.get_logger(__name__)
@@ -80,12 +96,21 @@ def _count_file_modified(events: list[dict[str, object]]) -> int:
 
 
 def _events_since_last_session_start(events: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Return events after the last ``session_start``; returns all on no boundary."""
+    """Return events STRICTLY AFTER the last ``session_start``; all on no boundary.
+
+    The slice starts at ``last_session_idx + 1`` so the ``session_start``
+    boundary event itself is excluded — it belongs to the boundary, not the
+    current-session work window. This matches the docstring contract ("after")
+    and the only consumers (``_count_file_modified_current_session`` and
+    ``_check_complexity_drift``) count ``file_modified`` events, which a
+    ``session_start`` event is never one of, so excluding it is a pure
+    correctness fix with no gate-decision change.
+    """
     last_session_idx = -1
     for i, ev in enumerate(events):
         if str(ev.get("event", "")) == "session_start":
             last_session_idx = i
-    return events if last_session_idx < 0 else events[last_session_idx:]
+    return events if last_session_idx < 0 else events[last_session_idx + 1 :]
 
 
 def _count_file_modified_current_session(events: list[dict[str, object]]) -> int:
@@ -214,12 +239,27 @@ def _check_review_gate(
         # Check complexity — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
         complexity_class = _read_complexity_class(run_path, reader)
         if complexity_class in ("STANDARD", "COMPREHENSIVE"):
-            warning = (
-                f"No trw_review was run before delivery (complexity: {complexity_class}). "
-                "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
-                "false completions that self-review misses. "
-                "Run trw_review() or /trw-audit before delivering."
-            )
+            # PRD-CORE-192-FR02: review_gate_mode escalates this warning to a hard
+            # block. Default ``warn`` keeps the historical soft posture; ``block``
+            # refuses delivery (overridable via allow_unverified). NFR02: any
+            # config-read / resolution failure fails OPEN to the warning, never a
+            # spurious block.
+            if _review_gate_mode_is_block(complexity_class):
+                block = (
+                    f"No trw_review was run before delivery (complexity: {complexity_class}) "
+                    "and review_gate_mode=block. Review is MANDATORY for STANDARD+ tasks — "
+                    "adversarial audit catches false completions that self-review misses. "
+                    "Run trw_review() or /trw-audit before delivering, or — only for a "
+                    "documented acceptable failure — retry with allow_unverified=true and a "
+                    "structured acceptable-failure record."
+                )
+            else:
+                warning = (
+                    f"No trw_review was run before delivery (complexity: {complexity_class}). "
+                    "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
+                    "false completions that self-review misses. "
+                    "Run trw_review() or /trw-audit before delivering."
+                )
         else:
             advisory = "No trw_review was run before delivery. Consider running trw_review for quality assurance."
 
@@ -431,6 +471,13 @@ def check_delivery_gates(
     elif review_advisory:
         result["review_advisory"] = review_advisory
 
+    # PRD-CORE-192-FR04: pre-deliver REVIEW nudge — surfaced for any STANDARD+
+    # run with no review.yaml, regardless of review_gate_mode, so the prompt is
+    # prominent rather than buried in the gate warning above.
+    review_nudge = _review_nudge_for_run(run_path, reader)
+    if review_nudge:
+        result["review_nudge"] = review_nudge
+
     # Integration review gate (PRD-INFRA-027-FR06)
     int_block, int_warning = _check_integration_review_gate(run_path, reader)
     if int_block:
@@ -453,7 +500,18 @@ def check_delivery_gates(
     if untracked_warning:
         result["untracked_warning"] = untracked_warning
 
-    # Build gate and work events (uses shared events list)
+    # Build gate and work events (uses shared events list).
+    #
+    # Scope asymmetry (intentional): the build gate is SESSION-GLOBAL — it
+    # passes the FULL ``events`` list so ANY recorded passing ``trw_build_check``
+    # in this run's history satisfies it. The review-scope (R-01) and complexity
+    # drift gates are SESSION-LOCAL (they slice via
+    # ``_count_file_modified_current_session``). This is deliberate: a build
+    # check is run-global validation evidence whose validity does not expire at
+    # a session boundary, whereas review-scope/drift are about THIS session's
+    # change surface. The ``allow_unverified`` override still gates the whole
+    # cascade, so this never weakens truthfulness — it only avoids forcing a
+    # redundant re-run of a still-valid build across a session boundary.
     build_warning, premature_warning = _check_build_and_work_events(events)
     if build_warning:
         result["build_gate_warning"] = build_warning

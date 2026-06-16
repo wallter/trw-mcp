@@ -284,9 +284,7 @@ class TestFailOpen:
     def test_hook_exits_0_when_no_tool_use_id(self, tmp_path: Path) -> None:
         """No tool_use_id → write_hint_file is skipped → still exits 0."""
         _enable_cc03(tmp_path)
-        payload = json.dumps(
-            {"tool_name": "Edit", "tool_input": {"file_path": "src/module.py"}}
-        )
+        payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": "src/module.py"}})
         result = _run_hook(payload, tmp_path)
         assert result.returncode == 0
 
@@ -401,33 +399,17 @@ class TestNoShellPostToolUseHook:
 
     def test_no_posttooluse_shell_hook_file(self) -> None:
         """Confirm: no post-tool-distill-hint.sh exists in data/claude_code/hooks/."""
-        hooks_dir = (
-            Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "claude_code"
-            / "hooks"
-        )
+        hooks_dir = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "claude_code" / "hooks"
         post_hook = hooks_dir / "post-tool-distill-hint.sh"
         assert not post_hook.exists(), (
-            "Unexpected PostToolUse shell hook found. If CC-04 gains a shell hook, "
-            "add behavioral tests for it here."
+            "Unexpected PostToolUse shell hook found. If CC-04 gains a shell hook, add behavioral tests for it here."
         )
 
     def test_only_expected_hooks_in_data_dir(self) -> None:
         """data/claude_code/hooks/ contains exactly the two expected hook files."""
-        hooks_dir = (
-            Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "claude_code"
-            / "hooks"
-        )
+        hooks_dir = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "claude_code" / "hooks"
         actual_files = {f.name for f in hooks_dir.iterdir() if f.is_file()}
         expected_files = {"pre-tool-distill-hint.sh", "lib-distill-hint.sh"}
         assert actual_files == expected_files, (
-            f"Unexpected hook files: {actual_files - expected_files}. "
-            "Update this test if new hooks are added."
+            f"Unexpected hook files: {actual_files - expected_files}. Update this test if new hooks are added."
         )

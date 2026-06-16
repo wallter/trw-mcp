@@ -37,9 +37,7 @@ def _wipe_edges(trw_dir: Path) -> None:
 
 
 class TestStepKnowledgeSyncFR03:
-    def test_below_threshold_reports_not_met_fail_open(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_below_threshold_reports_not_met_fail_open(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Below threshold → knowledge_sync present with threshold_met False."""
         # Capture the real config BEFORE patching, then override the threshold.
         high_threshold_cfg = _config_with_threshold(50)
@@ -56,17 +54,13 @@ class TestStepKnowledgeSyncFR03:
         sync = cast("dict[str, object]", results["knowledge_sync"])
         assert sync.get("threshold_met") is False
 
-    def test_failure_is_fail_open_records_failed_status(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_failure_is_fail_open_records_failed_status(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A sync exception must not raise; records status='failed'."""
 
         def boom(*args: object, **kwargs: object) -> dict[str, object]:
             raise RuntimeError("sync exploded")
 
-        monkeypatch.setattr(
-            "trw_mcp.state.knowledge_topology.execute_knowledge_sync", boom
-        )
+        monkeypatch.setattr("trw_mcp.state.knowledge_topology.execute_knowledge_sync", boom)
 
         results: dict[str, object] = {}
         # Must NOT raise.
@@ -76,9 +70,7 @@ class TestStepKnowledgeSyncFR03:
         assert sync.get("status") == "failed"
         assert "sync exploded" in str(sync.get("error", ""))
 
-    def test_threshold_met_populates_knowledge_dir(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_threshold_met_populates_knowledge_dir(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Threshold met → execute_knowledge_sync runs (non-dry-run)."""
         low_threshold_cfg = _config_with_threshold(2)
         monkeypatch.setattr(
@@ -97,10 +89,68 @@ class TestStepKnowledgeSyncFR03:
         assert sync.get("status") != "failed"
 
 
+class TestStepKnowledgeSyncGraphBackfillF5:
+    """F5 suggestion 2: opportunistic time-boxed graph backfill on deliver."""
+
+    def test_deliver_backfills_ungraphed_corpus(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Entries stored without edges get graphed on deliver (singleton conn)."""
+        cfg = _config_with_threshold(2)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
+        # Store two tag-sharing entries but suppress edge creation on the store
+        # path so the corpus mirrors the historical un-graphed state.
+        monkeypatch.setattr(
+            "trw_mcp.state.memory_adapter.update_entry_graph",
+            lambda *a, **k: {"similarity_edges": 0, "tag_edges": 0, "consolidation_edges": 0},
+        )
+        store_learning(trw_dir, "L-bk-1", "alpha topic note", "x", tags=["t", "u"])
+        store_learning(trw_dir, "L-bk-2", "beta topic detail", "y", tags=["t", "u"])
+        monkeypatch.undo()
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
+        _wipe_edges(trw_dir)
+
+        results: dict[str, object] = {}
+        step_knowledge_sync(trw_dir, cast("dict", results))  # type: ignore[arg-type]
+
+        backfill = cast("dict[str, int]", results["graph_backfill"])
+        assert backfill["edges_built"] > 0
+        backend = get_backend(trw_dir)
+        conn = backend._conn
+        assert isinstance(conn, sqlite3.Connection)
+        assert int(conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]) > 0
+
+    def test_deliver_backfill_disabled_by_config(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """deliver_graph_backfill_enabled=False skips the backfill entirely."""
+        cfg = _config_with_threshold(50).model_copy(  # type: ignore[attr-defined]
+            update={"deliver_graph_backfill_enabled": False}
+        )
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
+        store_learning(trw_dir, "L-bd-1", "gamma note", "z")
+
+        results: dict[str, object] = {}
+        step_knowledge_sync(trw_dir, cast("dict", results))  # type: ignore[arg-type]
+
+        assert "graph_backfill" not in results
+
+    def test_deliver_backfill_fail_open(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A backfill exception must not fail the deliver step."""
+        cfg = _config_with_threshold(50)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
+        store_learning(trw_dir, "L-bf-x", "delta note", "z")
+
+        def boom(*args: object, **kwargs: object) -> dict[str, int]:
+            raise RuntimeError("backfill exploded")
+
+        monkeypatch.setattr("trw_mcp.state.memory_adapter.backfill_graph", boom)
+
+        results: dict[str, object] = {}
+        # Must NOT raise; knowledge_sync still recorded, graph_backfill absent.
+        step_knowledge_sync(trw_dir, cast("dict", results))  # type: ignore[arg-type]
+        assert "knowledge_sync" in results
+        assert "graph_backfill" not in results
+
+
 class TestStepGraphHealthFR04:
-    def test_empty_graph_many_memories_emits_advisory(
-        self, trw_dir: Path
-    ) -> None:
+    def test_empty_graph_many_memories_emits_advisory(self, trw_dir: Path) -> None:
         """>10 memories + 0 edges → advisory dict returned."""
         words = _distinct_words()
         for i, w in enumerate(words):

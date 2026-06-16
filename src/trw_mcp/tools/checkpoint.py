@@ -80,7 +80,7 @@ def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
 
         # PRD-FIX-085 FR01: pin-only is correct here -- auto-checkpoint
         # requires a pinned run; without one, the function is a no-op.
-        run_dir = find_active_run()  # noqa: PRD-FIX-085 — pin-only no-arg is intentional
+        run_dir = find_active_run()  # compat: legacy pin-only no-arg is intentional (PRD-FIX-085)
         if run_dir is None:
             return None
 

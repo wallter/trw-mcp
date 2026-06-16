@@ -115,6 +115,13 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
 
     base["session_count"] = entry.session_count or 0
 
+    # Bi-temporal validity (PRD-CORE-194 FR03): surface the superseded flag +
+    # closer so agents see WHY a record is down-ranked. Only emitted for a closed
+    # window — open entries are byte-identical to the pre-194 shape (back-compat).
+    if entry.invalid_from is not None:
+        base["superseded"] = True
+        base["invalidated_by"] = entry.invalidated_by
+
     return cast("LearningEntryDict", base)
 
 
@@ -189,10 +196,24 @@ def _learning_to_memory_entry(
         merged_metadata["shard_id"] = shard_id
     if metadata:
         merged_metadata.update(metadata)
-    # NFR06 observability: the routed tier is carried by the AUTHORITATIVE
-    # ``namespace`` (``user:<id>`` vs ``default``); it is NOT stamped into
-    # ``metadata`` so the user-facing metadata contract is unchanged (back-compat
-    # for callers asserting exact metadata). The store path logs the chosen tier.
+    # core185-11: stamp ``metadata["tier"]="user"`` on user-tier entries so the
+    # native store path matches the backfill-promotion path (``_promote_entry``),
+    # which already stamps it. ``tier_of_entry()`` reads this first, then falls
+    # back to the namespace. Project-tier entries are LEFT UNSTAMPED to preserve
+    # the back-compat metadata contract (callers asserting exact project-tier
+    # metadata stay green); the project tier is the default and its absence is
+    # itself the signal. NFR06: the store path also logs the chosen tier.
+    #
+    # core185-METADATA-TIER-INJECT-5: the routing decision is AUTHORITATIVE over
+    # any caller-supplied ``metadata["tier"]``. On user routing we stamp "user";
+    # on project routing we STRIP a caller-injected tier key so it cannot make
+    # ``tier_of_entry()`` mis-report "user" and divert a project entry into the
+    # user backend. This keeps the back-compat "project entries carry no tier
+    # key" contract while neutralizing the injection.
+    if tier == "user":
+        merged_metadata["tier"] = "user"
+    else:
+        merged_metadata.pop("tier", None)
 
     # Validate and attach assertions (PRD-CORE-086)
     assertion_objects: list[Assertion] = []

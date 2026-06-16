@@ -63,9 +63,22 @@ def resolve_unified_events_path(
     """
     fname = _events_filename(now)
     if run_dir is not None:
+        # Auto-create the run's meta/ directory (mirrors
+        # FileStateWriter.append_jsonl, which mkdirs the parent on write).
+        # Previously, a not-yet-created meta/ caused the event to either fall
+        # through to fallback_dir (wrong location) or, with no fallback, be
+        # silently dropped — a real loss of telemetry. The run dir is the
+        # intended destination, so ensure it exists.
         meta = run_dir / "meta"
-        if meta.exists():
+        try:
+            meta.mkdir(parents=True, exist_ok=True)
             return meta / fname
+        except OSError:  # justified: fail-open, fall back to fallback_dir if mkdir fails
+            logger.warning(
+                "unified_event_meta_mkdir_failed",
+                run_dir=str(run_dir),
+                exc_info=True,
+            )
     if fallback_dir is not None:
         return fallback_dir / fname
     return None

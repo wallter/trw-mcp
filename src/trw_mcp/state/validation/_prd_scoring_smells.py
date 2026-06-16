@@ -40,19 +40,28 @@ _SMELL_PATTERNS: tuple[tuple[str, re.Pattern[str], str, str], ...] = (
     ),
     (
         "vague_adverb",
-        re.compile(r"\b(?:quickly|efficiently|easily|appropriately|adequately|sufficiently|properly|reasonably|seamlessly)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:quickly|efficiently|easily|appropriately|adequately|sufficiently|properly|reasonably|seamlessly)\b",
+            re.IGNORECASE,
+        ),
         "warning",
         "Replace the adverb with a measurable criterion (a number, bound, or condition).",
     ),
     (
         "subjective",
-        re.compile(r"\b(?:user-friendly|intuitive|seamless|robust|flexible|scalable|lightweight|simple|fast|slow|good|nice)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:user-friendly|intuitive|seamless|robust|flexible|scalable|lightweight|simple|fast|slow|good|nice)\b",
+            re.IGNORECASE,
+        ),
         "warning",
         "Quantify the quality or state the acceptance criterion; subjective terms are not verifiable (ISO 29148 Unambiguous).",
     ),
     (
         "escape_clause",
-        re.compile(r"\b(?:if possible|where possible|as appropriate|as needed|as required|if practical(?:able)?|where feasible|to the extent practicable|if applicable)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:if possible|where possible|as appropriate|as needed|as required|if practical(?:able)?|where feasible|to the extent practicable|if applicable)\b",
+            re.IGNORECASE,
+        ),
         "warning",
         "Remove the escape clause or specify the exact triggering condition (INCOSE R8).",
     ),

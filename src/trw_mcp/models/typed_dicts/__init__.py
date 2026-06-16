@@ -75,7 +75,6 @@ from trw_mcp.models.typed_dicts._bootstrap import (
 # _build
 from trw_mcp.models.typed_dicts._build import (
     ApiFuzzResult,
-    DepAuditResult,
     MypyResultDict,
     NpmAuditResult,
     PipAuditResult,
@@ -190,6 +189,7 @@ from trw_mcp.models.typed_dicts._opencode import (
 from trw_mcp.models.typed_dicts._orchestration import (
     CheckpointEventDataDict,
     CheckpointRecordDict,
+    DeliverGateScanDict,
     DeployFrameworksVersionDataDict,
     StatusReflectionDict,
     StatusReversionLatestDict,
@@ -310,9 +310,9 @@ __all__ = [
     "CrossModelReviewResult",
     "DedupHandleResult",
     "DegradationAlertResult",
+    "DeliverGateScanDict",
     "DeliverResultDict",
     "DeliveryGatesDict",
-    "DepAuditResult",
     "DeployFrameworksVersionDataDict",
     "DimensionScoreDict",
     "EmbedHealthStatus",

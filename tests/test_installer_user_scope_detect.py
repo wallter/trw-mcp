@@ -1,11 +1,9 @@
-"""PRD-CORE-185 FR09: installer auto-detection + provisioning of the user scope.
+"""Installer user-scope detection and consent-gated provisioning.
 
-The installer auto-detects whether a machine-local user-scope is warranted by
-probing common home / XDG / agent-harness paths (``~/.claude``, ``~/.codex``,
-``~/.config/*``, ``~/.trw``, XDG base dirs). When a sensible setup exists it
-provisions the user-scope store location + seeds ``~/.trw/config.yaml`` (the
-FR04 machine layer) NON-destructively. On a bare box it provisions nothing and
-TRW stays project-only with zero config. No network call is made.
+Detection remains available for prompts and diagnostics, but provisioning the
+machine-local ``~/.trw`` tier is now consent-gated (PRD-SEC-006-FR06). The
+provisioner is non-destructive, writes only user-scope files, and performs no
+network calls.
 
 These tests load the template installer as a module and exercise the two new
 helpers directly with ``HOME`` / XDG pointed at a tmp dir.
@@ -84,7 +82,7 @@ def test_detect_user_scope_bare_box_false(installer, tmp_path: Path) -> None:  #
 
 def test_provision_creates_config_and_store_dir(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     (_home(tmp_path) / ".claude").mkdir(parents=True)
-    provisioned = installer._provision_user_scope()
+    provisioned = installer._provision_user_scope(consented=True)
     assert provisioned is True
 
     cfg = _home(tmp_path) / ".trw" / "config.yaml"
@@ -103,7 +101,7 @@ def test_provision_non_destructive_preserves_existing_keys(  # type: ignore[no-u
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text("user_tier_enabled: false\nexisting_key: keepme\n", encoding="utf-8")
 
-    installer._provision_user_scope()
+    installer._provision_user_scope(consented=True)
 
     text = cfg.read_text(encoding="utf-8")
     # Existing keys are NOT clobbered.
@@ -113,9 +111,10 @@ def test_provision_non_destructive_preserves_existing_keys(  # type: ignore[no-u
     assert text.count("user_tier_enabled:") == 1
 
 
-def test_provision_bare_box_is_noop(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    """No harness markers -> provision nothing (project-only, zero config)."""
-    provisioned = installer._provision_user_scope()
+def test_provision_without_consent_is_noop(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """No consent -> provision nothing (project-only, zero config)."""
+    (_home(tmp_path) / ".claude").mkdir(parents=True)
+    provisioned = installer._provision_user_scope(consented=False)
     assert provisioned is False
     assert not (_home(tmp_path) / ".trw" / "config.yaml").exists()
     assert not (_home(tmp_path) / ".trw" / "memory").exists()
@@ -128,7 +127,7 @@ def test_provision_does_not_touch_project_data(installer, tmp_path: Path) -> Non
     sentinel = project / ".trw" / "config.yaml"
     sentinel.write_text("installation_id: myproj\n", encoding="utf-8")
 
-    installer._provision_user_scope()
+    installer._provision_user_scope(consented=True)
 
     # The project config is untouched.
     assert sentinel.read_text(encoding="utf-8") == "installation_id: myproj\n"

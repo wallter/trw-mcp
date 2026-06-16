@@ -105,9 +105,7 @@ class TestCtxPropagation:
         result = resolve_client_profile(ctx=ctx)
         assert result == "aider"
 
-    def test_ctx_none_client_params_falls_back_to_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_ctx_none_client_params_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_ENV_VAR, "gemini")
         ctx = _make_ctx_null_client_params()
         result = resolve_client_profile(ctx=ctx)
@@ -198,9 +196,7 @@ class TestCtxToTierIntegration:
         client = resolve_client_profile(ctx=ctx)
         assert resolve_tier_for_client(client) == "T1"
 
-    def test_ctx_runtime_error_env_fallback_resolves_tier(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_ctx_runtime_error_env_fallback_resolves_tier(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._client_detection import resolve_tier_for_client
 
         monkeypatch.setenv(_ENV_VAR, "opencode")

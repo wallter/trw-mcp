@@ -44,6 +44,14 @@ WHEEL_SHA256 = "{{WHEEL_SHA256}}"
 MEMORY_WHEEL_SHA256 = "{{MEMORY_WHEEL_SHA256}}"
 MIN_PYTHON_VERSION = (3, 10)
 DOCS_BASE = "https://trwframework.com/docs"
+# PRD-SEC-004-FR08 (telemetry-privacy-8): the consent prompt's "learn more"
+# link MUST resolve. The marketing privacy policy lives at the ROOT route
+# https://trwframework.com/privacy (NOT under /docs) and accurately describes
+# the pseudonymous telemetry + separate learning-sharing opt-ins. The prior
+# ``/docs/integration#telemetry`` anchor 404s (no such route).
+_PRIVACY_DOC_URL = "https://trwframework.com/privacy"
+# PRD-SEC-006-FR05: BSL-1.1 source-available license notice surfaced in-flow.
+_BSL_LICENSE_URL = "https://trwframework.com/license"
 # Device-auth (RFC 8628) must hit the BACKEND API host, not the marketing /
 # frontend host. https://trwframework.com is the Amplify-hosted Next.js app; it
 # has no /v1 routes and no rewrite to the backend, so device-code requests there
@@ -91,6 +99,7 @@ _SUPPORTED_IDES = [
     "copilot",
     "gemini",
     "aider",
+    "antigravity-cli",
 ]
 
 # Legacy identifier migrations — old names that prior configs may still hold.
@@ -132,6 +141,10 @@ _IDE_META: dict[str, dict[str, str]] = {
     "aider": {
         "label": "Aider",
         "summary": "Minimal instruction-first profile for terminal workflows.",
+    },
+    "antigravity-cli": {
+        "label": "Antigravity CLI",
+        "summary": "Antigravity (agy) native profile — ANTIGRAVITY.md, MCP config, and subagents.",
     },
 }
 
@@ -232,6 +245,14 @@ class UI:
     def doc_link(self, anchor: str) -> None:
         """Show a docs link hint."""
         self.hint(f"Learn more: {DOCS_BASE}/{anchor}")
+
+    def doc_link_url(self, url: str) -> None:
+        """Show a docs link hint pointing at an absolute URL.
+
+        Used for links outside the ``/docs`` tree (e.g. the root
+        ``/privacy`` route) that ``doc_link`` cannot express.
+        """
+        self.hint(f"Learn more: {url}")
 
     # ── Spinner ──────────────────────────────────────────────────────
 
@@ -561,6 +582,49 @@ def _parse_simple_yaml(text: str) -> dict[str, str]:
     return result
 
 
+def _read_credentials_key(credentials_path: Path) -> str:
+    """Return the ``platform_api_key`` in *credentials_path*, or ``""``.
+
+    Self-contained line scan (no pyyaml, no trw_mcp import) mirroring
+    ``models/config/_credentials.py::read_key_from_file`` — the installer
+    template ships standalone, so it cannot import the runtime package.
+    """
+    try:
+        text = credentials_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped.startswith("platform_api_key:"):
+            continue
+        value = stripped.partition(":")[2].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if value:
+            return value
+    return ""
+
+
+def _resolve_prior_api_key(target_dir: Path, flat: dict[str, str]) -> str:
+    """Resolve the platform API key by SEC-005 precedence (highest wins).
+
+    Precedence (PRD-SEC-005-FR03): ``TRW_PLATFORM_API_KEY`` env >
+    ``.trw/credentials.yaml`` > ``.trw/config.yaml`` (deprecated fallback).
+
+    Before SEC-005 the installer read config.yaml ONLY, so prior-key detection
+    and ``--with-proprietary`` auto-derivation silently broke on migrated
+    installs (the key now lives in the ignored credentials.yaml). *flat* is the
+    already-parsed config.yaml mapping so config.yaml is not re-read.
+    """
+    env_key = os.environ.get("TRW_PLATFORM_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    creds_key = _read_credentials_key(target_dir / ".trw" / "credentials.yaml")
+    if creds_key:
+        return creds_key
+    return flat.get("platform_api_key", "").strip()
+
+
 def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, object]:
     """Load prior installation config from .trw/config.yaml if it exists.
 
@@ -581,10 +645,21 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
         flat = _parse_simple_yaml(raw_text)
         if "installation_id" in flat:
             prior["project_name"] = flat["installation_id"]
-        if "platform_api_key" in flat:
-            prior["api_key"] = flat["platform_api_key"]
+        # PRD-SEC-005-FR03: resolve the credential by precedence
+        # (env > credentials.yaml > config.yaml). Reading config.yaml ONLY
+        # broke prior-key detection + --with-proprietary auto-derive on
+        # migrated installs where the key moved to the ignored credentials.yaml.
+        resolved_api_key = _resolve_prior_api_key(target_dir, flat)
+        if resolved_api_key:
+            prior["api_key"] = resolved_api_key
         if "platform_telemetry_enabled" in flat:
             prior["telemetry"] = flat["platform_telemetry_enabled"].lower() == "true"
+        if "platform_telemetry_enabled" in flat:
+            # FR07: also surface platform_telemetry_enabled under its canonical
+            # config key so reinstall logic can read the prior opt-out directly.
+            prior["platform_telemetry_enabled"] = flat["platform_telemetry_enabled"].lower() == "true"
+        if "learning_sharing_enabled" in flat:
+            prior["learning_sharing_enabled"] = flat["learning_sharing_enabled"].lower() == "true"
         if "embeddings_enabled" in flat:
             prior["embeddings"] = flat["embeddings_enabled"].lower() == "true"
         if "sqlite_vec_enabled" in flat:
@@ -918,9 +993,24 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
         ui.step_warn(f"Installed {label} with --user (PEP 668 managed environment)")
         return True
 
-    if _run_quiet(base + ["--break-system-packages"]):
-        ui.step_warn(f"Installed {label} with --break-system-packages")
-        return True
+    # PRD-SEC-006-FR03: --break-system-packages mutates a system Python's
+    # site-packages and can corrupt OS-managed packages. It is NEVER applied
+    # silently — only when the operator opted in via --allow-system-python (or
+    # an interactive confirmation, resolved into _ALLOW_SYSTEM_PYTHON). When not
+    # allowed, fail with an actionable recommendation (venv / pipx).
+    if _allow_system_python(ui):
+        if _run_quiet(base + ["--break-system-packages"]):
+            ui.step_warn(f"Installed {label} with --break-system-packages (--allow-system-python)")
+            return True
+    else:
+        ui.step_fail(
+            f"Refusing to install {label} with --break-system-packages on a "
+            "PEP 668-managed system Python."
+        )
+        ui.step_warn("Use an isolated environment instead, e.g.:")
+        ui.step_warn("  python3 -m venv .venv && . .venv/bin/activate   (then re-run)")
+        ui.step_warn("  pipx install trw-mcp                            (CLI-only)")
+        ui.step_warn("Or pass --allow-system-python to override (not recommended).")
 
     return False
 
@@ -950,6 +1040,46 @@ def validate_pip_target(target_dir: str) -> str:
 #   TRW_UV_BIN          = /path/to/uv       (else found on PATH)
 
 _INSTALL_BACKEND: tuple[str, list[str]] | None = None
+
+# PRD-SEC-006-FR03: tri-state consent for --break-system-packages.
+#   None  -> not yet resolved; resolve lazily (interactive prompt or default-off)
+#   True  -> operator opted in (--allow-system-python / TRW_ALLOW_SYSTEM_PYTHON
+#            / interactive yes)
+#   False -> explicitly declined
+_ALLOW_SYSTEM_PYTHON: bool | None = None
+
+
+def set_allow_system_python(allowed: bool | None) -> None:
+    """Set the resolved --break-system-packages consent (called from main())."""
+    global _ALLOW_SYSTEM_PYTHON
+    _ALLOW_SYSTEM_PYTHON = allowed
+
+
+def _allow_system_python(ui: UI) -> bool:
+    """Return whether --break-system-packages may be applied (FR03).
+
+    Consent is explicit and never silent. Resolution order:
+      1. A previously-resolved value (from the --allow-system-python flag or
+         TRW_ALLOW_SYSTEM_PYTHON env, set via set_allow_system_python).
+      2. An interactive confirmation prompt (default NO).
+      3. Otherwise (non-interactive, no flag): DENY.
+    """
+    global _ALLOW_SYSTEM_PYTHON
+    if _ALLOW_SYSTEM_PYTHON is not None:
+        return _ALLOW_SYSTEM_PYTHON
+    if ui.interactive:
+        ui.step_warn(
+            "This Python is externally managed (PEP 668). Installing into it "
+            "with --break-system-packages can corrupt OS packages."
+        )
+        decision = prompt_yes_no(
+            "Allow --break-system-packages on this system Python?", default="n"
+        )
+        _ALLOW_SYSTEM_PYTHON = decision
+        return decision
+    # Non-interactive without explicit opt-in: deny.
+    _ALLOW_SYSTEM_PYTHON = False
+    return False
 
 
 def _python_has_pip(python: str) -> bool:
@@ -1122,6 +1252,33 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
 # ── Config file update ───────────────────────────────────────────────
 
 
+def write_platform_credentials(config_path: Path, api_key: str) -> Path | None:
+    """Write *api_key* to ``.trw/credentials.yaml`` (mode 0600).
+
+    PRD-SEC-005-FR01: the platform bearer credential is stored in an ignored,
+    owner-only file sibling to ``config.yaml`` — never in the git-tracked
+    config. The chmod is best-effort (Windows has no POSIX mode bits).
+
+    Returns the credentials path on a successful write, or ``None`` when there
+    is no key to write.
+    """
+    if not api_key:
+        return None
+    credentials_path = config_path.parent / "credentials.yaml"
+    credentials_path.parent.mkdir(parents=True, exist_ok=True)
+    credentials_path.write_text(
+        "# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\n"
+        f'platform_api_key: "{api_key}"\n',
+        encoding="utf-8",
+    )
+    try:
+        os.chmod(credentials_path, 0o600)
+    except OSError:
+        # Windows does not honor POSIX mode bits; proceed (NFR03).
+        pass
+    return credentials_path
+
+
 def update_config(
     config_path: Path,
     project_name: str,
@@ -1170,7 +1327,11 @@ def update_config(
             updated.add("installation_id")
             continue
         if s.startswith("platform_api_key:"):
-            out.append(f'platform_api_key: "{api_key}"\n' if api_key else line)
+            # PRD-SEC-005-FR01: the credential no longer lives in the
+            # git-tracked config.yaml. Blank any existing field (a legacy
+            # tracked key is migrated to credentials.yaml by the caller) and
+            # never write the secret here for fresh installs.
+            out.append('platform_api_key: ""\n')
             updated.add("platform_api_key")
             continue
         if s.startswith("platform_telemetry_enabled:"):
@@ -1219,8 +1380,8 @@ def update_config(
     # Append missing keys
     if "installation_id" not in updated:
         out.append(f"installation_id: {project_name}\n")
-    if api_key and "platform_api_key" not in updated:
-        out.append(f'platform_api_key: "{api_key}"\n')
+    # PRD-SEC-005-FR01: never append the secret into the tracked config.yaml.
+    # The key is persisted to .trw/credentials.yaml (0600) by the caller.
     if telemetry_enabled and "platform_telemetry_enabled" not in updated:
         out.append("platform_telemetry_enabled: true\n")
     if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
@@ -1442,8 +1603,20 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
         if version_path.is_file():
             existing = _parse_simple_yaml(version_path.read_text(encoding="utf-8"))
         version_path.parent.mkdir(parents=True, exist_ok=True)
-        framework_version = existing.get("framework_version", "v25_TRW")
-        aaref_version = existing.get("aaref_version", "v2.0.0")
+        # Fallbacks derive from the DEPLOYED framework bodies when possible —
+        # a hardcoded fallback inevitably goes stale (it shipped "v25_TRW" /
+        # "v2.0.0" long after v26/v3.x were current).
+        framework_version = existing.get("framework_version") or _deployed_doc_version(
+            target_dir / ".trw" / "frameworks" / "FRAMEWORK.md",
+            r"(v\d+_TRW)",
+            "v26_TRW",
+        )
+        aaref_version = existing.get("aaref_version") or _deployed_doc_version(
+            target_dir / ".trw" / "frameworks" / "AARE-F-FRAMEWORK.md",
+            r"\*\*Version\*\*:\s*(\d+\.\d+\.\d+)",
+            "v3.1.0",
+            prefix="v",
+        )
         version_path.write_text(
             "\n".join(
                 [
@@ -1460,6 +1633,19 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
         pass  # Best-effort; the sentinel remains the runtime restart signal.
 
 
+def _deployed_doc_version(doc_path: Path, pattern: str, fallback: str, prefix: str = "") -> str:
+    """Extract a version label from a deployed framework doc header (best-effort)."""
+    try:
+        if doc_path.is_file():
+            head = doc_path.read_text(encoding="utf-8", errors="replace")[:2000]
+            m = re.search(pattern, head)
+            if m:
+                return f"{prefix}{m.group(1)}"
+    except OSError:
+        pass
+    return fallback
+
+
 def _iso_now() -> str:
     """Return current UTC timestamp in ISO 8601 format."""
     from datetime import datetime, timezone
@@ -1467,12 +1653,154 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _resolve_framework_version() -> str:
+    """Resolve the installed trw-mcp version, falling back to the build stamp.
+
+    Prefers the freshly-installed package metadata; ``TRW_VERSION`` is the
+    build-time placeholder substituted into the generated installer.
+    """
+    try:
+        return importlib_metadata.version("trw-mcp")
+    except Exception:  # justified: metadata lookup is best-effort, never block emit
+        return TRW_VERSION
+
+
+def _anonymize_installation_id(raw_id: str) -> str:
+    """Double SHA-256 hash for non-reversible anonymization (PRD-SEC-004-FR08).
+
+    Self-contained replica of ``trw_memory.security.pii.anonymize_installation_id``
+    / ``trw_mcp.telemetry.anonymizer.anonymize_installation_id`` — two rounds of
+    SHA-256, first 16 hex chars of the second digest. The installer ships without
+    importing trw_mcp/trw_memory (it RUNS before they are installed), so the
+    logic is duplicated here. Keep byte-identical to the library helper so the
+    installer's install_complete event hashes to the same value the running MCP
+    server later reports for the same project.
+    """
+    first = hashlib.sha256(raw_id.encode()).hexdigest()
+    return hashlib.sha256(first.encode()).hexdigest()[:16]
+
+
+def _build_install_complete_payload(
+    *,
+    installation_id: str,
+    profile: str,
+) -> dict[str, str]:
+    """Build the PRD-INFRA-142 FR01 install_complete event payload.
+
+    Field contract (taxonomy v1, §0 of the PRD): installation_id, os_platform,
+    python_version, framework_version, profile, install_outcome.
+
+    PRD-SEC-004-FR08: ``installation_id`` is HASHED (double-SHA256, truncated)
+    before egress so the raw project-directory name never leaves the machine.
+    The remaining fields are host platform facts (os, python, framework, profile)
+    — no PII. This matches the consent copy: pseudonymous, enumerated fields.
+    """
+    import platform as _platform
+
+    return {
+        "event_type": "install_complete",
+        "installation_id": _anonymize_installation_id(installation_id),
+        "os_platform": _platform.system() or "unknown",
+        "python_version": _platform.python_version(),
+        "framework_version": _resolve_framework_version(),
+        "profile": profile,
+        "install_outcome": "success",
+    }
+
+
+def _post_telemetry_event(
+    api_base: str,
+    api_key: str,
+    event: dict[str, str],
+    *,
+    timeout: float = 5.0,
+) -> bool:
+    """POST a single telemetry event to ``{api_base}/v1/telemetry``.
+
+    Mirrors the trw-mcp telemetry sender contract: Bearer-auth, JSON body of
+    ``{"events": [event]}``. Returns True on a 2xx. Fire-and-forget: any
+    network error returns False rather than raising (PRD-INFRA-142 NFR02).
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps({"events": [event]}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{api_base.rstrip('/')}/v1/telemetry",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — trusted backend
+            return bool(200 <= resp.status < 300)
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _emit_install_complete_event(
+    target_dir: Path,
+    *,
+    api_base: str = API_BASE,
+    post_fn: "Any | None" = None,
+) -> bool:
+    """Emit the PRD-INFRA-142 FR01 ``install_complete`` telemetry event.
+
+    Reads the just-written ``.trw/config.yaml`` to resolve the installation
+    identity, API key, and telemetry opt-out. The emit is gated (NFR01):
+    it fires ONLY when an API key is configured AND telemetry is enabled. On
+    any failure — missing config, opt-out, or network error — it returns False
+    and never raises, so the installer always exits cleanly (NFR02).
+
+    ``post_fn`` is an injection seam for tests: a callable
+    ``(api_base, api_key, event) -> bool``. Defaults to the real HTTP poster.
+    """
+    try:
+        prior = _load_prior_config(target_dir)
+        api_key = str(prior.get("api_key") or "").strip()
+        telemetry_enabled = bool(prior.get("telemetry"))
+        installation_id = str(prior.get("project_name") or "").strip()
+        # NFR01 opt-out gate: no key or telemetry disabled → suppress silently.
+        if not api_key or not telemetry_enabled or not installation_id:
+            return False
+
+        platform_urls = prior.get("platform_urls")
+        resolved_base = api_base
+        if isinstance(platform_urls, list) and platform_urls:
+            resolved_base = str(platform_urls[0])
+
+        prior_targets = prior.get("target_platforms")
+        profile = "unknown"
+        if isinstance(prior_targets, list) and prior_targets:
+            profile = str(prior_targets[0])
+
+        event = _build_install_complete_payload(
+            installation_id=installation_id,
+            profile=profile,
+        )
+        poster = post_fn if post_fn is not None else _post_telemetry_event
+        return bool(poster(resolved_base, api_key, event))
+    except Exception:  # justified: fire-and-forget, install must not fail on emit
+        return False
+
+
 # ── Banners ──────────────────────────────────────────────────────────
 
 
 def show_banner(ui: UI) -> None:
-    """Display the installer header banner."""
+    """Display the installer header banner.
+
+    PRD-SEC-006-FR05: a BSL-1.1 source-available license notice line is printed
+    in the install flow on every path (interactive, script, and quiet).
+    """
+    license_line = f"trw-mcp + trw-memory are source-available under BSL-1.1 \u2014 {_BSL_LICENSE_URL}"
     if ui.quiet:
+        # Even in quiet mode the license notice MUST appear (FR05).
+        print(f"{DIM}{license_line}{NC}")
         return
     if ui.interactive:
         print()
@@ -1484,9 +1812,23 @@ def show_banner(ui: UI) -> None:
             ],
             color=CYAN,
         )
+        print(f"  {DIM}{license_line}{NC}")
     else:
         print(f"{BOLD}TRW Framework Installer v{TRW_VERSION}{NC}")
+        print(f"{DIM}{license_line}{NC}")
         print()
+
+
+def _telemetry_state_line(telemetry_enabled: bool, learning_sharing_enabled: bool) -> str:
+    """Render the resolved consent state for the success banner (FR04).
+
+    Both the pseudonymous usage-telemetry opt-in and the separate
+    learning-content sharing opt-in are echoed so the operator can verify
+    consent was honored on every install path.
+    """
+    usage = "enabled" if telemetry_enabled else "disabled"
+    sharing = "enabled" if learning_sharing_enabled else "disabled"
+    return f"Telemetry: {usage} · Learning sharing: {sharing}"
 
 
 def show_success_banner(
@@ -1496,14 +1838,23 @@ def show_success_banner(
     is_reinstall: bool = False,
     backend_results: list[dict[str, object]] | None = None,
     selected_targets: list[str] | None = None,
+    *,
+    telemetry_enabled: bool = False,
+    learning_sharing_enabled: bool = False,
 ) -> None:
     """Display the post-install success banner with summary.
 
     Content adapts to fresh vs. reinstall scenarios, shows real backend
     connectivity, and includes a random tip to teach users capabilities.
+
+    PRD-SEC-004-FR04: the resolved telemetry + learning-sharing consent state is
+    printed on every install path (interactive, script, quiet).
     """
+    state_line = _telemetry_state_line(telemetry_enabled, learning_sharing_enabled)
     if ui.quiet:
-        ui.info(f"TRW Framework v{TRW_VERSION} installed.")
+        # FR04: the consent state MUST print on every path — use print() directly
+        # because UI.info() is suppressed under --quiet.
+        print(f"{GREEN}[TRW]{NC} TRW Framework v{TRW_VERSION} installed. {state_line}.")
         return
 
     if ui.interactive:
@@ -1532,7 +1883,7 @@ def show_success_banner(
         elif platform_status == "connected":
             print(f"  {DIM}\u2022 API key configured (backend not verified){NC}")
         elif platform_status == "telemetry":
-            print(f"  {BLUE}\u2022{NC} Anonymous telemetry enabled")
+            print(f"  {BLUE}\u2022{NC} Pseudonymous usage telemetry enabled")
         else:
             print(f"  {DIM}\u2022 Offline mode (re-run installer to connect){NC}")
 
@@ -1541,6 +1892,8 @@ def show_success_banner(
         if features:
             feat_str = ", ".join(features)
             print(f"  {DIM}Extras: {feat_str}{NC}")
+        # PRD-SEC-004-FR04: echo the resolved consent state.
+        print(f"  {DIM}{state_line}{NC}")
         print()
 
         # Dynamic next-steps based on install type
@@ -1565,7 +1918,7 @@ def show_success_banner(
 
         print()
         print(f"  {DIM}Upgrade anytime: python3 install-trw.py --upgrade{NC}")
-        print(f"  {DIM}Full docs: {DOCS_BASE}/integration{NC}")
+        print(f"  {DIM}Full docs: {DOCS_BASE}/quickstart{NC}")
     else:
         print()
         print(f"{GREEN}{BOLD}TRW Framework v{TRW_VERSION} \u2014 ready{NC}")
@@ -1583,7 +1936,9 @@ def show_success_banner(
                 else "Next: open your project in your selected client — TRW tools load automatically."
             )
             ui.info(next_step)
-        ui.info(f"Docs: {DOCS_BASE}/integration")
+        # PRD-SEC-004-FR04: echo the resolved consent state.
+        ui.info(state_line)
+        ui.info(f"Docs: {DOCS_BASE}/quickstart")
 
 
 # ── IDE detection and selection ──────────────────────────────────────
@@ -1687,16 +2042,52 @@ def _detect_user_scope() -> bool:
     return False
 
 
-def _provision_user_scope() -> bool:
-    """Non-destructively seed the user-scope store + ``~/.trw/config.yaml`` (FR09).
+def _resolve_user_tier_consent(
+    ui: UI,
+    *,
+    interactive: bool,
+    opt_user_tier: bool | None,
+) -> bool:
+    """Resolve whether to provision the ~/.trw user-scope tier (FR06).
 
-    Only acts when :func:`_detect_user_scope` is truthy. Ensures the machine-
-    local memory dir parent exists and that the machine-defaults config carries
+    Default is PROJECT-ONLY. ``~/.trw`` is provisioned only with explicit
+    consent:
+      * ``--user-tier`` / ``--no-user-tier`` (or ``TRW_USER_TIER`` env) wins.
+      * Interactive: a yes/no prompt, defaulting to NO.
+      * Non-interactive without a flag: NO (project-only).
+
+    PRD-SEC-006-FR06 supersedes the prior auto-detect behavior (PRD-CORE-185
+    FR09), which provisioned ``~/.trw`` whenever home markers were present —
+    that violated the consent requirement.
+    """
+    if opt_user_tier is None:
+        env_val = os.environ.get("TRW_USER_TIER", "").strip().lower()
+        if env_val in {"1", "true", "yes"}:
+            opt_user_tier = True
+        elif env_val in {"0", "false", "no"}:
+            opt_user_tier = False
+    if opt_user_tier is True:
+        return True
+    if opt_user_tier is False:
+        return False
+    if interactive:
+        ui.hint("The user-scope tier (~/.trw) shares memory across all your projects on this machine.")
+        return prompt_yes_no("Provision the machine-local ~/.trw user-scope tier?", default="n")
+    # Non-interactive default: project-only.
+    return False
+
+
+def _provision_user_scope(consented: bool) -> bool:
+    """Non-destructively seed the user-scope store + ``~/.trw/config.yaml`` (FR06).
+
+    PRD-SEC-006-FR06: provisions ONLY when *consented* is True (resolved by
+    :func:`_resolve_user_tier_consent`). Ensures the machine-local memory dir
+    parent exists and that the machine-defaults config carries
     ``user_tier_enabled``. NEVER clobbers an existing ``~/.trw/config.yaml`` key
     (merge/skip only) and NEVER touches project data. Returns True if a user
-    scope was provisioned, False on a bare box (no-op). No network.
+    scope was provisioned, False otherwise (no-op). No network.
     """
-    if not _detect_user_scope():
+    if not consented:
         return False
 
     home = Path.home()
@@ -1881,7 +2272,7 @@ def phase_prompt_features(
             print()
             ui.hint("AI extras enable semantic search over your learnings")
             ui.hint("and LLM-powered analysis of patterns across sessions.")
-            ui.doc_link("integration#ai-extras")
+            ui.doc_link("concepts")
             install_ai = prompt_yes_no("Install AI/LLM features?")
 
     if install_sqlitevec is None:
@@ -1892,7 +2283,7 @@ def phase_prompt_features(
             print()
             ui.hint("sqlite-vec adds vector similarity search for faster,")
             ui.hint("more relevant recall of past learnings and discoveries.")
-            ui.doc_link("integration#vector-search")
+            ui.doc_link("concepts")
             install_sqlitevec = prompt_yes_no("Install sqlite-vec for vector search?")
 
     return bool(install_ai), bool(install_sqlitevec)
@@ -1906,6 +2297,7 @@ def phase_install_packages(
     memory_whl: Path,
     mcp_whl: Path,
     pip_target: str = "",
+    offline: bool = False,
 ) -> None:
     """Phase 3: Install base packages (order: memory -> mcp).
 
@@ -1914,9 +2306,17 @@ def phase_install_packages(
     site-packages.  A PYTHONPATH wrapper is generated under
     ``<pip-target>/bin/trw-mcp`` so the CLI finds the packages at runtime
     without writing to overlay-backed system paths.
+
+    PRD-SEC-006-FR09: when *offline* is True, pip is invoked with ``--no-index``
+    so it NEVER reaches PyPI — it resolves trw-mcp + trw-memory from the embedded
+    wheels (via ``--find-links``) and external transitive deps from already-
+    installed packages or a ``--find-links`` directory. Combine with proxy env
+    vars (HTTPS_PROXY/HTTP_PROXY/NO_PROXY) for air-gapped hosts.
     """
     ui.step_header(step, total, "Installing packages")
     validated_target = validate_pip_target(pip_target)
+    if offline:
+        ui.step_warn("Offline mode: installing from embedded wheels only (--no-index)")
 
     # 2026-04-21 L-8heG v2: install BOTH bundled wheels in one pip invocation
     # with --find-links pointing at the wheel directory. This lets pip's
@@ -1936,6 +2336,7 @@ def phase_install_packages(
         [str(memory_whl), str(mcp_whl)],
         target_dir=validated_target,
         find_links=str(wheel_dir),
+        no_index=offline,
     )
 
     ui.start_spinner(f"Installing trw-memory + trw-mcp v{TRW_VERSION}...")
@@ -2189,10 +2590,10 @@ def phase_install_extras(
     return features
 
 
-# \u2500\u2500 Proprietary package install (PRD-INFRA-126; PRD-INFRA-128 adds trw-harness) \u2500\u2500
+# \u2500\u2500 Proprietary package install (PRD-INFRA-126; PRD-INFRA-128 adds the meta-harness, renamed trw-harness -> trw-metaharness 2026-06-10) \u2500\u2500
 PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
     "trw-distill",
-    "trw-harness",
+    "trw-metaharness",
     "trw-loop",
     "trw-swarm",
 )
@@ -2204,7 +2605,7 @@ PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
 # ModuleNotFoundError on a clean machine (or silently imports a different
 # copy of the module if one happens to be on the default sys.path). We
 # therefore re-write each as a PYTHONPATH wrapper mirroring the trw-mcp
-# wrapper generated in phase_install_packages. trw-harness ships no console
+# wrapper generated in phase_install_packages. trw-metaharness ships no console
 # script, so it is intentionally absent.
 PROPRIETARY_CONSOLE_SCRIPTS: tuple[tuple[str, str, str], ...] = (
     ("trw-distill", "trw-distill", "trw_distill.cli"),
@@ -2530,7 +2931,7 @@ def phase_install_proprietary(
     failed_packages: list[str] = []
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
     # Two-pass: download every wheel first so cross-package deps (e.g.
-    # trw-distill depending on trw-harness) resolve via pip --find-links
+    # trw-distill depending on trw-metaharness) resolve via pip --find-links
     # regardless of which order the packages appear in the tuple.
     downloaded: list[tuple[str, Path, str, str]] = []  # (package, wheel_path, resolved_version, sha256)
     try:
@@ -2678,6 +3079,7 @@ def phase_project_setup(
     interactive: bool = False,
     ide: list[str] | None = None,
     pip_target: str = "",
+    provision_user_tier: bool = False,
 ) -> list[str]:
     """Set up or update the project scaffolding."""
     ui.step_header(step, total, "Setting up project")
@@ -2758,18 +3160,65 @@ def phase_project_setup(
         telemetry_enabled,
         target_platforms=resolved_targets,
     )
+    # PRD-SEC-005-FR01: persist the bearer credential to the ignored, 0600
+    # credentials.yaml — config.yaml never receives the secret.
+    write_platform_credentials(config_path, api_key)
 
-    # PRD-CORE-185 FR09: auto-detect whether a machine-local user-scope tier is
-    # warranted (home/XDG/harness markers) and, if so, provision the user-scope
-    # store + ``~/.trw/config.yaml`` machine layer NON-destructively. On a bare
-    # box this is a no-op and TRW stays project-only with zero config.
+    # PRD-SEC-006-FR06: provision the machine-local user-scope tier
+    # (~/.trw/config.yaml + memory dir) ONLY with explicit consent
+    # (``provision_user_tier``). Default install is project-only. This replaces
+    # the prior PRD-CORE-185 FR09 auto-detect, which provisioned ~/.trw whenever
+    # home markers were present (a consent violation).
     try:
-        if _provision_user_scope():
+        if _provision_user_scope(provision_user_tier):
             ui.step_ok("User-space memory tier provisioned (~/.trw machine layer)")
     except OSError:  # justified: fail-open — provisioning must never break install
         ui.step_warn("Skipped user-scope provisioning (filesystem error)")
 
     return resolved_targets
+
+
+def _resolve_interactive_telemetry(
+    ui: UI,
+    *,
+    opt_telemetry: bool | None,
+    prior_config: dict[str, object],
+) -> bool:
+    """Resolve the telemetry opt-in for an interactive install (FR02/FR07).
+
+    Precedence (highest first):
+      1. An explicit ``--telemetry`` / ``--no-telemetry`` flag forwarded through
+         install.sh — honored verbatim, no prompt (FR02/FR03).
+      2. A prior ``platform_telemetry_enabled`` recorded in config — used as the
+         consent-prompt DEFAULT so a reinstall never silently re-enables a prior
+         opt-out (FR07).
+      3. Otherwise, an explicit yes/no consent prompt that defaults to OFF.
+
+    The presence of an API key NEVER force-enables telemetry: usage telemetry is
+    consented independently of platform connection (FR02).
+    """
+    if opt_telemetry is True:
+        ui.step_ok("Telemetry enabled (--telemetry)")
+        return True
+    if opt_telemetry is False:
+        ui.step_ok("Telemetry disabled (--no-telemetry)")
+        return False
+
+    prior_default = "n"
+    if "telemetry" in prior_config:
+        prior_default = "y" if bool(prior_config["telemetry"]) else "n"
+
+    print()
+    ui.hint("Pseudonymous usage telemetry helps us improve TRW for everyone.")
+    ui.hint("Only tool-usage counts are shared — never your code or learnings.")
+    ui.doc_link_url(_PRIVACY_DOC_URL)
+    if prior_default == "n" and "telemetry" in prior_config:
+        ui.hint("Your prior choice was OFF — leaving it off unless you opt in.")
+    telemetry_enabled = prompt_yes_no(
+        "Enable pseudonymous usage telemetry?", default=prior_default
+    )
+    ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
+    return telemetry_enabled
 
 
 def phase_configure(
@@ -2813,10 +3262,8 @@ def phase_configure(
         if prior_config.get("api_key"):
             ui.step_ok("API key: configured (from prior install)")
             api_key = str(prior_config["api_key"])
-            telemetry_enabled = True
         elif skip_auth and opt_api_key and validate_api_key(opt_api_key):
             api_key = opt_api_key
-            telemetry_enabled = True
             ui.step_ok("API key: accepted (from bootstrap)")
         elif skip_auth:
             ui.step_ok("Auth skipped (--skip-auth)")
@@ -2825,21 +3272,17 @@ def phase_configure(
             print()
             ui.hint("Connect to trwframework.com to sync learnings across")
             ui.hint("machines, view analytics, and collaborate with your team.")
-            ui.doc_link("integration#platform-connection")
+            ui.doc_link_url(_PRIVACY_DOC_URL)
             api_key = _prompt_api_key(ui)
 
-            if api_key:
-                telemetry_enabled = True
-            elif "telemetry" in prior_config:
-                telemetry_enabled = bool(prior_config["telemetry"])
-                ui.step_ok(f"Telemetry: {'enabled' if telemetry_enabled else 'disabled'} (from prior install)")
-            else:
-                print()
-                ui.hint("Anonymous telemetry helps us improve TRW for everyone.")
-                ui.hint("Only tool usage counts are shared — no code or learnings.")
-                ui.doc_link("integration#telemetry")
-                telemetry_enabled = prompt_yes_no("Enable anonymous usage telemetry?")
-                ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
+        # PRD-SEC-004-FR02: telemetry consent is ALWAYS explicit. A configured
+        # API key (whether from prior install, bootstrap, or fresh device auth)
+        # must NEVER force-enable telemetry — the consent prompt is reachable on
+        # every interactive path. PRD-SEC-004-FR07: a prior opt-out is the
+        # default and is never silently re-enabled.
+        telemetry_enabled = _resolve_interactive_telemetry(
+            ui, opt_telemetry=opt_telemetry, prior_config=prior_config
+        )
     else:
         # Script mode: use flags
         project_name = (
@@ -2850,19 +3293,27 @@ def phase_configure(
         # PRD-FIX-067-FR02: Check prior_config before opt_api_key
         if prior_config.get("api_key"):
             api_key = str(prior_config["api_key"])
-            telemetry_enabled = True
             ui.step_ok("API key: configured (from prior install)")
         elif opt_api_key:
             if validate_api_key(opt_api_key):
                 api_key = opt_api_key
-                telemetry_enabled = True
             else:
                 ui.warn("Invalid API key format — ignoring --api-key")
-        if not api_key and opt_telemetry is True:
+        # PRD-SEC-004-FR02: script mode defaults telemetry OFF; an API key alone
+        # never enables it. PRD-SEC-004-FR07: a prior opt-in/opt-out is preserved
+        # when no explicit flag is given, and an explicit --no-telemetry always
+        # wins. PRD-SEC-004-FR03: --telemetry/--no-telemetry are forwarded here
+        # from install.sh.
+        if opt_telemetry is True:
             telemetry_enabled = True
-        if opt_telemetry is False:
+        elif opt_telemetry is False:
+            telemetry_enabled = False
+        elif "telemetry" in prior_config:
+            telemetry_enabled = bool(prior_config["telemetry"])
+        else:
             telemetry_enabled = False
         ui.step_ok(f"Project: {project_name}")
+        ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
 
     preserve_prior_platform_urls = bool(prior_config.get("platform_urls")) and not opt_api_key and opt_telemetry is None
 
@@ -2886,6 +3337,9 @@ def phase_configure(
         target_platforms=target_platforms or None,
         rewrite_platform_urls=not preserve_prior_platform_urls,
     ):
+        # PRD-SEC-005-FR01: store the bearer credential in the ignored, 0600
+        # credentials.yaml rather than the git-tracked config.yaml.
+        write_platform_credentials(config_path, api_key)
         ui.step_ok("Configuration saved to .trw/config.yaml")
     else:
         ui.step_warn("Config file not found — run project setup first")
@@ -3122,6 +3576,25 @@ def main() -> None:
             "  python3 install-trw.py --ide cursor-ide,codex,gemini\n"
             "  python3 install-trw.py --script --no-ai      # Headless\n"
             "  python3 install-trw.py --upgrade             # Upgrade only\n"
+            "  python3 install-trw.py --script --no-telemetry  # Headless, telemetry off\n"
+            "  python3 install-trw.py --user-tier           # Provision ~/.trw user tier\n\n"
+            "Air-gapped / proxy install:\n"
+            "  Proxy: export HTTPS_PROXY / HTTP_PROXY / NO_PROXY (and CA bundle via\n"
+            "         SSL_CERT_FILE / REQUESTS_CA_BUNDLE) before running.\n"
+            "  Offline: python3 install-trw.py --offline    # installs from the\n"
+            "         embedded wheels only (--no-index); no PyPI access.\n"
+            "         NOTE: the embedded wheels are ONLY trw-mcp + trw-memory.\n"
+            "         Their transitive deps (pydantic, pydantic-settings,\n"
+            "         ruamel.yaml, structlog, ...) are NOT bundled — they must\n"
+            "         already be installed in the target environment OR pre-staged\n"
+            "         in a wheelhouse and exposed via pip's PIP_FIND_LINKS env var.\n"
+            "         Without them, an --offline install on a clean env will fail.\n\n"
+            "Security:\n"
+            "  - Pass the API key via the TRW_API_KEY env var (kept out of argv).\n"
+            "  - --break-system-packages is never silent; opt in with\n"
+            "    --allow-system-python (prefer a venv/pipx instead).\n"
+            "  - trw-mcp + trw-memory are source-available under BSL-1.1:\n"
+            "    https://trwframework.com/license\n"
         ),
     )
     parser.add_argument("target_dir", nargs="?", default=".", help="Project directory")
@@ -3139,6 +3612,49 @@ def main() -> None:
     parser.add_argument("--telemetry", dest="telemetry", action="store_true", default=None, help="Enable telemetry")
     parser.add_argument("--no-telemetry", dest="telemetry", action="store_false", help="Disable telemetry")
     parser.add_argument("--skip-auth", action="store_true", help="Skip device auth flow during install")
+    # PRD-SEC-006-FR03: explicit opt-in for --break-system-packages on a
+    # PEP 668-managed system Python (never applied silently).
+    parser.add_argument(
+        "--allow-system-python",
+        action="store_true",
+        help="Allow --break-system-packages on an externally-managed system Python (not recommended; prefer a venv/pipx)",
+    )
+    # PRD-SEC-006-FR06: ~/.trw user-scope (machine-local memory tier) is
+    # provisioned only with explicit consent. Default is project-only.
+    parser.add_argument(
+        "--user-tier",
+        dest="user_tier",
+        action="store_true",
+        default=None,
+        help="Provision the machine-local ~/.trw user-scope memory tier (default: project-only)",
+    )
+    parser.add_argument(
+        "--no-user-tier",
+        dest="user_tier",
+        action="store_false",
+        help="Never provision the ~/.trw user-scope tier (project-only)",
+    )
+    # PRD-SEC-006-FR02 / US-002: pin a specific release. Forwarded to the
+    # bootstrap by install.sh; recorded here for parity + --help discoverability.
+    parser.add_argument(
+        "--version",
+        dest="pin_version",
+        default="",
+        metavar="VER",
+        help="Pin the TRW release version to install (or set TRW_VERSION). Bootstrap verifies its published checksum.",
+    )
+    # PRD-SEC-006-FR09: offline / air-gapped install from embedded wheels.
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help=(
+            "Offline mode: install only from embedded wheels (no PyPI). "
+            "PREREQUISITE: only trw-mcp + trw-memory are embedded; their transitive "
+            "deps (pydantic, pydantic-settings, ruamel.yaml, structlog, ...) must "
+            "already be installed or pre-staged in a wheelhouse via PIP_FIND_LINKS. "
+            "Use with proxy env vars (HTTPS_PROXY/HTTP_PROXY/NO_PROXY) for air-gapped hosts."
+        ),
+    )
     parser.add_argument(
         "--pip-target",
         default="",
@@ -3155,7 +3671,7 @@ def main() -> None:
         "--with-proprietary",
         action="store_true",
         help=(
-            "Install trw-distill, trw-harness, trw-loop, trw-swarm. "
+            "Install trw-distill, trw-metaharness, trw-loop, trw-swarm. "
             "Auto-derives a license from the platform_api_key in "
             ".trw/config.yaml; falls back to --license-key for explicit overrides."
         ),
@@ -3213,6 +3729,23 @@ def main() -> None:
     backend_url = args.backend_url or os.environ.get(
         "TRW_BACKEND_URL", "https://api.trwframework.com/v1"
     )
+
+    # PRD-SEC-006-FR04: prefer the API key from the TRW_API_KEY environment
+    # variable over --api-key. install.sh passes the key via env so it never
+    # appears in this process's argv (visible in `ps`). An explicit --api-key
+    # still works for backward compatibility but is discouraged.
+    resolved_api_key = os.environ.get("TRW_API_KEY", "").strip() or args.api_key
+
+    # PRD-SEC-006-FR03: resolve --break-system-packages consent up front.
+    # An explicit --allow-system-python flag or TRW_ALLOW_SYSTEM_PYTHON env is
+    # authoritative; otherwise it is resolved lazily (interactive prompt /
+    # default-deny) inside _allow_system_python at the escalation point.
+    if args.allow_system_python or os.environ.get("TRW_ALLOW_SYSTEM_PYTHON", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        set_allow_system_python(True)
 
     # Mode detection
     interactive = (not args.script) and sys.stdin.isatty()
@@ -3294,7 +3827,7 @@ def main() -> None:
     install_ai = bool(install_ai)
     install_vec = bool(install_vec)
     has_extras = install_ai or install_vec
-    has_config = interactive or args.name or args.api_key or bool(prior_config)
+    has_config = interactive or args.name or resolved_api_key or bool(prior_config)
 
     # ── Step count (stable from here on) ─────────────────────────────
     total = 3  # extract + install + project-setup
@@ -3316,7 +3849,16 @@ def main() -> None:
 
         # Step 2: Install base packages
         step += 1
-        phase_install_packages(ui, step, total, python, memory_whl, mcp_whl, pip_target=args.pip_target)
+        phase_install_packages(
+            ui,
+            step,
+            total,
+            python,
+            memory_whl,
+            mcp_whl,
+            pip_target=args.pip_target,
+            offline=args.offline,
+        )
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
@@ -3350,6 +3892,11 @@ def main() -> None:
             write_proprietary_marker(target_dir, proprietary_installed)
             features.extend(proprietary_installed)
 
+        # PRD-SEC-006-FR06: resolve ~/.trw user-scope consent (default off).
+        provision_user_tier = _resolve_user_tier_consent(
+            ui, interactive=interactive, opt_user_tier=args.user_tier
+        )
+
         # Step N: Project setup
         step += 1
         selected_targets = phase_project_setup(
@@ -3362,6 +3909,7 @@ def main() -> None:
             interactive=interactive,
             ide=ide_targets,
             pip_target=args.pip_target,
+            provision_user_tier=provision_user_tier,
         )
 
         # Step N+1 (conditional): Configure
@@ -3375,7 +3923,7 @@ def main() -> None:
                 target_dir,
                 interactive,
                 args.name,
-                args.api_key,
+                resolved_api_key,
                 args.telemetry,
                 prior_config=prior_config,
                 install_ai=install_ai,
@@ -3399,6 +3947,14 @@ def main() -> None:
             if interactive:
                 ui.stop_spinner(True, "Backend connectivity checked")
 
+        # PRD-SEC-004-FR04: resolve the consent state from the freshly-written
+        # config so the banner reflects what was actually persisted (not the
+        # pre-install prior). platform_status=="telemetry" means it was enabled;
+        # otherwise re-read config for the authoritative bool.
+        resolved = _load_prior_config(target_dir)
+        telemetry_state = bool(resolved.get("telemetry")) or platform_status == "telemetry"
+        sharing_state = bool(resolved.get("learning_sharing_enabled"))
+
         # Done!
         show_success_banner(
             ui,
@@ -3407,7 +3963,14 @@ def main() -> None:
             is_reinstall=is_reinstall,
             backend_results=backend_results,
             selected_targets=selected_targets,
+            telemetry_enabled=telemetry_state,
+            learning_sharing_enabled=sharing_state,
         )
+
+        # PRD-INFRA-142 FR01: emit a single install_complete funnel event.
+        # Gated on a configured API key + telemetry opt-in (NFR01) and
+        # fire-and-forget (NFR02) — never blocks or fails the install.
+        _emit_install_complete_event(target_dir)
 
     finally:
         try:

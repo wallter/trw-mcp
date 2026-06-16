@@ -115,14 +115,15 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         from trw_mcp.models.config import get_config
 
         config = get_config()
+        # Do NOT override the global kill switch here: a disabled meta-tune
+        # subsystem must stay disabled. rollback_proposal() performs its own
+        # kill-switch check and returns status="disabled", which we surface to
+        # the operator (SAFE-001 FR-7 / FR-13). We may still redirect the audit
+        # log path, but only the path — never the enabled flag.
         if audit_log_path is not None:
             config = config.model_copy(
-                update={
-                    "meta_tune": config.meta_tune.model_copy(update={"enabled": True, "audit_log_path": audit_log_path})
-                }
+                update={"meta_tune": config.meta_tune.model_copy(update={"audit_log_path": audit_log_path})}
             )
-        elif not config.meta_tune.enabled:
-            config = config.model_copy(update={"meta_tune": config.meta_tune.model_copy(update={"enabled": True})})
         result = rollback_proposal(
             proposal_id,
             state_dir=Path(state_dir) if state_dir is not None else None,

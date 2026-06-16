@@ -138,32 +138,56 @@ class TelemetryPipeline:
         Previously only the ``error`` field was PII-scrubbed, leaking PII in
         other string fields (messages, args, paths). Now ``strip_pii`` is
         applied to all string values except an explicit safe-key allowlist.
-        """
-        for key, value in event.items():
-            if key in self._PII_SAFE_KEYS or not isinstance(value, str):
-                continue
-            event[key] = strip_pii(value)
 
+        Scrubbing is RECURSIVE: nested dicts and lists are walked so PII
+        buried inside ``args``/``payload`` structures cannot leak. The
+        ``_PII_SAFE_KEYS`` allowlist applies only to TOP-LEVEL keys; nested
+        string values are always scrubbed (a safe key name reused deeper in
+        the tree carries no by-construction safety guarantee).
+        """
         try:
-            project_root = resolve_project_root()
+            project_root: Path | None = resolve_project_root()
         except Exception:  # justified: fail-open, path resolution failure non-fatal
             project_root = None
 
-        if project_root is not None:
-            for key, value in event.items():
-                if key in self._PII_SAFE_KEYS:
-                    continue
-                if isinstance(value, str):
-                    event[key] = redact_paths(value, project_root)
+        for key, value in event.items():
+            if key in self._PII_SAFE_KEYS:
+                continue
+            event[key] = self._scrub_value(value, project_root)
+
+    def _scrub_value(self, value: object, project_root: Path | None) -> object:
+        """Recursively scrub a single value (string/dict/list); other types pass through."""
+        if isinstance(value, str):
+            scrubbed = strip_pii(value)
+            if project_root is not None:
+                scrubbed = redact_paths(scrubbed, project_root)
+            return scrubbed
+        if isinstance(value, dict):
+            return {k: self._scrub_value(v, project_root) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._scrub_value(item, project_root) for item in value]
+        return value
 
     def _enrich_installation_id(self, event: dict[str, object]) -> None:
-        """Add installation_id if missing."""
+        """Add a HASHED installation_id if missing (caller-supplied ids preserved).
+
+        PRD-SEC-004-FR08: the installation_id this library resolves from config
+        MUST NOT egress as a raw project-directory name (the installer may set
+        ``installation_id`` to a raw dir name while the privacy copy says
+        "anonymous"). The pipeline is a library telemetry-payload builder, so it
+        hashes the resolved id at the egress boundary via
+        ``anonymize_installation_id`` (non-reversible double SHA-256). A caller
+        that supplied its own installation_id on the event owns that value and
+        is left untouched (the no-overwrite contract).
+        """
         if "installation_id" in event:
             return
+        from trw_mcp.telemetry.anonymizer import anonymize_installation_id
+
         try:
             from trw_mcp.state._paths import resolve_installation_id
 
-            event["installation_id"] = resolve_installation_id()
+            event["installation_id"] = anonymize_installation_id(resolve_installation_id())
         except Exception:  # justified: fail-open, enrichment failure non-fatal
             event["installation_id"] = "unknown"
 
@@ -359,6 +383,19 @@ class TelemetryPipeline:
                 "failed": len(events),
                 "overflow": self._overflow_count,
                 "skipped_reason": "config_unavailable",
+            }
+
+        # PRD-SEC-004-FR01: single choke point — the documented opt-out flag
+        # platform_telemetry_enabled gates ALL off-machine telemetry sends.
+        # The local JSONL durable write above is preserved (opt-out suppresses
+        # only the network POST, not local buffering). Fail-closed for egress:
+        # a connected user who sets the flag false stops uploading immediately.
+        if not getattr(cfg, "platform_telemetry_enabled", False):
+            return {
+                "sent": 0,
+                "failed": 0,
+                "overflow": self._overflow_count,
+                "skipped_reason": "platform_telemetry_disabled",
             }
 
         urls = cfg.effective_platform_urls

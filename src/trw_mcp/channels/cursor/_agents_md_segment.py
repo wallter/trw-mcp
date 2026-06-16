@@ -191,8 +191,8 @@ class AgentsMdSegmentWriter:
         finally:
             try:
                 lock.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception:  # justified: fail-open, lock cleanup must not mask AGENTS.md result
+                log.debug("cursor_agents_md_lock_release_failed", channel_id=channel_id, exc_info=True)
 
     def _write_under_lock(
         self,
@@ -292,8 +292,8 @@ class AgentsMdSegmentWriter:
                 bytes_written=log_entry.bytes_written,
                 outcome="written",
             )
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open telemetry, AGENTS.md write already completed
+            log.debug("cursor_agents_md_event_failed", channel_id=channel_id, exc_info=True)
 
         return InstructionSegmentResult(
             channel_id=channel_id,

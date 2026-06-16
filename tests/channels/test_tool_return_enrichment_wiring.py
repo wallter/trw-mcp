@@ -258,51 +258,39 @@ class TestBeforeEditHintTierWiring:
             file_path="src.py", repo_root=str(repo), cache_dir=str(cache_dir)
         )
 
-    def test_t2_response_has_co_change_neighbors(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_t2_response_has_co_change_neighbors(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
         assert "enrichment" in result
         ctx = result["enrichment"]["distill_context"]
         assert ctx is not None
         assert len(ctx["co_change_neighbors"]) == 2
 
-    def test_t1_response_has_no_co_change_neighbors(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_t1_response_has_no_co_change_neighbors(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("claude-code", monkeypatch, tmp_path)
         assert "enrichment" in result
         ctx = result["enrichment"]["distill_context"]
         assert ctx is not None
         assert "co_change_neighbors" not in ctx
 
-    def test_t0_response_has_no_importers_list(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_t0_response_has_no_importers_list(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("copilot", monkeypatch, tmp_path)
         assert "enrichment" in result
         ctx = result["enrichment"]["distill_context"]
         assert ctx is not None
         assert "importers" not in ctx
 
-    def test_t2_importers_not_truncated(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_t2_importers_not_truncated(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
         ctx = result["enrichment"]["distill_context"]
         # sidecar has 6 importers; T2 returns all
         assert len(ctx["importers"]) == 6
 
-    def test_t1_importers_truncated_to_5(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_t1_importers_truncated_to_5(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("claude-code", monkeypatch, tmp_path)
         ctx = result["enrichment"]["distill_context"]
         assert len(ctx["importers"]) == 5
 
-    def test_base_fields_unchanged_across_tiers(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
-    ) -> None:
+    def test_base_fields_unchanged_across_tiers(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
         assert result["file_path"] == "src.py"
         assert result["distill_status"] == "hint_available"

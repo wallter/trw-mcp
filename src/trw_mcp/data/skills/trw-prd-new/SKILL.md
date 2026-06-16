@@ -1,10 +1,7 @@
 ---
 name: trw-prd-new
-description: >
-  Create a new PRD from a feature description, then automatically run the full
-  readiness pipeline (groom → review → execution plan) so the user gets a
-  sprint-ready PRD with micro-tasks in one command.
-  Use: /trw-prd-new "Add rate limiting to the API"
+description: >-
+  Create a new PRD from a feature description and automatically execute the readiness pipeline (groom → review → execution plan) to produce a sprint-ready document with micro-tasks. Invoke when a user wants to convert a feature idea into a detailed PRD. Use: /trw-prd-new "Add rate limiting to the API"
 user-invocable: true
 argument-hint: "[feature description]"
 ---

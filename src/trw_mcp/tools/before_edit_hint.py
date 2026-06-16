@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
@@ -341,7 +342,7 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
             cache_dir=cache_dir,
         )
         # --- telemetry (fail-open) ---
-        try:
+        with suppress(Exception):  # justified: fail-open telemetry, never break the tool
             from trw_mcp.channels._distill_telemetry import emit_tool_call
 
             sidecar_sha = result.distill_sidecar_sha or ""
@@ -352,18 +353,14 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
                 tier=result.tier,
                 record_ids=record_ids,
             )
-        except Exception:  # justified: BLE001 — fail-open telemetry, never break the tool
-            pass
         # --- tier-aware response enrichment (fail-open) ---
         base: dict[str, Any] = result.model_dump()
-        try:
+        with suppress(Exception):  # justified: fail-open enrichment never breaks the base response
             from trw_mcp.channels._tool_return_tiers import enrich_response
 
             client = resolve_client_profile(ctx=ctx)
             client_tier = resolve_tier_for_client(client)
             return enrich_response(base, client_tier=client_tier)
-        except Exception:  # justified: BLE001 — enrichment never breaks the base response
-            pass
         return base
 
 

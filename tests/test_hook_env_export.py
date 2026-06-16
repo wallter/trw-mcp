@@ -87,7 +87,7 @@ def test_malicious_display_name_is_shell_escaped(tmp_path: Path) -> None:
     import subprocess
 
     profile = resolve_client_profile("claude-code").model_copy(
-        update={"display_name": '$(touch ' + str(tmp_path / "pwned") + ')`echo hi`'}
+        update={"display_name": "$(touch " + str(tmp_path / "pwned") + ")`echo hi`"}
     )
     written = _write_hook_env_file(tmp_path / ".trw", profile)
     # Source the file in a real shell; the payload must NOT run.

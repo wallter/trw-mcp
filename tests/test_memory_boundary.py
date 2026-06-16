@@ -33,6 +33,19 @@ from trw_mcp.state.memory_adapter import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _isolated_user_tier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point user-tier federation at an empty tmp dir.
+
+    ``recall_learnings`` federates the user-tier store (PRD-CORE-185 FR06).
+    Without this, the operator's real ``~/.trw/memory`` records leak into
+    recall results and fail the exact-count assertions on any dev box with a
+    populated user store (9 failures observed 2026-06-10). Mirrors the
+    isolation pattern in ``test_recall_federation.py``.
+    """
+    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
+
+
 @pytest.fixture
 def trw_dir(tmp_path: Path) -> Path:
     """Minimal .trw directory structure for boundary tests."""
@@ -282,17 +295,13 @@ class TestHybridSearchPath:
     fallback. Tests that the embedder wiring in _search_entries is functional."""
 
     def test_hybrid_path_called_when_embedder_available(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Mock the embedder and backend.search_vectors() to return hits, then verify
-        rrf_fuse is invoked — confirming the hybrid branch was taken.
+        """When an embedder is available, recall must exercise the hybrid pipeline.
 
-        The hybrid path in _search_entries has two guards:
-        1. get_embedder() must not return None (patched at definition site)
-        2. backend.search_vectors() must return non-empty hits (patched on instance)
-        Both must be satisfied before rrf_fuse is called.
-
-        rrf_fuse is imported via a local 'from ... import' inside _search_entries on
-        every call, so patching fusion_mod.rrf_fuse (the attribute on the already-loaded
-        module object in sys.modules) is the correct interception point.
+        PRD-DIST-254 §FR03 follow-up: ``_search_entries`` now delegates to
+        ``trw_memory.retrieval.pipeline.hybrid_search`` (BM25 + dense + RRF) — the
+        same fusion the MemoryClient path uses — instead of a hand-rolled
+        LIKE+vector RRF. We spy on the ``hybrid_search`` the queries module
+        imports locally on each call, confirming the hybrid branch was taken.
         """
         store_learning(trw_dir, "L-hyb001", "hybrid search test entry", "detail")
 
@@ -302,48 +311,38 @@ class TestHybridSearchPath:
         mock_embedder.embed.return_value = fixed_vector
         mock_embedder.available.return_value = True
 
-        # Patch get_embedder at definition site (local import in _search_entries
-        # resolves via sys.modules['trw_mcp.state._memory_connection'].get_embedder)
+        # Patch get_embedder at its definition site (local import in
+        # _search_entries resolves via sys.modules[...]._memory_connection).
         monkeypatch.setattr(
             "trw_mcp.state._memory_connection.get_embedder",
             lambda: mock_embedder,
         )
 
-        # Also patch search_vectors on the backend instance to return a hit,
-        # otherwise the "if not vector_hits: return keyword_results" early exit
-        # fires before rrf_fuse is reached.
-        backend = get_backend(trw_dir)
-        monkeypatch.setattr(
-            backend,
-            "search_vectors",
-            lambda vec, top_k=50: [("L-hyb001", 0.95)],
-        )
-
-        # Track whether rrf_fuse was called using a spy
-        rrf_called = False
-
+        # Spy on hybrid_search at its definition site. _search_entries does a
+        # local 'from trw_memory.retrieval.pipeline import hybrid_search' on each
+        # call, so patching the attribute on the already-loaded pipeline module
+        # is the correct interception point.
         try:
-            from trw_memory.retrieval import fusion as fusion_mod
+            from trw_memory.retrieval import pipeline as pipeline_mod
         except ImportError:
-            pytest.skip("trw_memory.retrieval.fusion not available")
+            pytest.skip("trw_memory.retrieval.pipeline not available")
 
-        original_rrf = fusion_mod.rrf_fuse
+        hybrid_called = False
+        original_hybrid = pipeline_mod.hybrid_search
 
-        def spy_rrf_fuse(rankings: object, **kwargs: object) -> list:
-            nonlocal rrf_called
-            rrf_called = True
-            return original_rrf(rankings, **kwargs)  # type: ignore[arg-type]
+        def spy_hybrid(*args: object, **kwargs: object) -> list:
+            nonlocal hybrid_called
+            hybrid_called = True
+            return original_hybrid(*args, **kwargs)  # type: ignore[arg-type]
 
-        # rrf_fuse is imported via a local 'from ... import' on each function call,
-        # so patching the attribute on the module object in sys.modules intercepts it.
-        monkeypatch.setattr(fusion_mod, "rrf_fuse", spy_rrf_fuse)
+        monkeypatch.setattr(pipeline_mod, "hybrid_search", spy_hybrid)
 
         results = recall_learnings(trw_dir, "hybrid search")
-        # Results must still be a list
         assert isinstance(results, list)
-        # The key assertion: rrf_fuse was called, meaning we went through the hybrid branch
-        assert rrf_called, (
-            "rrf_fuse was not called — hybrid search path was not exercised. "
+        # The key assertion: hybrid_search was called, meaning we went through the
+        # hybrid (BM25 + dense + RRF) branch rather than the keyword fallback.
+        assert hybrid_called, (
+            "hybrid_search was not called — hybrid branch was not exercised. "
             "Check _search_entries embedder wiring in _memory_queries.py."
         )
 
@@ -435,21 +434,33 @@ class TestEmbeddingBackfill:
         Uses 384-dim vectors to match the default retrieval_embedding_dim in TRWConfig.
         backfill_embeddings() calls get_embedder() directly (not via a local import),
         so patching the module-level function is sufficient.
+
+        Determinism note: when real ``sentence-transformers`` is installed,
+        ``store_learning`` embeds at store time, leaving backfill nothing to do
+        (``embedded==0``). To make the invariant hold regardless of environment,
+        we force-disable the store-time embedder for the store loop so the entries
+        land *unembedded*, then install the mock embedder before calling backfill.
+        This preserves the behavioral intent: backfill embeds previously-unembedded
+        entries.
         """
+        import trw_mcp.state._memory_connection as conn_mod
+
+        # Phase 1: store with NO embedder so entries are persisted unembedded,
+        # independent of whether real sentence-transformers is installed.
+        monkeypatch.setattr(conn_mod, "_embedder", None)
+        monkeypatch.setattr(conn_mod, "_embedder_checked", True)
+
         n_entries = 4
         for i in range(n_entries):
             store_learning(trw_dir, f"L-bf3{i:02d}", f"entry with content {i}", "detail")
 
+        # Phase 2: install the mock embedder so backfill has work to do.
         # 384 dims must match the backend's dim (set at SQLiteBackend construction time
         # from cfg.retrieval_embedding_dim which defaults to 384)
         fixed_vector = [0.5] * 384
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = fixed_vector
         mock_embedder.available.return_value = True
-
-        # Patch get_embedder at definition site AND force singleton state so the
-        # call inside backfill_embeddings() receives the mock embedder
-        import trw_mcp.state._memory_connection as conn_mod
 
         monkeypatch.setattr(conn_mod, "_embedder", mock_embedder)
         monkeypatch.setattr(conn_mod, "_embedder_checked", True)

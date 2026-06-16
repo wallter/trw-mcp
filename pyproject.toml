@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.55.4"
+version = "0.55.14"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -25,7 +25,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastmcp>=3.0.0,<4.0.0",
+    "cryptography>=46.0.7",
+    "fastmcp>=3.2.0,<4.0.0",
+    "httpx>=0.27.0",
+    "mcp>=1.26.0",
     # Same rationale as trw-memory: prefer pysqlite3 to mitigate the SQLite
     # WAL-reset bug. trw-memory's __init__ performs the actual sys.modules
     # swap; trw-mcp listing the dep here keeps installs of the MCP server
@@ -36,10 +39,17 @@ dependencies = [
     "pysqlite3-binary>=0.5.4; platform_system == 'Linux'",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    "PyYAML>=6.0.0",
     "ruamel.yaml>=0.18.0",
+    "starlette>=1.0.1",
     "structlog>=24.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
-    "trw-memory>=0.8.3,<1.0.0",
+    # Floor 0.9.0 is the lowest release carrying BOTH rrf_fuse(importances=) and
+    # SQLiteBackend.find_active_by_content — the trw-mcp caller hard-depends on
+    # both (recall RRF impact-blend + embedding-independent exact-content dedup).
+    # Earlier releases (0.8.x) lacked them, surfacing as runtime skew (F7/F8/F9)
+    # instead of an install-time failure. Raise the floor so the skew fails fast.
+    "trw-memory>=0.9.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -90,10 +100,45 @@ trw-mcp = "trw_mcp.server:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/trw_mcp"]
 
+[tool.hatch.build.targets.sdist]
+# Defense in depth alongside .gitignore: hatchling honors the package-local
+# .gitignore but NOT a global git excludesfile, so dev/runtime artifacts and
+# monorepo-internal files must be excluded explicitly here too — they must
+# never ship in the published sdist or the public subtree-split mirror.
+exclude = [
+  "meta",
+  "*.jsonl",
+  "uv.lock",
+  "CLAUDE.md",
+  "AGENTS.md",
+  "FRAMEWORK.md",
+  "REVIEW.md",
+  "docs",
+  "scratch",
+]
+
 [tool.pyright]
 include = ["src/trw_mcp"]
 pythonVersion = "3.10"
 typeCheckingMode = "standard"
+
+[tool.deptry]
+known_first_party = ["trw_mcp"]
+optional_dependencies_dev_groups = ["dev"]
+extend_exclude = ["scripts/install-trw.template.py"]
+package_module_name_map = { "opentelemetry-distro" = "opentelemetry_distro", "opentelemetry-exporter-otlp" = "opentelemetry_exporter_otlp" }
+
+[tool.deptry.per_rule_ignores]
+# Optional tokenizer: hotspot segment estimates use tiktoken when present and
+# intentionally fall back to char/4 when absent.
+DEP001 = ["tiktoken"]
+# Optional OpenTelemetry installers are exercised through namespace imports and
+# runtime environment, not direct package-name imports.
+DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp"]
+DEP003 = ["opentelemetry", "tiktoken"]
+# rank_bm25 is an optional quality booster; retrieval degrades gracefully when
+# the import is absent, so it stays out of the required runtime set.
+DEP004 = ["rank_bm25"]
 
 [tool.ruff]
 target-version = "py310"

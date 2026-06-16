@@ -17,9 +17,17 @@ Analyze the health of TRW's self-learning memory layer and provide actionable re
 
 ## Workflow
 
-### Step 1: Run trw-distill maintain audit
+> **Optional accelerator — `trw-distill`.** The fastest path uses the
+> `trw-distill maintain audit` command for the heavy analysis. `trw-distill`
+> is a separate, optional TRW package; if it is **not installed** (the command
+> is not on your `PATH`), skip Step 1 and use the MCP-tool-only fallback in
+> Step 1b — every audit dimension below is also derivable from `trw_recall`
+> and the `assertion_health` field of `trw_session_start`, no extra tooling
+> required.
 
-The heavy analysis runs locally via `trw-distill maintain audit`:
+### Step 1: Run trw-distill maintain audit (if available)
+
+If `trw-distill` is installed, the heavy analysis runs locally via `trw-distill maintain audit`:
 
 ```bash
 # Full audit with assertion verification (slower, requires codebase)
@@ -40,7 +48,25 @@ This produces a structured report covering:
 - **Domain sizing**: topic clusters, target range, overshoot
 - **Recommendations**: algorithmic suggestions for improvement
 
-### Step 2: Run assertion verification (optional)
+### Step 1b: MCP-tool-only fallback (no trw-distill required)
+
+When `trw-distill` is unavailable, build the same picture using only the
+built-in MCP tools:
+
+1. **Inventory**: `trw_recall(query="*", max_results=0)` to list every active
+   learning with its tags, impact, and access metadata.
+2. **Tag distribution**: count entries per tag from the inventory; flag orphan
+   tags (1 entry) and hot tags (>30% of entries).
+3. **Impact spread**: bucket the `impact` scores into 5 ranges (0.0–1.0).
+4. **Staleness**: use each entry's last-access/created timestamps to flag
+   never-accessed and 30/60/90-day-stale entries.
+5. **Assertion health**: read the `assertion_health` field from
+   `trw_session_start` (see "Assertion Health Analysis" below).
+
+Present the same recommendation set as the trw-distill path — the only
+difference is the analysis is done in-session rather than by the external CLI.
+
+### Step 2: Run assertion verification (optional, requires trw-distill)
 
 For deeper assertion health analysis:
 

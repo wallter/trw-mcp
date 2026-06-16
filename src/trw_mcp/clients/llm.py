@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,11 +90,13 @@ class LLMClient:
             self._available = True
         except ImportError:
             logger.warning("LLM features disabled — install with: pip install trw-mcp[ai]")
+        except Exception as e:
+            logger.info("Anthropic client initialization deferred: %s", e)
 
     @property
     def available(self) -> bool:
-        """Whether the Anthropic SDK is installed and usable."""
-        return self._available
+        """Whether the Anthropic SDK is installed and usable, or local models are available."""
+        return self._available or self._model.startswith("ollama/") or bool(os.environ.get("OLLAMA_HOST"))
 
     async def ask(
         self,
@@ -103,9 +106,9 @@ class LLMClient:
         model: str | None = None,
         max_turns: int | None = None,
     ) -> str | None:
-        """Send a prompt to Claude and return the text response.
+        """Send a prompt to Claude or local Ollama and return the text response.
 
-        Returns ``None`` if the SDK is unavailable or the call fails.
+        Returns ``None`` if the SDK/Ollama is unavailable or the call fails.
 
         Args:
             prompt: The user prompt to send.
@@ -116,10 +119,18 @@ class LLMClient:
         Returns:
             The assistant's text response, or ``None`` on failure/unavailability.
         """
+        resolved_model = model or self._model
+        if resolved_model.startswith("ollama/"):
+            ollama_model = resolved_model.split("/", 1)[1]
+            return await self._ask_ollama(prompt, system=system, model=ollama_model)
+
         if not self._available or self._async_client is None:
+            # Check if we have OLLAMA_HOST and can try falling back to Ollama
+            if os.environ.get("OLLAMA_HOST"):
+                return await self._ask_ollama(prompt, system=system, model=resolved_model)
             return None
 
-        resolved_model = _resolve_model(model or self._model)
+        resolved_model = _resolve_model(resolved_model)
         start = time.monotonic()
 
         try:
@@ -157,6 +168,56 @@ class LLMClient:
 
             logger.warning(
                 "llm_call_failed",
+                prompt_preview=strip_pii(prompt[:80]),
+                exc_info=True,
+            )
+            return None
+
+    async def _ask_ollama(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        model: str = "qwen2.5-coder",
+    ) -> str | None:
+        """Send a prompt to local Ollama and return the text response."""
+        import httpx
+
+        host = os.environ.get("OLLAMA_HOST") or os.environ.get("OLLAMA_API_BASE") or "http://localhost:11434"
+        url = f"{host.rstrip('/')}/api/generate"
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }
+
+        effective_system = system or self._system_prompt
+        if effective_system:
+            payload["system"] = effective_system
+
+        start = time.monotonic()
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=120.0)
+            latency_ms = (time.monotonic() - start) * 1000
+
+            if response.status_code != 200:
+                self._append_usage_record(model, 0, 0, latency_ms, success=False)
+                return None
+
+            data = response.json()
+            response_text = str(data.get("response", ""))
+
+            eval_count = int(data.get("eval_count", 0) or 0)
+            self._append_usage_record(model, 0, eval_count, latency_ms, success=True)
+            return response_text
+        except Exception:
+            latency_ms = (time.monotonic() - start) * 1000
+            self._append_usage_record(model, 0, 0, latency_ms, success=False)
+            from trw_mcp.telemetry.anonymizer import strip_pii
+
+            logger.warning(
+                "ollama_llm_call_failed",
                 prompt_preview=strip_pii(prompt[:80]),
                 exc_info=True,
             )

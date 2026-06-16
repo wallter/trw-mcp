@@ -11,9 +11,6 @@ from tests._telemetry_pipeline_support import (
     _make_event,
     _read_jsonl,
 )
-from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
-
-from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
 from ._telemetry_pipeline_support import fast_pipeline, pipeline_cls  # noqa: F401
 
@@ -160,9 +157,7 @@ class TestQueueOverflow:
 class TestScrubPiiAllFields:
     """Round-2 SECURITY fix: _scrub_pii must scrub ALL string fields, not only 'error'."""
 
-    def test_scrub_pii_scrubs_non_error_string_fields(
-        self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_scrub_pii_scrubs_non_error_string_fields(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         """PII in message/args fields must be redacted, not just the 'error' field."""
         # Avoid path-redaction interference; isolate strip_pii behavior.
         monkeypatch.setattr(
@@ -204,3 +199,41 @@ class TestScrubPiiAllFields:
         p._scrub_pii(event)
         assert event["session_id"] == "agent@host-session"
         assert event["ts"] == "2026-06-09T00:00:00+00:00"
+
+    def test_scrub_pii_recurses_into_nested_dict(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PII buried inside a nested dict value must be scrubbed (was leaking raw)."""
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.resolve_project_root",
+            lambda: None,
+            raising=False,
+        )
+        p = pipeline_cls()
+        event: dict[str, object] = {
+            "args": {"user": "alice@example.com", "nested": {"contact": "bob@example.com"}},
+        }
+        p._scrub_pii(event)
+
+        flat = str(event["args"])
+        assert "alice@example.com" not in flat
+        assert "bob@example.com" not in flat
+        assert "<email>" in flat
+
+    def test_scrub_pii_recurses_into_nested_list(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PII inside list elements (including dicts in lists) must be scrubbed."""
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.resolve_project_root",
+            lambda: None,
+            raising=False,
+        )
+        p = pipeline_cls()
+        event: dict[str, object] = {
+            "payload": ["carol@example.com", {"email": "dan@example.com"}, 42],
+        }
+        p._scrub_pii(event)
+
+        payload = event["payload"]
+        assert isinstance(payload, list)
+        assert "carol@example.com" not in str(payload[0])
+        assert "dan@example.com" not in str(payload[1])
+        # Non-string scalars in the list survive untouched.
+        assert payload[2] == 42

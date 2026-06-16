@@ -71,11 +71,7 @@ def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) 
         state_file.parent.mkdir(parents=True, exist_ok=True)
         existing: list[str] = []
         if state_file.exists():
-            existing = [
-                line.strip()
-                for line in state_file.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            existing = [line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()]
         # Merge old + new, de-dup preserving recency (newest occurrence wins),
         # then keep only the most-recent tail.
         merged = existing + ids
@@ -293,6 +289,7 @@ def step_phase_auto_recall(
 
 def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
     """PRD-CORE-086 FR07: assertion health summary from cached last_result fields."""
+    from trw_mcp.state._constants import DEFAULT_NAMESPACE
     from trw_mcp.state.memory_adapter import get_backend
 
     started = time.monotonic()
@@ -300,7 +297,14 @@ def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
         backend = get_backend(trw_dir)
         if not hasattr(backend, "entries_with_assertions"):
             return None
-        entries = backend.entries_with_assertions()
+        # Scope to the project namespace so a shared/federated store cannot leak
+        # another namespace's assertions into this session's health summary
+        # (memory-storage-1). Fall back to the unscoped call for an older
+        # trw-memory whose signature predates the namespace kwarg.
+        try:
+            entries = backend.entries_with_assertions(namespace=DEFAULT_NAMESPACE)
+        except TypeError:
+            entries = backend.entries_with_assertions()
         if not entries:
             return None
         stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
@@ -353,9 +357,7 @@ def step_graph_health(trw_dir: Path) -> dict[str, object] | None:
             return {
                 "status": "empty",
                 "memories": memories,
-                "advisory": (
-                    "knowledge graph empty — run trw_knowledge_sync or re-deliver to trigger backfill"
-                ),
+                "advisory": ("knowledge graph empty — re-deliver (trw_deliver) to trigger graph backfill"),
             }
         return None
     except Exception:  # justified: fail-open — graph-health probe must not block session start

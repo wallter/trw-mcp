@@ -183,11 +183,28 @@ def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
 
 
 def _registered_trw_tool_names() -> list[str]:
-    """Return the current TRW MCP tool names from the registered server."""
+    """Return the FULL set of TRW MCP tool names for Codex's enabled_tools.
+
+    Codex manages its own per-tool exposure, so this list must reflect the
+    complete tool registry — NOT the live server's post-filter state. The
+    module-level ``mcp`` server has already had ``_apply_tool_exposure_filter``
+    applied at import time (PRD-CORE-125-FR02), so a restrictive
+    ``tool_exposure_mode`` (standard/minimal/core) would otherwise truncate the
+    Codex config and silently hide privileged tools from Codex users.
+
+    We therefore UNION the live server's tools with the canonical full preset
+    (``TOOL_PRESETS["all"]``, the single source of truth for the complete tool
+    set). The union ensures Codex always sees the full curated set regardless
+    of server exposure mode, while still surfacing any tool registered beyond
+    the presets that survives the filter.
+    """
+    from trw_mcp.models.config._defaults import TOOL_PRESETS
     from trw_mcp.server._app import mcp
 
     tools = cast("list[_NamedTool]", _run_async(mcp.list_tools()))
-    tool_names = sorted(tool.name for tool in tools if tool.name.startswith(_TRW_TOOL_PREFIX))
+    names = {tool.name for tool in tools if tool.name.startswith(_TRW_TOOL_PREFIX)}
+    names.update(name for name in TOOL_PRESETS["all"] if name.startswith(_TRW_TOOL_PREFIX))
+    tool_names = sorted(names)
     if not tool_names:
         logger.warning("codex_trw_tool_discovery_empty")
     return tool_names

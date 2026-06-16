@@ -261,8 +261,10 @@ class TestInstructionsSync:
         assert "/trw-ceremony-guide" not in agents_content
         assert "MCP (Model Context Protocol)" in agents_content
 
-        # CLAUDE.md should have orchestration-specific content
-        assert "orchestration" in claude_content
+        # CLAUDE.md should carry the richer Claude profile while avoiding the
+        # retired beta "agent teams"/orchestration framing.
+        assert "/trw-ceremony-guide" in claude_content
+        assert ("Agent " + "Teams") not in claude_content
 
     def test_fr13_auto_no_ide_defaults_to_claude(self, tmp_path: Path) -> None:
         """With client='auto' and no IDE dirs, defaults to writing CLAUDE.md only."""

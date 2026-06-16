@@ -259,6 +259,53 @@ class TestMergeSection:
         result = _merge_section("", "<!-- s -->\nnew\n<!-- e -->", "<!-- s -->", "<!-- e -->")
         assert "new" in result
 
+    def test_inline_marker_mention_not_treated_as_section_start(self) -> None:
+        """Regression: 2026-06-11 ROADMAP.md truncation.
+
+        Header prose mentioning the start marker inline (in backticks) was
+        matched by content.index(), deleting everything between the prose
+        line and the real catalogue section (705 lines of planning body).
+        Only a marker alone on its own line delimits the section.
+        """
+        content = (
+            "# Roadmap\n\n"
+            "See the catalogue at the bottom (`<!-- start -->`) for counts.\n\n"
+            "## Planning Body\n\nbody content that must survive\n\n"
+            "<!-- start -->\nold catalogue\n<!-- end -->\n"
+        )
+        result = _merge_section(
+            content,
+            "<!-- start -->\nnew catalogue\n<!-- end -->",
+            "<!-- start -->",
+            "<!-- end -->",
+        )
+        assert "body content that must survive" in result
+        assert "(`<!-- start -->`)" in result
+        assert "new catalogue" in result
+        assert "old catalogue" not in result
+
+    def test_inline_mention_only_appends_at_end(self) -> None:
+        """An inline mention with no real marker line appends, never replaces."""
+        content = "# Doc\n\nProse mentioning `<!-- s -->` inline.\n\nTail text.\n"
+        result = _merge_section(
+            content,
+            "<!-- s -->\ninserted\n<!-- e -->",
+            "<!-- s -->",
+            "<!-- e -->",
+        )
+        assert "Tail text." in result
+        assert "Prose mentioning" in result
+        assert "inserted" in result
+        # Section was appended after existing content, not spliced into prose
+        assert result.index("inserted") > result.index("Tail text.")
+
+    def test_indented_marker_line_still_matches(self) -> None:
+        content = "# H\n\n  <!-- s -->\nold\n  <!-- e -->\n\nFooter\n"
+        result = _merge_section(content, "<!-- s -->\nnew\n<!-- e -->", "<!-- s -->", "<!-- e -->")
+        assert "new" in result
+        assert "old" not in result
+        assert "Footer" in result
+
 
 # --- sync_index_md ---
 

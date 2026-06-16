@@ -288,8 +288,7 @@ def _apply(
     # replace the entry in the channels list to propagate the change.
     updated_entry = target.model_copy(update={"tier_default": new_tier})
     manifest.channels = [
-        updated_entry if (e.id == channel_id and e.client == decision.client) else e
-        for e in manifest.channels
+        updated_entry if (e.id == channel_id and e.client == decision.client) else e for e in manifest.channels
     ]
 
     write(manifest, manifest_path)

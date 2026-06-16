@@ -21,7 +21,9 @@ class _FakeEmbedder:
 
 
 def test_embedding_dependency_status_is_structured_and_does_not_download_models() -> None:
-    status = EmbeddingDependencyStatus(dependency_available=False, provider="local-optional", remediation="install extras")
+    status = EmbeddingDependencyStatus(
+        dependency_available=False, provider="local-optional", remediation="install extras"
+    )
 
     assert status.dependency_available is False
     assert status.provider == "local-optional"

@@ -14,7 +14,11 @@ sub-CLAUDE.md row of PRD-INFRA-SEC-001 exit criteria.
 ## Observe/Shadow Mode First — Do Not Short-Circuit
 
 Every module in this package ships in **observe-mode for v1**:
-- `verify_signature` always returns `True` and logs the decision it *would* have made
+- `fingerprint_format_valid` (formerly the misleadingly-named `verify_signature`)
+  performs a STRUCTURAL `sha256:`-shape check only — NOT cryptographic
+  verification. Real Ed25519 verification of the signed allowlist payload is
+  done in `MCPRegistry.load`. `verify_signature` is retained as a deprecated
+  back-compat alias; new callers use `fingerprint_format_valid`.
 - `capability_scope.check(...)` logs deny decisions but does not raise
 - `anomaly_detector` writes to `.jsonl` without tripping any action
 

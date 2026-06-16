@@ -1,9 +1,7 @@
 ---
 name: trw-ceremony-guide
-description: >
-  Load the full TRW ceremony reference: tool lifecycle table, execution
-  phases, and example flows. Use when you need to know which tool to call
-  and when. Invoke: /trw-ceremony-guide
+description: >-
+  Load the TRW ceremony reference with the tool lifecycle table, execution phases, and example flows. Use this to resolve questions about tool selection and execution timing within the TRW framework. Invoke: /trw-ceremony-guide
 user-invocable: true
 argument-hint: ""
 ---

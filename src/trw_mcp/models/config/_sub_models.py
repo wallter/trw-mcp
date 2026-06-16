@@ -6,7 +6,7 @@ Each groups related fields for type-narrowed function signatures.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -78,6 +78,11 @@ class TelemetryConfig(BaseModel):
     platform_telemetry_enabled: bool = False
     otel_enabled: bool = False
     otel_endpoint: str = ""
+    # PRD-INFRA-145: see _fields_telemetry.py for semantics. 'legacy' default
+    # preserves the current tool.*/trw.* span shape; 'gen_ai' opts into OTel
+    # GenAI semantic conventions. Message-body capture is off by default.
+    otel_semconv: Literal["legacy", "gen_ai"] = "legacy"
+    otel_capture_messages: bool = False
     ceremony_alert_threshold: int = 40
     ceremony_alert_consecutive: int = 3
 
@@ -208,9 +213,14 @@ class MetaTuneConfig(BaseModel):
         ),
     )
     rollback_max_attempts: int = Field(
-        default=1,
+        default=3,
         ge=1,
-        description="Maximum rollback attempts per proposal before operators must intervene.",
+        description=(
+            "Maximum rollback attempts per proposal before operators must intervene. "
+            "Governs operator retry count, NOT transient-failure tolerance: a single "
+            "transient FS/OS error must not permanently brick the rollback safety path, "
+            "so the default allows a retry after a transient error then success."
+        ),
     )
     sandbox_image_tag: str = Field(
         default="subprocess-seccomp-v1",
@@ -237,10 +247,18 @@ class MCPSecurityAnomalyConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    mode: str = Field(default="shadow", description="shadow logs only; enforce blocks rate spikes")
+    mode: Literal["shadow", "enforce"] = Field(
+        default="shadow", description="shadow logs only; enforce blocks rate spikes"
+    )
     sigma_threshold: float = Field(default=5.0, description="Rate-spike sigma threshold")
     window_seconds: int = Field(default=60, description="Rolling anomaly-detection window in seconds")
     baseline_min_sessions: int = 5
+    max_arg_hashes_per_pair: int = Field(
+        default=1024, gt=0, description="Per-(server,tool) cap on remembered novel arg-hashes (DoS bound)"
+    )
+    max_baseline_store_lines: int = Field(
+        default=100_000, gt=0, description="Max lines kept in the arg-baseline store file before rolling"
+    )
 
 
 class MCPSecurityQuarantineConfig(BaseModel):

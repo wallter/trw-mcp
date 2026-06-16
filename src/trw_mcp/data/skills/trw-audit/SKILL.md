@@ -2,11 +2,8 @@
 name: trw-audit
 context: fork
 agent: general-purpose
-description: >
-  Adversarial spec-vs-code audit. Verifies implementation against PRD acceptance
-  criteria, runs mandatory NFR checklist, assesses test quality. Independent from
-  the implementer to break confirmation bias.
-  Use: /trw-audit PRD-CORE-055
+description: >-
+  Run /trw-audit to verify code against PRD acceptance criteria, enforce the mandatory NFR checklist, and assess test quality. Use this skill when an independent, bias-breaking audit is required, invoking the command /trw-audit PRD-CORE-055 to generate the adversarial spec-vs-code report.
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
 ---

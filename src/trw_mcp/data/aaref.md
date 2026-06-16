@@ -1,11 +1,13 @@
 # AI-Augmented Requirements Engineering Framework (AARE-F)
 
-**Version**: 3.0.0
-**Last Updated**: 2026-05-31
+**Version**: 3.1.0
+**Last Updated**: 2026-06-10
 **Purpose**: Project-agnostic framework for engineering requirements with AI assistance — truthful, verifiable, and aligned to current requirements-engineering standards.
-**Research Basis**: ISO/IEC/IEEE 29148:2018, INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), 2024–2026 LLM-for-RE literature, and TRW's own empirical findings (eval iterations and the PRD-audit corpus).
+**Research Basis**: ISO/IEC/IEEE 29148:2018 (revision in progress; 2018 remains operative), INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), 2024–2026 LLM-for-RE literature, and TRW's own empirical findings (eval iterations and the PRD-audit corpus).
 
-> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v25_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md`.
+> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v26_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
+
+> **Operative summary (read this even under context pressure).** The real quality gate is §6.2: independent adversarial review + behavioral tests on real data paths + status truthfulness + recorded build evidence. The validator score (§5) is a drafting aid, not a verdict (§0). The anti-patterns that actually ship defects are A1 (existence ≠ wiring), A3 (`implemented` over stubs), and A4 (self-review only) — check them at test-writing, status-update, and reviewer-assignment time respectively (§7). A PRD without executable ACs is not ready to implement (§9, implementation-start gate).
 
 ---
 
@@ -29,12 +31,12 @@ Read this before using any threshold or score below.
 
 | # | Principle | Description |
 |---|-----------|-------------|
-| **P1** | **Specification Primacy** | The approved spec is the source of truth; code and tests are its expression. A requirement with no passing test is unverified; a change with no requirement is unauthorized scope. |
+| **P1** | **Specification Primacy** | The approved spec is the source of truth; code and tests are its expression. A requirement with no passing test is unverified; a change with no requirement is unauthorized scope. (ISO/IEC/IEEE 29148 §5.2; INCOSE GtWR v4.) |
 | **P2** | **Traceability First** | Every requirement traces *up* to a need/source and *down* to implementation and verification. Links are created during authoring, not reconstructed later. |
 | **P3** | **Human-in-the-Loop** | AI accelerates drafting, analysis, and review; humans own approval, risk acceptance, and delivery. Oversight is a checkpoint with authority, not a rubber stamp. |
 | **P4** | **Risk-Based Rigor** | Effort, proof, and review scale with consequence. Not all requirements deserve equal ceremony. |
 | **P5** | **Verifiable by Construction** | "Verifiable" means *an automated check exists and passes* — not that the prose sounds testable. Acceptance criteria compile to tests. |
-| **P6** | **Evidence Over Assertion** | Quality is demonstrated with artifacts (tests, diffs, traces, independent review), never asserted. Uncertainty is preserved, not averaged away. |
+| **P6** | **Evidence Over Assertion** | Quality is demonstrated with artifacts (tests, diffs, traces, independent review), never asserted. Uncertainty is preserved, not averaged away. (TRW PRD-audit corpus; eval governance findings.) |
 
 These mirror FRAMEWORK.md's execution principles (Evidence > assertion; Prevention > detection; External checks > self-belief). AARE-F applies them to the *requirement* artifact specifically.
 
@@ -60,6 +62,7 @@ EARS (Easy Approach to Requirements Syntax; Mavin et al., 2009) remains the domi
 > **Implementation status (TRW reference):** the validator classifies each requirement-like line by EARS pattern (informational `ears_classifications`); a requirement-shaped line that matches no pattern is tagged `non-ears` as an authoring smell. Advisory only — `validation_ears_weight` stays 0.
 
 EARS is sentence-level. It does **not** by itself cover NFR quantification, acceptance-criteria execution, or inter-requirement conflict — those are §2.4–§2.5 and C10.
+**Layering**: EARS structures the *requirement sentence*; Given/When/Then (§2.5) structures its *acceptance criteria*. They are complementary levels, not alternatives — one requirement → one EARS sentence → one or more executable ACs. This is also how current spec-driven tooling composes them.
 
 ### 2.2 ISO/IEC/IEEE 29148:2018 — Quality Characteristics
 
@@ -69,6 +72,8 @@ Each requirement (individual) and the requirement set (collective) MUST satisfy:
 |-------|-----------------|
 | **Individual** | Necessary · Appropriate · Unambiguous · Complete · Singular · Feasible · Verifiable · Correct · Conforming |
 | **Set** | Complete · Consistent · Feasible · Comprehensible · Validatable · Correct (no duplicates, no conflicts, homogeneous language) |
+
+> 29148 is under revision (committee draft in circulation since early 2026); the 2018 edition remains the operative standard — plan a conformance review when the new edition publishes.
 
 ### 2.3 INCOSE GtWR v4 (2023) — Rule Families
 
@@ -91,7 +96,7 @@ A *smell* is a lexical/structural signal of likely low quality (Femmer et al.). 
 
 `subjective language` · `ambiguous adverbs/adjectives` · `weak modal verbs (should/might/may vs shall)` · `passive voice without agent` · `vague pronouns` · `anaphoric ambiguity` · `coordination ambiguity (AND/OR precedence)` · `loopholes/escape clauses` · `non-verifiable terms (robust/scalable without criteria)` · `superlatives` · `negative statements` · `compound requirements`.
 
-> **Implementation status (TRW reference):** the live validator **detects requirement smells** (weak modal, vague adverb, subjective, escape clause, open-ended, superlative, absolute, compound, vague pronoun) and surfaces them as **informational** `smell_findings` — each with a line number, matched text, and a fix suggestion. They are advisory: `validation_smell_weight` stays 0, so smells never change the score. A separate `ambiguity_rate` (a small vague-term ratio) is also reported. *Scoring* smells (non-zero weight) is deliberately deferred — see Section 9 — to avoid destabilizing the calibrated score.
+> **Implementation status (TRW reference):** the live validator **detects requirement smells** (weak modal, vague adverb, subjective, escape clause, open-ended, superlative, absolute, compound, vague pronoun) and surfaces them as **informational** `smell_findings` — each with a line number, matched text, and a fix suggestion. They are advisory: `validation_smell_weight` stays 0, so smells never change the score. A separate `ambiguity_rate` (a small vague-term ratio) is also reported. *Scoring* smells (non-zero weight) is deliberately deferred — see Section 9 — to avoid destabilizing the calibrated score. Newer external evidence (RE 2025: smell density measurably degrades LLM performance on downstream traceability tasks) strengthens the case for an eventual non-zero weight; revisit at the next corpus calibration — until then the documented smell-count/score confound controls.
 
 ### 2.5 Executable Acceptance Criteria
 
@@ -105,6 +110,8 @@ Then  <observable, asserted outcome>
 
 - Every functional requirement has ≥1 AC; every `status: implemented` requirement has ≥1 test referencing it that exercises the **real data path** (not a mock of the unit under test).
 - Prefer behavioral assertions (the output contains the correct value) over existence assertions (a symbol/string is present). Existence checks prove a name compiled, not that data flowed (see §7, Anti-Pattern A1).
+- Tests authored by the same agent in the same session as the implementation are **self-review artifacts** (confidence: medium) until independently reviewed or mutation-tested — they tend to validate the implementation, not the specification (A2, A4).
+- For Critical/High-risk requirements, supplement behavioral tests with **sampled mutation testing**: full line/branch coverage is compatible with very low mutation scores, so coverage alone never demonstrates AC satisfaction. LLM-assisted mutant generation is now practical at production scale.
 - *Advanced / aspirational*: for high-risk requirements, auto-formalize ACs and check joint satisfiability with a solver (the neuro-symbolic path now appearing in spec-driven IDEs). Reserve for Critical/High risk.
 
 ---
@@ -172,6 +179,8 @@ dedup:       cosine ≈0.85 is a starting point — calibrate on your corpus
 
 **Regulatory alignment** (where applicable): EU AI Act Art. 14 (human oversight), FDA SaMD (decision support, not replacement), ISO/IEC 42001, NIST AI RMF 1.0.
 
+> **Autonomous-loop oversight.** When requirements work runs inside unattended loops, human checkpoints degrade to theater unless escalation is structurally protected: a stop-recommendation overridden repeatedly MUST escalate on a channel the loop cannot disable, and cycle closure MUST be outcome-gated (a declared success criterion moved, or a documented rationale) rather than throughput-gated. A loop that can suppress its own diagnostics inverts the authority hierarchy (P3).
+
 #### C3: Risk-Based Rigor Scaling — [live]
 **Purpose**: Scale effort and proof to consequence. This is AARE-F's strongest, fully-implemented component (Section 8 gives the live profiles).
 
@@ -184,7 +193,8 @@ dedup:       cosine ≈0.85 is a starting point — calibrate on your corpus
 
 #### C8: AI Guardrails & Safety — [partial]
 **Minimal set**: input sanitizer (prompt-injection detection) · output filter (harmful-content / PII) · tool allowlist · token/cost budgets · immutable audit log · periodic adversarial testing.
-**OWASP Top-10-for-LLM focus**: prompt injection, sensitive-information disclosure, data/model poisoning. (Cite the OWASP edition you target; prevalence figures are edition- and context-specific — don't quote a bare percentage.)
+**OWASP focus**: for agent-executed workflows treat the **Top 10 for Agentic Applications** (Dec 2025) as primary — goal hijack, tool misuse, identity/privilege abuse, memory/context poisoning, excessive agency — alongside the LLM edition (prompt injection, sensitive-information disclosure, data/model poisoning). Cite the edition you target; prevalence figures are edition- and context-specific — don't quote a bare percentage.
+**Requirement-level guardrail**: a requirement that directs an agent to read external content (files, URLs, retrieval results, tool outputs) SHOULD carry an injection-resistance acceptance criterion — indirect injection through content is the production exploit class.
 
 ### Execution Layer
 
@@ -199,7 +209,8 @@ dedup:       cosine ≈0.85 is a starting point — calibrate on your corpus
                                           MEMORY
 ```
 This maps onto FRAMEWORK.md formations (SINGLE-TRACK / MAP-REDUCE / PIPELINE / DEBATE+CRITIC+JUDGE). **Decision protocols** — voting (reasoning), consensus (knowledge), majority (latency) — improve robustness; reported accuracy gains vary by task and model, so calibrate rather than quoting a fixed lift.
-**Isolation-first**: an independent reviewer/critic MUST NOT inherit the author's context (see §7, A4). First-pass exploration without prior-pattern priming reduces anchoring.
+**Isolation-first**: an independent reviewer/critic MUST NOT inherit the author's context (see §7, A4). First-pass exploration without prior-pattern priming reduces anchoring. Iteration policy for multi-pass review: pass 1 fully independent (no prior context), pass 2 compares against known patterns, pass 3+ targets the specific gaps the earlier passes surfaced. Stop when a pass yields no new material findings.
+**Critical-risk requirement sets**: a dialectical pass with NFR-specialized agents (one per quality family — safety, security, performance, …) that must surface and resolve inter-quality conflicts *before* approval has recent empirical support (single-study evidence — calibrate locally); run it as the DEBATE+CRITIC+JUDGE formation with requirements-level roles.
 
 #### C6: Uncertainty Management over Zero-Defects — [guide]
 **Paradigm**: "eliminate all hallucination" is unreachable → **quantify and route uncertainty** instead.
@@ -227,10 +238,11 @@ This maps onto FRAMEWORK.md formations (SINGLE-TRACK / MAP-REDUCE / PIPELINE / D
 |-------|--------|
 | Pre-commit | schema validity, required fields, ID uniqueness |
 | CI | structure + traceability + (target) executable-AC pass-rate; no unresolved conflicts |
-| Delivery | approval recorded, audit log, rollback path |
+| Delivery | approval recorded, audit log, rollback path, **wiring verified** — a surface marked `implemented` has ≥1 verified consumer (import, registration, route, or end-to-end test) or an explicit seam entry with owner + expiry. Existence without consumption is A1 at architecture scale: delivery criteria that only check "code exists" produce integration islands. |
 
 #### C9: Continuous Observability — [partial]
-**MELT**: Metrics (coverage, novelty, AC pass-rate, requirement churn) · Events (validated/groomed/delivered) · Logs (validation + decision trail) · Traces (end-to-end flow). Use whatever telemetry stack the project already has (structured logging is the floor; OpenTelemetry/Prometheus are optional, not required).
+**MELT**: Metrics (coverage, novelty, AC pass-rate, requirement churn, **false-completion rate** — delivers whose claimed outcome was later contradicted ÷ total delivers) · Events (validated/groomed/delivered) · Logs (validation + decision trail) · Traces (end-to-end flow). Use whatever telemetry stack the project already has (structured logging is the floor; OpenTelemetry/Prometheus are optional, not required).
+**Verifier identity**: for P0/P1 requirements whose ACs test code the implementing agent wrote, record *who verified* — self-reported verification is confidence-medium evidence; an independent verifier (or captured raw check output) is required for confidence-high (P3, A4).
 
 ---
 
@@ -297,13 +309,13 @@ The first group is classic RE; the second (A1–A5) is the set TRW has learned t
 | Confidence Theater | Everything is "high confidence" | Uniform high confidence signals miscalibration; require evidence |
 | Historical Anchoring | A stale snapshot overrides the live contract | Canonical doc first, then research/snapshots |
 
-| # | Truthfulness Anti-Pattern | Why text scoring misses it | Mitigation (the gate that catches it) |
-|---|---------------------------|----------------------------|----------------------------------------|
-| **A1** | **Existence ≠ wiring** | `grep_present`/symbol checks prove a name exists, not that the computed value reaches the output. Real bugs shipped green: an estimate computed then dropped (`estimate=None`); loaded priors silently discarded. | Behavioral assertions on output *values*; ≥1 test per FR exercising the real path. |
-| **A2** | **Mock-depth blindness** | 90%+ coverage with all-green tests can mock away the unit under test; AI-written tests routinely score 30–40% on mutation testing at high coverage. | Forbid mocking the primary unit under test; require an integration test on a real (in-memory) path; consider sampled mutation testing. |
-| **A3** | **`implemented` over stubs** | A status field is text; nothing in the score checks runtime completeness. Audits repeatedly find `status: implemented` with non-empty `stubs[]`. | Enforce: `status: implemented` ⇒ functionally live, `stubs: []`; verify in review/CI, not by reading the claim. |
-| **A4** | **Self-review only** | The author's tests validate the author's implementation, not the spec; a same-context reviewer inherits the same blind spots. | Independent reviewer without author context; focused multi-lens review (correctness / security / tests / integration). |
-| **A5** | **Score-gaming** | More file refs, more headings, more prose raise the number without raising quality. | Read the §0 operating rule; weight implementation-readiness over density; require A1/A4 evidence regardless of score. |
+| # | Truthfulness Anti-Pattern | Check when | Why text scoring misses it | Mitigation (the gate that catches it) |
+|---|---------------------------|------------|----------------------------|----------------------------------------|
+| **A1** | **Existence ≠ wiring** | writing/reviewing tests; declaring a surface done | `grep_present`/symbol checks prove a name exists, not that the computed value reaches the output. Real bugs shipped green: an estimate computed then dropped (`estimate=None`); loaded priors silently discarded. | Behavioral assertions on output *values*; ≥1 test per FR exercising the real path; a consumer or seam for every new surface (C7). |
+| **A2** | **Mock-depth blindness** | judging coverage claims | 90%+ coverage with all-green tests can mock away the unit under test; published industrial reports find AI-written tests can score very low on mutation testing despite high coverage. | Forbid mocking the primary unit under test; require an integration test on a real (in-memory) path; sampled mutation testing (§2.5). |
+| **A3** | **`implemented` over stubs** | updating any status field | A status field is text; nothing in the score checks runtime completeness. Audits repeatedly find `status: implemented` with non-empty `stubs[]`. | Enforce: `status: implemented` ⇒ functionally live, `stubs: []`; verify in review/CI, not by reading the claim. |
+| **A4** | **Self-review only** | assigning review | The author's tests validate the author's implementation, not the spec; a same-context reviewer inherits the same blind spots. | Independent reviewer without author context; focused multi-lens review (correctness / security / tests / integration). |
+| **A5** | **Score-gaming** | reading a validator score | More file refs, more headings, more prose raise the number without raising quality. | Read the §0 operating rule; weight implementation-readiness over density; require A1/A4 evidence regardless of score. |
 
 ---
 
@@ -318,13 +330,14 @@ When you catch one of these thoughts, stop — it precedes an anti-pattern (mirr
 | "It's basically implemented — I'll mark it done." | `implemented` is a truthfulness claim (A3). Disclose stubs or don't claim it. |
 | "I wrote it, so I can review it." | Self-review inherits your blind spots (A4). Get an independent pass. |
 | "Score is 85, it's ready." | The score is a drafting aid, not a verdict (§0, A5). |
+| "The PRD is close enough — start coding." | Implementation against a PRD with no executable ACs guarantees an unverifiable "done" (§2.5, §9 implementation-start gate). Groom first. |
 | "We must eliminate all uncertainty first." | Route uncertainty (C6); don't chase zero. |
 
 ---
 
 ## 8. Risk-Based Rigor — Live Profiles (Reference)
 
-Priority maps to risk (P0→Critical, P1→High, P2→Medium, P3→Low) unless an explicit `risk_level` overrides. Each profile scales tier thresholds, the density floor, and dimension weights:
+Priority maps to risk (P0→Critical, P1→High, P2→Medium, P3→Low) unless an explicit `risk_level` in the PRD frontmatter overrides it (use the override when priority and consequence diverge — e.g., a P1-priority but low-blast-radius UX change). Each profile scales tier thresholds, the density floor, and dimension weights:
 
 | Risk | Approved | Review | Draft | Density floor | Weights (density / structure / readiness / traceability) |
 |------|---------:|-------:|------:|--------------:|-----------------------------------------------------------|
@@ -367,12 +380,19 @@ Higher risk raises the bar **and** shifts weight toward implementation-readiness
 ```
 create → groom → review (independent) → exec-plan → IMPLEMENT → VALIDATE → REVIEW → DELIVER → audit
 ```
-In the TRW reference: `trw_prd_create` → `/trw-prd-groom` → `/trw-prd-review` → `/trw-exec-plan` → sprint execution → `trw_build_check` → `trw_deliver` → `/trw-audit` (expected for P0/P1). The grooming gate is "ready for review" (the score); the **delivery** gate is §6.2 evidence.
+In the TRW reference: `trw_prd_create` → grooming → independent review → execution planning → sprint execution → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit (expected for P0/P1). Client adapters provide shorthand for the middle stages (Claude Code: `/trw-prd-groom`, `/trw-prd-review`, `/trw-exec-plan`, `/trw-audit`; other full-mode profiles have equivalent skills; light clients use the underlying MCP tools directly — `trw_prd_create`, `trw_prd_validate` — or the manual lifecycle). Sprint grouping of reviewed PRDs is likewise an adapter concern. The grooming gate is "ready for review" (the score); the **delivery** gate is §6.2 evidence.
+
+**Implementation-start gate** (the inverse of A3): if a PRD lacks executable ACs (§2.5) when implementation begins, STOP and groom before writing code. A3 catches false completion at the end; this catches unverifiable scope at the start.
+
+### Adoption sequence (for a new project — honest tiers)
+1. **Structural floor** (days): PRD template, schema validation, ID uniqueness in CI.
+2. **Traceability floor** (weeks): bidirectional links, executable ACs, independent review on P0/P1.
+3. **Intelligence layer** (when justified): semantic search/dedup (C4), multi-agent review (C5), calibrated confidence routing (C2). Skipping straight to layer 3 without the floors produces score theater.
 
 ### Backlog (aspirational components, honestly flagged)
 Live as of v3.0.x: smell detection + EARS classification (informational, §2.4/§2.1); smell findings surfaced in grooming suggestions; behavioral-assertion vocabulary (`asserts_value`/`output_contains`, §2.5/A1); a corpus-wide status-truthfulness audit + ratchet gate (`make prd-truthfulness-gate`, FPI #7); a malformed-frontmatter validation gate; variant-aware section-count + FIX/compact scoring; a **mock-depth / weak-test static gate** (`make mock-depth`, anti-pattern A2) with opt-in mutation sampling (`make mutation-sample`); a **traceability-target existence gate** (`make ac-coverage` — implemented PRDs must not cite dangling test paths); an informational **measured traceability coverage ratio**; **status-vocabulary canonicalization** (warning-only); and **legacy-PRD truthfulness migration tooling** (`make prd-migrate`, dry-run, never fabricates `live`).
 
-**Decided (with evidence):** *scoring* smells/EARS at a non-zero weight is **NOT** adopted — a corpus calibration (N≈2800) found smell-count *positively* correlates with score (r≈+0.58, a confound: substantive PRDs have more requirement lines to both smell and score), so scoring would inflate empty skeletons and is trivially gameable by omission. Smells stay informational. See `docs/research/aaref-smell-weight-calibration-2026-05-31.md`.
+**Decided (with evidence):** *scoring* smells/EARS at a non-zero weight is **NOT** adopted — a corpus calibration (N≈2800) found smell-count *positively* correlates with score (r≈+0.58, a confound: substantive PRDs have more requirement lines to both smell and score), so scoring would inflate empty skeletons and is trivially gameable by omission. Smells stay informational. See `docs/research/aaref-smell-weight-calibration-2026-05-31.md` (TRW-internal research artifact).
 
 Remaining items to track as PRDs rather than implying they exist: a full executable-AC *test-runner* (the existence gate checks the cited test exists, not that it passes); a blocking mutation-testing gate (currently opt-in/advisory); solver-checked conflict satisfiability; and *executing* the legacy migration — the tooling exists but the ~286 PRDs missing `functionality_level` (status `done` family needs human review) and ~169–184 with malformed frontmatter still need remediation.
 
@@ -393,7 +413,7 @@ Remaining items to track as PRDs rather than implying they exist: a full executa
 
 ## 11. Relationship to FRAMEWORK.md
 
-| | AARE-F (this doc) | FRAMEWORK.md (`v25_TRW`) |
+| | AARE-F (this doc) | FRAMEWORK.md (`v26_TRW`) |
 |---|---|---|
 | Governs | the **specification** (requirement/PRD quality, traceability, verification) | the **execution** (phases, gates, formations, persistence, learning) |
 | Key artifact | the PRD | the run (phases + checkpoints + evidence) |
@@ -423,7 +443,8 @@ Use them together: AARE-F says *what good looks like and how to prove it*; FRAME
 | 1.0.0 | 2026-01-24 | Initial release |
 | 1.1.0 | 2026-02-02 | Prompts, indexes, quality gates |
 | 2.0.0 | 2026-02-21 | Project-agnostic portable edition; removed hardcoded project references; Getting Started |
-| **3.0.0** | **2026-05-31** | **Truthfulness + SOTA reconciliation**: removed residual project contamination and unsourced effectiveness numbers (67%/96%/100%/+28%/+13.2%); replaced fixed confidence-% bands with calibration-first guidance; added the Requirement Quality Standard (EARS + ISO 29148 + INCOSE GtWR v4 + smells + executable ACs); added §0 "what this is/isn't" and the live quality model (real 4-dimension risk-scaled validator); added truthfulness anti-patterns A1–A5; added Specification Primacy (P1) and Evidence-over-Assertion (P6); clarified relationship to FRAMEWORK.md; per-component live/partial/guide status; single-source/sync mandate. |
+| 3.0.0 | 2026-05-31 | **Truthfulness + SOTA reconciliation**: removed residual project contamination and unsourced effectiveness numbers (67%/96%/100%/+28%/+13.2%); replaced fixed confidence-% bands with calibration-first guidance; added the Requirement Quality Standard (EARS + ISO 29148 + INCOSE GtWR v4 + smells + executable ACs); added §0 "what this is/isn't" and the live quality model (real 4-dimension risk-scaled validator); added truthfulness anti-patterns A1–A5; added Specification Primacy (P1) and Evidence-over-Assertion (P6); clarified relationship to FRAMEWORK.md; per-component live/partial/guide status; single-source/sync mandate. |
+| **3.1.0** | **2026-06-10** | **Operational sharpening** (research-grounded refinement run): operative summary front-loaded; EARS/Given-When-Then layering (§2.1); ISO 29148 revision note (§2.2); smell-weight evidence update — RE 2025 (§2.4); agent-authored-test caveat + sampled mutation testing (§2.5); autonomous-loop oversight (C2); reviewer iteration policy + NFR-specialized dialectical review for Critical sets (C5); delivered≠wired consumer/seam check (C7); OWASP agentic edition + injection-resistance ACs (C8); false-completion rate metric + verifier identity (C9); A1–A5 "check when" column; implementation-start gate + adoption sequence + portable lifecycle naming (§9); principle citations (P1/P6); risk_level override location (§8). |
 
 ---
 
@@ -444,16 +465,19 @@ Use them together: AARE-F says *what good looks like and how to prove it*; FRAME
 
 ## Appendix B: References
 
-- ISO/IEC/IEEE 29148:2018 — Requirements Engineering
+- ISO/IEC/IEEE 29148:2018 — Requirements Engineering (revision in committee draft as of early 2026)
 - INCOSE *Guide to Writing Requirements* v4 (INCOSE-TP-2010-006-04, 2023)
 - A. Mavin et al., *Easy Approach to Requirements Syntax (EARS)*, IEEE RE 2009
-- OWASP Top 10 for LLM Applications (cite the edition you target)
+- OWASP Top 10 for LLM Applications; OWASP Top 10 for Agentic Applications (Dec 2025) — cite the edition you target
 - NIST AI RMF 1.0; EU AI Act (2024); ISO/IEC 42001
-- 2024–2026 LLM-for-RE literature (ambiguity detection, requirements smells, automated repair)
+- 2024–2026 LLM-for-RE literature (ambiguity detection, requirements smells, automated repair; RE 2025 smell-impact-on-LLM-performance findings)
+- LLM-assisted mutation testing at production scale (Meta ACH, 2025–2026)
 - LLM calibration / uncertainty quantification: Guo et al. 2017 (*On Calibration of Modern Neural Networks*); Kadavath et al. 2022 (*Language Models (Mostly) Know What They Know*); semantic-entropy and conformal-prediction literature (2023–2025)
 - Domain assurance (where applicable): DO-178C, ISO 26262, IEC 62304
 
 ## Appendix C: Related Documents
+
+Paths below are TRW-monorepo locations; new projects create their own per §9 (the scaffold), and standalone deployments should treat them as scaffold targets, not existing files.
 
 | Document | Location | Purpose |
 |----------|----------|---------|
@@ -475,5 +499,5 @@ An execution plan bridges a reviewed PRD to implementation by decomposing FRs in
 
 ---
 
-*AARE-F v3.0.0 — AI-Augmented Requirements Engineering Framework (Portable Edition)*
-*Truthful · Standards-Aligned · Implementation-Reconciled · Last Updated: 2026-05-31*
+*AARE-F v3.1.0 — AI-Augmented Requirements Engineering Framework (Portable Edition)*
+*Truthful · Standards-Aligned · Implementation-Reconciled · Last Updated: 2026-06-10*

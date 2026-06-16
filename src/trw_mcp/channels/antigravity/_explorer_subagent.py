@@ -347,8 +347,8 @@ def generate_distill_explorer_agent(
     )
     try:
         write_state(new_state, state_file)
-    except Exception:
-        pass  # fail-open on state write
+    except Exception:  # justified: fail-open, state persistence must not block agent write
+        log.debug("ag02_state_write_failed", state_file=str(state_file), exc_info=True)
 
     # Emit telemetry (fail-open).
     try:
@@ -360,8 +360,8 @@ def generate_distill_explorer_agent(
             bytes_emitted=bytes_written,
             extra={"outcome": "written"},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, agent write already completed
+        log.debug("ag02_channel_event_failed", channel_id=AG02_CHANNEL_ID, exc_info=True)
 
     log.debug(
         "ag02_subagent_written",

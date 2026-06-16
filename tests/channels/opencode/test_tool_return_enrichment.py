@@ -37,10 +37,7 @@ def test_substrate_enrich_response_is_wired_in_tools() -> None:
     """
     import pathlib
 
-    tool_file = (
-        pathlib.Path(__file__).parent.parent.parent.parent
-        / "src" / "trw_mcp" / "tools" / "before_edit_hint.py"
-    )
+    tool_file = pathlib.Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "tools" / "before_edit_hint.py"
     if not tool_file.exists():
         return  # substrate file not in this checkout; skip gracefully
 
@@ -147,7 +144,6 @@ def test_is_opencode_client_false_unknown(monkeypatch: Any) -> None:
     from trw_mcp.channels.opencode._tool_return_enrichment import is_opencode_client
 
     assert is_opencode_client() is False
-
 
 
 @pytest.fixture(autouse=True)

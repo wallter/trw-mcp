@@ -11,7 +11,11 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from trw_mcp.security.mcp_registry import MCPRegistry, verify_signature
+from trw_mcp.security.mcp_registry import (
+    MCPRegistry,
+    fingerprint_format_valid,
+    verify_signature,
+)
 
 
 def _public_key_bytes(private_key: Ed25519PrivateKey) -> bytes:
@@ -71,10 +75,37 @@ def test_load_allowlist_from_signed_canonical(tmp_path: Path) -> None:
     assert registry.allowlist.by_name("trw") is not None
 
 
-def test_verify_signature_helper_requires_fingerprint_shape() -> None:
+def test_fingerprint_format_valid_accepts_sha256_shape() -> None:
     from trw_mcp.security.mcp_registry import MCPServer
 
-    assert verify_signature(MCPServer(name="trw", url_or_command="trw-mcp"))
+    server = MCPServer(
+        name="trw",
+        url_or_command="trw-mcp",
+        public_key_fingerprint="sha256:" + "a" * 64,
+    )
+    assert fingerprint_format_valid(server) is True
+
+
+def test_fingerprint_format_valid_rejects_non_sha256_shape() -> None:
+    """Format helper is NOT accept-all: a non-sha256 fingerprint is rejected."""
+    from trw_mcp.security.mcp_registry import MCPServer
+
+    server = MCPServer(
+        name="trw",
+        url_or_command="trw-mcp",
+        public_key_fingerprint="md5:deadbeef",
+    )
+    assert fingerprint_format_valid(server) is False
+
+
+def test_verify_signature_is_alias_of_fingerprint_format_valid() -> None:
+    """Back-compat alias forwards to the honestly-named helper (no crypto)."""
+    from trw_mcp.security.mcp_registry import MCPServer
+
+    ok = MCPServer(name="trw", url_or_command="trw-mcp", public_key_fingerprint="sha256:" + "b" * 64)
+    bad = MCPServer(name="trw", url_or_command="trw-mcp", public_key_fingerprint="plain")
+    assert verify_signature(ok) == fingerprint_format_valid(ok) is True
+    assert verify_signature(bad) == fingerprint_format_valid(bad) is False
 
 
 def test_unsigned_server_denied_by_default(tmp_path: Path) -> None:

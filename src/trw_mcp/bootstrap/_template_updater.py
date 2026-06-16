@@ -22,6 +22,7 @@ from pathlib import Path
 import structlog
 
 from ._file_ops import read_json_object
+from ._gitignore_merge import _ensure_credentials_gitignored as _ensure_credentials_gitignored
 from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
 from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
 from ._ide_targets import _update_antigravity_artifacts as _update_antigravity_artifacts
@@ -64,6 +65,13 @@ _NEVER_OVERWRITE = {
     ".trw/config.yaml",
     ".trw/learnings/index.yaml",
 }
+
+# Credentials-gitignore merge-ensure extracted to ``_gitignore_merge.py``
+# (PRD-SEC-005-FR02, 350-eLOC gate). Re-exported here for back-compat with
+# callers/tests that patch/import ``_template_updater._ensure_credentials_gitignored``.
+# ``.trw/.gitignore`` is intentionally NOT in ``_ALWAYS_UPDATE`` — blind-overwriting
+# it would silently discard a user's custom ignores — so the single credentials
+# rule is merge-ensured instead.
 
 # CLAUDE.md markers + helpers extracted to ``_template_claude_md.py``
 # (PRD-DIST-243 Phase 1 batch 4, cycle 32). Re-imported above.
@@ -180,7 +188,6 @@ def _merge_settings_json(
         module's long-standing recovery behavior (copy the valid bundled
         template), with a content-free warning.
     """
-    _log = structlog.get_logger(__name__)
     if not src.is_file():
         return
     if not dest.exists():
@@ -202,7 +209,7 @@ def _merge_settings_json(
     if existing is None:
         # Unreadable / corrupt / non-object existing file: recover by copying the
         # (valid) bundled template, mirroring the prior fallback semantics.
-        _log.warning("settings_json_merge_fallback", path=str(dest), reason="unreadable_or_non_object")
+        logger.warning("settings_json_merge_fallback", path=str(dest), reason="unreadable_or_non_object")
         _update_or_report(src, dest, result, dry_run)
         return
 
@@ -358,6 +365,10 @@ def _update_framework_files(
         result,
         dry_run,
     )
+    # PRD-SEC-005-FR02: merge-ensure the credentials.yaml ignore rule on every
+    # existing install (gitignore.txt is only deployed on INIT, so update-project
+    # would otherwise never refresh a custom .trw/.gitignore).
+    _ensure_credentials_gitignored(target_dir, result, dry_run, on_progress)
     _update_hooks(target_dir, effective_data, result, dry_run, on_progress)
     _update_skills(target_dir, effective_data, result, dry_run, on_progress)
     _update_agents(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)

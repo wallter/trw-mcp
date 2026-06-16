@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -35,6 +36,7 @@ __all__ = [
 
 _DEFAULT_EVENTS_LOG = ".trw/telemetry/channel-events.jsonl"
 _DEFAULT_WINDOW_SECONDS = 3600
+_LOGGER = logging.getLogger(__name__)
 
 
 def _load_events(log_path: Path) -> list[dict[str, object]]:
@@ -279,7 +281,7 @@ def main() -> int:
         )
     except Exception:
         # Always exit 0 — fail-open per P1-22
-        pass
+        _LOGGER.debug("copilot_posttool_correlation_failed", exc_info=True)
 
     return 0
 

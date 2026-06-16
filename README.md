@@ -13,12 +13,12 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->43<!-- /inv --> tools, <!-- inv:skills -->25<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->43<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What It Does
 
-trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in `.trw/` and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; iter-0..10 SWE-bench-single-shot measurements showed null (n=40/47). See [docs/eval/iter-notes/iter-11-prospector-analysis.md](https://github.com/wallter/trw-framework/blob/main/docs/eval/iter-notes/iter-11-prospector-analysis.md).*
+trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in `.trw/` and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; early SWE-bench single-shot measurements (n=40/47) showed null. See the [verification docs](https://trwframework.com/docs/verification) for the current methodology and evidence posture.*
 
 The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, CLAUDE.md auto-generation from high-impact learnings, and instruction-tool manifest validation that ensures agents only see tools they can actually call.
 
@@ -29,14 +29,8 @@ The server also manages structured run tracking (phases, checkpoints, events), b
 See the [full quickstart guide](https://trwframework.com/docs/quickstart) for Claude Code, Cursor, opencode, and Codex setup.
 
 ```bash
-# Install from PyPI
-pip install trw-mcp
-
-# Or install from source
-git clone https://github.com/wallter/trw-mcp.git
-cd trw-mcp
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+# Recommended: one-line installer (sets up trw-mcp + bootstraps your project)
+curl -fsSL https://trwframework.com/install.sh | bash
 
 # Deploy TRW to a project (must be a git repo)
 trw-mcp init-project /path/to/your/repo
@@ -45,9 +39,22 @@ trw-mcp init-project /path/to/your/repo
 claude mcp add trw -- trw-mcp --debug
 ```
 
+### Manual / advanced install
+
+```bash
+# Install from PyPI
+pip install trw-mcp
+
+# Or install from source
+git clone https://github.com/wallter/trw-mcp.git
+cd trw-mcp
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
 ### Deploy to a Project
 
-`trw-mcp init-project` bootstraps the full TRW framework in any git repository. Full configuration reference at [trwframework.com/docs/configuration](https://trwframework.com/docs/configuration).
+`trw-mcp init-project` bootstraps the full TRW framework in any git repository. Full configuration reference at [trwframework.com/docs/config](https://trwframework.com/docs/config).
 
 ```bash
 trw-mcp init-project .              # current directory
@@ -66,32 +73,89 @@ This creates:
 
 ### Configuration
 
-Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`. Full reference at [trwframework.com/docs/configuration](https://trwframework.com/docs/configuration).
+Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`. Full reference at [trwframework.com/docs/config](https://trwframework.com/docs/config).
 
 ```yaml
 # .trw/config.yaml — top settings (all optional, shown with defaults)
-embeddings_enabled: false          # Enable vector search (requires [vectors] extra)
-learning_max_entries: 5000         # Max learnings before auto-pruning
+embeddings_enabled: true           # Vector search on by default (install the [vectors] extra to use it)
+learning_max_entries: 500          # Max learnings before auto-pruning
 build_check_enabled: true          # Run pytest+mypy on trw_build_check
+deliver_gate_mode: "block_coding"  # Block delivery for coding/rca/eval tasks without a passing build record;
+                                   # set to "advisory" to restore warn-only posture (changed 2026-06-10)
 observation_masking: true          # Reduce verbosity in long sessions
-ceremony_mode: "full"              # "full", "light", or "off"
+ceremony_mode: "full"              # "full" or "light"
 ```
+
+## Telemetry & network behavior
+
+trw-mcp is **local-first**: with the default configuration it persists everything under your project's `.trw/` directory and makes **no outbound network calls** except the optional embedding-model download described below. There is no built-in usage tracking, phone-home, or content upload unless you explicitly enable it.
+
+### What can touch the network, when, and how to turn it off
+
+| Surface | When | Default | Opt-out / control |
+|---------|------|---------|-------------------|
+| **Embedding model download** | First vector operation downloads `all-MiniLM-L6-v2` from huggingface.co (only when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the download and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
+| **Usage telemetry** | Only if explicitly enabled | **off** (gated by `platform_telemetry_enabled`, default `false`) | leave `platform_telemetry_enabled=false`; see PRD-SEC-004 |
+| **Learning-content publishing** | Only if explicitly enabled | **off** (gated by `learning_sharing_enabled`, default `false`) | leave `learning_sharing_enabled=false`; learning content is never published off-box by default |
+
+With `TRW_OFFLINE=1` set, `session_start` makes **zero** huggingface.co calls — a testable invariant for air-gapped deployments.
+
+### Environment-variable inventory
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `TRW_OFFLINE` | Master offline switch — blocks the huggingface.co embedding-model download | unset (online) |
+| `HF_HUB_OFFLINE` | Upstream huggingface_hub offline switch — also honored by trw-mcp | unset |
+| `TRW_PROBE_ENABLED` | Enables the optional sandboxed `trw_probe` experiment tool | unset (probe disabled) |
+| `ENABLE_TOOL_SEARCH` | Force-enable/disable MCP tool-search auto-deferral (`true`/`false`) | auto-detected |
+| `TRW_LOG_LEVEL` | Explicit log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`) | derived from `--debug` / defaults |
+| `TRW_PLATFORM_API_KEY` | Platform credential (PRD-SEC-005) — read from the environment, kept out of git-tracked config | unset |
+| `TRW_CONFIG_STRICT` | Fail **closed** on a malformed `.trw/config.yaml` instead of reverting to defaults | unset (fail-open, but loud) |
+| `MEMORY_*` | trw-memory engine knobs (see the [trw-memory README](https://github.com/wallter/trw-memory)) | per-field |
+
+A malformed `.trw/config.yaml` always emits a `WARNING` (and a stderr notice) rather than being silently discarded; set `TRW_CONFIG_STRICT=1` to make the load fail closed so security overrides are never dropped unnoticed.
+
+### Security defaults
+
+| Capability | Default | Notes |
+|-----------|---------|-------|
+| Field-level encryption | **off** | opt-in via trw-memory `encryption_enabled` |
+| Secret redaction in logs | **on** | API keys, tokens, and secret-named fields are masked in log output by default |
+| PII detection (memory content) | **warn** | PII (emails, API keys, etc.) is detected and logged but stored as-is by default (`pii_action: warn`); set `pii_action: block` to reject such writes, or `redact` to mask them |
+| Recall output filtering | **redact** | SEC-001 recall filter masks flagged values returned by recall (`recall_filter_mode: redact`) |
+| Memory poisoning detection | **observe** | detects and records statistical anomalies, does not quarantine, by default |
+| Remote sync / publishing | **off** | `learning_sharing_enabled=false`, `platform_telemetry_enabled=false` |
+| `.trw/` directory permissions | `0700` | state/secret dirs are owner-only |
+| `memory.db` / secret files | `0600` | owner read/write only (consistent with `pins.json`) |
+
+### Enterprise hardening recipe
+
+For an air-gapped or compliance-sensitive deployment:
+
+```bash
+export TRW_OFFLINE=1            # no huggingface.co egress; keyword-only recall
+export TRW_CONFIG_STRICT=1      # malformed config fails closed, never silently reverts
+# Leave telemetry + learning-sharing at their secure defaults:
+#   platform_telemetry_enabled: false
+#   learning_sharing_enabled:   false
+```
+
+Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound connection is attempted at `session_start`.
 
 ## MCP Tools (<!-- inv:tools -->43<!-- /inv -->)
 
-<!-- inv:tools -->43<!-- /inv --> tools covering the full AI coding assistant memory lifecycle. See [tool reference docs](https://trwframework.com/docs) for detailed parameter documentation.
+The table below covers the most-used tools out of the full <!-- inv:tools -->43<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
 | **Session** | `session_start`, `init`, `status`, `checkpoint`, `pre_compact_checkpoint`, `heartbeat`, `adopt_run` | Run lifecycle, progress tracking, and pin/liveness management |
-| **Learning** | `learn`, `learn_update`, `recall`, `knowledge_sync`, `claude_md_sync`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
+| **Learning** | `learn`, `learn_update`, `recall`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
 | **Quality** | `build_check`, `review`, `deliver` | Verification and delivery |
 | **Requirements** | `prd_create`, `prd_validate`, `prd_diff` | [Spec-driven development](https://trwframework.com/docs) with AARE-F PRDs |
-| **Ceremony** | `ceremony_status`, `ceremony_approve`, `ceremony_revert` | Workflow compliance |
 | **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `codebase_risk_report`, `entity_risk_map` | Repo-aware search, symbol lookup, and risk signals |
 | **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
-## Skills (<!-- inv:skills -->25<!-- /inv -->)
+## Skills (<!-- inv:skills -->26<!-- /inv -->)
 
 Slash-command workflows — zero tokens until triggered. Full skill reference at [trwframework.com/docs](https://trwframework.com/docs).
 
@@ -115,7 +179,7 @@ Specialized sub-agents for Agent Teams — parallel execution with coordinated h
 
 ## The 6-Phase Model
 
-TRW implements a structured execution lifecycle: **RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER** with phase gates, build checks, adversarial audits, and delivery ceremony. See [FRAMEWORK.md](FRAMEWORK.md) for the full specification, or read the [framework overview at trwframework.com/docs/framework](https://trwframework.com/docs/framework).
+TRW implements a structured execution lifecycle: **RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER** with phase gates, build checks, adversarial audits, and delivery ceremony. See [FRAMEWORK.md](FRAMEWORK.md) for the full specification, or read the [lifecycle overview at trwframework.com/docs/lifecycle](https://trwframework.com/docs/lifecycle).
 
 ## CLI Commands
 

@@ -95,8 +95,23 @@ def _copilot_skills_source_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _copilot_deliver_gate_block() -> str:
+    """Return the FR03 session-start + deliver-gate block (bundled-source derived).
+
+    Function-local import avoids pulling the heavy ``sections`` package at
+    ``_copilot`` import time (PRD-QUAL-104 FR03).
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
+
+    return render_deliver_gate_statement()
+
+
 def _copilot_instructions_content() -> str:
-    """Generate repo-wide Copilot instruction content with TRW ceremony guidance."""
+    """Generate repo-wide Copilot instruction content with TRW ceremony guidance.
+
+    PRD-QUAL-104 FR03: injects the non-negotiable session-start + deliver-gate
+    block so the Copilot protocol carrier always states the gate verbatim.
+    """
     return f"""{_COPILOT_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
@@ -126,6 +141,7 @@ TRW tools are available via MCP server. Key tools: `trw_session_start`, `trw_lea
 - Use `trw_checkpoint()` after working milestones
 - Commit messages: `feat(scope): msg` (Conventional Commits)
 
+{_copilot_deliver_gate_block()}
 {_COPILOT_TRW_END_MARKER}
 """
 

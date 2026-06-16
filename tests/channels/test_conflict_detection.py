@@ -132,9 +132,7 @@ def test_render_log_last_for_no_file_returns_none(tmp_path: Path) -> None:
     assert result is None
 
 
-def test_render_log_append_fail_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_render_log_append_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """append() must not raise even if writing fails."""
     log_path = tmp_path / "no-write" / "render-log.jsonl"
     rl = RenderLog(log_path)
@@ -183,10 +181,13 @@ def test_detect_human_edit_no_baseline_returns_false(tmp_path: Path) -> None:
             mode=mode,
             target_path=target,
             expected_sha=None,
-            markers=_make_markers() if mode in (
+            markers=_make_markers()
+            if mode
+            in (
                 HumanEditDetection.SHA256_SEGMENT,
                 HumanEditDetection.MARKER_BOUNDARY,
-            ) else None,
+            )
+            else None,
         )
         assert result is False, f"mode={mode} should return False when expected_sha is None"
 
@@ -362,9 +363,7 @@ def test_write_atomic_appends_to_log(tmp_path: Path) -> None:
     assert result.channel_id == "ch1"
 
 
-def test_write_atomic_log_before_rename_ordering(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_atomic_log_before_rename_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The log entry must be written BEFORE os.rename is called."""
     target = tmp_path / "out.md"
     log_path = tmp_path / "render-log.jsonl"
@@ -384,9 +383,7 @@ def test_write_atomic_log_before_rename_ordering(
     assert log_written_before_rename["value"] is True
 
 
-def test_write_atomic_crash_safety(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_atomic_crash_safety(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If os.rename crashes after log append, reconcile() must fix the log.
 
     After the crash:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -242,13 +241,18 @@ class TestTrwMcpServerEntry:
         assert "command" in entry
         assert "args" in entry
 
-    def test_falls_back_to_sys_executable_when_no_which(self) -> None:
-        """Falls back to sys.executable -m when trw-mcp not in PATH."""
+    def test_falls_back_to_portable_python_when_no_which(self) -> None:
+        """Falls back to portable ``python3 -m`` (not machine-absolute path).
+
+        PRD-SEC-006 / audit installer-client-12: the fallback must not embed a
+        build-machine interpreter path into a portable ``.mcp.json``.
+        """
         with patch("trw_mcp.bootstrap._utils.shutil") as mock_shutil:
             mock_shutil.which.return_value = None
             entry = _trw_mcp_server_entry()
-        assert entry["command"] == sys.executable
-        assert "-m" in entry["args"]  # type: ignore[operator]
+        assert entry["command"] == "python3"
+        assert not str(entry["command"]).startswith("/")
+        assert entry["args"] == ["-m", "trw_mcp.server"]  # no --debug default
 
 
 @pytest.mark.unit

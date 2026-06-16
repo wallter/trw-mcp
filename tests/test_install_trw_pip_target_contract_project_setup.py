@@ -29,16 +29,7 @@ def test_parse_ide_argument_supports_comma_separated_multi_select(installer_path
     module = _load_installer_module(installer_path)
 
     assert module._parse_ide_argument("cursor-ide,codex,gemini") == ["cursor-ide", "codex", "gemini"]
-    assert module._parse_ide_argument("all") == [
-        "claude-code",
-        "cursor-ide",
-        "cursor-cli",
-        "opencode",
-        "codex",
-        "copilot",
-        "gemini",
-        "aider",
-    ]
+    assert module._parse_ide_argument("all") == module._SUPPORTED_IDES
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

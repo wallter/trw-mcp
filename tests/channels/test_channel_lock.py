@@ -131,9 +131,7 @@ def test_channel_lock_skip_never_deadlocks(tmp_path: Path) -> None:
     sys.platform == "win32",
     reason="Windows advisory locking is a no-op — skip contention test",
 )
-def test_channel_lock_closes_fd_when_poll_sleep_interrupted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_channel_lock_closes_fd_when_poll_sleep_interrupted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: a BaseException (KeyboardInterrupt / asyncio.CancelledError)
     interrupting the poll sleep must CLOSE the fd, not leak it. __exit__ is not
     called when __enter__ raises, and the prior `except OSError` handler missed

@@ -54,42 +54,24 @@ from trw_mcp.state.validation import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
 )
 from trw_mcp.state.validation import (
+    extract_wiring_warnings,
     validate_prd_quality_v2,
 )
-from trw_mcp.tools._prd_template_helpers import (
-    _CACHED_TEMPLATE_BODY as _CACHED_TEMPLATE_BODY,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _CACHED_TEMPLATE_VERSION as _CACHED_TEMPLATE_VERSION,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _apply_prefill as _apply_prefill,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _extract_prefill as _extract_prefill,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _filter_sections_for_category as _filter_sections_for_category,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _generate_prd_body as _generate_prd_body,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _load_template_body as _load_template_body,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _render_prd as _render_prd,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _strip_deprecated_fields as _strip_deprecated_fields,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    _substitute_template as _substitute_template,
-)
-from trw_mcp.tools._prd_template_helpers import (
-    reset_template_cache as reset_template_cache,
-)
 from trw_mcp.tools.telemetry import log_tool_call
+
+# Backward-compatible re-exports for test imports (assignments are
+# formatter-stable; the isort hook re-splits aliased import blocks).
+_CACHED_TEMPLATE_BODY = _helpers._CACHED_TEMPLATE_BODY
+_CACHED_TEMPLATE_VERSION = _helpers._CACHED_TEMPLATE_VERSION
+_apply_prefill = _helpers._apply_prefill
+_extract_prefill = _helpers._extract_prefill
+_filter_sections_for_category = _helpers._filter_sections_for_category
+_generate_prd_body = _helpers._generate_prd_body
+_load_template_body = _helpers._load_template_body
+_render_prd = _helpers._render_prd
+_strip_deprecated_fields = _helpers._strip_deprecated_fields
+_substitute_template = _helpers._substitute_template
+reset_template_cache = _helpers.reset_template_cache
 
 logger = structlog.get_logger(__name__)
 
@@ -520,6 +502,8 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             "risk_scaled": v2_result.risk_scaled,
             "status_drift_warnings": v2_result.status_drift_warnings,
             "integrity_warnings": v2_result.integrity_warnings,
+            # PRD-CORE-190 FR03: full wiring set, un-truncated (helper docs).
+            "wiring_gate_warnings": extract_wiring_warnings(v2_result),
             "cache": {
                 "hit": False,
                 "key": cache_key,

@@ -141,9 +141,7 @@ class TestReadRecentEvents:
         """A single corrupt JSONL line is skipped without dropping valid lines."""
         events_path = tmp_path / "events.jsonl"
         events_path.write_text(
-            '{"event": "session_start"}\n'
-            "NOT JSON AT ALL\n"
-            '{"event": "nudge_shown"}\n',
+            '{"event": "session_start"}\nNOT JSON AT ALL\n{"event": "nudge_shown"}\n',
             encoding="utf-8",
         )
         result = read_recent_events(events_path)
@@ -169,9 +167,7 @@ class TestReadRecentEvents:
         with structlog.testing.capture_logs() as logs:
             result = read_recent_events(events_path)
         assert [e["event"] for e in result] == ["ok"]
-        skips = [
-            log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"
-        ]
+        skips = [log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"]
         assert len(skips) == 1
         skip = skips[0]
         assert skip["path"] == str(events_path)
@@ -187,11 +183,7 @@ class TestReadRecentEvents:
         with structlog.testing.capture_logs() as logs:
             result = read_recent_events(events_path)
         assert result == []
-        unreadable = [
-            log
-            for log in logs
-            if log.get("event") == "proximal_reward.event_file_unreadable"
-        ]
+        unreadable = [log for log in logs if log.get("event") == "proximal_reward.event_file_unreadable"]
         assert len(unreadable) == 1
         assert unreadable[0]["path"] == str(events_path)
         assert unreadable[0]["error_class"] == "UnicodeDecodeError"
@@ -206,8 +198,6 @@ class TestReadRecentEvents:
         with structlog.testing.capture_logs() as logs:
             result = read_recent_events(events_path)
         assert [e["event"] for e in result] == ["e0", "e1", "e3"]
-        skips = [
-            log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"
-        ]
+        skips = [log for log in logs if log.get("event") == "proximal_reward.event_line_skipped"]
         assert len(skips) == 1
         assert skips[0]["line_number"] == 3

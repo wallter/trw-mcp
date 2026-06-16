@@ -282,6 +282,69 @@ def test_sandbox_fail_loud_when_seccomp_unavailable(
     assert "seccomp" in excinfo.value.activation_gate_blocked_reason
 
 
+def test_sandbox_does_not_inherit_parent_secrets_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE-144 §7.6 — an untrusted probe cannot read parent secrets via stdout.
+
+    A secret set in the PARENT environment must NOT appear in the sandboxed
+    child's environment (default minimal-env policy), so the probe prints
+    ``ABSENT`` rather than exfiltrating the value on stdout.
+    """
+    monkeypatch.setenv("TRW_TEST_SECRET", "super-secret-value")
+    result = run_sandboxed(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ.get('TRW_TEST_SECRET', 'ABSENT'))",
+        ],
+        timeout_s=10.0,
+        strict=False,
+    )
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "ABSENT"
+    assert "super-secret-value" not in result.stdout
+
+
+def test_sandbox_env_allowlist_passes_named_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE-144 §7.6 — a caller MAY opt a named var in via ``env_allowlist``."""
+    monkeypatch.setenv("TRW_TEST_ALLOWED", "present")
+    result = run_sandboxed(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ.get('TRW_TEST_ALLOWED', 'ABSENT'))",
+        ],
+        timeout_s=10.0,
+        strict=False,
+        env_allowlist=["TRW_TEST_ALLOWED"],
+    )
+    assert result.stdout.strip() == "present"
+
+
+def test_sandbox_explicit_env_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SAFE-001 callers needing inheritance pass an explicit ``env`` dict."""
+    monkeypatch.setenv("TRW_TEST_SECRET", "leaked")
+    # An explicit env dict is honored verbatim — the secret is NOT in it, so
+    # even a caller opting into explicit-env control does not auto-inherit it.
+    result = run_sandboxed(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ.get('TRW_TEST_SECRET', 'ABSENT'))",
+        ],
+        timeout_s=10.0,
+        strict=False,
+        env={"PATH": __import__("os").environ.get("PATH", "")},
+    )
+    assert result.stdout.strip() == "ABSENT"
+    assert "leaked" not in result.stdout
+
+
 def test_sandbox_fail_loud_when_unshare_probe_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

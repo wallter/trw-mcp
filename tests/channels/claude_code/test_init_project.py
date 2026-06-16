@@ -22,6 +22,7 @@ def _call_install(target_dir: Path, force: bool = False) -> dict[str, list[str]]
     from trw_mcp.bootstrap._claude_code_distill_channels import (
         install_claude_code_distill_channels,
     )
+
     return install_claude_code_distill_channels(target_dir, force=force)
 
 
@@ -121,20 +122,14 @@ class TestFirstInstall:
 
         _call_install(tmp_path)
         bundled = _get_hook_content("pre-tool-distill-hint.sh")
-        installed = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
+        installed = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
         assert installed == bundled
 
     def test_cc03_hook_has_trap_exit0(self, tmp_path: Path) -> None:
         """Installed hook must contain the FR26 safety contract (trap 'exit 0' EXIT)."""
         _call_install(tmp_path)
-        content = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
-        assert "trap 'exit 0' EXIT" in content, (
-            "FR26 safety contract 'trap exit 0 EXIT' missing from hook"
-        )
+        content = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
+        assert "trap 'exit 0' EXIT" in content, "FR26 safety contract 'trap exit 0 EXIT' missing from hook"
 
     def test_cc05_entry_in_created_or_preserved(self, tmp_path: Path) -> None:
         """CC-05 result records the subagent in created or preserved list."""
@@ -180,25 +175,17 @@ class TestIdempotency:
     def test_second_call_hook_content_unchanged(self, tmp_path: Path) -> None:
         """Hook file content is identical after two installs."""
         _call_install(tmp_path)
-        content1 = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
+        content1 = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
         _call_install(tmp_path)
-        content2 = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
+        content2 = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
         assert content1 == content2
 
     def test_second_call_subagent_content_unchanged(self, tmp_path: Path) -> None:
         """Subagent file content is identical after two installs."""
         _call_install(tmp_path)
-        content1 = (
-            tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
-        ).read_text(encoding="utf-8")
+        content1 = (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").read_text(encoding="utf-8")
         _call_install(tmp_path)
-        content2 = (
-            tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
-        ).read_text(encoding="utf-8")
+        content2 = (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").read_text(encoding="utf-8")
         assert content1 == content2
 
     def test_second_call_reports_preserved_not_created(self, tmp_path: Path) -> None:
@@ -209,31 +196,21 @@ class TestIdempotency:
         all_created2 = result2["created"]
         # The subagent was already written — second run should NOT re-create it
         agent_rel = ".claude/agents/trw-distill-explorer.md"
-        assert agent_rel not in all_created2, (
-            f"Second install re-created {agent_rel} instead of preserving it"
-        )
+        assert agent_rel not in all_created2, f"Second install re-created {agent_rel} instead of preserving it"
 
     def test_idempotent_final_state_same_as_first_run(self, tmp_path: Path) -> None:
         """Final state after 2 runs equals state after 1 run (all files identical)."""
         _call_install(tmp_path)
         # Snapshot state after first run
-        agent_content1 = (
-            tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
-        ).read_text(encoding="utf-8")
-        hook_content1 = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
+        agent_content1 = (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").read_text(encoding="utf-8")
+        hook_content1 = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
         manifest1 = _load_manifest(tmp_path)
         cc_ids1 = {e.id for e in manifest1.channels}
 
         _call_install(tmp_path)
         # Compare after second run
-        agent_content2 = (
-            tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
-        ).read_text(encoding="utf-8")
-        hook_content2 = (
-            tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
-        ).read_text(encoding="utf-8")
+        agent_content2 = (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").read_text(encoding="utf-8")
+        hook_content2 = (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").read_text(encoding="utf-8")
         manifest2 = _load_manifest(tmp_path)
         cc_ids2 = {e.id for e in manifest2.channels}
 

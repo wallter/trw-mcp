@@ -18,6 +18,7 @@ path is tried next.
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def _probe_ctx_client_name(ctx: Any) -> str | None:
 
     Never raises.
     """
-    try:
+    with suppress(Exception):
         session = ctx.session  # raises RuntimeError when no session yet
         client_params = session.client_params  # may be None pre-initialize
         if client_params is None:
@@ -66,8 +67,6 @@ def _probe_ctx_client_name(ctx: Any) -> str | None:
         name = getattr(client_info, "name", None)
         if isinstance(name, str) and name.strip():
             return name.strip().lower()
-    except Exception:
-        pass
     return None
 
 

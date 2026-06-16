@@ -30,14 +30,28 @@ class TestResolveUnifiedEventsPath:
         assert path.name.startswith("events-")
         assert path.name.endswith(".jsonl")
 
-    def test_falls_back_when_run_dir_missing_meta(self, tmp_path: Path) -> None:
+    def test_auto_creates_run_dir_meta_when_missing(self, tmp_path: Path) -> None:
+        """Bug fix: a not-yet-created meta/ must be created and used (run dir is
+        the intended destination) rather than silently falling through to the
+        fallback dir or, with no fallback, dropping the event."""
         run_dir = tmp_path / "run-no-meta"
         run_dir.mkdir()
         fallback = tmp_path / "fallback"
         fallback.mkdir()
         path = resolve_unified_events_path(run_dir=run_dir, fallback_dir=fallback)
         assert path is not None
-        assert path.parent == fallback
+        # Lands under the run dir's meta/, NOT the fallback.
+        assert path.parent == run_dir / "meta"
+        assert (run_dir / "meta").is_dir()
+
+    def test_no_silent_drop_when_run_dir_missing_meta_and_no_fallback(self, tmp_path: Path) -> None:
+        """With run_dir set, a missing meta/ and no fallback must NOT return None
+        (which would silently drop the event)."""
+        run_dir = tmp_path / "run-only"
+        run_dir.mkdir()
+        path = resolve_unified_events_path(run_dir=run_dir, fallback_dir=None)
+        assert path is not None
+        assert path.parent == run_dir / "meta"
 
     def test_returns_none_when_nothing_resolvable(self) -> None:
         assert resolve_unified_events_path(run_dir=None) is None

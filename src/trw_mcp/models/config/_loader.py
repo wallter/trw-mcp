@@ -6,11 +6,28 @@ import get_config(), while _build_config() imports state modules.
 
 from __future__ import annotations
 
+import os
+import sys
+
 import structlog
 
+from trw_mcp.models.config._credentials import resolve_platform_api_key
 from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
+
+
+def _config_strict_mode() -> bool:
+    """Return True when fail-closed config loading is requested (PRD-QUAL-110-FR01).
+
+    Opt-in via ``TRW_CONFIG_STRICT=1`` (per PRD Open-Question recommendation:
+    loud-warn always, fail-closed only when explicitly configured). In strict
+    mode a malformed/invalid ``config.yaml`` re-raises instead of silently
+    reverting to defaults, so operator security overrides can never be dropped
+    without the process noticing.
+    """
+    return os.environ.get("TRW_CONFIG_STRICT", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 # --- Singleton factory ---------------------------------------------------
 
@@ -113,7 +130,6 @@ def _build_config() -> TRWConfig:
     - config.yaml is missing or malformed
     - Any import or filesystem error occurs
     """
-    import os
     from pathlib import Path
 
     try:
@@ -121,17 +137,57 @@ def _build_config() -> TRWConfig:
 
         machine_overrides = _read_yaml_overrides(Path.home() / ".trw" / "config.yaml")
         project_root = resolve_project_root()
-        project_overrides = _read_yaml_overrides(project_root / ".trw" / "config.yaml")
+        project_config_path = project_root / ".trw" / "config.yaml"
+        project_overrides = _read_yaml_overrides(project_config_path)
 
         # Deep merge: machine is the base, project overrides per key.
         merged = _deep_merge(machine_overrides, project_overrides)
+
+        # PRD-SEC-005-FR03/FR04: resolve platform_api_key by precedence
+        # (TRW_PLATFORM_API_KEY env > .trw/credentials.yaml > config.yaml),
+        # emitting a one-shot deprecation warning when the key still comes
+        # from the deprecated, git-tracked config.yaml. The credential file
+        # read is the only NEW file access (NFR01) and adds no network call.
+        config_key_raw = merged.get("platform_api_key")
+        resolved_key = resolve_platform_api_key(
+            project_config_path,
+            config_key=str(config_key_raw) if config_key_raw else None,
+        )
+        if resolved_key:
+            merged["platform_api_key"] = resolved_key
+        else:
+            # No source supplies a key — drop any empty placeholder so the
+            # field default (empty SecretStr) is used.
+            merged.pop("platform_api_key", None)
+
         if merged:
-            # Exclude keys overridden by a TRW_ env var (env wins).
-            filtered = {k: v for k, v in merged.items() if f"TRW_{k.upper()}" not in os.environ}
+            # Exclude keys overridden by a TRW_ env var (env wins). The
+            # platform_api_key is resolved above and intentionally kept even
+            # when TRW_PLATFORM_API_KEY is set (its env precedence is already
+            # applied), so it is exempt from the generic TRW_* exclusion.
+            filtered = {
+                k: v for k, v in merged.items() if k == "platform_api_key" or f"TRW_{k.upper()}" not in os.environ
+            }
             if filtered:
                 return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
-    except Exception:  # justified: fail-open, config file read failure falls back to defaults
-        logger.debug("config_load_failed", exc_info=True)
+    except Exception as exc:
+        # PRD-QUAL-110-FR01: fail LOUD, not silent. A malformed or invalid
+        # config.yaml here means every operator hardening override is about to
+        # be discarded — that MUST be visible. Was a DEBUG no-op (the dominant
+        # silent-misconfiguration failure mode in the enterprise audit).
+        logger.warning("config_load_failed", exc_info=True, strict=_config_strict_mode())
+        # Loud stderr notice for operators tailing the process (logs may be
+        # routed elsewhere or filtered below WARNING).
+        print(
+            "TRW: WARNING — .trw/config.yaml could not be loaded "
+            f"({type(exc).__name__}); reverting to defaults and DISCARDING any "
+            "config overrides. Set TRW_CONFIG_STRICT=1 to fail closed instead.",
+            file=sys.stderr,
+        )
+        # FR01 fail-closed: in strict mode, re-raise so security-relevant
+        # overrides are never silently dropped (opt-in; default stays fail-open).
+        if _config_strict_mode():
+            raise
     return TRWConfig()
 
 

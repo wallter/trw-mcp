@@ -56,17 +56,31 @@ class _BuildFields:
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     # PRD-CORE-184-FR03: task-type-aware deliver gate mode.
-    #   advisory     — warn but allow delivery (current behavior; zero regression)
+    #   advisory     — warn but allow delivery
     #   block_coding — block missing-build-check delivery ONLY for coding/rca/eval
     #                  task types; advisory for docs/research/planning/unknown
     #   block_all    — block for every task type that expects a build artifact
     #                  (excludes docs/research/planning)
-    # Default is ``advisory`` so existing deployments see NO behavior change.
-    # The ``override_reason`` (allow_unverified) path always remains open.
-    deliver_gate_mode: Literal["advisory", "block_coding", "block_all"] = "advisory"
+    # Default flipped advisory -> block_coding (2026-06-10, framework-canon
+    # refinement): deliver-without-build-evidence is the dominant measured
+    # false-completion mode (iter-28: universal miss-verification), and the
+    # gate is safe by construction — docs/research/planning/unknown task types
+    # never block, ceremony-only runs (no work events) never block, and the
+    # ``allow_unverified`` + ``unverified_reason`` override path always
+    # remains open. Set ``deliver_gate_mode: advisory`` in .trw/config.yaml to
+    # restore the old warn-only posture.
+    deliver_gate_mode: Literal["advisory", "block_coding", "block_all"] = "block_coding"
     # Optional per-task-type override map, e.g. {"eval": "advisory"}. Empty by
     # default; values must be one of the three modes above.
     deliver_gate_task_type_overrides: dict[str, str] = Field(default_factory=dict)
+    # PRD-CORE-192-FR01: review_gate_mode (warn | block). When a STANDARD /
+    #   COMPREHENSIVE run reaches deliver with no recorded trw_review, ``warn``
+    #   (the brownfield-safe default) emits a soft ``review_warning`` and lets
+    #   delivery proceed; ``block`` escalates that to a hard ``review_block`` so
+    #   trw_deliver refuses to ship until a review exists (overridable via the
+    #   ``allow_unverified`` + structured acceptable-failure path). Mirrors the
+    #   ``deliver_gate_mode`` precedent. Default ``warn`` -> zero behavior change.
+    review_gate_mode: Literal["warn", "block"] = "warn"
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None
@@ -114,7 +128,7 @@ class _BuildFields:
     deferred_batch_max_seconds: int = 300
     deferred_lock_stale_seconds: int = 600
 
-    # -- Quality gates (mutation, cross-model, multi-agent, dep audit, API fuzz) --
+    # -- Quality gates (mutation, cross-model, multi-agent, API fuzz) --
 
     mutation_enabled: bool = False
     mutation_threshold: float = 0.50
@@ -128,10 +142,11 @@ class _BuildFields:
     cross_model_review_timeout_secs: int = 30
     cross_model_review_block_on_critical: bool = True
     review_confidence_threshold: int = 80
-    dep_audit_enabled: bool = True
-    dep_audit_level: str = "high"
-    dep_audit_timeout_secs: int = 30
-    dep_audit_block_on_patchable_only: bool = True
+    # PRD-QUAL-110-FR03: the dependency-audit config flags were removed — they
+    # advertised a gate with NO implementation anywhere in the package source
+    # (the only references were dead, non-collecting test files). TRWConfig sets
+    # ``extra="ignore"``, so an old config that still carries the removed key
+    # loads gracefully rather than erroring (RISK-003).
     comment_check_enabled: bool = True
     api_fuzz_enabled: bool = False
     api_fuzz_base_url: str = "http://localhost:8000"

@@ -41,3 +41,6 @@ AGENTS.md
 
 # Internal PRD docs (monorepo-only, not for public repo)
 docs/requirements-aare-f/
+
+# Internal dev telemetry event logs (rides the public subtree split otherwise)
+meta/

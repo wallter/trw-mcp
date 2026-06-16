@@ -121,10 +121,7 @@ class TestLightModeCapHoldsForLongCustomSkillName:
     def test_light_mode_120_char_cap_with_long_custom_skill(self) -> None:
         # 50-char custom skill name (well above the default 12).
         long_skill = "trw-feedback-very-long-custom-handle-for-cap-test"
-        out = render_feedback_reporting(
-            _profile(ceremony_mode="light", feedback_skill=long_skill)
-        )
+        out = render_feedback_reporting(_profile(ceremony_mode="light", feedback_skill=long_skill))
         assert len(out.rstrip("\n")) <= 120, (
-            f"NFR03 cap violated for custom skill {long_skill!r}: "
-            f"{len(out.rstrip())} chars in {out!r}"
+            f"NFR03 cap violated for custom skill {long_skill!r}: {len(out.rstrip())} chars in {out!r}"
         )

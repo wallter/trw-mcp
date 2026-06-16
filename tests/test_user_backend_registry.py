@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.state import _memory_connection

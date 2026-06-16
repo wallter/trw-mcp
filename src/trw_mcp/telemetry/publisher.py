@@ -23,7 +23,7 @@ from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.telemetry.anonymizer import strip_pii
+from trw_mcp.telemetry.anonymizer import anonymize_installation_id, strip_pii
 
 logger = structlog.get_logger(__name__)
 
@@ -138,7 +138,12 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     """
     cfg = get_config()
     urls = cfg.effective_platform_urls
-    if not urls or not cfg.platform_telemetry_enabled:
+    # PRD-SEC-004-FR05: learning-CONTENT publishing (full summary + detail) is
+    # gated by its OWN consent flag, learning_sharing_enabled — NOT by the
+    # anonymous-usage telemetry flag (platform_telemetry_enabled). Default off:
+    # a user who only enabled usage telemetry never has their learning content
+    # uploaded. No off-machine POST occurs unless learning_sharing_enabled=True.
+    if not urls or not cfg.learning_sharing_enabled:
         return {
             "published": 0,
             "skipped": 0,
@@ -165,6 +170,11 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     skipped = 0
     unchanged = 0
     errors = 0
+
+    # PRD-SEC-004-FR08: source_project egresses the installation id with the
+    # learning content — hash it (non-reversible) so no raw project-directory
+    # name leaves the machine in published learnings.
+    source_project = anonymize_installation_id(cfg.installation_id) if cfg.installation_id else "unknown"
 
     # Load content hashes from previous runs
     prev_hashes = _load_hashes(entries_dir) if not force else {}
@@ -213,7 +223,7 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     "tags": [str(t) for t in tags],
                     "impact": impact,
                     "embedding": embedding,
-                    "source_project": cfg.installation_id or "unknown",
+                    "source_project": source_project,
                     "source_learning_id": entry_id,
                     "status": status,
                 }

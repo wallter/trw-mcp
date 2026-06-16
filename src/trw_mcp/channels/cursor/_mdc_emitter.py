@@ -405,8 +405,8 @@ class MdcEmitter:
         finally:
             try:
                 lock.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception:  # justified: fail-open, lock cleanup must not mask MDC result
+                log.debug("cursor_mdc_lock_release_failed", channel_id=channel_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # Sidecar helpers (delegates to _mdc_sidecar module)
@@ -459,5 +459,5 @@ class MdcEmitter:
                 log_path=self._repo_root / ".trw" / "telemetry" / "channel-events.jsonl",
                 **kwargs,
             )
-        except Exception:
-            pass  # fail-open
+        except Exception:  # justified: fail-open telemetry, MDC write path already completed
+            log.debug("cursor_mdc_event_failed", channel_id=channel_id, event_type=event_type, exc_info=True)

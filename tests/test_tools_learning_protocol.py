@@ -192,11 +192,48 @@ class TestProgressiveDisclosure:
         assert "loads 19 learnings from 7 prior sessions and recovers any active run" in result
         assert "load context from 7 prior sessions" in result
 
-    def test_closing_reminder_no_trw_deliver(self) -> None:
-        """PRD-CORE-062-FR01: render_closing_reminder has no trw_deliver."""
+    def test_closing_reminder_includes_deliver_gate(self) -> None:
+        """PRD-CORE-062-FR01 / v26: render_closing_reminder carries deliver-gate language.
+
+        The deliver gate (Do NOT call trw_deliver unless build_check pass / acceptable-failure
+        / explicit override) was added to render_closing_reminder in 86da33ef. The prior
+        assertion that trw_deliver was absent is now invalid; verify the gate is present.
+        """
         result = render_closing_reminder()
-        assert "trw_deliver" not in result
+        assert "trw_deliver" in result
+        assert "Deliver Gate" in result
+        assert "trw_build_check" in result
         assert "compounds across sessions" in result
+
+    def test_render_agents_trw_section_includes_deliver_gate(self, tmp_path: Path) -> None:
+        """AGENTS.md TRW section must carry deliver-gate language for light clients.
+
+        Light clients (opencode, cursor-cli, aider, copilot) receive AGENTS.md as their
+        sole protocol carrier; without the gate statement they silently bypass the
+        build_check prerequisite that blocks coding-task delivers.
+        """
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache
+
+        _analytics_cache.set(None)
+        result = render_agents_trw_section()
+
+        assert "Deliver gate" in result
+        assert "trw_build_check" in result
+        assert "acceptable-failure" in result
+
+    def test_render_codex_trw_section_includes_deliver_gate(self) -> None:
+        """Codex AGENTS.md TRW section must carry deliver-gate language.
+
+        Codex uses render_codex_trw_section for its AGENTS.md; without the gate
+        statement Codex agents can call trw_deliver without a passing build_check.
+        """
+        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+
+        result = render_codex_trw_section()
+
+        assert "Deliver gate" in result
+        assert "trw_build_check" in result
+        assert "acceptable-failure" in result
 
     def test_session_start_hook_contains_behavioral_protocol_header(self) -> None:
         """PRD-CORE-061-FR03: session-start.sh has formal protocol header."""

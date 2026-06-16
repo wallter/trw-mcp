@@ -65,6 +65,7 @@ def _register_session(session_id: str) -> None:
         _session_state.pop(oldest, None)
         _compaction_gate_sessions.pop(oldest, None)
 
+
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 

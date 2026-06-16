@@ -12,9 +12,6 @@ import pytest
 from tests._ceremony_helpers import make_ceremony_server
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileStateReader
-from ._review_modes_support import run_dir  # noqa: F401
-
-from ._review_modes_support import run_dir  # noqa: F401
 
 from ._review_modes_support import run_dir  # noqa: F401
 

@@ -114,10 +114,30 @@ class TestEmbedHealthAdvisory:
 class TestEmbedFailureCounter:
     """FR07: _embed_failures counter tracks embedding failures."""
 
+    @staticmethod
+    def _enable_embeddings_but_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Simulate ``embeddings_enabled=True`` while the embedder is unavailable.
+
+        FR07: ``_embed_and_store_returning`` only counts a None embedder as a
+        failure when embeddings are ENABLED — it reads
+        ``trw_mcp.models.config.get_config().embeddings_enabled`` and calls the
+        ``_memory_connection.get_embedder`` definition site. We force the config
+        flag on AND pin the real embedder lookup to None so the genuine
+        enabled-but-unavailable failure path is exercised (not a live model
+        load).
+        """
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _memory_connection
+
+        mock_config = TRWConfig.__new__(TRWConfig)
+        object.__setattr__(mock_config, "embeddings_enabled", True)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: mock_config)
+        monkeypatch.setattr(_memory_connection, "get_embedder", lambda: None)
+
     def test_counter_increments_when_embedder_unavailable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """store_learning with embedder=None → failure counter increments."""
+        """store_learning with embeddings enabled but embedder=None → counter increments."""
         from trw_mcp.state import memory_adapter
 
         # Reset counter before test
@@ -128,8 +148,8 @@ class TestEmbedFailureCounter:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "memory").mkdir()
 
-        # Ensure no embedder is available
-        monkeypatch.setattr(memory_adapter, "get_embedder", lambda: None)
+        # Embeddings ENABLED but no embedder available → genuine failure.
+        self._enable_embeddings_but_unavailable(monkeypatch)
 
         # Store 5 learnings — each should increment the failure counter
         for i in range(5):
@@ -142,6 +162,42 @@ class TestEmbedFailureCounter:
 
         count = memory_adapter.get_embed_failure_count()
         assert count == 5, f"Expected 5 failures, got {count}"
+
+    def test_counter_does_not_increment_when_embeddings_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FR07: embeddings INTENTIONALLY disabled → None embedder is NOT a failure.
+
+        Regression for the metrics-conflation bug: when ``embeddings_enabled`` is
+        False, ``get_embedder()`` returns None by design, and storing learnings
+        must NOT inflate the embed-failure health counter.
+        """
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import _memory_connection, memory_adapter
+
+        memory_adapter.reset_embed_failure_count()
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "memory").mkdir()
+
+        mock_config = TRWConfig.__new__(TRWConfig)
+        object.__setattr__(mock_config, "embeddings_enabled", False)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: mock_config)
+        # get_embedder returns None for disabled embeddings (the real behavior).
+        monkeypatch.setattr(_memory_connection, "get_embedder", lambda: None)
+
+        for i in range(5):
+            memory_adapter.store_learning(
+                trw_dir,
+                f"L-disabled{i:03d}",
+                f"Summary {i}",
+                f"Detail {i}",
+            )
+
+        count = memory_adapter.get_embed_failure_count()
+        assert count == 0, f"Disabled embeddings must not count as failures, got {count}"
 
     @pytest.mark.skip(
         reason="Pre-existing: mock_embedder patched at wrong layer — get_embedder not consulted by SQLite backend"
@@ -193,7 +249,7 @@ class TestEmbedFailureCounter:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "memory").mkdir()
 
-        monkeypatch.setattr(memory_adapter, "get_embedder", lambda: None)
+        self._enable_embeddings_but_unavailable(monkeypatch)
         memory_adapter.store_learning(trw_dir, "L-reset01", "Summary", "Detail")
         assert memory_adapter.get_embed_failure_count() > 0
 
@@ -236,8 +292,8 @@ class TestEmbedFailureCounter:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "memory").mkdir()
 
-        # Use None embedder to trigger failure counter during store_learning
-        monkeypatch.setattr(memory_adapter, "get_embedder", lambda: None)
+        # Embeddings ENABLED but no embedder → genuine failure path.
+        self._enable_embeddings_but_unavailable(monkeypatch)
 
         # Cause 3 real failures via store_learning
         for i in range(3):

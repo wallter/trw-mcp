@@ -87,6 +87,16 @@ _CLIENT_MAPS: dict[str, dict[str, str]] = {
     "cursor-ide": _CURSOR_IDE_MAP,
 }
 
+#: Universally-safe model token used when a *known* capability tier reaches
+#: an unrecognised client (not adapted, not a recognised passthrough). Every
+#: major subagent harness accepts ``inherit`` (Claude Code, Cursor) or
+#: ignores an unknown ``model:`` more gracefully than rejecting a bare tier
+#: token. This is the defence-in-depth net for Potemkin-Gate defect A
+#: (sub_zAfRqZYYq2KtF72d): a known tier must NEVER leak raw to a client whose
+#: harness would reject it outright ("issue with the selected model
+#: (balanced)") and silently disable the agent.
+_UNKNOWN_CLIENT_FALLBACK: str = "inherit"
+
 
 @dataclass(frozen=True)
 class LaunchThrottlePolicy:
@@ -123,8 +133,12 @@ def resolve_tier(tier: str, *, client: str) -> str:
             see passthrough rule below.
         client: A client-profile identifier (e.g. ``"claude-code"``,
             ``"cursor-ide"``). Identifiers without an entry in
-            :data:`_CLIENT_MAPS` fall through to *passthrough*: the
-            ``tier`` argument is returned unchanged.
+            :data:`_CLIENT_MAPS` but present in :data:`KNOWN_CLIENTS` fall
+            through to *passthrough*: the ``tier`` argument is returned
+            unchanged. Identifiers absent from *both* (a wholly unknown
+            harness) degrade a recognised capability tier to
+            :data:`_UNKNOWN_CLIENT_FALLBACK` — see the Potemkin-Gate net
+            below.
 
     Returns:
         The resolved model identifier the harness expects.
@@ -141,11 +155,29 @@ def resolve_tier(tier: str, *, client: str) -> str:
         'inherit'
         >>> resolve_tier("frontier", client="opencode")
         'frontier'
+        >>> resolve_tier("balanced", client="some-unknown-harness")
+        'inherit'
+        >>> resolve_tier("gpt-4o", client="some-unknown-harness")
+        'gpt-4o'
     """
     client_map = _CLIENT_MAPS.get(client)
     if client_map is None:
-        # Passthrough — adapter not yet written for this client; the
-        # tier vocabulary lands at the destination unchanged.
+        # Recognised passthrough profile — its harness accepts the tier
+        # vocabulary (or ``inherit``) directly, so the tier lands unchanged.
+        if client in KNOWN_CLIENTS:
+            return tier
+        # Wholly unknown harness: a *known* capability tier must never leak
+        # raw (it would be rejected outright and silently disable the agent
+        # — Potemkin-Gate defect A). Degrade known tiers to a safe default;
+        # pass an explicit concrete model id through unchanged.
+        if tier in KNOWN_TIERS:
+            logger.debug(
+                "agent_tier_unknown_client_degraded",
+                tier=tier,
+                client=client,
+                resolved=_UNKNOWN_CLIENT_FALLBACK,
+            )
+            return _UNKNOWN_CLIENT_FALLBACK
         return tier
     if tier not in client_map:
         raise ValueError(f"Unknown tier {tier!r} for client {client!r}; known tiers: {sorted(client_map)}")

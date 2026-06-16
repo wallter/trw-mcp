@@ -29,10 +29,7 @@ def _make_sidecar(
         }
         for i in range(hotspot_count)
     ]
-    conventions = [
-        f"Always validate input with Pydantic v2 (convention {i})"
-        for i in range(convention_count)
-    ]
+    conventions = [f"Always validate input with Pydantic v2 (convention {i})" for i in range(convention_count)]
     return {
         "schema_version": "risk-report-sidecar/v0",
         "hotspots": hotspots,
@@ -313,11 +310,7 @@ def test_human_edit_detection_skips(tmp_path: Path) -> None:
     # Inject human text between markers.
     interior_start = content.find(AG01_DISTILL_BEGIN) + len(AG01_DISTILL_BEGIN)
     interior_end = content.find(AG01_DISTILL_END)
-    modified = (
-        content[:interior_start]
-        + "\n## HUMAN EDIT HERE\n"
-        + content[interior_end:]
-    )
+    modified = content[:interior_start] + "\n## HUMAN EDIT HERE\n" + content[interior_end:]
     target.write_text(modified)
 
     # Second render WITHOUT force — should detect conflict and skip.

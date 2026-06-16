@@ -115,6 +115,9 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
         timeout=2.0,
         batch_size=1,
         client_id="sync-test",
+        # PRD-SEC-004: this test exercises the real (consented) async push path
+        # to prove it yields the event loop; consent must be enabled.
+        learning_sharing_enabled=True,
     )
 
     async def slow_post(request: httpx.Request) -> httpx.Response:

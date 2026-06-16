@@ -40,13 +40,10 @@ REQUIRED_OUTPUT_CONTRACT: frozenset[str] = frozenset(
         "trw_review",
         "trw_heartbeat",
         "trw_adopt_run",
-        "trw_knowledge_sync",
+        # trw_knowledge_sync / trw_ceremony_* removed by PRD-FIX-076.
         "trw_instructions_sync",
         "trw_claude_md_sync",
         "trw_learn_update",
-        "trw_ceremony_status",
-        "trw_ceremony_approve",
-        "trw_ceremony_revert",
         "trw_pre_compact_checkpoint",
     }
 )

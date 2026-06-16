@@ -10,42 +10,43 @@ from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
 
-class TestToolRegistration:
-    """FR06: trw_knowledge_sync appears in MCP server tool registry."""
+class TestToolDeregistration:
+    """PRD-FIX-076: trw_knowledge_sync was removed from the MCP tool surface.
 
-    def test_knowledge_sync_registered(self) -> None:
+    The wrapper carried tool-only ``force`` graph-backfill orchestration; the
+    durable behavior (``execute_knowledge_sync`` + ``backfill_graph``) is
+    preserved as internal state logic and is invoked from the deliver path
+    (``_ceremony_deliver_steps.step_knowledge_sync``). These tests assert the
+    tool is gone and the internal logic still works.
+    """
+
+    def test_knowledge_sync_tool_deregistered(self) -> None:
         from trw_mcp.server import mcp
 
         tool_names = set(get_tools_sync(mcp).keys())
-        assert "trw_knowledge_sync" in tool_names
+        assert "trw_knowledge_sync" not in tool_names
 
-    def test_knowledge_sync_callable(self, tmp_path: Path) -> None:
-        from trw_mcp.server import mcp
+    def test_execute_knowledge_sync_internal_dry_run(self, tmp_path: Path) -> None:
+        """The internal execute_knowledge_sync API still returns a result."""
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.knowledge_topology import execute_knowledge_sync
 
-        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
-        assert callable(tool.fn)
-
-    def test_knowledge_sync_dry_run_parameter(self, tmp_path: Path) -> None:
-        import inspect
-
-        from trw_mcp.server import mcp
-
-        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
-        sig = inspect.signature(tool.fn)
-        assert "dry_run" in sig.parameters
-
-    def test_knowledge_sync_returns_elapsed_seconds(self, tmp_path: Path) -> None:
-        from trw_mcp.server import mcp
-        from trw_mcp.state._paths import resolve_trw_dir
-
-        trw_dir = resolve_trw_dir()
-        tool = get_tools_sync(mcp)["trw_knowledge_sync"]
-
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
         with patch("trw_mcp.state.knowledge_topology.count_entries", return_value=1):
-            result = tool.fn(dry_run=False)
+            result = execute_knowledge_sync(trw_dir, get_config(), dry_run=True)
 
-        assert "elapsed_seconds" in result
-        assert isinstance(result["elapsed_seconds"], float)
+        assert result is not None
+        # The internal API returns the cluster/threshold summary directly; the
+        # "status"/"elapsed_seconds" keys were added by the removed tool wrapper.
+        assert result["dry_run"] is True
+        assert "entries_clustered" in result
+
+    def test_backfill_graph_internal_api_preserved(self, tmp_path: Path) -> None:
+        """The graph-backfill internal API (invoked from the deliver path) is callable."""
+        from trw_mcp.state import memory_adapter
+
+        assert callable(memory_adapter.backfill_graph)
 
 
 class TestRecallTopicFilter:

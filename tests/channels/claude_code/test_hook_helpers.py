@@ -29,8 +29,7 @@ class TestCeremonyModeField:
 
         # _CeremonyFields is a plain class (mixin), not a Pydantic model
         # Check via __annotations__ — populated by type annotations in the class body
-        assert hasattr(_CeremonyFields, "__annotations__"), \
-            "_CeremonyFields should have __annotations__"
+        assert hasattr(_CeremonyFields, "__annotations__"), "_CeremonyFields should have __annotations__"
         assert "ceremony_mode" in _CeremonyFields.__annotations__
 
 

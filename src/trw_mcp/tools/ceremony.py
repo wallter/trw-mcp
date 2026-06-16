@@ -51,6 +51,12 @@ from trw_mcp.state.persistence import (
 from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 from trw_mcp.tools._ceremony_deliver_tool import run_trw_deliver as _run_trw_deliver
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
+from trw_mcp.tools._ceremony_profile_step import (
+    step_resolve_profile as step_resolve_profile,
+)
+from trw_mcp.tools._ceremony_telemetry import (
+    step_first_session_marker as step_first_session_marker,
+)
 from trw_mcp.tools._deferred_delivery import _step_checkpoint as _step_checkpoint
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -312,6 +318,18 @@ def register_ceremony_tools(server: FastMCP) -> None:
         results["surface_snapshot_id"] = step_surface_stamp(run_dir, str(call_ctx.session_id))
         _record_step("surface_stamp", _surface_stamp_started)
 
+        # PRD-HPO-PROF-001 FR-4: resolve the hierarchical profile (defaults →
+        # org → domain → task-type → session → client) and stamp the resolved
+        # surface + persistent snapshot id onto the result. Fail-open inside
+        # step_resolve_profile: a missing/invalid layer or disabled feature
+        # flag omits the block without blocking session start. Looked up via
+        # the ``_ceremony`` facade so test monkeypatches propagate.
+        _profile_started = time.monotonic()
+        from trw_mcp.tools import ceremony as _ceremony
+
+        _ceremony.step_resolve_profile(config, run_dir, results)
+        _record_step("profile_resolve", _profile_started)
+
         # Step 3: Log session_start event (FR01, PRD-CORE-031)
         _log_event_started = time.monotonic()
         try:
@@ -327,6 +345,17 @@ def register_ceremony_tools(server: FastMCP) -> None:
         except Exception:  # justified: fail-open, telemetry publish must not block session start
             logger.debug("session_telemetry_failed", exc_info=True)
         _record_step("telemetry", _telemetry_started)
+
+        # Step 3b': PRD-INFRA-142 FR02 — emit a one-time first_session funnel
+        # event on the first session of a fresh installation. Idempotent via a
+        # local flag file (no backend round-trip on subsequent calls). Fail-open
+        # and looked up via the _ceremony facade so test monkeypatches propagate.
+        try:
+            from trw_mcp.tools import ceremony as _ceremony
+
+            results["first_session_emitted"] = _ceremony.step_first_session_marker()
+        except Exception:  # justified: fail-open, first-session marker must not block session start
+            logger.debug("first_session_marker_failed", exc_info=True)
 
         # Step 3c: Increment sessions_tracked counter (FIX-050-FR06)
         _counter_started = time.monotonic()

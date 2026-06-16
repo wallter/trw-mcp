@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from trw_mcp.meta_tune.audit import AuditAppendError, AuditIntegrityError, append_audit_entry
+from trw_mcp.meta_tune.errors import MetaTuneSafetyUnavailableError
 from trw_mcp.meta_tune.sandbox import SandboxResult
 
 
@@ -98,6 +100,31 @@ def sandbox_escape_signals(sandbox_result: SandboxResult) -> tuple[str, ...]:
     if sandbox_result.network_attempted:
         signals.append("network_attempted")
     return tuple(signals)
+
+
+def build_sandbox_payload(sandbox_result: SandboxResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "exit_code": sandbox_result.exit_code,
+        "timed_out": sandbox_result.timed_out,
+        "wall_ms": sandbox_result.wall_ms,
+        "writes_outside_tmp": sandbox_result.writes_outside_tmp,
+        "network_attempted": sandbox_result.network_attempted,
+    }
+    if sandbox_result.exit_code == 0 and not sandbox_result.timed_out:
+        payload["stdout"] = sandbox_result.stdout
+    else:
+        payload["stderr"] = sandbox_result.stderr
+    return payload
+
+
+def append_audit_entry_or_raise(audit_log_path: Path, **kwargs: Any) -> None:
+    try:
+        append_audit_entry(audit_log_path, **kwargs)
+    except (AuditAppendError, AuditIntegrityError) as exc:
+        raise MetaTuneSafetyUnavailableError(
+            dependency_id="audit_log",
+            activation_gate_blocked_reason=str(exc),
+        ) from exc
 
 
 def persist_snapshot(

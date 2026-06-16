@@ -50,17 +50,10 @@ def _make_memory_db(trw_dir: Path, *, corpus: int = 0, vec: int = 0, max_recall:
     """Create a minimal memory.db with the required tables."""
     db_path = trw_dir / "memory" / "memory.db"
     conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0)")
+    conn.execute("CREATE TABLE IF NOT EXISTS vec_memories (id TEXT PRIMARY KEY)")
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS memories "
-        "(id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS vec_memories "
-        "(id TEXT PRIMARY KEY)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memory_graph_edges "
-        "(id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
+        "CREATE TABLE IF NOT EXISTS memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
     )
     # Insert corpus entries
     for i in range(corpus):
@@ -73,7 +66,7 @@ def _make_memory_db(trw_dir: Path, *, corpus: int = 0, vec: int = 0, max_recall:
     for i in range(edges):
         conn.execute(
             "INSERT INTO memory_graph_edges (source_id, target_id) VALUES (?, ?)",
-            (f"m{i}", f"m{i+1}"),
+            (f"m{i}", f"m{i + 1}"),
         )
     conn.commit()
     conn.close()
@@ -652,8 +645,7 @@ def test_trw_pipeline_health_registrar_publishes_tool() -> None:
 
     tools = get_tools_sync(make_test_server("pipeline_health"))
     assert "trw_pipeline_health" in tools, (
-        "register_pipeline_health_tools did not advertise trw_pipeline_health; "
-        f"got: {sorted(tools)}"
+        f"register_pipeline_health_tools did not advertise trw_pipeline_health; got: {sorted(tools)}"
     )
 
 

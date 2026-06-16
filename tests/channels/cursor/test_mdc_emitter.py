@@ -22,10 +22,7 @@ def _make_sidecar(
     undocumented: int = 1,
 ) -> dict[str, Any]:
     """Build a synthetic sidecar dict matching the sidecar envelope schema."""
-    conv_list = [
-        {"slug": f"conv-{i}", "title": f"Convention {i}", "body": f"Body {i}"}
-        for i in range(conventions)
-    ]
+    conv_list = [{"slug": f"conv-{i}", "title": f"Convention {i}", "body": f"Body {i}"} for i in range(conventions)]
     hotspot_list = [
         {
             "file_path": f"pkg_{d}/module.py",
@@ -34,14 +31,8 @@ def _make_sidecar(
         }
         for d in range(hotspot_dirs)
     ]
-    survivor_list = [
-        {"file_path": f"svc_{i}/handler.py", "description": f"survivor {i}"}
-        for i in range(survivors)
-    ]
-    undoc_list = [
-        {"file_path": f"lib_{i}/utils.py", "description": f"undoc {i}"}
-        for i in range(undocumented)
-    ]
+    survivor_list = [{"file_path": f"svc_{i}/handler.py", "description": f"survivor {i}"} for i in range(survivors)]
+    undoc_list = [{"file_path": f"lib_{i}/utils.py", "description": f"undoc {i}"} for i in range(undocumented)]
     return {
         "schema_version": "risk-report-sidecar/v0",
         "sha": sha,
@@ -129,8 +120,7 @@ class TestHotspotsMaxInstantiationsCap:
     def test_max_12_cap_with_20_dirs(self, tmp_path: Path) -> None:
         # Make 20 distinct directories
         payload_hotspots = [
-            {"file_path": f"dir_{i}/module.py", "risk_score": 0.9 - i * 0.01, "reason": "r"}
-            for i in range(20)
+            {"file_path": f"dir_{i}/module.py", "risk_score": 0.9 - i * 0.01, "reason": "r"} for i in range(20)
         ]
         sidecar: dict[str, Any] = {
             "schema_version": "risk-report-sidecar/v0",
@@ -158,6 +148,7 @@ class TestHotspotsMaxInstantiationsCap:
         for f in mdc_files:
             # All chars in stem should be lowercase, alphanumeric, or dashes
             import re
+
             assert re.match(r"^[a-z0-9-]+$", f.stem.replace("distill-hotspots-", ""))
 
 
@@ -178,9 +169,7 @@ class TestDangerousEditsGlobs:
                 "generated_at": "ts",
                 "conventions": [],
                 "hotspots": [],
-                "edge_case_survivors": [
-                    {"file_path": "backend/routers/admin.py", "description": "d"}
-                ],
+                "edge_case_survivors": [{"file_path": "backend/routers/admin.py", "description": "d"}],
                 "edge_case_undocumented": [],
             },
         }

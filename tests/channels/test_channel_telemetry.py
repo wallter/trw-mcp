@@ -55,12 +55,26 @@ def test_valid_event_types_count() -> None:
 def test_valid_event_types_contains_canonical() -> None:
     # The 20 channel-level events from master plan §6.2
     channel_events = {
-        "push_write", "push_ephemeral", "pull_tool_call", "push_stale",
-        "quota_exceeded", "tier_down", "channel_conflict", "snapshot_written",
-        "snapshot_stale", "explorer_invoked", "explorer_completed",
-        "edit_correlated", "hook_installed", "channel_disabled",
-        "memory_index_near_cap", "mdc_tombstone", "mdc_conflict_skip",
-        "subagent_outcome", "throttle_applied", "throttle_cleared",
+        "push_write",
+        "push_ephemeral",
+        "pull_tool_call",
+        "push_stale",
+        "quota_exceeded",
+        "tier_down",
+        "channel_conflict",
+        "snapshot_written",
+        "snapshot_stale",
+        "explorer_invoked",
+        "explorer_completed",
+        "edit_correlated",
+        "hook_installed",
+        "channel_disabled",
+        "memory_index_near_cap",
+        "mdc_tombstone",
+        "mdc_conflict_skip",
+        "subagent_outcome",
+        "throttle_applied",
+        "throttle_cleared",
     }
     assert channel_events.issubset(VALID_EVENT_TYPES)
 
@@ -247,9 +261,7 @@ def test_append_channel_event_creates_parent_dirs(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_append_channel_event_fail_open_on_oserror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_append_channel_event_fail_open_on_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     log_path = tmp_path / "events.jsonl"
 
     def _boom(*_a: object, **_kw: object) -> None:
@@ -265,9 +277,7 @@ def test_append_channel_event_fail_open_on_oserror(
     )
 
 
-def test_append_channel_event_fail_open_on_permission_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_append_channel_event_fail_open_on_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     log_path = tmp_path / "events.jsonl"
 
     def _boom(*_a: object, **_kw: object) -> None:
@@ -283,9 +293,7 @@ def test_append_channel_event_fail_open_on_permission_error(
     )
 
 
-def test_append_channel_event_fail_open_on_json_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_append_channel_event_fail_open_on_json_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Even if json.dumps raises, the function must not propagate."""
     log_path = tmp_path / "events.jsonl"
 
@@ -359,9 +367,7 @@ def test_validate_event_type_raises_for_unknown_type() -> None:
 
 def test_event_v1_schema_required_fields_constant() -> None:
     """The CHANNEL_EVENT_V1_REQUIRED constant must enumerate the 5 required fields."""
-    assert set(CHANNEL_EVENT_V1_REQUIRED) == {
-        "schema_version", "channel_id", "client", "ts", "event_type"
-    }
+    assert set(CHANNEL_EVENT_V1_REQUIRED) == {"schema_version", "channel_id", "client", "ts", "event_type"}
 
 
 # ---------------------------------------------------------------------------
@@ -500,9 +506,7 @@ def test_prune_channel_events_missing_file(tmp_path: Path) -> None:
     assert result == 0
 
 
-def test_prune_channel_events_fail_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prune_channel_events_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     log_path = tmp_path / "events.jsonl"
     log_path.write_text("line\n" * 60_000, encoding="utf-8")
 
@@ -534,9 +538,7 @@ def test_prune_keeps_most_recent_lines(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_append_uses_trw_repo_root_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_append_uses_trw_repo_root_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRW_REPO_ROOT", str(tmp_path))
     append_channel_event(
         channel_id="ch",

@@ -13,12 +13,18 @@ from trw_mcp.telemetry.sender import BatchSender
 # ---------------------------------------------------------------------------
 
 
-def _write_events(path: Path, events: list[dict[str, object]]) -> None:
-    """Write a list of dicts to a JSONL file."""
+def _write_events(path: Path, events: list[dict[str, object]], *, consented: bool = True) -> None:
+    """Write a list of dicts to a JSONL file.
+
+    PRD-SEC-004-FR01: BatchSender uploads only records stamped as recorded under
+    consent. These send-mechanics tests presume consented data; stamp by default.
+    """
+    from trw_mcp.telemetry.sender import stamp_consent
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for event in events:
-            fh.write(json.dumps(event) + "\n")
+            fh.write(json.dumps(stamp_consent(dict(event), consented=consented)) + "\n")
 
 
 def _read_events(path: Path) -> list[dict[str, object]]:
@@ -40,6 +46,7 @@ def _make_sender(
     batch_size: int = 100,
     max_retries: int = 3,
     backoff_base: float = 0.0,
+    platform_telemetry_enabled: bool = True,
 ) -> tuple[BatchSender, Path]:
     input_path = tmp_path / "logs" / "tool-telemetry.jsonl"
     urls = [platform_url] if platform_url else []
@@ -49,6 +56,7 @@ def _make_sender(
         batch_size=batch_size,
         max_retries=max_retries,
         backoff_base=backoff_base,
+        platform_telemetry_enabled=platform_telemetry_enabled,
     )
     return sender, input_path
 
@@ -373,6 +381,9 @@ class TestFromConfig:
         cfg = TRWConfig(
             trw_dir=str(tmp_path / ".trw"),
             platform_url="",
+            # Telemetry consented; the offline path is reached via empty URLs,
+            # not the PRD-SEC-004-FR01 opt-out gate.
+            platform_telemetry_enabled=True,
         )
         trw_dir = tmp_path / ".trw"
 
@@ -406,6 +417,7 @@ class TestParallelFanout:
             batch_size=100,
             max_retries=1,
             backoff_base=0.0,
+            platform_telemetry_enabled=True,
         )
         _write_events(input_path, [{"event_type": "test"}])
 
@@ -434,6 +446,7 @@ class TestParallelFanout:
             batch_size=100,
             max_retries=1,
             backoff_base=0.0,
+            platform_telemetry_enabled=True,
         )
         _write_events(input_path, [{"event_type": "test"}])
 
@@ -458,6 +471,7 @@ class TestParallelFanout:
             batch_size=100,
             max_retries=1,
             backoff_base=0.0,
+            platform_telemetry_enabled=True,
         )
         _write_events(input_path, [{"event_type": "test"}])
 

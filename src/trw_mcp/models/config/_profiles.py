@@ -62,8 +62,19 @@ _TIER_OVERRIDES: dict[ModelTier, dict[str, object]] = {
 }
 
 
-def _light_profile(client_id: str, display_name: str, instruction_path: str) -> ClientProfile:
-    """Construct a light-mode profile with eval-calibrated defaults."""
+def _light_profile(
+    client_id: str,
+    display_name: str,
+    instruction_path: str,
+    *,
+    on_transition: str = "require_reconnect",
+) -> ClientProfile:
+    """Construct a light-mode profile with eval-calibrated defaults.
+
+    ``on_transition`` (PRD-INTENT-002 FR04/FR05b): opencode keeps the safe
+    ``require_reconnect`` default (its cache is not invalidated automatically);
+    codex uses ``silent`` (phase set at session start, no intra-session change).
+    """
     return ClientProfile(
         client_id=client_id,
         display_name=display_name,
@@ -86,6 +97,7 @@ def _light_profile(client_id: str, display_name: str, instruction_path: str) -> 
         learning_recall_enabled=True,
         mcp_instructions_enabled=False,
         skills_enabled=False,
+        on_transition=on_transition,  # type: ignore[arg-type]
     )
 
 
@@ -108,6 +120,8 @@ _PROFILES: dict[str, ClientProfile] = {
         skills_enabled=True,
         # PRD-FIX-078: claude-code exposes MCP tools under mcp__{server}__{tool}
         tool_namespace_prefix="mcp__trw__",
+        # PRD-INTENT-002 FR04: claude-code supports tools.listChanged.
+        on_transition="notify",
     ),
     "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
     "cursor-ide": ClientProfile(
@@ -134,6 +148,7 @@ _PROFILES: dict[str, ClientProfile] = {
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
+        on_transition="silent",  # PRD-INTENT-002 FR04
     ),
     "cursor-cli": ClientProfile(
         client_id="cursor-cli",
@@ -175,8 +190,9 @@ _PROFILES: dict[str, ClientProfile] = {
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
+        on_transition="silent",  # PRD-INTENT-002 FR04
     ),
-    "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md"),
+    "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md", on_transition="silent"),
     "copilot": ClientProfile(
         client_id="copilot",
         display_name="GitHub Copilot CLI",
@@ -198,6 +214,7 @@ _PROFILES: dict[str, ClientProfile] = {
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
+        on_transition="silent",  # PRD-INTENT-002 FR04
     ),
     "gemini": ClientProfile(
         client_id="gemini",
@@ -225,6 +242,7 @@ _PROFILES: dict[str, ClientProfile] = {
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
+        on_transition="silent",  # PRD-INTENT-002 FR04 (gemini)
     ),
     "antigravity-cli": ClientProfile(
         client_id="antigravity-cli",

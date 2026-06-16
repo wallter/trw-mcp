@@ -30,6 +30,7 @@ _SUPPORTED_IDES = [
     "copilot",
     "gemini",
     "aider",
+    "antigravity-cli",
 ]
 
 
@@ -257,3 +258,37 @@ class TestExplicitIDEFlag:
         )
 
         assert result == ["copilot"]
+
+
+class TestInstallerTemplateAntigravityContract:
+    """Contract tests ensuring install-trw.template.py includes antigravity-cli.
+
+    The installer template is a standalone script (not importable); these tests
+    scan it as text to verify _SUPPORTED_IDES parity with bootstrap._utils.SUPPORTED_IDES.
+    When the template _SUPPORTED_IDES drifts from the runtime list, users selecting
+    antigravity-cli interactively get a silent ValueError at install time.
+    """
+
+    _TEMPLATE = Path(__file__).resolve().parent.parent / "scripts" / "install-trw.template.py"
+
+    @pytest.mark.unit
+    def test_template_supported_ides_contains_antigravity_cli(self) -> None:
+        """install-trw.template.py _SUPPORTED_IDES must include antigravity-cli."""
+        text = self._TEMPLATE.read_text(encoding="utf-8")
+        assert '"antigravity-cli"' in text, (
+            "install-trw.template.py _SUPPORTED_IDES is missing 'antigravity-cli'. "
+            "Users who select antigravity-cli interactively will hit a ValueError. "
+            "Add it to _SUPPORTED_IDES and _IDE_META in the installer template."
+        )
+
+    @pytest.mark.unit
+    def test_template_ide_meta_contains_antigravity_cli(self) -> None:
+        """install-trw.template.py _IDE_META must have an antigravity-cli entry for the menu."""
+        text = self._TEMPLATE.read_text(encoding="utf-8")
+        # _IDE_META is a dict; antigravity-cli key must appear after the _SUPPORTED_IDES block
+        ide_meta_pos = text.find("_IDE_META")
+        assert ide_meta_pos != -1, "_IDE_META dict not found in installer template"
+        assert '"antigravity-cli"' in text[ide_meta_pos:], (
+            "install-trw.template.py _IDE_META is missing an 'antigravity-cli' entry. "
+            "The interactive menu will show a blank or raise KeyError for antigravity-cli."
+        )

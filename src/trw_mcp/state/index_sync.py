@@ -250,6 +250,24 @@ def render_roadmap_catalogue(entries: list[PRDEntry]) -> str:
     return "\n".join(lines)
 
 
+def _find_marker_line(content: str, marker: str) -> tuple[int, int] | None:
+    """Locate a marker that occupies a whole line, returning (start, end) offsets.
+
+    Prose may *mention* a marker inline (e.g. inside backticks in a header
+    sentence); matching the first raw substring occurrence truncated 705
+    lines of ROADMAP.md planning body on 2026-06-11. Only a marker alone on
+    its own line (modulo surrounding whitespace) delimits the section.
+    """
+    match = re.search(
+        rf"^[ \t]*{re.escape(marker)}[ \t]*$",
+        content,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return None
+    return match.start(), match.end()
+
+
 def _merge_section(
     content: str,
     new_section: str,
@@ -257,6 +275,9 @@ def _merge_section(
     end_marker: str,
 ) -> str:
     """Replace content between markers, or append if markers not found.
+
+    Markers must occupy their own line to count — inline mentions of a
+    marker (e.g. in documentation prose) are ignored.
 
     Args:
         content: Existing file content.
@@ -267,11 +288,11 @@ def _merge_section(
     Returns:
         Updated content with section replaced or appended.
     """
-    if start_marker in content and end_marker in content:
-        start_idx = content.index(start_marker)
-        end_idx = content.index(end_marker) + len(end_marker)
-        before = content[:start_idx].rstrip("\n")
-        after = content[end_idx:].lstrip("\n")
+    start_span = _find_marker_line(content, start_marker)
+    end_span = _find_marker_line(content, end_marker)
+    if start_span is not None and end_span is not None and end_span[1] > start_span[0]:
+        before = content[: start_span[0]].rstrip("\n")
+        after = content[end_span[1] :].lstrip("\n")
         joiner = "\n\n" if before else ""
         suffix = "\n\n" + after if after.strip() else ""
         return before + joiner + new_section + suffix + "\n"

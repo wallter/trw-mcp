@@ -131,6 +131,74 @@ class TestLogSurfaceEvent:
         assert event["files_context"] == ["a.py", "b.py", "c.py"]
 
 
+class TestNudgeTimingFields:
+    """Work target #4: live timing-validity fields on nudge surface events."""
+
+    def test_timing_fields_persisted_for_nudge(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_surface_event(
+            trw_dir,
+            learning_id="L-t",
+            surface_type="nudge",
+            nudge_step="checkpoint",
+            is_timely=True,
+            step_distance_from_call=-1,
+        )
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
+        assert event["nudge_step"] == "checkpoint"
+        assert event["is_timely"] is True
+        assert event["step_distance_from_call"] == -1
+
+    def test_timing_fields_absent_when_not_supplied(self, tmp_path: Path) -> None:
+        """Non-nudge surfaces stay byte-shape-compatible: no timing keys."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_surface_event(trw_dir, learning_id="L-r", surface_type="recall")
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
+        assert "is_timely" not in event
+        assert "step_distance_from_call" not in event
+        assert "nudge_step" not in event
+
+    def test_untimely_flag_records_false(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_surface_event(
+            trw_dir,
+            learning_id="L-late",
+            surface_type="nudge",
+            nudge_step="session_start",
+            is_timely=False,
+            step_distance_from_call=4,
+        )
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
+        assert event["is_timely"] is False
+        assert event["step_distance_from_call"] == 4
+
+    def test_variant_and_messenger_persisted(self, tmp_path: Path) -> None:
+        """Work target #6: A/B arm + messenger persisted on nudge events."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_surface_event(
+            trw_dir,
+            learning_id="L-ab",
+            surface_type="nudge",
+            nudge_variant="structural-v2",
+            messenger="contextual",
+        )
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
+        assert event["nudge_variant"] == "structural-v2"
+        assert event["messenger"] == "contextual"
+
+    def test_variant_absent_when_unset(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        log_surface_event(trw_dir, learning_id="L-x", surface_type="nudge")
+        event = json.loads((trw_dir / "logs" / "surface_tracking.jsonl").read_text().strip())
+        assert "nudge_variant" not in event
+        assert "messenger" not in event
+
+
 class TestRotation:
     """Tests for _rotate_jsonl() file rotation."""
 

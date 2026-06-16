@@ -184,9 +184,7 @@ def _write_cli_json(cli_file: Path, payload: object, result: BootstrapFileResult
         cli_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     except OSError:
         logger.warning("cursor_cli_config_write_failed", path=str(cli_file), reason="unwritable")
-        result.setdefault("errors", []).append(
-            ".cursor/cli.json could not be written (unwritable path)."
-        )
+        result.setdefault("errors", []).append(".cursor/cli.json could not be written (unwritable path).")
         return False
     return True
 
@@ -271,8 +269,7 @@ def generate_cursor_cli_config(
             if _write_cli_json(cli_file, default_config, result):
                 result["updated"].append(".cursor/cli.json")
                 result.setdefault("info", []).append(
-                    "WARNING: .cursor/cli.json was malformed or unreadable — "
-                    "overwritten with TRW defaults."
+                    "WARNING: .cursor/cli.json was malformed or unreadable — overwritten with TRW defaults."
                 )
     elif _write_cli_json(cli_file, default_config, result):
         result["created"].append(".cursor/cli.json")

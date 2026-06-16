@@ -199,9 +199,7 @@ class TestDryRun:
             "would_write",
             "error",
         }
-        assert required_keys.issubset(result.keys()), (
-            f"Missing keys: {required_keys - result.keys()}"
-        )
+        assert required_keys.issubset(result.keys()), f"Missing keys: {required_keys - result.keys()}"
 
 
 # ---------------------------------------------------------------------------

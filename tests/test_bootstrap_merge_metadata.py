@@ -296,6 +296,6 @@ class TestManagedArtifactsManifest:
         # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed,
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
-        assert len(skills) == 25
+        assert len(skills) == 26
         assert len(agents) == 12
         assert len(hooks) > 0

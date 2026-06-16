@@ -404,8 +404,9 @@ def test_tokens_used_reflects_post_max_results_cap(tmp_path: Path) -> None:
     tokens_used must equal the sum for the capped set — not the pre-cap set.
     This prevents callers from seeing a tokens_used > sum(returned entries).
     """
-    from trw_mcp.tools._recall_impl import execute_recall
     from trw_memory.retrieval.token_budget import estimate_entry_tokens
+
+    from trw_mcp.tools._recall_impl import execute_recall
 
     config = _make_config()
     trw_dir = tmp_path / ".trw"

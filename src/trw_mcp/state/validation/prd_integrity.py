@@ -328,14 +328,20 @@ def run_prd_integrity_checks(
     *,
     project_root: Path,
     prds_relative_path: str,
+    extra_roots: list[Path] | None = None,
 ) -> tuple[list[ValidationFailure], list[str]]:
-    """Return integrity failures and warnings for a PRD document."""
+    """Return integrity failures and warnings for a PRD document.
+
+    *extra_roots* are sibling repo roots checked (in addition to
+    *project_root*) when resolving backtick-quoted path references, for
+    multi-repo workspaces — Potemkin-Gate defect B (sub_zAfRqZYYq2KtF72d).
+    """
     failures: list[ValidationFailure] = []
     warnings: list[str] = []
 
     failures.extend(_check_frontmatter_parses(content))
     failures.extend(_check_allowed_category(frontmatter))
-    failures.extend(_check_repo_path_references(content, project_root))
+    failures.extend(_check_repo_path_references(content, project_root, extra_roots=extra_roots))
     failures.extend(_check_functionality_level_matches_status(frontmatter))
     warnings.extend(_check_status_canonical(frontmatter))
     warnings.extend(_check_implemented_alias_functionality(frontmatter))

@@ -68,8 +68,24 @@ TRW provides specialized agents in `.antigravitycli/agents/`:
 """
 
 
+def _deliver_gate_block() -> str:
+    """Return the FR03 non-negotiable session-start + deliver-gate block.
+
+    Function-local import of the bundled-source loader (PRD-QUAL-104 FR02/FR03)
+    avoids an import cycle with the ``sections`` package, which transitively
+    imports the renderers.
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
+
+    return render_deliver_gate_statement()
+
+
 def render_gemini_instructions() -> str:
-    """Render GEMINI.md TRW ceremony section."""
+    """Render GEMINI.md TRW ceremony section.
+
+    PRD-QUAL-104 FR03: injects the non-negotiable session-start + deliver-gate
+    block, sourced from the bundled tool-lifecycle surface.
+    """
     return f"""{_GEMINI_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
@@ -117,12 +133,23 @@ TRW provides specialized agents in `.gemini/agents/`:
 - Use `trw_checkpoint()` after working milestones
 - Commit messages: `feat(scope): msg` (Conventional Commits)
 
+{_deliver_gate_block()}
 {_GEMINI_TRW_END_MARKER}
 """
 
 
 def _render_opencode_portable() -> str:
-    """Render OpenCode instructions without model/provider assumptions."""
+    """Render OpenCode instructions without model/provider assumptions.
+
+    PRD-QUAL-104 FR03: appends the non-negotiable session-start + deliver-gate
+    block (bundled-source derived) so the OpenCode protocol carrier always
+    states the gate verbatim.
+    """
+    return _render_opencode_portable_body() + "\n" + _deliver_gate_block()
+
+
+def _render_opencode_portable_body() -> str:
+    """Render the portable OpenCode instruction body (pre-FR03 content)."""
     return (
         "# TRW Instructions\n"
         "\n"

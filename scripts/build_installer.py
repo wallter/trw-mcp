@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import re
 import stat
 import sys
@@ -38,7 +39,8 @@ DEFAULT_FORMAT = "py"
 # wheel filenames appears in the embed step.
 _PROPRIETARY_WHEEL_PREFIXES: tuple[str, ...] = (
     "trw_distill-",
-    "trw_harness-",  # PRD-INFRA-128: cross-monorepo dep of trw-distill
+    "trw_metaharness-",  # PRD-INFRA-128: cross-monorepo dep of trw-distill (renamed from trw-harness 2026-06-10)
+    "trw_harness-",  # legacy wheel name pre-2026-06-10 rename; kept so stale wheels stay fail-closed
     "trw_loop-",
     "trw_swarm-",
 )
@@ -90,6 +92,48 @@ def _format_b64_for_python(b64: str, line_width: int = 76) -> str:
     return "\n".join(f"# {b64[i:i+line_width]}" for i in range(0, len(b64), line_width))
 
 
+def _read_template(template_path: Path) -> str:
+    """Read the installer template text (seam for tests)."""
+    return template_path.read_text(encoding="utf-8")
+
+
+def _compute_sha256(data: bytes) -> str:
+    """Return the lowercase 64-hex SHA-256 of *data* (PRD-SEC-006 FR01).
+
+    Must hash the raw wheel bytes that are base64-embedded, so the installer's
+    ``_verify_checksum`` (which hashes the decoded bytes) matches at install time.
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
+def _assert_checksums_substituted(output: str) -> None:
+    """Fail the build unless both wheel checksum placeholders are 64-hex values.
+
+    A claimed security control (install-time checksum verification) must not ship
+    as a dead no-op: the template's ``_verify_checksum`` skips while the value
+    starts with ``{{``. This guard makes a missing substitution a hard build
+    failure rather than a silently-disabled verification (PRD-SEC-006 NFR03).
+    """
+    errors: list[str] = []
+    for placeholder, var in (
+        ("{{WHEEL_SHA256}}", "WHEEL_SHA256"),
+        ("{{MEMORY_WHEEL_SHA256}}", "MEMORY_WHEEL_SHA256"),
+    ):
+        if placeholder in output:
+            errors.append(f"checksum placeholder {placeholder} was not substituted")
+            continue
+        match = re.search(rf'^{var} = "([0-9a-f]{{64}})"$', output, re.MULTILINE)
+        if match is None:
+            errors.append(
+                f"{var} is not a 64-hex SHA-256 in the generated installer "
+                f"(checksum verification would be a dead no-op)"
+            )
+    if errors:
+        for err in errors:
+            print(f"ERROR: {err}", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_installer(
     wheel_path: Path | None = None,
     memory_wheel_path: Path | None = None,
@@ -110,7 +154,7 @@ def build_installer(
     if not template_path.exists():
         print(f"ERROR: Template not found: {template_path}", file=sys.stderr)
         sys.exit(1)
-    template = template_path.read_text(encoding="utf-8")
+    template = _read_template(template_path)
 
     # Find wheels
     if wheel_path is None:
@@ -134,23 +178,43 @@ def build_installer(
 
     print(f"Wheel (trw-memory): {memory_wheel_path}")
 
-    # Base64-encode wheels
-    wheel_b64 = base64.b64encode(wheel_path.read_bytes()).decode("ascii")
-    memory_b64 = base64.b64encode(memory_wheel_path.read_bytes()).decode("ascii")
+    # Read wheel bytes once (used for size, base64 embedding, and checksums).
+    wheel_bytes = wheel_path.read_bytes()
+    memory_bytes = memory_wheel_path.read_bytes()
 
-    wheel_mb = len(wheel_path.read_bytes()) / (1024 * 1024)
-    mem_mb = len(memory_wheel_path.read_bytes()) / (1024 * 1024)
+    # Base64-encode wheels
+    wheel_b64 = base64.b64encode(wheel_bytes).decode("ascii")
+    memory_b64 = base64.b64encode(memory_bytes).decode("ascii")
+
+    # PRD-SEC-006 FR01: SHA-256 of the RAW wheel bytes (matches install-time
+    # _verify_checksum, which hashes the decoded bytes).
+    wheel_sha256 = _compute_sha256(wheel_bytes)
+    memory_sha256 = _compute_sha256(memory_bytes)
+
+    wheel_mb = len(wheel_bytes) / (1024 * 1024)
+    mem_mb = len(memory_bytes) / (1024 * 1024)
     print(f"Size (trw-mcp):     {wheel_mb:.1f} MB")
     print(f"Size (trw-memory):  {mem_mb:.1f} MB")
+    print(f"SHA256 (trw-mcp):   {wheel_sha256}")
+    print(f"SHA256 (trw-memory):{memory_sha256}")
 
     # Substitute placeholders
     output = template.replace("{{VERSION}}", version)
     output = output.replace("{{WHEEL_FILENAME}}", wheel_path.name)
     output = output.replace("{{MEMORY_WHEEL_FILENAME}}", memory_wheel_path.name)
 
+    # PRD-SEC-006 FR01: substitute the wheel checksum placeholders so install-time
+    # verification actually executes instead of skipping on a ``{{`` sentinel.
+    output = output.replace("{{WHEEL_SHA256}}", wheel_sha256)
+    output = output.replace("{{MEMORY_WHEEL_SHA256}}", memory_sha256)
+
     # Python template: wheel data is in comment-prefixed lines
     output = output.replace("# {{MEMORY_WHEEL_BASE64}}", _format_b64_for_python(memory_b64))
     output = output.replace("# {{WHEEL_BASE64}}", _format_b64_for_python(wheel_b64))
+
+    # PRD-SEC-006 FR01: fail the build if either checksum placeholder remains
+    # (dead verification is itself an audit finding).
+    _assert_checksums_substituted(output)
 
     # Write output
     DIST_DIR.mkdir(exist_ok=True)

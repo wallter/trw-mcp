@@ -77,6 +77,7 @@ def test_manifest_entries_written(tmp_path: Path) -> None:
     assert manifest_path.exists()
 
     from trw_mcp.channels._manifest_loader import load
+
     manifest = load(manifest_path)
 
     opencode_ids = {e.id for e in manifest.channels if e.client == "opencode"}
@@ -103,6 +104,7 @@ def test_manifest_entries_have_correct_default_tier() -> None:
         bootstrap_channel_manifest(p)
 
         from trw_mcp.channels._manifest_loader import load
+
         manifest = load(p / ".trw" / "channels" / "manifest.yaml")
         enrichment = next(
             (e for e in manifest.channels if e.id == "opencode-tool-return-enrichment"),
@@ -145,9 +147,7 @@ def test_manifest_all_or_nothing_on_validation_error(tmp_path: Path) -> None:
     # Patch the manifest data to include a bad entry
     bad_yaml = "channels:\n  - id: bad-entry\n    missing_required_field: true\n"
 
-    with patch(
-        "trw_mcp.bootstrap._opencode_distill_channels.YAML"
-    ) as _:
+    with patch("trw_mcp.bootstrap._opencode_distill_channels.YAML") as _:
         # Patch the actual file read instead
 
         # We patch the manifest data file path's read_text
@@ -213,8 +213,9 @@ def test_bootstrap_module_under_loc_gate() -> None:
     """NFR01: _opencode_distill_channels.py under 200 effective LOC."""
     from pathlib import Path as _Path
 
-    module_path = _Path(__file__).parent.parent.parent.parent / \
-        "src" / "trw_mcp" / "bootstrap" / "_opencode_distill_channels.py"
+    module_path = (
+        _Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "bootstrap" / "_opencode_distill_channels.py"
+    )
 
     assert module_path.exists(), f"Module not found: {module_path}"
 
@@ -260,6 +261,7 @@ def test_opencode_json_untouched_by_distill_install(tmp_path: Path) -> None:
     from trw_mcp.bootstrap._opencode_distill_channels import (
         install_opencode_distill_channels,
     )
+
     install_opencode_distill_channels(tmp_path)
 
     result = json.loads(oc_json.read_text(encoding="utf-8"))
@@ -301,9 +303,7 @@ def test_manifest_validation_error_propagates(tmp_path: Path) -> None:
         mock_load.return_value = manifest_mock
 
         raw_data = {"channels": bad_channels}
-        with patch(
-            "trw_mcp.bootstrap._opencode_distill_channels.YAML"
-        ) as mock_yaml_cls:
+        with patch("trw_mcp.bootstrap._opencode_distill_channels.YAML") as mock_yaml_cls:
             mock_yaml = MagicMock()
             mock_yaml.load.return_value = raw_data
             mock_yaml_cls.return_value = mock_yaml

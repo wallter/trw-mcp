@@ -195,8 +195,8 @@ def render_instruction_segment(
     finally:
         try:
             lock.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception:  # justified: fail-open, lock cleanup must not mask render result
+            log.debug("instruction_segment_lock_release_failed", channel_id=channel_id, exc_info=True)
 
 
 def _render_under_lock(
@@ -456,5 +456,5 @@ def _emit(
             bytes_emitted=bytes_written,
             extra={"outcome": outcome},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, render path already completed
+        log.debug("instruction_segment_event_failed", channel_id=channel_id, event_type=event_type, exc_info=True)

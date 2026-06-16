@@ -71,8 +71,7 @@ def test_concurrent_increment_learnings_no_lost_updates(
 
     final = real_read(trw)
     assert final.learnings_this_session == threads_count * per_thread, (
-        f"lost updates: expected {threads_count * per_thread}, "
-        f"got {final.learnings_this_session}"
+        f"lost updates: expected {threads_count * per_thread}, got {final.learnings_this_session}"
     )
 
 

@@ -121,9 +121,7 @@ def read_recent_events(events_path: Path, max_events: int = 200) -> list[dict[st
     base = len(lines) - len(window)
     events: list[dict[str, object]] = []
     for offset, line in enumerate(window):
-        parsed = _parse_event_line(
-            line, events_path=events_path, line_number=base + offset + 1
-        )
+        parsed = _parse_event_line(line, events_path=events_path, line_number=base + offset + 1)
         if parsed is not None:
             events.append(parsed)
     return events

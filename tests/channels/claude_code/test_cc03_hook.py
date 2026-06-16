@@ -151,9 +151,7 @@ class TestNeverExitsNonZero:
             '{"garbage": true}',
         ]:
             result = _run_hook(payload, tmp_path)
-            assert result.returncode != 2, (
-                f"Hook exited 2 with payload={payload!r} — FR26 violation"
-            )
+            assert result.returncode != 2, f"Hook exited 2 with payload={payload!r} — FR26 violation"
 
 
 # ---------------------------------------------------------------------------
@@ -207,15 +205,12 @@ class TestOptInGate:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True)
         # channels.cc03_hook_enabled: true — the documented canonical enable path
-        (trw_dir / "config.yaml").write_text(
-            "channels:\n  cc03_hook_enabled: true\n", encoding="utf-8"
-        )
+        (trw_dir / "config.yaml").write_text("channels:\n  cc03_hook_enabled: true\n", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="main.py"), tmp_path)
         assert result.returncode == 0
         # Nested key IS now matched by the shell — hook emits output (T0 beacon at minimum)
         assert len(result.stdout) > 0, (
-            "channels.cc03_hook_enabled: true should enable the hook via shell; "
-            "got empty output (hook stayed disabled)"
+            "channels.cc03_hook_enabled: true should enable the hook via shell; got empty output (hook stayed disabled)"
         )
 
     def test_toplevel_cc03_hook_enabled_overrides_nested(self, tmp_path: Path) -> None:
@@ -235,15 +230,12 @@ class TestOptInGate:
         """channels.cc03.enabled: true (alternative nested path) enables the hook."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True)
-        (trw_dir / "config.yaml").write_text(
-            "channels:\n  cc03:\n    enabled: true\n", encoding="utf-8"
-        )
+        (trw_dir / "config.yaml").write_text("channels:\n  cc03:\n    enabled: true\n", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="main.py"), tmp_path)
         assert result.returncode == 0
         # Alternative nested key IS matched by the shell
         assert len(result.stdout) > 0, (
-            "channels.cc03.enabled: true should enable the hook via shell; "
-            "got empty output (hook stayed disabled)"
+            "channels.cc03.enabled: true should enable the hook via shell; got empty output (hook stayed disabled)"
         )
 
 
@@ -309,9 +301,7 @@ class TestSkipConditions:
 
     def test_skip_missing_file_path(self, tmp_path: Path) -> None:
         """Empty file_path → skip condition (no hint for unknown file)."""
-        payload = json.dumps(
-            {"tool_use_id": "t1", "tool_name": "Edit", "tool_input": {}}
-        )
+        payload = json.dumps({"tool_use_id": "t1", "tool_name": "Edit", "tool_input": {}})
         result = _run_hook(payload, tmp_path)
         assert result.returncode == 0
         assert result.stdout == ""
@@ -396,9 +386,7 @@ class TestPythonFallback:
         channels_dir = tmp_path / ".trw" / "channels"
         channels_dir.mkdir(parents=True, exist_ok=True)
         # Point cc03-python.txt to a non-existent binary → Python resolution fails
-        (channels_dir / "cc03-python.txt").write_text(
-            "/nonexistent/python", encoding="utf-8"
-        )
+        (channels_dir / "cc03-python.txt").write_text("/nonexistent/python", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
         # Fallback T0 beacon or empty (if library path also fails)
@@ -409,9 +397,7 @@ class TestPythonFallback:
         _enable_cc03(tmp_path)
         channels_dir = tmp_path / ".trw" / "channels"
         channels_dir.mkdir(parents=True, exist_ok=True)
-        (channels_dir / "cc03-python.txt").write_text(
-            "/nonexistent/python", encoding="utf-8"
-        )
+        (channels_dir / "cc03-python.txt").write_text("/nonexistent/python", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
         if result.stdout:

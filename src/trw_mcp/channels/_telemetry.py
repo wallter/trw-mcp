@@ -65,7 +65,7 @@ VALID_EVENT_TYPES: frozenset[str] = frozenset(
         "push_stale",
         "quota_exceeded",
         "tier_down",
-        "channel_conflict",      # write-conflict only (human edit detected)
+        "channel_conflict",  # write-conflict only (human edit detected)
         "snapshot_written",
         "snapshot_stale",
         "explorer_invoked",
@@ -83,8 +83,8 @@ VALID_EVENT_TYPES: frozenset[str] = frozenset(
         # channel_conflict is now reserved for write-conflict (human edit detected).
         # Lock-skip and internal errors get their own event types so meta-tune
         # signal and operator observability remain unambiguous.
-        "channel_lock_skip",     # another writer holds the lock
-        "channel_error",         # internal error during render
+        "channel_lock_skip",  # another writer holds the lock
+        "channel_error",  # internal error during render
         # --- System recovery events (FR15 / SYS-04) ---
         "manifest_recovered",
     }
@@ -114,8 +114,7 @@ def validate_event_type(event_type: str) -> None:
     """
     if event_type not in VALID_EVENT_TYPES:
         raise ValueError(
-            f"event_type {event_type!r} is not in VALID_EVENT_TYPES. "
-            f"Valid values: {sorted(VALID_EVENT_TYPES)}"
+            f"event_type {event_type!r} is not in VALID_EVENT_TYPES. Valid values: {sorted(VALID_EVENT_TYPES)}"
         )
 
 

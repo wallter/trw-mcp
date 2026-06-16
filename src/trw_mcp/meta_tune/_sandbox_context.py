@@ -55,6 +55,8 @@ class ProbeIsolationContext:
         readonly_paths: tuple[Path, ...] | list[Path] | None = None,
         writable_paths: tuple[Path, ...] | list[Path] | None = None,
         strict: bool = True,
+        env_allowlist: tuple[str, ...] | list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.timeout_s = timeout_s
         self.memory_cap_mb = memory_cap_mb
@@ -62,6 +64,11 @@ class ProbeIsolationContext:
         self.readonly_paths: tuple[Path, ...] = tuple(readonly_paths or ())
         self.writable_paths: tuple[Path, ...] = tuple(writable_paths or ())
         self.strict = strict
+        # CORE-144 §7.6: env handling. ``env_allowlist`` extends the minimal
+        # safe env by named keys; ``env`` (explicit dict) opts into full
+        # inheritance for SAFE-001 callers. Default = minimal sanitized env.
+        self.env_allowlist: tuple[str, ...] = tuple(env_allowlist or ())
+        self.env = env
         self._runner: SandboxRunner | None = None
 
     def __enter__(self) -> SandboxRunner:
@@ -111,6 +118,8 @@ class ProbeIsolationContext:
             writable_paths=self.writable_paths,
             degraded=degraded,
             strict=self.strict,
+            env_allowlist=self.env_allowlist,
+            env=self.env,
         )
         log.info(
             "sandbox_context_enter",
@@ -148,6 +157,8 @@ def run_sandboxed(
     readonly_paths: list[Path] | None = None,
     writable_paths: list[Path] | None = None,
     strict: bool = True,
+    env_allowlist: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> SandboxResult:
     """One-shot helper: run ``cmd`` under :class:`ProbeIsolationContext`."""
     with ProbeIsolationContext(
@@ -157,5 +168,7 @@ def run_sandboxed(
         readonly_paths=tuple(readonly_paths or ()),
         writable_paths=tuple(writable_paths or ()),
         strict=strict,
+        env_allowlist=tuple(env_allowlist or ()),
+        env=env,
     ) as runner:
         return runner.run(cmd)

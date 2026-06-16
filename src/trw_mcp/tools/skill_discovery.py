@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from pathlib import Path
 
+import structlog
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,8 @@ from trw_mcp.models.skill_manifest import (
     SkillValidationMode,
     validate_skill_markdown,
 )
+
+logger = structlog.get_logger(__name__)
 
 _QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -51,8 +54,22 @@ def discover_meta_skills(
     query: str,
     mode: SkillValidationMode = "compat",
     include_private: bool = False,
+    active_cap: int | None = None,
+    session_id: str = "",
 ) -> SkillDiscoveryResult:
-    """Return ranked eligible skills from SKILL.md paths without executing them."""
+    """Return ranked eligible skills from SKILL.md paths without executing them.
+
+    PRD-QUAL-111 additions (both DEFAULT-OFF / no-op, NFR01):
+
+    - ``active_cap`` (FR03): when ``None`` (default) all eligible candidates are
+      returned exactly as before. When a positive integer, the result is
+      truncated to the top ``active_cap`` candidates AFTER the existing sort
+      (key unchanged: ``(-score, name, path)``), so ties resolve identically.
+    - Surface tracking (FR01): when ``config.skill_surface_tracking_enabled`` is
+      true, one append-only ``SkillSurfaceEvent`` is written per RETURNED
+      candidate (after the cap). When the flag is false (default), zero events
+      are written and the returned tuple is byte-for-byte identical to today.
+    """
 
     candidates: list[SkillDiscoveryCandidate] = []
     warnings: list[SkillManifestIssue] = []
@@ -76,7 +93,52 @@ def discover_meta_skills(
         candidates.append(_candidate(skill_path, validation.manifest, query_terms))
 
     ranked = tuple(sorted(candidates, key=lambda candidate: (-candidate.score, candidate.name, candidate.path)))
+
+    # FR03 active-cap: post-sort truncation only. None (default) = no-op.
+    if active_cap is not None and active_cap >= 0:
+        ranked = ranked[:active_cap]
+
+    # FR01 surface tracking: guarded side-write, one event per returned
+    # candidate. Default-off and fail-open -- never alters the returned tuple.
+    _maybe_log_surface_events(ranked, query_terms=query_terms, session_id=session_id)
+
     return SkillDiscoveryResult(candidates=ranked, warnings=tuple(warnings), executed=False)
+
+
+def _maybe_log_surface_events(
+    ranked: Sequence[SkillDiscoveryCandidate],
+    *,
+    query_terms: frozenset[str],
+    session_id: str,
+) -> None:
+    """Emit one skill-surface event per returned candidate, behind the flag.
+
+    DEFAULT-OFF (NFR01): when ``skill_surface_tracking_enabled`` is false the
+    function returns before any write. Fail-open (NFR02): any error during the
+    enable-check or write is swallowed so discovery is never blocked.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        cfg = get_config()
+        if not getattr(cfg, "skill_surface_tracking_enabled", False):
+            return
+
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.skill_surface_tracking import log_skill_surface_event
+
+        trw_dir = resolve_trw_dir()
+        for candidate in ranked:
+            matched = len(query_terms & _terms(f"{candidate.name} {candidate.description}"))
+            log_skill_surface_event(
+                trw_dir,
+                skill_name=candidate.name,
+                surface_type="discovery",
+                session_id=session_id,
+                query_terms_matched=matched,
+            )
+    except Exception:  # trw:intentional fail-open: surface tracking must not block discovery
+        logger.debug("skill_surface_tracking_skipped", exc_info=True)
 
 
 def register_skill_discovery_tools(server: FastMCP) -> None:
@@ -88,6 +150,7 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
         query: str,
         mode: SkillValidationMode = "compat",
         include_private: bool = False,
+        active_cap: int | None = None,
     ) -> dict[str, object]:
         """Rank eligible SKILL.md files without executing them.
 
@@ -99,6 +162,9 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
             query: Natural-language search terms.
             mode: Manifest validation mode, either "compat" or "strict".
             include_private: Include non-user-invocable skills when true.
+            active_cap: Optional PRD-QUAL-111-FR03 bound. ``None`` (default) is a
+                no-op (all eligible candidates returned). A positive integer
+                truncates to the top-N after the existing sort.
 
         Returns:
             {"candidates": list, "warnings": list, "executed": false}
@@ -109,6 +175,7 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
             query=query,
             mode=mode,
             include_private=include_private,
+            active_cap=active_cap,
         ).model_dump(mode="json")
 
 

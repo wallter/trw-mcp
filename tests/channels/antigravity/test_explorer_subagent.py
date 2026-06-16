@@ -30,9 +30,7 @@ def _make_sidecar(
             }
             for i in range(hotspot_count)
         ],
-        "conventions": [
-            f"Convention {i}: use structlog for logging" for i in range(convention_count)
-        ],
+        "conventions": [f"Convention {i}: use structlog for logging" for i in range(convention_count)],
     }
 
 
@@ -215,9 +213,7 @@ def test_description_contains_read_only(tmp_path: Path) -> None:
     parts = content.split("---")
     parsed = yaml.safe_load(parts[1])
     desc = parsed.get("description", "")
-    assert "Read-only" in desc or "read-only" in desc.lower(), (
-        f"'Read-only' not found in description: {desc!r}"
-    )
+    assert "Read-only" in desc or "read-only" in desc.lower(), f"'Read-only' not found in description: {desc!r}"
 
 
 # ---------------------------------------------------------------------------

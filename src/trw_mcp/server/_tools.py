@@ -40,30 +40,55 @@ def _apply_tool_exposure_filter() -> None:
     registered tool not in the allowed set.  Mode ``"all"`` is a no-op.
     Mode ``"custom"`` uses the explicit ``tool_exposure_list`` from config.
 
-    Fail-open: if config loading fails, all tools remain registered.
+    Fail-CLOSED under a restrictive mode: an operator that configured a
+    non-``all`` mode meant to HIDE privileged tools. If anything fails AFTER
+    we have determined the mode is restrictive, we must NOT leave every tool
+    registered — that would silently widen exposure (under-block). Instead we
+    fall back to the most restrictive known preset (``core``) so a config or
+    list_tools failure can never expose more than the operator asked for, and
+    we log the failure at WARNING (not DEBUG) so the loss of fidelity is
+    visible. When the mode is ``all`` / unset / unresolvable, keeping all
+    tools is the intended behavior.
     """
+    # Phase 1: resolve the mode. A failure HERE means we don't know what the
+    # operator wanted, so leaving all tools registered is acceptable (we have
+    # no evidence a restrictive mode was configured) — keep this fail-open.
+    try:
+        from trw_mcp.models.config import get_config
+
+        mode = get_config().effective_tool_exposure_mode
+    except Exception:  # justified: mode unknown -> no evidence of restrictive intent
+        logger.warning("tool_exposure_mode_resolve_failed", exc_info=True)  # justified: fail-open, visible
+        return
+
+    if mode == "all":
+        return
+
+    # Phase 2: from here on we KNOW a restrictive mode is configured. Any
+    # failure must fail to the SAFE (most restrictive) subset, never to "all".
     try:
         from trw_mcp.models.config import get_config
         from trw_mcp.models.config._defaults import TOOL_PRESETS
 
         config = get_config()
-        mode = config.effective_tool_exposure_mode
-
-        if mode == "all":
-            return
 
         if mode == "custom":
             allowed = set(config.tool_exposure_list)
         else:
             preset = TOOL_PRESETS.get(mode)
             if preset is None:
-                logger.warning("unknown_tool_exposure_mode", mode=mode)
-                return
-            allowed = set(preset)
+                # Unknown restrictive mode: do not widen — fall to safe subset.
+                logger.warning("unknown_tool_exposure_mode_failing_safe", mode=mode)
+                allowed = set(TOOL_PRESETS["core"])
+            else:
+                allowed = set(preset)
 
         if not allowed:
-            logger.warning("empty_tool_exposure_set", mode=mode)
-            return
+            # An empty allow-set under a restrictive mode would remove every
+            # tool; treat as a misconfiguration and fail to the safe subset
+            # rather than serving everything.
+            logger.warning("empty_tool_exposure_set_failing_safe", mode=mode)
+            allowed = set(TOOL_PRESETS["core"])
 
         # Get all currently registered tool names via the public async API.
         # FastMCP's internal tool-manager attributes changed across releases,
@@ -83,8 +108,21 @@ def _apply_tool_exposure_filter() -> None:
                 removed_count=len(removed),
                 removed=removed[:10],  # Log at most 10 names to avoid spam
             )
-    except Exception:  # justified: fail-open, tool filtering must never crash server startup
-        logger.debug("tool_exposure_filter_failed", exc_info=True)
+    except Exception:
+        # CONSERVATIVE / fail-closed: a restrictive mode was configured but the
+        # filter blew up. Make a best-effort pass to remove anything outside
+        # the safe ``core`` subset so a failure here cannot leave privileged
+        # tools exposed. Log at WARNING so the degradation is visible.
+        logger.warning("tool_exposure_filter_failed_failing_safe", mode=mode, exc_info=True)
+        try:
+            from trw_mcp.models.config._defaults import TOOL_PRESETS
+
+            safe = set(TOOL_PRESETS["core"])
+            for tool in list(_run_async(mcp.list_tools())):
+                if tool.name not in safe:
+                    mcp.remove_tool(tool.name)
+        except Exception:  # justified: last-resort; could not enumerate tools to prune
+            logger.warning("tool_exposure_safe_fallback_failed", mode=mode, exc_info=True)
 
 
 def _register_tools() -> None:
@@ -170,6 +208,23 @@ def _register_tools() -> None:
     from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
 
     register_pipeline_health_tools(mcp)
+
+    # PRD-CORE-144: empirical probe harness — bounded sandboxed experiments
+    # for disputed plan assumptions (consumes the shared SAFE-001
+    # ProbeIsolationContext). Registers trw_probe + trw_probe_budget_status.
+    from trw_mcp.tools.trw_probe import register_probe_tools
+
+    register_probe_tools(mcp)
+
+    # PRD-HPO-PROF-001 FR-4/FR-11: hierarchical profile explain tool
+    from trw_mcp.tools.trw_profile_explain import register_trw_profile_explain_tools
+
+    register_trw_profile_explain_tools(mcp)
+
+    # PRD-INTENT-002 FR06: phase-exposure override tool (trw_request_tool_access)
+    from trw_mcp.tools.phase_overrides import register_phase_override_tools
+
+    register_phase_override_tools(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)

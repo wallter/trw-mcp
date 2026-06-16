@@ -108,6 +108,91 @@ def test_deliver_override_surfaces_truthfulness_gate_bypass(tmp_path: Path) -> N
     assert overrides[0]["log_level"] == "warning"
 
 
+# ── codex cross-model review #3: PATH-3 no-run/no-ceremony-state, layered defense ──
+
+
+def test_no_active_run_no_ceremony_state_is_by_design_advisory(tmp_path: Path) -> None:
+    """codex cross-model review PATH-3 (DOCUMENTED): with NO run pin AND NO
+
+    ceremony-state.json, the no-active-run build gate returns None (no block).
+    This is by-design, not an oversight — a delivery with no run.yaml has
+    task_type=unknown, which the deliver_gate_mode taxonomy intentionally treats
+    as advisory (blocking it would over-block legitimate brand-new-project /
+    quick-task delivery). Upstream, the compaction-gate middleware blocks a
+    deliver after a dropped/compacted session (pinned separately below).
+    """
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._delivery_build_gates import _check_no_active_run_build_gate
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)  # context dir exists but NO ceremony-state.json
+
+    result = _check_no_active_run_build_gate(trw_dir, FileStateReader())
+    assert result is None, "no ceremony state -> no gate (by-design; layered defense)"
+
+
+def test_no_active_run_started_session_without_build_still_blocks(tmp_path: Path) -> None:
+    """The fail-closed posture IS active for a STARTED session with no passing build
+
+    — the gate's actual job. This is the second layer of the PATH-3 defense.
+    """
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._delivery_build_gates import _check_no_active_run_build_gate
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "context" / "ceremony-state.json").write_text(
+        json.dumps({"session_started": True, "build_check_result": None}), encoding="utf-8"
+    )
+
+    result = _check_no_active_run_build_gate(trw_dir, FileStateReader())
+    assert result is not None
+    assert "unpinned session" in result
+
+
+def test_compaction_gate_blocks_trw_deliver_before_session_start() -> None:
+    """Upstream layer: CeremonyMiddleware blocks trw_deliver with
+
+    ``session_start_required`` when a post-compaction recovery marker is pending,
+    so a deliver after a dropped session cannot reach the no-run path at all.
+    """
+    import asyncio
+
+    from mcp.types import TextContent
+
+    from trw_mcp.middleware import ceremony as cm
+
+    cm.reset_state()
+
+    class _Msg:
+        name = "trw_deliver"
+
+    class _ReqCtx:
+        pass
+
+    class _Ctx:
+        session_id = "sess-1"
+        request_context = _ReqCtx()
+
+    class _MwCtx:
+        message = _Msg()
+        fastmcp_context = _Ctx()
+
+    async def _call_next(_ctx: object) -> object:  # pragma: no cover - must NOT run
+        raise AssertionError("trw_deliver should be blocked before execution")
+
+    mw = cm.CeremonyMiddleware()
+    # Force the compaction gate pending for this session.
+    with patch.object(cm, "_is_compaction_gate_required_for_session", return_value=True):
+        result = asyncio.run(mw.on_call_tool(_MwCtx(), _call_next))  # type: ignore[arg-type]
+
+    structured = getattr(result, "structured_content", {})
+    assert structured.get("error") == "session_start_required"
+    assert structured.get("tool_attempted") == "trw_deliver"
+    content = getattr(result, "content", [])
+    assert content and isinstance(content[0], TextContent)
+
+
 def test_deliver_rejects_run_path_outside_project_root(tmp_path: Path) -> None:
     """PRD-QUAL-042-FR02: an explicit run_path that resolves OUTSIDE the project
     root is a path-traversal attempt — deliver must block, not operate on it."""

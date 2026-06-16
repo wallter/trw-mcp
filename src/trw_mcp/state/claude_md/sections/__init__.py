@@ -52,6 +52,9 @@ from trw_mcp.state.claude_md.sections._feedback import (
     render_feedback_reporting as render_feedback_reporting,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
+    MEMORY_ROUTING_SYNC_MARKER_PREFIX as MEMORY_ROUTING_SYNC_MARKER_PREFIX,
+)
+from trw_mcp.state.claude_md.sections._memory_routing import (
     _analytics_cache as _analytics_cache,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
@@ -61,19 +64,40 @@ from trw_mcp.state.claude_md.sections._memory_routing import (
     _load_analytics_counts as _load_analytics_counts,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
+    bundled_memory_routing_hash_prefix as bundled_memory_routing_hash_prefix,
+)
+from trw_mcp.state.claude_md.sections._memory_routing import (
+    load_memory_routing as load_memory_routing,
+)
+from trw_mcp.state.claude_md.sections._memory_routing import (
     render_memory_harmonization as render_memory_harmonization,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
     render_shared_learnings as render_shared_learnings,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+    DELIVER_GATE_PHRASE as DELIVER_GATE_PHRASE,
+)
+from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+    LIFECYCLE_SYNC_MARKER_PREFIX as LIFECYCLE_SYNC_MARKER_PREFIX,
+)
+from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     _load_prompting_guide as _load_prompting_guide,
+)
+from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+    bundled_lifecycle_hash_prefix as bundled_lifecycle_hash_prefix,
+)
+from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+    load_tool_lifecycle as load_tool_lifecycle,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     render_closing_reminder as render_closing_reminder,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     render_codex_instructions as render_codex_instructions,
+)
+from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+    render_deliver_gate_statement as render_deliver_gate_statement,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     render_framework_reference as render_framework_reference,
@@ -83,13 +107,20 @@ from trw_mcp.state.claude_md.sections._tool_lifecycle import (
 )
 
 __all__ = [
+    "DELIVER_GATE_PHRASE",
     "FEEDBACK_MARKER_END",
     "FEEDBACK_MARKER_START",
+    "LIFECYCLE_SYNC_MARKER_PREFIX",
+    "MEMORY_ROUTING_SYNC_MARKER_PREFIX",
     "_analytics_cache",
     "_format_learning_session_claim",
     "_load_analytics_counts",
     "_load_prompting_guide",
+    "bundled_lifecycle_hash_prefix",
+    "bundled_memory_routing_hash_prefix",
     "generate_behavioral_protocol_md",
+    "load_memory_routing",
+    "load_tool_lifecycle",
     "render_agents_trw_section",
     "render_behavioral_protocol",
     "render_ceremony_flows",
@@ -99,6 +130,7 @@ __all__ = [
     "render_codex_instructions",
     "render_codex_trw_section",
     "render_delegation_protocol",
+    "render_deliver_gate_statement",
     "render_feedback_reporting",
     "render_framework_reference",
     "render_imperative_opener",

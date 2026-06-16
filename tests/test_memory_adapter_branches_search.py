@@ -8,12 +8,46 @@ from unittest.mock import MagicMock, patch
 
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.memory_adapter import _keyword_search, _search_entries, get_backend
-from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
 
-from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+
+class _HybridEmbedder:
+    """Embedder returning a fixed query vector; combined with patched stored
+    embeddings this drives the real cosine ``dense_search`` ranker
+    deterministically through ``hybrid_search``."""
+
+    def embed(self, _text: str) -> list[float]:
+        return [1.0, 0.0, 0.0]
+
+    def available(self) -> bool:
+        return True
+
+
+def _run_hybrid(
+    backend: Any,
+    query: str,
+    *,
+    stored: dict[str, list[float]],
+    min_impact: float = 0.0,
+    mem_status: MemoryStatus | None = None,
+    tags: list[str] | None = None,
+) -> list[str]:
+    """Drive ``_search_entries`` through the REAL hybrid pipeline (BM25 + dense
+    + RRF), injecting the dense ranking via patched stored embeddings."""
+    cfg = TRWConfig()
+    with (
+        patch(
+            "trw_mcp.state._memory_connection.get_embedder",
+            return_value=_HybridEmbedder(),
+        ),
+        patch.object(backend, "get_stored_embeddings", return_value=stored),
+        patch("trw_mcp.models.config.get_config", return_value=cfg),
+    ):
+        results = _search_entries(backend, query, min_impact=min_impact, mem_status=mem_status, tags=tags)
+    return [e.id for e in results]
 
 
 class TestKeywordSearchMultiToken:
@@ -76,158 +110,85 @@ class TestSearchEntriesHybrid:
             assert isinstance(results, list)
 
     def test_hybrid_rrf_fusion_success(self, trw_dir: Path) -> None:
-        """Full hybrid path with RRF fusion (lines 418-453)."""
+        """Full hybrid path through the real BM25 + dense + RRF pipeline.
+
+        PRD-DIST-254 §FR03 follow-up: ``_search_entries`` delegates to
+        ``trw_memory.retrieval.pipeline.hybrid_search``. The dense ranker is
+        driven via patched stored embeddings; both entries share the query token
+        so BM25 also ranks them. Both must surface.
+        """
         backend = get_backend(trw_dir)
-        entry1 = MemoryEntry(id="L-h1", content="hybrid test alpha", detail="d1")
-        entry2 = MemoryEntry(id="L-h2", content="hybrid test beta", detail="d2")
-        backend.store(entry1)
-        backend.store(entry2)
+        backend.store(MemoryEntry(id="L-h1", content="hybrid test alpha", detail="d1"))
+        backend.store(MemoryEntry(id="L-h2", content="hybrid test beta", detail="d2"))
 
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
-        vector_hits = [("L-h1", 0.9), ("L-h2", 0.8)]
-        mock_fuse = MagicMock(return_value=[("L-h1", 1.0), ("L-h2", 0.8)])
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ),
-            patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
-        ):
-            results = _search_entries(backend, "hybrid")
-            assert len(results) >= 1
+        ids = _run_hybrid(
+            backend,
+            "hybrid",
+            stored={"L-h1": [1.0, 0.0, 0.0], "L-h2": [0.0, 1.0, 0.0]},
+        )
+        assert len(ids) >= 1
+        assert "L-h1" in ids and "L-h2" in ids
 
     def test_hybrid_vector_only_entry_fetched(self, trw_dir: Path) -> None:
-        """Vector-only hits (not in keyword results) are fetched from backend (line 430)."""
+        """A dense-nearest entry with no lexical match still surfaces.
+
+        The widened candidate pool includes every namespace entry, so a vector-
+        only gold record (no keyword overlap) is ranked and returned — the gap
+        the old ~75-record keyword+vector slice could miss on a large namespace.
+        """
         backend = get_backend(trw_dir)
-        entry1 = MemoryEntry(id="L-vo1", content="keyword match", detail="d1")
-        entry2 = MemoryEntry(id="L-vo2", content="only in vectors", detail="d2", importance=0.9)
-        backend.store(entry1)
-        backend.store(entry2)
+        backend.store(MemoryEntry(id="L-vo1", content="keyword match token", detail="d1"))
+        backend.store(MemoryEntry(id="L-vo2", content="orthogonal unrelated content", detail="d2", importance=0.9))
 
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
-        vector_hits = [("L-vo1", 0.9), ("L-vo2", 0.8)]
-
-        def limited_keyword(be: Any, query: str, **kwargs: Any) -> list[MemoryEntry]:
-            return [entry1]
-
-        mock_fuse = MagicMock(return_value=[("L-vo1", 1.0), ("L-vo2", 0.8)])
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ),
-            patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state._memory_queries._keyword_search", limited_keyword),
-            patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
-        ):
-            results = _search_entries(backend, "keyword")
-            ids = [e.id for e in results]
-            assert "L-vo2" in ids
+        ids = _run_hybrid(
+            backend,
+            "keyword token",
+            stored={"L-vo1": [0.0, 1.0, 0.0], "L-vo2": [1.0, 0.0, 0.0]},
+        )
+        assert "L-vo2" in ids, f"vector-only entry missing: {ids}"
 
     def test_hybrid_vector_entry_filtered_by_min_impact(self, trw_dir: Path) -> None:
-        """Vector-only entry below min_impact is filtered (line 434)."""
+        """A dense-nearest entry below min_impact is excluded at the pool scan."""
         backend = get_backend(trw_dir)
-        entry1 = MemoryEntry(id="L-fi1", content="keyword hit", detail="d1", importance=0.9)
-        low_impact_entry = MemoryEntry(
-            id="L-fi2",
-            content="low impact vector",
-            detail="d2",
-            importance=0.1,
+        backend.store(MemoryEntry(id="L-fi1", content="keyword hit token", detail="d1", importance=0.9))
+        backend.store(MemoryEntry(id="L-fi2", content="low impact vector", detail="d2", importance=0.1))
+
+        ids = _run_hybrid(
+            backend,
+            "keyword token",
+            stored={"L-fi1": [0.0, 1.0, 0.0], "L-fi2": [1.0, 0.0, 0.0]},
+            min_impact=0.5,
         )
-        backend.store(entry1)
-        backend.store(low_impact_entry)
-
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
-        vector_hits = [("L-fi1", 0.9), ("L-fi2", 0.8)]
-
-        def limited_kw(be: Any, query: str, **kwargs: Any) -> list[MemoryEntry]:
-            return [entry1]
-
-        mock_fuse = MagicMock(return_value=[("L-fi1", 1.0), ("L-fi2", 0.8)])
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ),
-            patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
-            patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
-        ):
-            results = _search_entries(backend, "keyword", min_impact=0.5)
-            ids = [e.id for e in results]
-            assert "L-fi2" not in ids
+        assert "L-fi2" not in ids
+        assert "L-fi1" in ids
 
     def test_hybrid_vector_entry_filtered_by_status(self, trw_dir: Path) -> None:
-        """Vector-only entry with wrong status is filtered (line 436)."""
+        """A dense-nearest entry with the wrong status is excluded at the pool scan."""
         backend = get_backend(trw_dir)
-        entry1 = MemoryEntry(id="L-fs1", content="kw hit", detail="d1")
-        wrong_status = MemoryEntry(
-            id="L-fs2",
-            content="wrong status",
-            detail="d2",
-            status=MemoryStatus.OBSOLETE,
+        backend.store(MemoryEntry(id="L-fs1", content="kw hit token", detail="d1"))
+        backend.store(MemoryEntry(id="L-fs2", content="wrong status", detail="d2", status=MemoryStatus.OBSOLETE))
+
+        ids = _run_hybrid(
+            backend,
+            "kw token",
+            stored={"L-fs1": [0.0, 1.0, 0.0], "L-fs2": [1.0, 0.0, 0.0]},
+            mem_status=MemoryStatus.ACTIVE,
         )
-        backend.store(entry1)
-        backend.store(wrong_status)
-
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
-        vector_hits = [("L-fs1", 0.9), ("L-fs2", 0.8)]
-
-        def limited_kw(be: Any, query: str, **kwargs: Any) -> list[MemoryEntry]:
-            return [entry1]
-
-        mock_fuse = MagicMock(return_value=[("L-fs1", 1.0), ("L-fs2", 0.8)])
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ),
-            patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
-            patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
-        ):
-            results = _search_entries(backend, "kw", mem_status=MemoryStatus.ACTIVE)
-            ids = [e.id for e in results]
-            assert "L-fs2" not in ids
+        assert "L-fs2" not in ids
 
     def test_hybrid_vector_entry_filtered_by_tags(self, trw_dir: Path) -> None:
-        """Vector-only entry with missing tags is filtered (lines 438-439)."""
+        """A dense-nearest entry missing the requested tag is filtered post-rank."""
         backend = get_backend(trw_dir)
-        entry1 = MemoryEntry(id="L-ft1", content="kw hit", detail="d1", tags=["python"])
-        wrong_tags = MemoryEntry(id="L-ft2", content="wrong tags", detail="d2", tags=["rust"])
-        backend.store(entry1)
-        backend.store(wrong_tags)
+        backend.store(MemoryEntry(id="L-ft1", content="kw hit token", detail="d1", tags=["python"]))
+        backend.store(MemoryEntry(id="L-ft2", content="wrong tags", detail="d2", tags=["rust"]))
 
-        mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
-        vector_hits = [("L-ft1", 0.9), ("L-ft2", 0.8)]
-
-        def limited_kw(be: Any, query: str, **kwargs: Any) -> list[MemoryEntry]:
-            return [entry1]
-
-        mock_fuse = MagicMock(return_value=[("L-ft1", 1.0), ("L-ft2", 0.8)])
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ),
-            patch.object(backend, "search_vectors", return_value=vector_hits),
-            patch("trw_mcp.state._memory_queries._keyword_search", limited_kw),
-            patch("trw_memory.retrieval.fusion.rrf_fuse", mock_fuse),
-        ):
-            results = _search_entries(backend, "kw", tags=["python"])
-            ids = [e.id for e in results]
-            assert "L-ft2" not in ids
+        ids = _run_hybrid(
+            backend,
+            "kw token",
+            stored={"L-ft1": [0.0, 1.0, 0.0], "L-ft2": [1.0, 0.0, 0.0]},
+            tags=["python"],
+        )
+        assert "L-ft2" not in ids
 
     def test_hybrid_exception_falls_back(self, trw_dir: Path) -> None:
         """When hybrid search raises, falls back to keyword (lines 455-457)."""

@@ -355,8 +355,8 @@ def record_nudge_shown(
 
     PRD-QUAL-058-FR04: In addition to updating ceremony-state.json's nudge_history,
     this function also appends a discrete ``nudge_shown`` event to
-    ``{trw_dir}/context/session-events.jsonl`` so the trw-eval pipeline's
-    pre_analyzers (JSONL path) and TraceAnalyzer can detect per-nudge activity.
+    ``{trw_dir}/context/session-events.jsonl`` so downstream eval consumers
+    can detect per-nudge activity from the event stream.
 
     Emission is best-effort: any failure in the session-event append is
     suppressed so the primary ceremony-state update always completes.
@@ -380,8 +380,8 @@ def record_nudge_shown(
         write_ceremony_state(trw_dir, state)
 
     # PRD-QUAL-058-FR04: Also emit a nudge_shown event to session-events.jsonl
-    # so the event-based eval pipeline (proximal_reward, TraceAnalyzer,
-    # pre_analyzers JSONL path) can detect per-nudge activity.
+    # so downstream eval consumers can detect per-nudge activity from the
+    # event stream.
     _emit_nudge_shown_event(
         trw_dir,
         learning_id=learning_id,
@@ -409,11 +409,11 @@ def _emit_nudge_shown_event(
     try:
         events_path = trw_dir / "context" / "session-events.jsonl"
         events_path.parent.mkdir(parents=True, exist_ok=True)
-        # PRD-CORE-146 NFR03: canonical contract fields consumed by trw-eval
-        # pre_analyzers (scoring/analysis/nudge/pre_analyzers.py) — ``step`` and
-        # ``learning_ids`` (plural list form). The ``data.*`` block and the
-        # legacy singular ``learning_id`` / ``phase`` keys are preserved for
-        # backward compatibility with test_proximal_reward and TraceAnalyzer.
+        # PRD-CORE-146 NFR03: canonical contract fields consumed by downstream
+        # eval consumers — ``step`` and ``learning_ids`` (plural list form). The
+        # ``data.*`` block and the legacy singular ``learning_id`` / ``phase``
+        # keys are preserved for backward compatibility with existing eval
+        # consumers of the event stream.
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "event": "nudge_shown",

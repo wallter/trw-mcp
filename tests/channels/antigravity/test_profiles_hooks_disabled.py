@@ -31,6 +31,5 @@ def test_antigravity_cli_profile_hooks_enabled() -> None:
     profile = _PROFILES.get("antigravity-cli")
     assert profile is not None, "antigravity-cli profile not found in _PROFILES"
     assert profile.hooks_enabled is True, (
-        f"Expected hooks_enabled=True for antigravity-cli (AG-03 confirmed active), "
-        f"got {profile.hooks_enabled!r}"
+        f"Expected hooks_enabled=True for antigravity-cli (AG-03 confirmed active), got {profile.hooks_enabled!r}"
     )

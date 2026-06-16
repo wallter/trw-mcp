@@ -131,8 +131,7 @@ def test_idempotency(content: str, new_interior: str) -> None:
     once = replace_distill_segment(content, new_interior, markers=m)
     twice = replace_distill_segment(once, new_interior, markers=m)
     assert once == twice, (
-        f"Idempotency violated:\ncontent={content!r}\nnew_interior={new_interior!r}\n"
-        f"once={once!r}\ntwice={twice!r}"
+        f"Idempotency violated:\ncontent={content!r}\nnew_interior={new_interior!r}\nonce={once!r}\ntwice={twice!r}"
     )
 
 
@@ -145,18 +144,14 @@ def test_bounded_diff_before_marker() -> None:
     before = "PREFIX CONTENT\n"
     content = before + START + "\nold\n" + END + "\nafter"
     result = replace_distill_segment(content, "new", markers=_markers())
-    assert result.startswith(before + START), (
-        "Content before start marker must be byte-identical"
-    )
+    assert result.startswith(before + START), "Content before start marker must be byte-identical"
 
 
 def test_bounded_diff_after_marker() -> None:
     after = "\nSUFFIX CONTENT"
     content = "before\n" + START + "\nold\n" + END + after
     result = replace_distill_segment(content, "new", markers=_markers())
-    assert result.endswith(END + after), (
-        "Content after end marker must be byte-identical"
-    )
+    assert result.endswith(END + after), "Content after end marker must be byte-identical"
 
 
 # ---------------------------------------------------------------------------

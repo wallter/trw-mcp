@@ -54,8 +54,7 @@ def _assert_valid_feedback_skill(skill_md: Path) -> None:
     assert "trw_submit_feedback" in content, "feedback skill must reference the trw_submit_feedback tool"
     # The whole point of the field-bug fix: agents/sub-agents MAY invoke it.
     assert "disable-model-invocation: true" not in content, (
-        f"trw-feedback at {skill_md} must be model-invocable — "
-        "found disable-model-invocation: true in frontmatter"
+        f"trw-feedback at {skill_md} must be model-invocable — found disable-model-invocation: true in frontmatter"
     )
 
 
@@ -83,9 +82,7 @@ class TestFeedbackSkillClientParity:
         """The Copilot plugin is packaged verbatim (its own plugin.json, no
         bootstrap install fn), so assert the bundled source ships a valid,
         model-invocable trw-feedback skill."""
-        _assert_valid_feedback_skill(
-            _DATA_DIR / "copilot" / "plugin" / "skills" / "trw-feedback" / "SKILL.md"
-        )
+        _assert_valid_feedback_skill(_DATA_DIR / "copilot" / "plugin" / "skills" / "trw-feedback" / "SKILL.md")
 
 
 class TestFeedbackSkillModelInvocable:

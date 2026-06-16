@@ -73,8 +73,7 @@ def test_prd_diff_report_highlights_requirement_metric_and_acceptance_changes(tm
     before = tmp_path / "before.md"
     after = tmp_path / "after.md"
     before.write_text(
-        "| FR01 | Old requirement | THE SYSTEM SHALL do A. | 0.8 |\n"
-        "| Metric | Coverage target | 80% |\n",
+        "| FR01 | Old requirement | THE SYSTEM SHALL do A. | 0.8 |\n| Metric | Coverage target | 80% |\n",
         encoding="utf-8",
     )
     after.write_text(

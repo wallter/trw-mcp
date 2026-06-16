@@ -42,6 +42,8 @@ async def _push_to_target(
     timeout: float,
     dirty: list[MemoryEntry],
     outcomes: list[dict[str, object]],
+    learning_sharing_enabled: bool = False,
+    platform_telemetry_enabled: bool = False,
 ) -> PushResult:
     """PRD-FIX-087 FR03: async — awaits pusher.push_learnings / push_outcomes."""
     started = perf_counter()
@@ -51,12 +53,18 @@ async def _push_to_target(
     else:
         pusher = pusher_map.get(target.label)
     if pusher is None:
+        # PRD-SEC-004-FR05/FR01: a lazily-built fallback pusher MUST inherit the
+        # resolved consent flags — otherwise a target not pre-built in
+        # BackendSyncClient.__init__ would default fail-closed and silently drop
+        # a consented push.
         pusher = SyncPusher(
             backend_url=target.url,
             api_key=target.api_key,
             batch_size=batch_size,
             timeout=timeout,
             client_id=client_id,
+            learning_sharing_enabled=learning_sharing_enabled,
+            platform_telemetry_enabled=platform_telemetry_enabled,
         )
         pusher_map[target.label] = pusher
 
@@ -120,6 +128,8 @@ async def fanout_push(
     timeout: float,
     dirty: list[MemoryEntry],
     outcomes: list[dict[str, object]],
+    learning_sharing_enabled: bool = False,
+    platform_telemetry_enabled: bool = False,
 ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
     """PRD-FIX-087 FR03: async — awaits _push_to_target per target."""
     report: dict[str, dict[str, object]] = {}
@@ -138,6 +148,8 @@ async def fanout_push(
                 timeout=timeout,
                 dirty=dirty,
                 outcomes=outcomes,
+                learning_sharing_enabled=learning_sharing_enabled,
+                platform_telemetry_enabled=platform_telemetry_enabled,
             )
         except Exception as exc:  # justified: boundary, per-target failure is isolated
             logger.warning(

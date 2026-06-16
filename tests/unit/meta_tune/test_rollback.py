@@ -193,3 +193,43 @@ def test_rollback_honors_max_attempts(tmp_path: Path) -> None:
     assert first.status == "error"
     assert second.status == "error"
     assert second.reason == "rollback_attempt_limit_exceeded"
+
+
+def test_rollback_default_max_attempts_is_at_least_three() -> None:
+    """A single transient FS/OS error must not permanently brick rollback, so the
+    default attempt budget must allow retries (>=3)."""
+    assert TRWConfig().meta_tune.rollback_max_attempts >= 3
+
+
+def test_rollback_recovers_after_transient_error_then_success(tmp_path: Path) -> None:
+    """A transient failure (e.g. backup missing on first attempt) increments the
+    attempt counter; once the condition clears, a subsequent attempt completes
+    the rollback rather than being permanently locked out (uses default budget)."""
+    # Use the model default for rollback_max_attempts (>=3) — NOT the _cfg
+    # helper's local default of 1 — so the retry budget reflects production.
+    cfg = TRWConfig(meta_tune=MetaTuneConfig(enabled=True, audit_log_path=str(tmp_path / "audit.jsonl")))
+    assert cfg.meta_tune.rollback_max_attempts >= 3
+    state_dir = tmp_path / "state"
+    live_file = tmp_path / "CLAUDE.md"
+    backup_file = tmp_path / "backup.md"
+    live_file.write_text("mutated")
+    _write_snapshot(
+        state_dir=state_dir,
+        proposal_id="p1",
+        live_path=live_file,
+        backup_path=backup_file,
+        promoted_at=datetime.now(timezone.utc),
+    )
+
+    # First attempt: backup does not exist yet -> transient error, attempt counter ++.
+    first = rollback_proposal("p1", state_dir=state_dir, _config=cfg)
+    assert first.status == "error"
+    assert first.reason != "rollback_attempt_limit_exceeded"
+
+    # Transient condition clears.
+    backup_file.write_text("original")
+
+    # Second attempt succeeds because the default budget permits a retry.
+    second = rollback_proposal("p1", state_dir=state_dir, _config=cfg)
+    assert second.status == "rolled_back"
+    assert live_file.read_text() == "original"

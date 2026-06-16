@@ -58,6 +58,12 @@ class _PathsFields:
     knowledge_jaccard_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
     knowledge_min_cluster_size: int = Field(default=3, ge=1)
     knowledge_output_dir: str = "knowledge"
+    # F5 suggestion 2: opportunistic time-boxed knowledge-graph backfill on
+    # deliver. Builds edges for un-graphed entries within the deadline budget
+    # (WAL gives the singleton reader/writer isolation), then leaves the rest
+    # for the next deliver or a forced ``trw_knowledge_sync(force=True)``.
+    deliver_graph_backfill_enabled: bool = True
+    deliver_graph_backfill_deadline_seconds: float = Field(default=2.0, ge=0.0)
 
     # -- MCP transport --
 

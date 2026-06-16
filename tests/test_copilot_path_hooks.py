@@ -290,8 +290,7 @@ class TestCopilotHookCommandShellValidity:
                 text=True,
             )
             assert result.returncode == 0, (
-                f"bash -n failed for event '{event_name}': {result.stderr.strip()!r}\n"
-                f"Command was: {cmd!r}"
+                f"bash -n failed for event '{event_name}': {result.stderr.strip()!r}\nCommand was: {cmd!r}"
             )
 
     def test_command_is_simple_invocation_no_inline_shell(self) -> None:
@@ -352,9 +351,7 @@ class TestCopilotAdapterScriptBehavior:
         hook.chmod(0o755)
         return hook
 
-    def _run_adapter(
-        self, adapter: Path, hook: Path, event: str, payload: str
-    ) -> subprocess.CompletedProcess[str]:
+    def _run_adapter(self, adapter: Path, hook: Path, event: str, payload: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["/bin/sh", str(adapter), str(hook), event],
             input=payload,
@@ -362,9 +359,7 @@ class TestCopilotAdapterScriptBehavior:
             text=True,
         )
 
-    def test_tool_name_extracted_via_grep_fallback(
-        self, adapter: Path, echo_tool_name_hook: Path
-    ) -> None:
+    def test_tool_name_extracted_via_grep_fallback(self, adapter: Path, echo_tool_name_hook: Path) -> None:
         """toolName is correctly extracted from the Copilot JSON payload."""
         payload = '{"toolName":"str_replace_editor","tool_input":{"path":"foo.py"}}'
         result = self._run_adapter(adapter, echo_tool_name_hook, "postToolUse", payload)
@@ -393,9 +388,7 @@ class TestCopilotAdapterScriptBehavior:
         assert result.returncode == 0
         assert result.stdout == '{"permissionDecision":"allow"}'
 
-    def test_non_permission_hook_fail_open_on_error(
-        self, adapter: Path, tmp_path: Path
-    ) -> None:
+    def test_non_permission_hook_fail_open_on_error(self, adapter: Path, tmp_path: Path) -> None:
         """Non-permission hooks fail open (exit 0) when hook script is missing."""
         missing = tmp_path / "nonexistent-hook.sh"
         payload = '{"toolName":"anything","tool_input":{}}'

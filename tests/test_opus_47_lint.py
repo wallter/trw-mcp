@@ -99,8 +99,7 @@ def test_no_removed_sampling_params_in_frontmatter() -> None:
     if offenders:
         pytest.fail(
             "Removed sampling params found in frontmatter "
-            "(delete them — they return HTTP 400 on Opus 4.7 and later, incl. 4.8):\n  "
-            + "\n  ".join(offenders)
+            "(delete them — they return HTTP 400 on Opus 4.7 and later, incl. 4.8):\n  " + "\n  ".join(offenders)
         )
 
 

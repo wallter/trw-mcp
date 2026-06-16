@@ -25,6 +25,7 @@ re-exported through ``memory_adapter`` for the FR08 grep/wiring assertion.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -96,7 +97,14 @@ def reclassify_to_user_tier(
     project_entries = project_backend.list_entries(namespace=_NAMESPACE, limit=limit)
 
     user_backend = get_user_backend()
-    existing_user_ids = {e.id for e in user_backend.list_entries(namespace=USER_NAMESPACE, limit=limit)}
+    # core185-5: the dedup set must cover the ENTIRE user store, independent of
+    # the project-scan ``limit``. The user store is box-wide and may hold far
+    # more entries than a single project's scan window; truncating this fetch to
+    # ``limit`` lets an already-promoted entry beyond the window slip the
+    # ``in existing_user_ids`` check and be RE-PROMOTED (duplicate). ``limit=0``
+    # is NOT an "unlimited" sentinel in the backend (it means ``LIMIT 0`` -> zero
+    # rows), so use ``sys.maxsize`` to fetch all ids.
+    existing_user_ids = {e.id for e in user_backend.list_entries(namespace=USER_NAMESPACE, limit=sys.maxsize)}
 
     for entry in project_entries:
         if entry.importance < min_impact:

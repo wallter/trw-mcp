@@ -279,6 +279,29 @@ def emit_h1_observe_mode_warning(
     )
 
 
+class ProbeEvent(HPOTelemetryEvent):
+    """Empirical-probe yield event (PRD-CORE-144 FR-09).
+
+    Emitted once per completed probe (success, timeout, OOM, sandbox kill)
+    so the meta-proposer can measure **probe yield** = (probes producing
+    decisive verdicts) / (probes attempted). Probe-specific details live in
+    ``payload`` because the base envelope is frozen + ``extra=forbid``.
+
+    Required ``payload`` keys (see ``PROBE_EVENT_PAYLOAD_KEYS`` in
+    ``probe/telemetry.py``):
+        - ``verdict``, ``hypothesis_id``, ``wall_ms``, ``timed_out``,
+          ``cache_hit``, ``planning_mode``, ``confidence``, ``decisive``
+
+    Defined here (rather than in ``probe/telemetry.py``) so the global
+    ``EVENT_TYPE_REGISTRY`` is complete regardless of import order — the
+    CI emitter-coverage parity gate walks ``HPOTelemetryEvent.__subclasses__()``
+    and rejects any subclass missing from the registry.
+    """
+
+    event_type: str = "probe"
+    emitter: str = "probe_harness"
+
+
 class DefaultResolutionError(RuntimeError):
     """Raised when a Phase-1 default cannot be resolved to a real resource.
 
@@ -314,6 +337,7 @@ EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
     HPOCeremonyComplianceEvent.model_fields["event_type"].default: HPOCeremonyComplianceEvent,
     H1ObserveModeWarning.model_fields["event_type"].default: H1ObserveModeWarning,
     SurfaceRegistered.model_fields["event_type"].default: SurfaceRegistered,
+    ProbeEvent.model_fields["event_type"].default: ProbeEvent,
 }
 
 
@@ -352,6 +376,16 @@ EVENT_PAYLOAD_KEY_REGISTRY: dict[str, tuple[str, ...]] = {
         "activation_gate_blocked_reason",
     ),
     "surface_registered": ("surface_id", "content_hash", "source_path", "category"),
+    "probe": (
+        "verdict",
+        "hypothesis_id",
+        "wall_ms",
+        "timed_out",
+        "cache_hit",
+        "planning_mode",
+        "confidence",
+        "decisive",
+    ),
 }
 
 
@@ -410,6 +444,7 @@ __all__ = [
     "MetaTuneEvent",
     "ObserverEvent",
     "PhaseExposureEvent",
+    "ProbeEvent",
     "SurfaceRegistered",
     "ThrashingEvent",
     "ToolCallEvent",

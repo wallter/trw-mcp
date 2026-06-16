@@ -110,6 +110,7 @@ _TOOL_GROUPS: dict[str, tuple[str, str]] = {
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
     "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
+    "phase_overrides": ("trw_mcp.tools.phase_overrides", "register_phase_override_tools"),
     "pipeline_health": ("trw_mcp.tools._pipeline_health_tool", "register_pipeline_health_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
@@ -173,6 +174,18 @@ def extract_tool_fn(server: FastMCP, tool_name: str) -> Any:
 
 _UNIT_FILES: frozenset[str] = frozenset(
     {
+        # PRD-HPO-PROF-001 profile system — pure logic, no filesystem I/O.
+        "test_profile_model.py",
+        "test_model.py",
+        "test_resolver.py",
+        "test_invariants.py",
+        "test_inference.py",
+        "test_explain.py",
+        "test_snapshot.py",
+        "test_allowlist_policy_surface.py",
+        "test_property_layer_composition.py",
+        # PRD-INTENT-002 phase-exposure — pure logic / mocks only.
+        "test_phase_overrides.py",
         "test_models.py",
         "test_scoring.py",
         "test_scoring_branches.py",
@@ -194,6 +207,8 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_core080_template_variants.py",
         "test_response_optimizer.py",
         "test_scoring_q_preseed.py",
+        # PRD-INFRA-145: OTel GenAI span shape — recording fake tracer, no I/O
+        "test_otel_genai.py",
         # PRD-CORE-184: task-type detection + nudge weights — pure logic, no I/O
         "test_task_type_detection.py",
         "test_task_type_nudge_weights.py",
@@ -227,6 +242,13 @@ _UNIT_FILES: frozenset[str] = frozenset(
         # PRD-CORE-125: Surface area control — pure config/model, no I/O
         "test_tool_presets.py",
         "test_surface_area_flags.py",
+        # PRD-FIX-076: tool surface reduction — registry/manifest absence, no I/O
+        "test_fix076_tool_surface_reduction.py",
+        # PRD-CORE-144: empirical probe harness — pure model/budget/cache/
+        # verdict/telemetry logic, no filesystem I/O (subprocess-spawning
+        # invocation/bounds/observability tests stay default/integration).
+        "test_budget.py",
+        "test_verdict.py",
     }
 )
 
@@ -280,6 +302,46 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.integration)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_trw_user_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Redirect TRW_USER_DIR to an isolated temporary directory for the whole session.
+
+    Prevents tests from reading or writing to the operator's real
+    ``~/.trw/`` user-tier memory store. Without this guard a cold-start
+    recall test that writes to the user tier would persist entries into
+    the developer's actual user-scope memory database.
+
+    Session scope mirrors the ``test_recall_federation.py`` per-file pattern
+    (``monkeypatch.setenv("TRW_USER_DIR", ...)``), promoted to suite-wide so
+    every test file benefits automatically. Per-file overrides that further
+    narrow the path (as ``test_recall_federation.py`` does) remain valid
+    because the os.environ write here is overridden by a later
+    monkeypatch.setenv() in a narrower fixture scope — pytest's monkeypatch
+    isolation is function-scoped so per-test overrides take precedence.
+
+    Pairs with ``_reset_memory_backend`` (function-scoped autouse) which
+    already calls ``reset_user_backend()`` + ``reset_user_scope_cache()``
+    between tests — this fixture provides the directory boundary.
+    """
+    import os
+
+    session_user_dir = tmp_path_factory.mktemp("trw_user_dir_session")
+    old = os.environ.get("TRW_USER_DIR")
+    os.environ["TRW_USER_DIR"] = str(session_user_dir)
+    # Also clear XDG_DATA_HOME so platform-default path resolution does not
+    # slip through on Linux when TRW_USER_DIR is absent from getenv().
+    old_xdg = os.environ.pop("XDG_DATA_HOME", None)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("TRW_USER_DIR", None)
+        else:
+            os.environ["TRW_USER_DIR"] = old
+        if old_xdg is not None:
+            os.environ["XDG_DATA_HOME"] = old_xdg
+
+
 @pytest.fixture(autouse=True)
 def _reset_config_singleton() -> Iterator[None]:
     """Reset TRWConfig singleton for test isolation."""
@@ -319,6 +381,24 @@ def _reset_auto_close_throttle_fixture() -> Iterator[None]:
     _reset_auto_close_throttle()
     yield
     _reset_auto_close_throttle()
+
+
+@pytest.fixture(autouse=True)
+def _reset_low_coverage_advisory_guard() -> Iterator[None]:
+    """Reset the one-time low-vector-coverage advisory guard between tests.
+
+    Option A+ (2026-06-10): ``run_embeddings_maintenance`` surfaces the
+    low-coverage backfill nudge once per PROCESS so it doesn't cry wolf every
+    session while the background self-heal runs. Tests that exercise the
+    first-surfacing path need a fresh guard per case.
+    """
+    from trw_mcp.tools._ceremony_embeddings_maintenance import (
+        reset_low_coverage_advisory_guard,
+    )
+
+    reset_low_coverage_advisory_guard()
+    yield
+    reset_low_coverage_advisory_guard()
 
 
 @pytest.fixture(autouse=True)
@@ -408,15 +488,21 @@ def _reset_memory_backend() -> Iterator[None]:
     Joins any running deferred-deliver thread first to prevent
     use-after-close segfaults on the SQLite backend.
     """
+    from trw_mcp.state._tier_routing import reset_user_scope_cache
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
     reset_backend()
+    # core185-8: the user-scope presence probe is memoized; clear it between
+    # tests so a prior test that set TRW_USER_TIER_ENABLED cannot leak a stale
+    # "user scope present" verdict into a later, unconfigured test.
+    reset_user_scope_cache()
     yield
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
     reset_backend()
+    reset_user_scope_cache()
 
 
 @pytest.fixture(autouse=True)

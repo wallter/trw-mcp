@@ -184,11 +184,15 @@ class TestCeremonyStateTracking:
         assert state.deliver_called is True
 
     def test_ceremony_status_returns_metrics(self, tmp_project: Path) -> None:
-        """2.7 cont: trw_ceremony_status returns per-task-class metrics."""
-        server = make_test_server("ceremony_feedback")
-        status_fn = extract_tool_fn(server, "trw_ceremony_status")
+        """2.7 cont: get_ceremony_status returns per-task-class metrics.
 
-        result = status_fn()
+        PRD-FIX-076 removed the trw_ceremony_status MCP tool wrapper; the
+        internal state API that produced the metrics is unchanged and is now
+        exercised directly.
+        """
+        from trw_mcp.state.ceremony_feedback import get_ceremony_status
+
+        result = get_ceremony_status(tmp_project / ".trw")
         assert result is not None
         # ceremony_status returns a dict with task-class-level metrics
         assert isinstance(result, dict)

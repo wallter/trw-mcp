@@ -43,9 +43,7 @@ def _capture_sender(pipeline: Any) -> list[dict[str, object]]:
     """
     captured: list[dict[str, object]] = []
 
-    def fake_send(
-        events: list[dict[str, object]], urls: list[str], api_key: str
-    ) -> bool:
+    def fake_send(events: list[dict[str, object]], urls: list[str], api_key: str) -> bool:
         captured.extend(events)
         return True
 
@@ -96,9 +94,9 @@ class TestEnqueueAutoStartsFlushThread:
 
             pipeline.enqueue(_make_event(tool_name="trw_learn"))
 
-            assert _wait_for(
-                lambda: pipeline._thread is not None and pipeline._thread.is_alive()
-            ), "enqueue() must auto-start a live flush thread"
+            assert _wait_for(lambda: pipeline._thread is not None and pipeline._thread.is_alive()), (
+                "enqueue() must auto-start a live flush thread"
+            )
         finally:
             pipeline.stop(drain=False, timeout=5.0)
 
@@ -111,8 +109,7 @@ class TestEnqueueAutoStartsFlushThread:
             pipeline.enqueue(_make_event(tool_name="trw_deliver", duration_ms=7))
 
             assert _wait_for(lambda: len(captured) >= 1), (
-                "queued event must reach the sender boundary without an "
-                "explicit start()"
+                "queued event must reach the sender boundary without an explicit start()"
             )
             tool_names = {ev.get("tool_name") for ev in captured}
             assert "trw_deliver" in tool_names, "the exact event must be delivered"
@@ -130,17 +127,13 @@ class TestAutoStartIdempotency:
         pipeline, _ = _build_pipeline(pipeline_cls, tmp_path, monkeypatch)
         try:
             pipeline.enqueue(_make_event(seq=0))
-            assert _wait_for(
-                lambda: pipeline._thread is not None and pipeline._thread.is_alive()
-            )
+            assert _wait_for(lambda: pipeline._thread is not None and pipeline._thread.is_alive())
             first_thread = pipeline._thread
 
             for i in range(1, 25):
                 pipeline.enqueue(_make_event(seq=i))
 
-            assert pipeline._thread is first_thread, (
-                "repeated enqueues must not replace the flush thread"
-            )
+            assert pipeline._thread is first_thread, "repeated enqueues must not replace the flush thread"
             assert pipeline._thread.is_alive()
         finally:
             pipeline.stop(drain=False, timeout=5.0)
@@ -168,9 +161,7 @@ class TestAutoStartIdempotency:
                 with seen_lock:
                     seen_threads.append(t)
 
-        threads = [
-            threading.Thread(target=worker, args=(t,)) for t in range(n_threads)
-        ]
+        threads = [threading.Thread(target=worker, args=(t,)) for t in range(n_threads)]
         try:
             for t in threads:
                 t.start()
@@ -178,9 +169,7 @@ class TestAutoStartIdempotency:
                 t.join(timeout=10)
 
             unique = {id(t) for t in seen_threads}
-            assert len(unique) == 1, (
-                f"concurrent first enqueues must yield one thread, got {len(unique)}"
-            )
+            assert len(unique) == 1, f"concurrent first enqueues must yield one thread, got {len(unique)}"
         finally:
             pipeline.stop(drain=False, timeout=5.0)
 
@@ -203,9 +192,9 @@ class TestAtexitDrain:
         # before any periodic flush fired.
         pipeline.enqueue(_make_event(tool_name="trw_checkpoint"))
         pipeline.stop(drain=False, timeout=5.0)
-        assert len(captured) == 0 or "trw_checkpoint" not in {
-            ev.get("tool_name") for ev in captured
-        }, "precondition: event not yet flushed before drain"
+        assert len(captured) == 0 or "trw_checkpoint" not in {ev.get("tool_name") for ev in captured}, (
+            "precondition: event not yet flushed before drain"
+        )
 
         # Re-queue (stop may have raced a flush); then run the drain handler.
         if not any(ev.get("tool_name") == "trw_checkpoint" for ev in captured):
@@ -213,13 +202,11 @@ class TestAtexitDrain:
 
         pipeline._atexit_drain()
 
-        assert any(
-            ev.get("tool_name") == "trw_checkpoint" for ev in captured
-        ), "atexit drain must flush the queued event to the sender"
+        assert any(ev.get("tool_name") == "trw_checkpoint" for ev in captured), (
+            "atexit drain must flush the queued event to the sender"
+        )
 
-    def test_atexit_registered_once(
-        self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_atexit_registered_once(self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The drain handler is registered exactly once across many enqueues."""
         registrations: list[Any] = []
         monkeypatch.setattr(
@@ -233,8 +220,6 @@ class TestAtexitDrain:
                 pipeline.enqueue(_make_event(seq=i))
 
             drain_regs = [fn for fn in registrations if fn == pipeline._atexit_drain]
-            assert len(drain_regs) == 1, (
-                f"atexit drain must register once, got {len(drain_regs)}"
-            )
+            assert len(drain_regs) == 1, f"atexit drain must register once, got {len(drain_regs)}"
         finally:
             pipeline.stop(drain=False, timeout=5.0)

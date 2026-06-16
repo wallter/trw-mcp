@@ -16,9 +16,6 @@ from trw_mcp.state.ceremony_feedback import (
     register_proposal,
     revert_change,
 )
-from ._ceremony_feedback_support import feedback_env  # noqa: F401
-
-from ._ceremony_feedback_support import feedback_env  # noqa: F401
 
 from ._ceremony_feedback_support import feedback_env  # noqa: F401
 

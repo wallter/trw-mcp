@@ -120,9 +120,7 @@ async def test_run_stdio_proxy_threads_finite_timeout_into_session_and_call(
         async def list_prompts(self) -> _FakeResult:
             return _FakeResult([])
 
-        async def call_tool(
-            self, name: str, arguments: Any = None, *, read_timeout_seconds: Any = None
-        ) -> object:
+        async def call_tool(self, name: str, arguments: Any = None, *, read_timeout_seconds: Any = None) -> object:
             captured["call_tool_read_timeout_seconds"] = read_timeout_seconds
             return object()
 

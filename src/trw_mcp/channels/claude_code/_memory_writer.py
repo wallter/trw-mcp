@@ -20,6 +20,7 @@ Key invariants:
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
@@ -154,7 +155,7 @@ def update_memory_index(
     # Check line count warning threshold
     line_count = len(updated.splitlines())
     if line_count >= MEMORY_INDEX_NEAR_CAP_THRESHOLD:
-        try:
+        with suppress(Exception):
             append_channel_event(
                 channel_id=_CHANNEL_ID,
                 client="claude-code",
@@ -162,8 +163,6 @@ def update_memory_index(
                 tier=None,
                 extra={"line_count": line_count},
             )
-        except Exception:
-            pass
         log.warning(
             "memory_index_near_cap",
             line_count=line_count,
@@ -254,7 +253,7 @@ def write_distill_snapshot(
         update_memory_index(memory_dir)
 
         # Telemetry (fail-open)
-        try:
+        with suppress(Exception):
             append_channel_event(
                 channel_id=_CHANNEL_ID,
                 client="claude-code",
@@ -263,8 +262,6 @@ def write_distill_snapshot(
                 bytes_emitted=bytes_written,
                 extra={"sha": sha},
             )
-        except Exception:
-            pass
 
         log.debug(
             "cc01_snapshot_written",
@@ -285,7 +282,5 @@ def write_distill_snapshot(
         return WriteSnapshotResult(status="error")
 
     finally:
-        try:
+        with suppress(Exception):
             lock.__exit__(None, None, None)
-        except Exception:
-            pass

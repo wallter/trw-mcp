@@ -227,11 +227,7 @@ def _build_outcome_payload(
     """Construct an OutcomeSync-shaped dict from one run's session_metrics."""
     exposure = session_metrics.get("learning_exposure") or {}
     raw_ids = exposure.get("ids") if isinstance(exposure, dict) else None
-    learning_ids: list[str] = (
-        [str(i) for i in raw_ids][:_MAX_OUTCOME_LEARNING_IDS]
-        if isinstance(raw_ids, list)
-        else []
-    )
+    learning_ids: list[str] = [str(i) for i in raw_ids][:_MAX_OUTCOME_LEARNING_IDS] if isinstance(raw_ids, list) else []
 
     rework = session_metrics.get("rework_rate") or {}
     rework_rate: float | None = None

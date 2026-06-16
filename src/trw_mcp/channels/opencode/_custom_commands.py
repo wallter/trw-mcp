@@ -214,8 +214,8 @@ def install_custom_commands(
                             tier=None,
                             extra={"filename": filename},
                         )
-                    except Exception:
-                        pass
+                    except Exception:  # justified: fail-open telemetry, preserve user-modified command
+                        log.debug("opencode_custom_command_event_failed", filename=filename, exc_info=True)
                     results[filename] = {"status": "preserved", "sha256": on_disk_sha}
                     continue
 

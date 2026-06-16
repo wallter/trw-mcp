@@ -38,8 +38,7 @@ def test_fixture_schema_version() -> None:
     """Fixture must pin schema_version to 'risk-report-sidecar/v0'."""
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     assert data["schema_version"] == "risk-report-sidecar/v0", (
-        f"Fixture schema_version={data['schema_version']!r}; "
-        "expected 'risk-report-sidecar/v0'"
+        f"Fixture schema_version={data['schema_version']!r}; expected 'risk-report-sidecar/v0'"
     )
 
 
@@ -81,11 +80,7 @@ def test_fixture_required_fields_present() -> None:
 
     # Get required fields (those without defaults or with non-None defaults)
     model_fields = BeforeYouEditHintPayload.model_fields
-    required_field_names = {
-        name
-        for name, field in model_fields.items()
-        if field.is_required()
-    }
+    required_field_names = {name for name, field in model_fields.items() if field.is_required()}
 
     for field_name in required_field_names:
         assert field_name in payload_dict, (

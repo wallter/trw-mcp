@@ -281,7 +281,7 @@ def test_concurrent_appends_keep_chain_intact(tmp_path: Path) -> None:
                     payload={"worker": worker_id, "seq": j},
                     _config=cfg,
                 )
-            except Exception as exc:  # noqa: BLE001 — surface to assertion
+            except Exception as exc:
                 errors.append(exc)
 
     threads = [threading.Thread(target=_worker, args=(i,)) for i in range(n_threads)]

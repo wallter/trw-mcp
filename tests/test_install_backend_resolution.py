@@ -117,8 +117,13 @@ def test_build_install_cmd_flag_translation(mod):
     # pip backend → pip flags
     mod._INSTALL_BACKEND = ("pip", [PY, "-B", "-m", "pip", "install"])
     pip_cmd = mod.build_install_cmd(
-        PY, _StubUI(), ["/w/pkg.whl"], target_dir="/t", find_links="/w",
-        no_cache=True, no_warn_script_location=True,
+        PY,
+        _StubUI(),
+        ["/w/pkg.whl"],
+        target_dir="/t",
+        find_links="/w",
+        no_cache=True,
+        no_warn_script_location=True,
     )
     assert "--no-cache-dir" in pip_cmd and "--no-cache" not in pip_cmd
     assert "--no-warn-script-location" in pip_cmd
@@ -128,8 +133,13 @@ def test_build_install_cmd_flag_translation(mod):
     # uv backend → uv flags; pip-only flag dropped
     mod._INSTALL_BACKEND = ("uv", [UV, "pip", "install", "--python", PY])
     uv_cmd = mod.build_install_cmd(
-        PY, _StubUI(), ["/w/pkg.whl"], target_dir="/t", find_links="/w",
-        no_cache=True, no_warn_script_location=True,
+        PY,
+        _StubUI(),
+        ["/w/pkg.whl"],
+        target_dir="/t",
+        find_links="/w",
+        no_cache=True,
+        no_warn_script_location=True,
     )
     assert "--no-cache" in uv_cmd and "--no-cache-dir" not in uv_cmd
     assert "--no-warn-script-location" not in uv_cmd

@@ -1,4 +1,4 @@
-"""Framework v25 portability regression guards (PRD-CORE-161)."""
+"""Framework portability regression guards (PRD-CORE-161; v26 refresh 2026-06-10)."""
 
 from pathlib import Path
 
@@ -17,12 +17,12 @@ def _framework_content() -> str:
     return _FRAMEWORK_ROOT.read_text(encoding="utf-8")
 
 
-class TestFrameworkV25Portability:
+class TestFrameworkPortability:
     """PRD-CORE-161: canonical framework is portable and evidence-led."""
 
-    def test_header_declares_v25_model_agnostic_policy(self) -> None:
+    def test_header_declares_model_agnostic_policy(self) -> None:
         content = _framework_content()
-        assert "v25_TRW" in content
+        assert "v26_TRW" in content
         assert "MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK" in content
         assert "Model policy: capability-based" in content
 
@@ -60,7 +60,7 @@ class TestFrameworkV25Portability:
 
 
 class TestFrameworkMdEnforcement:
-    """Core RFC 2119 and process guardrails remain present in v25."""
+    """Core RFC 2119 and process guardrails remain present."""
 
     def test_rigid_review_must(self) -> None:
         content = _framework_content()

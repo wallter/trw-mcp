@@ -44,7 +44,21 @@ class _MemoryFields:
     # rename without coordinating with `_paths.resolve_memory_store_path`,
     # `dedup.py:367`, and tests in `test_retrieval.py`.
     memory_store_path: str = ".trw/memory/vectors.db"
-    embeddings_enabled: bool = False
+    # Council-ratified Option A+ (2026-06-10, PRD-DIST-254 §FR03 follow-up):
+    # default flipped False -> True. The MCP `recall_learnings` path the live
+    # `trw_recall` tool takes degrades to keyword-only AND-intersection when this
+    # is False, which collapses Recall@5 to 0.125 on a realistic corpus (vs
+    # 0.9375 for the full hybrid path) -- agents silently lost semantic recall.
+    # Option C (auto-enable on first vector hit) was REJECTED for a bootstrap
+    # deadlock: a vector-less fresh store never produces a vector hit, so it would
+    # never auto-enable. Accompaniments shipped with this flip: (a) a non-blocking
+    # first-recall download warm-up (`_schedule_embedder_warmup`) so the
+    # all-MiniLM-L6-v2 download never blocks the MCP hot path; (b) graceful
+    # keyword degradation while the warm-up is incomplete (the hot path uses
+    # `allow_cold_embedding_init=False` -> `get_initialized_embedder`); (c) the
+    # low-coverage backfill advisory + background self-heal already wired below.
+    # Operators can still opt out with `embeddings_enabled: false`.
+    embeddings_enabled: bool = True
     retrieval_embedding_model: str = "all-MiniLM-L6-v2"
     retrieval_embedding_dim: int = 384
     # PRD-FIX-COMPOUNDING-3-FR02: Coverage warning threshold for coverage_probe.
@@ -60,6 +74,19 @@ class _MemoryFields:
     embeddings_auto_backfill_on_low_coverage: bool = True
     hybrid_bm25_candidates: int = 50
     hybrid_vector_candidates: int = 50
+    # PRD-DIST-254 §FR03 follow-up (2026-06-10): the in-process MCP recall path
+    # (`_memory_queries._search_entries`) historically ranked only a ~75-record
+    # candidate slice — the ≤25 LIKE-substring keyword hits plus
+    # `hybrid_vector_candidates` vector hits — and fused them with a LIKE keyword
+    # ranker whose order is near-noise on a natural-language query. On the 226-
+    # record operator gold set this collapsed embeddings-ON Recall@5 to 0.583
+    # (vs MemoryClient 0.9375) even though the gold record sat at vector rank 0
+    # for 18/24 queries: pure-position RRF let ~10 junk LIKE hits leapfrog the
+    # correct vector hit. The hybrid branch now loads up to this many entries and
+    # ranks them with the SAME `trw_memory.retrieval.pipeline.hybrid_search`
+    # (BM25 + dense + RRF) the MemoryClient path uses, so the two paths agree.
+    # Default 1000 mirrors `MemoryConfig.hybrid_search_candidate_pool_size`.
+    hybrid_search_candidate_pool_size: int = Field(default=1000, ge=1)
     hybrid_rrf_k: int = 60
     # R-FUSION-001 / F15: blend learning importance into the in-process recall's
     # positional RRF fusion (`_memory_queries._search_entries`), matching the

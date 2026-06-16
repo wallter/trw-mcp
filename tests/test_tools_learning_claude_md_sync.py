@@ -225,9 +225,7 @@ class TestClaudeMdSyncLateResolve:
     redirect the write and a sync would pollute the real repo CLAUDE.md.
     """
 
-    def test_sync_honours_paths_source_patch_only(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_sync_honours_paths_source_patch_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Patching ONLY ``_paths`` (the source module) redirects the write.
 
         This deliberately does NOT patch the legacy claude_md ``__init__`` /
@@ -237,12 +235,8 @@ class TestClaudeMdSyncLateResolve:
         target_root = tmp_path / "late_resolve_root"
         target_root.mkdir()
 
-        monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_project_root", lambda: target_root
-        )
-        monkeypatch.setattr(
-            "trw_mcp.state._paths.resolve_trw_dir", lambda: target_root / ".trw"
-        )
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: target_root)
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: target_root / ".trw")
 
         tools = _get_tools()
         tools["trw_learn"].fn(

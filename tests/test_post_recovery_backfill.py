@@ -341,12 +341,9 @@ def test_backfill_start_warning_logged_when_missing(tmp_path: Path) -> None:
     warning_events = [e for e in cap if e.get("log_level") == "warning"]
 
     start_warnings = [
-        e for e in warning_events
-        if "backfill" in e.get("event", "").lower() and "start" in e.get("event", "").lower()
+        e for e in warning_events if "backfill" in e.get("event", "").lower() and "start" in e.get("event", "").lower()
     ]
-    assert start_warnings, (
-        f"Expected a WARNING log at backfill start when missing_count>0. Got: {log_events}"
-    )
+    assert start_warnings, f"Expected a WARNING log at backfill start when missing_count>0. Got: {log_events}"
     start_warn = start_warnings[0]
     assert "missing_count" in start_warn or "total_entries" in start_warn, (
         f"Start warning must include count fields: {start_warn}"
@@ -375,8 +372,7 @@ def test_backfill_no_start_warning_when_all_embedded(tmp_path: Path) -> None:
 
     warning_events = [e for e in cap if e.get("log_level") == "warning"]
     start_warnings = [
-        e for e in warning_events
-        if "backfill" in e.get("event", "").lower() and "start" in e.get("event", "").lower()
+        e for e in warning_events if "backfill" in e.get("event", "").lower() and "start" in e.get("event", "").lower()
     ]
     assert not start_warnings, f"No start WARNING expected when nothing to backfill, got: {start_warnings}"
     assert result["embedded"] == 0
@@ -407,7 +403,9 @@ def test_run_auto_maintenance_passes_coverage_probe(tmp_path: Path) -> None:
 
     with (
         patch("trw_mcp.state.memory_adapter.check_embeddings_status", side_effect=fake_check_embeddings),
-        patch("trw_mcp.state.memory_pressure.should_defer_session_start_optional_work", return_value=(False, [], "none")),
+        patch(
+            "trw_mcp.state.memory_pressure.should_defer_session_start_optional_work", return_value=(False, [], "none")
+        ),
         patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
         patch("trw_mcp.state.analytics._stale_runs.auto_close_stale_runs", return_value={"count": 0}),
         patch("trw_mcp.state.memory_adapter.maybe_checkpoint_wal", return_value={"checkpointed": False}),

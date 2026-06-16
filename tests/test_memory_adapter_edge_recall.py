@@ -42,6 +42,41 @@ class TestRecallLearningsBoundary:
         backend_second.store.assert_called_once()
         mock_warning.assert_called_once()
 
+    def test_store_learning_user_tier_retries_once_after_corruption(self, trw_dir: Path) -> None:
+        """core185-2: user-write corruption resets the USER backend + retries (symmetric to project)."""
+        backend_first = MagicMock()
+        backend_first.store.side_effect = RuntimeError("database disk image is malformed")
+        backend_second = MagicMock()
+
+        with (
+            # scope="user" + user_scope_present -> is_user_write=True
+            patch("trw_mcp.state._tier_routing.user_scope_present", return_value=True),
+            patch(
+                "trw_mcp.state._user_tier.get_user_backend",
+                side_effect=[backend_first, backend_second, backend_second],
+            ),
+            patch("trw_mcp.state.memory_adapter.reset_user_backend") as mock_reset_user,
+            patch("trw_mcp.state.memory_adapter._recover_and_reset_backend") as mock_recover,
+            patch("trw_mcp.state.memory_adapter._embed_and_store"),
+            patch("trw_mcp.state.memory_adapter._embed_and_store_returning", return_value=None),
+            patch("trw_mcp.state.memory_adapter.update_entry_graph"),
+            patch("trw_mcp.state.memory_adapter.logger.warning") as mock_warning,
+        ):
+            result = store_learning(
+                trw_dir,
+                "L-user-retry",
+                "operator wants commits frequent",
+                "always commit frequently",
+                scope="user",
+            )
+
+        assert result["status"] == "recorded"
+        mock_reset_user.assert_called_once_with()
+        # The PROJECT recovery path must NOT fire for a user-tier corruption.
+        mock_recover.assert_not_called()
+        backend_second.store.assert_called_once()
+        mock_warning.assert_called_once()
+
     def test_store_learning_does_not_retry_after_strict_refusal(self, trw_dir: Path) -> None:
         """Strict recovery refusal is terminal, not a generic retryable corruption."""
         terminal = CorruptDatabaseUnsalvageableError(

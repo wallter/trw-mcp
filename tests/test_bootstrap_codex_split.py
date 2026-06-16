@@ -336,3 +336,41 @@ config = [
 
         skill_paths = [entry["path"] for entry in config["skills"]["config"]]
         assert len(skill_paths) == len(set(skill_paths))
+
+
+class _FakeTool:
+    """Minimal stand-in for a FastMCP tool exposing a ``name`` attribute."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class TestCodexEnabledToolsCompleteness:
+    """Bug fix: Codex enabled_tools must reflect the FULL tool set, not the
+    live server's post-exposure-filter state."""
+
+    def test_enabled_tools_complete_under_restrictive_server_filter(self, monkeypatch: object) -> None:
+        """If the live server is filtered down to a tiny subset (simulating a
+        restrictive ``tool_exposure_mode``), the Codex enabled_tools list must
+        still contain the full canonical preset."""
+        import trw_mcp.bootstrap._codex as codex
+        from trw_mcp.models.config._defaults import TOOL_PRESETS
+
+        # Simulate a server whose exposure filter removed everything but the
+        # core subset.
+        async def _filtered_list_tools() -> list[_FakeTool]:
+            return [_FakeTool("trw_session_start"), _FakeTool("trw_learn")]
+
+        from trw_mcp.server._app import mcp
+
+        monkeypatch.setattr(mcp, "list_tools", _filtered_list_tools)  # type: ignore[attr-defined]
+
+        names = codex._registered_trw_tool_names()
+
+        # Every tool in the canonical full preset must be present despite the
+        # filtered live server.
+        full_preset = {n for n in TOOL_PRESETS["all"] if n.startswith("trw_")}
+        missing = full_preset - set(names)
+        assert not missing, f"Codex enabled_tools dropped tools under a filtered server: {missing}"
+        # Sanity: privileged admin tools (e.g. trw_meta_tune_rollback) are included.
+        assert "trw_meta_tune_rollback" in names

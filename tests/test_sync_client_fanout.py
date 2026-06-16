@@ -92,6 +92,9 @@ def _make_fanout_config() -> SimpleNamespace:
         team_sync_enabled=True,
         model_family="opus",
         framework_version="v1",
+        # PRD-SEC-004: fan-out push tests exercise the CONSENTED path.
+        learning_sharing_enabled=True,
+        platform_telemetry_enabled=True,
         resolved_sync_targets=[
             ("https://api.trwframework.com", "pk"),
             ("http://localhost:5002", "pk"),

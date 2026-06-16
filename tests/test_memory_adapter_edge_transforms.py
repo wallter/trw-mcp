@@ -16,9 +16,7 @@ from trw_mcp.state.memory_adapter import _learning_to_memory_entry, _memory_to_l
 
 
 @pytest.fixture(autouse=True)
-def _project_tier_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
+def _project_tier_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Pin the user tier OFF so transforms route to the project ``default`` ns.
 
     These transform tests assert the historical project-tier contract

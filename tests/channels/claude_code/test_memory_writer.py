@@ -37,9 +37,7 @@ class TestWriteDistillSnapshot:
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
         assert not claude_dir.exists()
-        result = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        result = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         assert result.status == "written"
         memory_dir = resolve_memory_dir(repo, claude_projects_dir=claude_dir)
         assert memory_dir.exists()
@@ -48,9 +46,7 @@ class TestWriteDistillSnapshot:
         """FR11: snapshot includes provenance frontmatter."""
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        result = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        result = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         assert result.status == "written"
         snapshot = result.snapshot_path
         assert snapshot is not None
@@ -63,14 +59,10 @@ class TestWriteDistillSnapshot:
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
         # First write: creates T0 beacon
-        r1 = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        r1 = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         assert r1.status == "written"
         # Second write: sidecar still absent, tier is T2 — should skip
-        r2 = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T2", claude_projects_dir=claude_dir
-        )
+        r2 = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T2", claude_projects_dir=claude_dir)
         assert r2.status == "skipped_stale_t0_no_sidecar"
 
     def test_force_bypasses_t0_skip(self, tmp_path: Path) -> None:
@@ -78,22 +70,16 @@ class TestWriteDistillSnapshot:
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
         # Write T0 beacon first
-        write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         # Force write with T0 again
-        r2 = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir
-        )
+        r2 = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir)
         assert r2.status == "written"
 
     def test_memory_index_pointer_added(self, tmp_path: Path) -> None:
         """FR17: after writing snapshot, MEMORY.md gains a pointer."""
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         memory_dir = resolve_memory_dir(repo, claude_projects_dir=claude_dir)
         memory_index = memory_dir / "MEMORY.md"
         assert memory_index.exists()
@@ -103,18 +89,14 @@ class TestWriteDistillSnapshot:
     def test_bytes_written_returned(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        result = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        result = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         assert result.bytes_written is not None
         assert result.bytes_written > 0
 
     def test_snapshot_path_in_result(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        result = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        result = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         assert result.snapshot_path is not None
         assert result.snapshot_path.name == "distill_snapshot.md"
 
@@ -122,9 +104,7 @@ class TestWriteDistillSnapshot:
         """FR16 (P1-01): init-project writes T0 beacon synchronously."""
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        result = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir
-        )
+        result = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", claude_projects_dir=claude_dir)
         # Result is available immediately (synchronous)
         assert result.status == "written"
         assert result.snapshot_path is not None
@@ -134,14 +114,10 @@ class TestWriteDistillSnapshot:
         """NFR09: same inputs → byte-identical output."""
         repo = _make_repo(tmp_path)
         claude_dir = _claude_dir(tmp_path)
-        r1 = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir
-        )
+        r1 = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir)
         assert r1.snapshot_path is not None
         content1 = r1.snapshot_path.read_text(encoding="utf-8")
-        r2 = write_distill_snapshot(
-            repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir
-        )
+        r2 = write_distill_snapshot(repo_root=repo, sha=_SHA, tier="T0", force=True, claude_projects_dir=claude_dir)
         assert r2.snapshot_path is not None
         content2 = r2.snapshot_path.read_text(encoding="utf-8")
         assert content1 == content2
@@ -173,9 +149,7 @@ class TestUpdateMemoryIndex:
         # Markers appear exactly once
         assert content.count(MEMORY_INDEX_MARKER_START) == 1
 
-    def test_memory_index_near_cap_warning_emitted_not_suppressed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_memory_index_near_cap_warning_emitted_not_suppressed(self, tmp_path: Path) -> None:
         """FR17: if MEMORY.md exceeds 190 lines, warning is emitted but write continues."""
         memory_dir = tmp_path / "memory"
         memory_dir.mkdir()

@@ -60,35 +60,6 @@ class NpmAuditResult(TypedDict, total=False):
     npm_audit_skip_reason: str
 
 
-class DepAuditResult(TypedDict, total=False):
-    """Return shape of ``_run_dep_audit()``.
-
-    Always present: ``dep_audit_passed``, ``timestamp``.
-    pip-audit keys merged from ``PipAuditResult``.
-    npm-audit keys merged from ``NpmAuditResult``.
-    Unlisted-import keys present only when unlisted imports are detected.
-    """
-
-    dep_audit_passed: bool
-    timestamp: str
-    # pip-audit sub-result keys (merged)
-    pip_audit_passed: bool
-    pip_audit_vulnerability_count: int
-    pip_audit_blocking_count: int
-    pip_audit_vulnerabilities: list[dict[str, object]]
-    pip_audit_skipped: bool
-    pip_audit_skip_reason: str
-    # npm-audit sub-result keys (merged)
-    npm_audit_passed: bool
-    npm_audit_high_plus_count: int
-    npm_audit_vulnerabilities: list[dict[str, object]]
-    npm_audit_skipped: bool
-    npm_audit_skip_reason: str
-    # unlisted imports (present only when imports detected)
-    unlisted_imports: list[str]
-    unlisted_import_count: int
-
-
 class ApiFuzzResult(TypedDict, total=False):
     """Return shape of ``_run_api_fuzz()``.
 

@@ -91,6 +91,14 @@ Common failure modes to look for:
 - Does the data flow end-to-end? (e.g., if you write to a store in module A, does module B read from it?)
 - Are new config fields referenced by the code that needs them?
 
+### Step 2b: Pre-Handoff Self-Check (wiring, size, gate parity)
+
+Confirm all three before handoff — these are the top recurring audit-found defect classes:
+- **Consumer or declared seam**: every new surface (module, event, flag, ledger, CLI option) has a verified production consumer at HEAD, or an explicitly declared seam. "Built but only logged" or "gate works but no CLI flag reaches it" is unwired work, not done work.
+- **Effective-LOC on EVERY touched module** before handoff (350-eLOC gate where the repo defines one) — a size crossing must never be first discovered at audit.
+- **Gate-preview parity**: any status/preview surface that mirrors a real gate must honor EVERY config branch the real gate honors (enable/disable flags, modes). A preview that diverges from its gate is a defect, not an approximation.
+- **Live-verify runtime features**: for any feature with a runtime surface (transport/CLI/HTTP endpoint, data pipeline, gate, parser of external input), drive the REAL path once before handoff — real transport call, real CLI invocation, real round-trip of stored data — not only unit/mock tests. Three independent sessions proved green unit suites missing transport-dead tools, silently dropped data, and live-only bugs (2026-06-09 ledger row 4; 2026-06-12 round-2 e2e: 2 P0s + data loss behind 6,800 green tests).
+
 ### Step 3: Quality Review
 
 - Duplicated logic → extract shared helpers (DRY)

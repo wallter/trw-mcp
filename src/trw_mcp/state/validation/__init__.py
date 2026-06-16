@@ -17,6 +17,9 @@ All public names are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+from trw_mcp.state.validation._prd_scoring_wiring import (
+    extract_wiring_warnings as extract_wiring_warnings,
+)
 from trw_mcp.state.validation.contract_validation import (
     _INTEGRATION_CHECKLIST as _INTEGRATION_CHECKLIST,
 )

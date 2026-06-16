@@ -92,7 +92,6 @@ PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = (
     (PACKAGE_KEY_MEMORY_TS, "packages/memory-ts"),
     ("platform", "platform"),
     ("trw-video", "trw-video"),
-    ("trw-symphony", "trw-symphony"),
 )
 
 
@@ -306,34 +305,12 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
 
 
 def assert_version_status_compatible(project_root: Path | None = None) -> VersionStatus:
-    """Return status or raise SystemExit when the release version gate fails.
-
-    Release invariant: **you may only publish the version you are actually
-    running.** This compares the version being released (the pyproject manifest)
-    against the trw-mcp installed in THIS environment and the installed-asset
-    manifest (``.trw/frameworks/VERSION.yaml``). A mismatch means the box is not
-    running the version it is about to ship.
-
-    The correct remediation is to **update the local version** to match the
-    release, then re-run — NOT to bypass this check or upload the bundle to S3
-    by hand. Skipping the gate ships a version the apparatus has never run.
-    """
+    """Return status or raise SystemExit when the release version gate fails."""
     status = collect_version_status(project_root)
     compatible = bool(status["compatible"])
     mismatches = status["mismatches"]
     if not compatible:
-        raise SystemExit(
-            "version compatibility gate failed: "
-            f"{','.join(mismatches)}\n"
-            "  This box is not running the version it is about to publish.\n"
-            "  CORRECT FIX (update the local version — do NOT bypass this gate):\n"
-            "    1. install the version you are publishing into this environment\n"
-            "       (`make eval-ready`, or pip-install the built trw-mcp wheel), and\n"
-            "    2. sync .trw/frameworks/VERSION.yaml trw_mcp_version to that version,\n"
-            "    3. then re-run the release.\n"
-            "  Do NOT skip this gate or `aws s3 cp` the bundle manually — publishing a\n"
-            "  version the apparatus is not running breaks the version-currency guarantee."
-        )
+        raise SystemExit(f"version compatibility gate failed: {','.join(mismatches)}")
     return status
 
 

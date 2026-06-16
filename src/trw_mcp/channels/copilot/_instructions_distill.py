@@ -220,8 +220,8 @@ class CopilotInstructionsDistillRenderer:
         finally:
             try:
                 lock.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception:  # justified: fail-open, lock cleanup must not mask C1 result
+                log.debug("copilot_instructions_lock_release_failed", channel_id=channel_id, exc_info=True)
 
     def _render_under_lock(
         self,
@@ -482,5 +482,5 @@ def _emit_event(
             tier=tier,
             extra={"outcome": outcome, **(extra or {})},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, C1 render path already completed
+        log.debug("copilot_instructions_event_failed", channel_id=channel_id, event_type=event_type, exc_info=True)

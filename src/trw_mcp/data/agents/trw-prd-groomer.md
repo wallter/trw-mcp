@@ -156,6 +156,12 @@ Audit artifacts written to the planning run:
 - NEVER remove existing substantive content; only add or improve
 - preserve the PRD ID, frontmatter structure, and section numbering
 - cite evidence for new requirements (codebase file:line, web source, PRD reference)
+- verify every referenced API, module, CLI flag, or tool EXISTS at HEAD via Grep/Glob —
+  never cite an interface from memory; FRs referencing fictional APIs are a BLOCK
+- recompute any numeric or statistical acceptance example (p-values, thresholds, rates)
+  before including it — a mathematically wrong worked example invalidates the criterion
+- specify boundary semantics explicitly: expiry-vs-today (inclusive/exclusive), same-day
+  or same-key collisions (overwrite vs append), and range endpoints
 - use EARS patterns for functional requirements (When/While/If/Where)
 - include confidence scores in [0.0-1.0] brackets on requirements
 - If grooming fails or times out, write the PRD at current quality with gaps

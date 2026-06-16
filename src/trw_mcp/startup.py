@@ -100,6 +100,8 @@ def init_security(config: MCPSecurityConfig | None = None) -> MCPSecurityMiddlew
                 window_seconds=resolved.anomaly.window_seconds,
                 shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
                 baseline_store_path=trw_dir / "security" / "mcp_arg_baseline.jsonl",
+                max_arg_hashes_per_pair=resolved.anomaly.max_arg_hashes_per_pair,
+                max_baseline_store_lines=resolved.anomaly.max_baseline_store_lines,
             ),
             run_dir=None,
             fallback_dir=audit_dir,

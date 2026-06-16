@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 __all__ = [
@@ -103,15 +104,13 @@ def _run_scan(args: argparse.Namespace, channels_dir: Path) -> None:
     manifest_path = _find_manifest(channels_dir)
     active_lock_paths: set[Path] = set()
     if manifest_path.exists():
-        try:
+        with suppress(Exception):
             from trw_mcp.channels._manifest_loader import load
 
             manifest = load(manifest_path)
             for entry in manifest.channels:
                 if entry.lock_file:
                     active_lock_paths.add(Path(entry.lock_file))
-        except Exception:
-            pass  # best-effort
 
     orphaned_locks: list[Path] = []
     stale_states: list[Path] = []
@@ -165,7 +164,7 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
     active_lock_paths: set[Path] = set()
     disabled_lock_paths: set[Path] = set()
     if manifest_path.exists():
-        try:
+        with suppress(Exception):
             from trw_mcp.channels._manifest_loader import load
 
             manifest = load(manifest_path)
@@ -177,8 +176,6 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
                         disabled_lock_paths.add(lp)
                     else:
                         active_lock_paths.add(lp)
-        except Exception:
-            pass  # best-effort
 
     removed: list[Path] = []
     errors: list[str] = []

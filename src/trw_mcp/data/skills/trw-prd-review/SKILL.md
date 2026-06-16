@@ -1,9 +1,7 @@
 ---
 name: trw-prd-review
-description: >
-  Internal phase: Review a PRD for quality, returning a structured READY/NEEDS WORK/BLOCK
-  verdict with per-dimension scores. Read-only — never modifies files.
-  Called automatically by /trw-prd-ready and /trw-prd-new. Not intended for direct user invocation.
+description: >-
+  Assess PRD quality and output a structured READY/NEEDS WORK/BLOCK verdict with per-dimension scores. The skill is read-only and never modifies files. Trigger only via automatic invocation from /trw-prd-ready or /trw-prd-new; do not invoke directly.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 context: fork

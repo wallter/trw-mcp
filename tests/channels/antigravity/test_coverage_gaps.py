@@ -97,6 +97,7 @@ def test_render_segment_returns_error_on_template_vars_in_content(tmp_path: Path
     from trw_mcp.channels.antigravity._antigravity_md_segment import (
         render_antigravity_distill_segment,
     )
+
     # Patch _content_for_tier_factory to return a function that emits template vars.
     def bad_content_fn(tier: str) -> str:
         return "content with {{ bad_variable }} here"
@@ -314,9 +315,7 @@ def test_install_skips_status_preserved(tmp_path: Path) -> None:
         status="skipped_same_sha",
         path=".antigravitycli/agents/trw-distill-explorer.md",
     )
-    with patch(
-        "trw_mcp.bootstrap._antigravity_distill_channels.install_antigravity_distill_channels"
-    ):
+    with patch("trw_mcp.bootstrap._antigravity_distill_channels.install_antigravity_distill_channels"):
         pass  # Just verify the call path exists
 
     # Test the "skipped" branch by passing an install with same SHA
@@ -417,7 +416,15 @@ def test_manifest_yaml_loads_and_has_four_channels() -> None:
     """FR16: manifest-antigravity.yaml loads with four channel entries."""
     import yaml
 
-    manifest_path = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "antigravity" / "channels" / "manifest-antigravity.yaml"
+    manifest_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "src"
+        / "trw_mcp"
+        / "data"
+        / "antigravity"
+        / "channels"
+        / "manifest-antigravity.yaml"
+    )
     assert manifest_path.exists(), f"Manifest not found at {manifest_path}"
 
     with open(manifest_path, encoding="utf-8") as fh:
@@ -437,7 +444,15 @@ def test_manifest_ag03_status_is_aspirational() -> None:
     """AG-03 manifest entry has status: aspirational (truthful per task context)."""
     import yaml
 
-    manifest_path = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "antigravity" / "channels" / "manifest-antigravity.yaml"
+    manifest_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "src"
+        / "trw_mcp"
+        / "data"
+        / "antigravity"
+        / "channels"
+        / "manifest-antigravity.yaml"
+    )
     with open(manifest_path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
 
@@ -452,30 +467,42 @@ def test_manifest_ag02_surface_is_subagent_file() -> None:
     """AG-02 manifest entry uses surface: subagent_file (not rules_segment)."""
     import yaml
 
-    manifest_path = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "antigravity" / "channels" / "manifest-antigravity.yaml"
+    manifest_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "src"
+        / "trw_mcp"
+        / "data"
+        / "antigravity"
+        / "channels"
+        / "manifest-antigravity.yaml"
+    )
     with open(manifest_path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
 
     ag02 = next((c for c in data["channels"] if c["id"] == "ag-02-distill-explorer-subagent"), None)
     assert ag02 is not None
-    assert ag02["surface"] == "subagent_file", (
-        f"AG-02 surface should be 'subagent_file', got: {ag02['surface']}"
-    )
+    assert ag02["surface"] == "subagent_file", f"AG-02 surface should be 'subagent_file', got: {ag02['surface']}"
 
 
 def test_manifest_ag04_write_strategy_none() -> None:
     """AG-04 manifest entry has write_strategy: NONE (pull-only, no file written)."""
     import yaml
 
-    manifest_path = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "antigravity" / "channels" / "manifest-antigravity.yaml"
+    manifest_path = (
+        Path(__file__).parent.parent.parent.parent
+        / "src"
+        / "trw_mcp"
+        / "data"
+        / "antigravity"
+        / "channels"
+        / "manifest-antigravity.yaml"
+    )
     with open(manifest_path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
 
     ag04 = next((c for c in data["channels"] if c["id"] == "ag-04-tool-return-enrichment"), None)
     assert ag04 is not None
-    assert ag04["write_strategy"] == "NONE", (
-        f"AG-04 write_strategy should be 'NONE', got: {ag04['write_strategy']}"
-    )
+    assert ag04["write_strategy"] == "NONE", f"AG-04 write_strategy should be 'NONE', got: {ag04['write_strategy']}"
 
 
 def test_no_trw_distill_imports_in_channel_package() -> None:

@@ -43,6 +43,12 @@ def _runtime_logger() -> Any:
     return structlog.get_logger(__name__)
 
 
+# File/dir permission hardening (PRD-QUAL-110-FR02) lives in the
+# ``trw_mcp.state._paths_permissions`` sibling (``harden_dir_mode`` /
+# ``harden_secret_file_mode``). Import it from there directly; it is kept out of
+# this module to hold _paths.py under the 350-effective-LOC gate.
+
+
 def _get_config() -> Any:
     """Lazy-load TRWConfig to avoid import cycles during path-only imports."""
     from trw_mcp.models.config import get_config

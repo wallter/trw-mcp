@@ -17,8 +17,19 @@ class EventType:
     SESSION_START = "session_start"
     SESSION_END = "session_end"
     CEREMONY_COMPLIANCE = "ceremony_compliance"
+    # PRD-INFRA-142 — signup→first-session funnel (Track-B install/session stages).
+    # Must stay in parity with the backend telemetry-constants event-type set.
+    INSTALL_COMPLETE = "install_complete"
+    FIRST_SESSION = "first_session"
 
-    ALL: ClassVar[list[str]] = [TOOL_INVOCATION, SESSION_START, SESSION_END, CEREMONY_COMPLIANCE]
+    ALL: ClassVar[list[str]] = [
+        TOOL_INVOCATION,
+        SESSION_START,
+        SESSION_END,
+        CEREMONY_COMPLIANCE,
+        INSTALL_COMPLETE,
+        FIRST_SESSION,
+    ]
 
 
 class Phase:

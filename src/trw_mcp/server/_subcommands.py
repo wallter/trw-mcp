@@ -21,6 +21,12 @@ from trw_mcp.server._subcommands_check import (
 from trw_mcp.server._subcommands_check import (
     _run_check_instructions as _run_check_instructions,
 )
+from trw_mcp.server._subcommands_doctor import (
+    _doctor_core as _doctor_core,
+)
+from trw_mcp.server._subcommands_doctor import (
+    _run_doctor as _run_doctor,
+)
 from trw_mcp.server._subcommands_lifecycle import (
     _run_auth as _run_auth,
 )
@@ -402,6 +408,49 @@ def _run_channel_doctor(args: argparse.Namespace) -> None:
     run_channel_doctor(args)
 
 
+def _run_tendencies(args: argparse.Namespace) -> None:
+    """Lazy dispatch to the ``tendencies`` report CLI (PRD-QUAL-109 FR-03).
+
+    Advisory only: runs every registered tendency detector over the corpus,
+    prints the findings, and exits 0 regardless of findings (never blocking).
+    Kept thin (and the implementation in the ``tendencies`` package) so this
+    facade stays under the eLOC gate.
+    """
+    from trw_mcp.tendencies.cli import run_tendencies
+
+    run_tendencies(args)
+
+
+def _run_session_changelog(args: argparse.Namespace) -> None:
+    """Handle the ``session-changelog`` subcommand (PRD-LOCAL-049 FR04).
+
+    Regenerate/print the session changelog for a given run path. Read-only by
+    default (prints markdown to stdout); ``--write`` persists the artifact to
+    ``<run>/reports/session-changelog.md`` and prints its path. No generic
+    ``trw changelog`` command is introduced — this is package-local to trw-mcp.
+    """
+    from trw_mcp.state._paths import resolve_trw_dir
+    from trw_mcp.state._session_changelog import build_session_changelog, write_session_changelog
+
+    run_path = Path(args.run_path).resolve()
+    if not (run_path / "meta").is_dir():
+        logger.error("session_changelog_run_not_found", op="session-changelog", run_path=str(run_path))
+        print(f"Not a TRW run directory (no meta/): {run_path}", file=sys.stderr)
+        sys.exit(1)
+
+    trw_dir = resolve_trw_dir()
+    advisory = bool(getattr(args, "advisory", False))
+
+    if getattr(args, "write", False):
+        report_path, _ = write_session_changelog(run_path, trw_dir, changelog_advisory_enabled=advisory)
+        print(str(report_path))
+    else:
+        result = build_session_changelog(run_path, trw_dir, changelog_advisory_enabled=advisory)
+        print(result.markdown)
+
+    sys.exit(0)
+
+
 SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "init-project": _run_init_project,
     "update-project": _run_update_project,
@@ -415,8 +464,11 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "config-reference": _run_config_reference,
     "local": _run_local,
     "check-instructions": _run_check_instructions,
+    "doctor": _run_doctor,
     "gc": _run_gc,
     "channel-doctor": _run_channel_doctor,
+    "session-changelog": _run_session_changelog,
+    "tendencies": _run_tendencies,
 }
 
 

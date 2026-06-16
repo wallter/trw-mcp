@@ -99,3 +99,43 @@ def test_env_var_override_via_domain_file(monkeypatch: pytest.MonkeyPatch) -> No
 
     # Clean up
     _reset_config()
+
+
+# -- T04: No duplicate field names across domain mixins --
+
+
+def test_no_duplicate_field_names_across_mixins() -> None:
+    """Each TRWConfig field name must be declared by exactly ONE domain mixin.
+
+    17+ `_fields_*.py` mixins compose into `_TRWConfigFields` via multiple
+    inheritance. If two mixins declared the same annotated field name, Python's
+    MRO would silently shadow one declaration with the other — the loser's
+    default/validator/description would vanish with no error. This guard
+    inspects each mixin's OWN ``__annotations__`` (never the composed model,
+    whose MRO has already collapsed the collision) and asserts the union is
+    disjoint, so a future field-name clash fails CI instead of shipping a
+    silent shadow.
+    """
+    from trw_mcp.models.config import _main_fields
+
+    # Collect every mixin class that contributes fields (every `_*Fields`
+    # class imported into the assembly shell, excluding BaseSettings itself).
+    mixins = [
+        obj
+        for name, obj in vars(_main_fields).items()
+        if isinstance(obj, type) and name.startswith("_") and name.endswith("Fields") and name != "_TRWConfigFields"
+    ]
+    assert mixins, "no domain mixin classes discovered in _main_fields"
+
+    field_owners: dict[str, list[str]] = {}
+    for mixin in mixins:
+        # __annotations__ accessed on the class dict directly so we only see
+        # THIS mixin's own field declarations, not inherited ones.
+        own = mixin.__dict__.get("__annotations__", {})
+        for field_name in own:
+            field_owners.setdefault(field_name, []).append(mixin.__name__)
+
+    duplicates = {name: owners for name, owners in field_owners.items() if len(owners) > 1}
+    assert not duplicates, (
+        f"config field name(s) declared by more than one mixin (silent MRO shadowing risk): {duplicates}"
+    )

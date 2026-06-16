@@ -71,10 +71,7 @@ def test_extract_fr_not_checkable_surfaces_identifierless_fr() -> None:
 @pytest.mark.unit
 def test_extract_fr_not_checkable_empty_when_all_checkable() -> None:
     """When every FR has an identifier, nothing is flagged not-checkable."""
-    prd = (
-        "## 3. Functional Requirements\n\n"
-        "### FR01: Add `Widget` class\n\nThe `Widget` does work.\n"
-    )
+    prd = "## 3. Functional Requirements\n\n### FR01: Add `Widget` class\n\nThe `Widget` does work.\n"
     assert _extract_fr_not_checkable(prd, "PRD-X") == []
 
 

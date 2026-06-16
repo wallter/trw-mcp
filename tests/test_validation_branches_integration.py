@@ -150,8 +150,7 @@ class TestCheckIntegrationServerPackageTopology:
         server_pkg.mkdir()
         (server_pkg / "__init__.py").write_text("", encoding="utf-8")
         (server_pkg / "_tools.py").write_text(
-            "from trw_mcp.tools.widget import register_widget_tools\n"
-            "register_widget_tools(mcp)\n",
+            "from trw_mcp.tools.widget import register_widget_tools\nregister_widget_tools(mcp)\n",
             encoding="utf-8",
         )
 
@@ -187,7 +186,5 @@ class TestCheckIntegrationRealTopology:
         # the check looked for a non-existent src/trw_mcp/server.py.
         assert isinstance(result["tool_modules_scanned"], int)
         assert result["tool_modules_scanned"] > 0, "expected at least one tool module"
-        assert result["unregistered"] == [], (
-            f"false-positive unregistered tool modules: {result['unregistered']}"
-        )
+        assert result["unregistered"] == [], f"false-positive unregistered tool modules: {result['unregistered']}"
         assert result["all_registered"] is True

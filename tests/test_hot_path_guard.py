@@ -51,7 +51,7 @@ def patched_runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_warn_fires_when_scan_called_in_hot_path(
     patched_runs_root: Path,
-    captured_structlog: list[dict],  # noqa: F811
+    captured_structlog: list[dict],
 ) -> None:
     """find_run_via_mtime_scan() while HOT_PATH=True logs hot_path_legacy_scan_attempted.
 
@@ -78,7 +78,7 @@ def test_warn_fires_when_scan_called_in_hot_path(
 
 def test_no_warn_when_scan_called_outside_hot_path(
     patched_runs_root: Path,
-    captured_structlog: list[dict],  # noqa: F811
+    captured_structlog: list[dict],
 ) -> None:
     """find_run_via_mtime_scan() outside the hot path is silent (legitimate use)."""
     # HOT_PATH defaults to False; we don't set it.

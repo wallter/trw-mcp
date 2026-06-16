@@ -90,12 +90,8 @@ def test_portable_learning_federates_across_distinct_project_dirs(tmp_path: Path
     assert memory_adapter.get_backend(project_b).get("L-portable") is None
     memory_adapter.reset_backend()
 
-    rows = memory_adapter.recall_learnings(
-        project_b, "commits cadence directive", max_results=10
-    )
-    assert "L-portable" in _ids(rows), (
-        "portable learning written in project-A must federate into project-B recall"
-    )
+    rows = memory_adapter.recall_learnings(project_b, "commits cadence directive", max_results=10)
+    assert "L-portable" in _ids(rows), "portable learning written in project-A must federate into project-B recall"
 
 
 def test_project_specific_learning_does_not_cross_projects(tmp_path: Path) -> None:
@@ -160,9 +156,7 @@ def test_precise_project_hit_outranks_federated_user_hit(tmp_path: Path) -> None
     rows = memory_adapter.recall_learnings(project, "gizmo retry backoff", max_results=10)
     ids = _ids(rows)
     assert ids, "recall returned nothing"
-    assert ids[0] == "L-precise-proj", (
-        f"precise project hit must out-rank the federated user hit (got {ids})"
-    )
+    assert ids[0] == "L-precise-proj", f"precise project hit must out-rank the federated user hit (got {ids})"
 
 
 def test_session_start_recall_does_not_scan_absent_user_store(tmp_path: Path) -> None:
@@ -194,9 +188,7 @@ def test_session_start_recall_does_not_scan_absent_user_store(tmp_path: Path) ->
     reader = FileStateReader()
 
     with patch("trw_mcp.state._memory_recall._query_user_backend") as spy_query:
-        learnings, _auto, _extra = perform_session_recalls(
-            project, "gizmo retry backoff", config, reader
-        )
+        learnings, _auto, _extra = perform_session_recalls(project, "gizmo retry backoff", config, reader)
 
     spy_query.assert_not_called()
     assert "L-hotpath" in _ids(learnings), (

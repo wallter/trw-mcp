@@ -20,6 +20,12 @@ def _make_config(**overrides: object) -> SimpleNamespace:
         "team_sync_enabled": True,
         "model_family": "opus",
         "framework_version": "v1",
+        # PRD-SEC-004: the sync-cycle tests exercise the CONSENTED sync path
+        # (push of learning content + outcomes). Both consent flags default True
+        # here so existing push assertions hold; dedicated opt-out tests live in
+        # test_sync_consent_gate.py.
+        "learning_sharing_enabled": True,
+        "platform_telemetry_enabled": True,
     }
     base.update(overrides)
     base.setdefault("resolved_backend_url", base.get("backend_url", ""))

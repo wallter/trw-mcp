@@ -236,7 +236,7 @@ class TestDistinctEventNames:
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
                 side_effect=Exception("embeddings error"),
             ),
-            patch("trw_mcp.tools._ceremony_helpers.logger") as mock_logger,
+            patch("trw_mcp.tools._ceremony_embeddings_maintenance.logger") as mock_logger,
         ):
             run_auto_maintenance(trw_dir, config)
 

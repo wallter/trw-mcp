@@ -15,17 +15,29 @@ Optimize the TRW self-learning layer by pruning low-value entries, consolidating
 
 ## Workflow
 
+> **Optional accelerator — `trw-distill`.** Steps 1, 2, and 6 below use the
+> `trw-distill maintain` commands to build and apply the optimization plan
+> automatically. `trw-distill` is a separate, optional TRW package. If it is
+> **not installed** (the command is not on your `PATH`), skip the
+> `trw-distill` commands and use the MCP-tool-only path noted in each step —
+> `/trw-memory-audit` (which has its own no-trw-distill fallback) for the
+> review, and `trw_learn_update()` per entry to apply changes. The interactive
+> confirm-before-delete discipline is identical either way.
+
 ### Step 1: Audit first
 
-Run `/trw-memory-audit` or the `trw-distill maintain audit` command to understand the current state:
+Run `/trw-memory-audit` to understand the current state. If `trw-distill` is
+installed you can run the audit command directly; otherwise `/trw-memory-audit`
+falls back to MCP-tool-only analysis:
 
 ```bash
+# Optional, only if trw-distill is installed:
 trw-distill maintain audit --trw-dir .trw --no-llm
 ```
 
 ### Step 2: Build optimization plan
 
-Use `trw-distill maintain optimize` to build a structured plan:
+If `trw-distill` is installed, use `trw-distill maintain optimize` to build a structured plan:
 
 ```bash
 # Dry-run: show what would change
@@ -37,6 +49,11 @@ trw-distill maintain optimize --trw-dir .trw --model gemma4:e2b
 # Machine-readable plan
 trw-distill maintain optimize --trw-dir .trw --format json
 ```
+
+Without `trw-distill`, build the plan from the `/trw-memory-audit` fallback
+output: identify prune candidates (low impact + stale), consolidation groups
+(semantically similar entries from `trw_recall`), and tag cleanup directly,
+then apply each change via `trw_learn_update()`.
 
 The plan identifies:
 - **Prune candidates**: Low impact + stale, noise patterns, very old entries
@@ -53,12 +70,15 @@ Show the plan and ask for confirmation before proceeding. The user should review
 
 ### Step 4: Execute (after confirmation)
 
+If `trw-distill` is installed, apply the whole plan at once:
+
 ```bash
 # Apply the optimization plan
 trw-distill maintain optimize --trw-dir .trw --apply
 ```
 
-Or apply selectively using `trw_learn_update()` for individual entries.
+Without `trw-distill`, apply each change selectively using `trw_learn_update()`
+for individual entries (set `status="obsolete"` to retire — never hard-delete).
 
 ### Step 5: Sync
 
@@ -66,7 +86,7 @@ Call `trw_instructions_sync()` to refresh the client instruction file (client in
 
 ### Step 6: Report
 
-Run `trw-distill maintain audit` again and compare before/after:
+Re-run `/trw-memory-audit` (or `trw-distill maintain audit` if installed) and compare before/after:
 - Active entries: before → after
 - Entries made obsolete
 - Tags normalized

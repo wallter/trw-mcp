@@ -23,6 +23,7 @@ def test_explorer_agent_content_is_valid_yaml_frontmatter() -> None:
     frontmatter_text = parts[1]
 
     from ruamel.yaml import YAML
+
     yaml = YAML(typ="safe")
     fm = yaml.load(frontmatter_text)
 

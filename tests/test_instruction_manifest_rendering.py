@@ -13,6 +13,30 @@ from trw_mcp.state.claude_md._tool_manifest import (
 )
 
 
+def _strip_deliver_gate_block(output: str) -> str:
+    """Remove the canonical deliver-gate statement block from a rendered section.
+
+    The deliver-gate statement (QUAL-104 FR03) is the protocol carrier: it
+    legitimately names the rigid ceremony tools (e.g. ``trw_build_check``) as
+    part of the Constitution gate prose, and MUST keep naming them so the gate
+    text stays verbatim across every light-client surface. That gate prose is
+    distinct from the *tool list* a tool-exposure preset filters — the filter
+    contract only governs the tool LIST, not the gate prose.
+
+    Tool-filtering assertions therefore strip this block (emitted verbatim by
+    ``render_deliver_gate_statement()``, anchored by its ``trw:lifecycle-sync``
+    marker) before asserting an excluded tool is absent. This preserves the
+    tests' real intent (filtered tool LISTS must omit excluded tools) without
+    falsely flagging the load-bearing gate prose.
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+        render_deliver_gate_statement,
+    )
+
+    gate_block = render_deliver_gate_statement()
+    return output.replace(gate_block, "")
+
+
 class TestToolDescriptions:
     """TOOL_DESCRIPTIONS covers all tools and is well-formed."""
 
@@ -120,8 +144,12 @@ class TestConditionalSectionRendering:
             output = render_agents_trw_section(exposed_tools=exposed)
             assert "trw_session_start" in output
             assert "trw_learn" in output
-            assert "trw_build_check" not in output
-            assert "trw_recall" not in output
+            # Strip the verbatim deliver-gate statement: it legitimately names
+            # rigid tools in the Constitution gate prose (QUAL-104 FR03). The
+            # tool-LIST filter must not contain them — the gate prose may.
+            tool_list = _strip_deliver_gate_block(output)
+            assert "trw_build_check" not in tool_list
+            assert "trw_recall" not in tool_list
 
     def test_codex_section_none_renders_all(self) -> None:
         """Codex section with None includes all tools."""
@@ -139,7 +167,10 @@ class TestConditionalSectionRendering:
         output = render_codex_trw_section(exposed_tools=exposed)
         assert "trw_session_start" in output
         assert "trw_checkpoint" in output
-        assert "trw_build_check" not in output
+        # The deliver-gate statement legitimately names rigid tools in its
+        # Constitution gate prose (QUAL-104 FR03); strip it so the assertion
+        # checks the tool LIST, not the gate prose.
+        assert "trw_build_check" not in _strip_deliver_gate_block(output)
 
 
 class TestToolEntry:
@@ -199,5 +230,9 @@ class TestAgentsSectionToolFiltering:
         output = render_codex_trw_section(exposed_tools=exposed)
         assert "trw_session_start" in output
         assert "trw_deliver" in output
-        assert "trw_build_check" not in output
-        assert "trw_recall" not in output
+        # The deliver-gate statement legitimately names rigid tools in its
+        # Constitution gate prose (QUAL-104 FR03); strip it so the assertion
+        # checks the tool LIST, not the gate prose.
+        tool_list = _strip_deliver_gate_block(output)
+        assert "trw_build_check" not in tool_list
+        assert "trw_recall" not in tool_list

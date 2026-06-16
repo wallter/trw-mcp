@@ -47,6 +47,7 @@ __all__ = [
     "bundled_allowlist_path",
     "bundled_public_key_path",
     "canonicalize_registry_payload",
+    "fingerprint_format_valid",
     "is_allowed",
     "load_allowlist",
     "verify_signature",
@@ -157,6 +158,18 @@ def _overlay_is_not_weaker(canonical: MCPServer, overlay: MCPServer) -> bool:
     if overlay.public_key_fingerprint != canonical.public_key_fingerprint:
         return False
     canonical_tools = {tool.name: tool for tool in canonical.allowed_tools}
+    overlay_tool_names = {tool.name for tool in overlay.allowed_tools}
+    # An overlay that DROPS a canonical tool silently shrinks the authorized
+    # surface relative to what the signed canonical registry declared. Whether
+    # that is "weaker" is policy-dependent, but it changes the gate's meaning
+    # silently, so reject it: the overlay must retain (be a superset of) every
+    # canonical tool. Combined with the per-tool loop below — which rejects any
+    # overlay tool absent from canonical or with broader phases/scopes — this
+    # pins the overlay tool set to the canonical set (phases/scopes may only
+    # narrow). Any deliberate narrowing of the tool set must be an explicit,
+    # signed, documented mechanism, never a silent omission.
+    if not set(canonical_tools).issubset(overlay_tool_names):
+        return False
     for tool in overlay.allowed_tools:
         original = canonical_tools.get(tool.name)
         if original is None:
@@ -362,10 +375,33 @@ def load_allowlist(
     return registry.allowlist
 
 
-def verify_signature(server: MCPServer) -> bool:
-    """Compatibility helper for structural signature contract checks."""
+def fingerprint_format_valid(server: MCPServer) -> bool:
+    """Return whether the server's fingerprint has the expected ``sha256:`` shape.
+
+    # trw:intentional format-check-only, NOT cryptographic verification.
+    This is a STRUCTURAL check: it confirms the fingerprint string is shaped
+    like ``sha256:<hex>`` so malformed entries are rejected early. It performs
+    NO signature math and proves NOTHING about authenticity. Real Ed25519
+    signature verification of the signed allowlist payload happens in
+    :meth:`MCPRegistry.load` (canonical + operator overlay paths); a structural
+    helper with only a fingerprint in scope cannot reproduce it.
+    """
 
     return server.public_key_fingerprint.startswith("sha256:")
+
+
+def verify_signature(server: MCPServer) -> bool:
+    """Deprecated alias for :func:`fingerprint_format_valid`.
+
+    # trw:intentional NOT crypto verification — kept only for backward-compat.
+    The ``verify_*`` name over-promised a cryptographic contract this helper
+    never fulfilled (it accepts any ``sha256:``-prefixed fingerprint). It now
+    forwards to :func:`fingerprint_format_valid`, whose name states the truth.
+    Real authentication is :meth:`MCPRegistry.load`. New callers MUST use
+    :func:`fingerprint_format_valid` (or the registry load path) instead.
+    """
+
+    return fingerprint_format_valid(server)
 
 
 def is_allowed(server_name: str, allowlist: MCPAllowlist) -> bool:
@@ -388,6 +424,7 @@ __all__ = [
     "bundled_allowlist_path",
     "bundled_public_key_path",
     "canonicalize_registry_payload",
+    "fingerprint_format_valid",
     "is_allowed",
     "load_allowlist",
     "verify_signature",

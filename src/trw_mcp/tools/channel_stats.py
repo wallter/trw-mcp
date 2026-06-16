@@ -50,8 +50,8 @@ def _resolve_repo_root(repo_root: str | None) -> Path | None:
         )
         if proc.returncode == 0:
             return Path(proc.stdout.strip())
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("channel_stats_git_root_resolution_failed", error=str(exc))
     return None
 
 

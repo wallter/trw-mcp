@@ -289,9 +289,7 @@ def test_compute_nudge_uses_passed_profile_weights_not_global(tmp_path: Path) ->
 
     with (
         patch("trw_mcp.models.config._loader.get_config", return_value=config),
-        patch.object(
-            type(config), "client_profile", new_callable=PropertyMock, return_value=global_profile
-        ),
+        patch.object(type(config), "client_profile", new_callable=PropertyMock, return_value=global_profile),
         patch("trw_mcp.state._nudge_content.load_pool_message", return_value=sentinel),
     ):
         result = compute_nudge(state, available_learnings=0, profile=passed_profile)

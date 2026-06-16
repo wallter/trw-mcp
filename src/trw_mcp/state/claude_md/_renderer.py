@@ -241,14 +241,28 @@ class ProtocolRenderer:
         """Render a shortened ceremony protocol for local model AGENTS.md.
 
         PRD-CORE-131-FR04: MINIMAL ceremony mode output.
-        Must be under 200 tokens.
+        PRD-QUAL-104-FR03: the light-ceremony body MAY omit the full tool table
+        but MUST still emit the session-start mandate and the deliver-gate
+        statement (the file is the only protocol carrier). The gate text is
+        non-negotiable and is present regardless of ceremony/deliver-gate mode.
+
+        P1 audit fix (2026-06-11): the gate language is sourced from the single
+        canonical ``render_deliver_gate_statement()`` (bundled tool-lifecycle
+        derived, FR02/FR04) rather than a hand-copied inline string, so this
+        light-render path can never silently drift gate-less or stale. The loader
+        is imported function-locally to avoid a ``sections`` <-> ``_renderer``
+        module-import cycle.
         """
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+            render_deliver_gate_statement,
+        )
+
         return (
             "TRW tools persist your work across sessions:\n"
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
             "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
             "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
-            "\n" + SESSION_BOUNDARY_TEXT
+            "\n" + render_deliver_gate_statement() + "\n" + SESSION_BOUNDARY_TEXT
         )
 
     # ------------------------------------------------------------------

@@ -11,6 +11,8 @@ PRD-DIST-2406.
 
 from __future__ import annotations
 
+import structlog
+
 from trw_mcp.channels._provenance import render_provenance_comment
 from trw_mcp.channels._telemetry import append_channel_event
 from trw_mcp.channels.copilot._templates import render_c1_t0_beacon, render_c1_t1_segment
@@ -22,6 +24,7 @@ __all__ = [
 
 # Hard cap (BUDGET_TOKENS defined here to avoid circular import)
 BUDGET_TOKENS = 250
+log = structlog.get_logger(__name__)
 
 
 def count_tokens_estimate(text: str) -> int:
@@ -173,5 +176,7 @@ def _emit_tier_down(tier_attempted: str, tier_actual: str) -> None:
             tier=tier_attempted,
             extra={"outcome": "tier_down", "tier_attempted": tier_attempted, "tier_actual": tier_actual},
         )
-    except Exception:
-        pass
+    except Exception:  # justified: fail-open telemetry, tier-down render already completed
+        log.debug(
+            "copilot_tier_down_event_failed", tier_attempted=tier_attempted, tier_actual=tier_actual, exc_info=True
+        )

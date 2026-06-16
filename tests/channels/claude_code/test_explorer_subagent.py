@@ -6,6 +6,7 @@ from pathlib import Path
 
 try:
     import yaml as _yaml_module  # type: ignore[import-untyped]
+
     _HAS_PYYAML = True
 except ImportError:
     _HAS_PYYAML = False
@@ -47,7 +48,7 @@ def _parse_frontmatter(content: str) -> dict:  # type: ignore[type-arg]
     for line in fm_text.splitlines():
         if ":" in line:
             k, _, v = line.partition(":")
-            result[k.strip()] = v.strip().strip('"\'')
+            result[k.strip()] = v.strip().strip("\"'")
     return result
 
 

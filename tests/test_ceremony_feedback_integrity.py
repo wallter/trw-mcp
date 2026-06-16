@@ -253,9 +253,7 @@ class TestCeremonyFeedbackPersistence:
 
         raw_text = feedback_path.read_text(encoding="utf-8")
         trailing_lines = [
-            line_number
-            for line_number, line in enumerate(raw_text.splitlines(), start=1)
-            if line.rstrip(" \t") != line
+            line_number for line_number, line in enumerate(raw_text.splitlines(), start=1) if line.rstrip(" \t") != line
         ]
         assert trailing_lines == []
 

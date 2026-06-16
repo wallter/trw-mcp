@@ -281,6 +281,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip confirmation prompt",
     )
+    uninstall_parser.add_argument(
+        "--user-tier",
+        action="store_true",
+        help="Also remove the machine-local ~/.trw user-tier store (PRD-SEC-006)",
+    )
+    uninstall_parser.add_argument(
+        "--keep-memory",
+        action="store_true",
+        help="Preserve the learning corpus (.trw/memory + .trw/learnings) while removing all other TRW state",
+    )
 
     # config-reference
     subparsers.add_parser(
@@ -298,6 +308,29 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=".",
         help="Target project directory (default: current directory)",
+    )
+
+    # doctor (PRD-QUAL-106) — first-run read-only diagnostic
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run read-only first-run diagnostics (env, config, MCP, profile, instruction surfaces, memory)",
+    )
+    doctor_parser.add_argument(
+        "target_dir",
+        nargs="?",
+        default=".",
+        help="Target project directory (default: current directory)",
+    )
+    doctor_parser.add_argument(
+        "--format",
+        choices=["human", "json"],
+        default="human",
+        help="Output format (default: human)",
+    )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Print suggested remediation (suggest-only in v1 — applies nothing)",
     )
 
     # local (PRD-FIX-073: offline ceremony fallback)
@@ -511,6 +544,44 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="dry_run",
         help="Preview throttle decisions without applying (default mode)",
+    )
+
+    # session-changelog (PRD-LOCAL-049 FR04) — regenerate/print a run's changelog
+    changelog_parser = subparsers.add_parser(
+        "session-changelog",
+        help="Regenerate or print the session changelog for a run path (read-only unless --write)",
+    )
+    changelog_parser.add_argument(
+        "run_path",
+        help="Path to the run directory (the dir containing meta/).",
+    )
+    changelog_parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Persist the report to <run>/reports/session-changelog.md and print its path.",
+    )
+    changelog_parser.add_argument(
+        "--advisory",
+        action="store_true",
+        help="Include the package-changelog coverage advisory (FR03).",
+    )
+
+    # tendencies (PRD-QUAL-109 FR-03) — advisory AI-development tendency report
+    tendencies_parser = subparsers.add_parser(
+        "tendencies",
+        help="Advisory scan for AI-development tendencies (PRD-count uniformity, stub-closure chains, "
+        "benchmark saturation, status-flip-only PRDs). Exit 0 always; never blocks.",
+    )
+    tendencies_parser.add_argument(
+        "--corpus",
+        default=None,
+        help="Corpus root to scan (default: .trw/distill/handoff-archive + the PRD catalogue when present).",
+    )
+    tendencies_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit findings as JSON for CI/telemetry ingestion instead of a human report.",
     )
 
     # version-status

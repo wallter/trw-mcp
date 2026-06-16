@@ -87,9 +87,7 @@ def test_install_creates_hooks_json_with_distill_entry(tmp_path: Path) -> None:
     )
 
     # Result should list hooks.json as created (not in errors)
-    assert ".antigravitycli/hooks.json" in result["created"], (
-        f"hooks.json not in result['created']: {result}"
-    )
+    assert ".antigravitycli/hooks.json" in result["created"], f"hooks.json not in result['created']: {result}"
     assert not result["errors"], f"Unexpected errors: {result['errors']}"
 
 
@@ -150,7 +148,9 @@ def test_install_preserves_existing_post_tool_use_entries(tmp_path: Path) -> Non
     # Original PostToolUse entry preserved
     assert "PostToolUse" in data, "PostToolUse section was removed by installer"
     raw_post = data["PostToolUse"]
-    post_hooks: list[dict[str, str]] = [h for h in raw_post if isinstance(h, dict)] if isinstance(raw_post, list) else []
+    post_hooks: list[dict[str, str]] = (
+        [h for h in raw_post if isinstance(h, dict)] if isinstance(raw_post, list) else []
+    )
     post_commands = _distill_hook_commands(post_hooks)
     assert any("echo POST_HOOK_EXISTING" in cmd for cmd in post_commands), (
         f"Pre-existing PostToolUse hook was lost: {post_commands}"
@@ -207,9 +207,7 @@ def test_hooks_json_format_is_valid_agy_format(tmp_path: Path) -> None:
     assert "PreToolUse" in data, (
         "hooks.json missing top-level 'PreToolUse' key — wrong format (Codex uses {'hooks': {'PreToolUse': ...}})"
     )
-    assert "hooks" not in data, (
-        "hooks.json has 'hooks' wrapper key — this is Codex format, not agy format"
-    )
+    assert "hooks" not in data, "hooks.json has 'hooks' wrapper key — this is Codex format, not agy format"
 
     # Each entry must have matcher and command
     pre_hooks = _get_pre_tool_hooks(data)

@@ -68,12 +68,31 @@ _GLOB_EXCLUDE_DIRS: frozenset[str] = frozenset(
 )
 
 
-def _check_repo_path_references(content: str, project_root: Path) -> list[ValidationFailure]:
+def _check_repo_path_references(
+    content: str,
+    project_root: Path,
+    *,
+    extra_roots: list[Path] | None = None,
+) -> list[ValidationFailure]:
+    """Verify backtick-quoted repo paths in *content* exist.
+
+    Resolves each referenced path against *project_root* first, then against
+    any *extra_roots* (sibling repos in a multi-repo workspace). A path that
+    exists under ANY supplied root is considered present.
+
+    Potemkin-Gate submission sub_zAfRqZYYq2KtF72d defect B: without
+    *extra_roots*, key-file paths living in a sibling code repo registered as
+    6 hard ``repo_path_exists`` errors and dragged a structurally-perfect PRD
+    to grade D / valid:false. *extra_roots* defaults to ``None`` so the
+    single-repo contract is byte-for-byte unchanged.
+    """
+    roots = [project_root, *(extra_roots or [])]
     failures: list[ValidationFailure] = []
-    bare_cache: dict[str, tuple[bool, int]] = {}
+    # One basename index PER root (lazily built on first bare lookup).
+    bare_caches: list[dict[str, tuple[bool, int]]] = [{} for _ in roots]
     for ref in _extract_repo_path_refs(content):
         if "/" not in ref and Path(ref).suffix in _KNOWN_SOURCE_SUFFIXES:
-            resolved, count = _resolve_bare_filename(project_root, ref, cache=bare_cache)
+            resolved, count = _resolve_bare_filename_any_root(roots, ref, caches=bare_caches)
             if resolved:
                 logger.debug(
                     "prd_integrity_bare_filename_resolved",
@@ -117,7 +136,7 @@ def _check_repo_path_references(content: str, project_root: Path) -> list[Valida
                 )
             continue
 
-        if _path_exists(project_root, ref):
+        if any(_path_exists(root, ref) for root in roots):
             continue
         failures.append(
             ValidationFailure(
@@ -174,7 +193,23 @@ def _looks_like_repo_path(candidate: str) -> bool:
     return Path(candidate).suffix in _PATH_SUFFIXES
 
 
-def _path_exists(project_root: Path, rel_path: str) -> bool:
+def _path_exists(
+    project_root: Path,
+    rel_path: str,
+    *,
+    extra_roots: list[Path] | None = None,
+) -> bool:
+    """True if *rel_path* exists under *project_root* or any *extra_roots*.
+
+    Each root is checked independently with the same path-escape guard, so a
+    sibling repo (multi-repo workspace) can satisfy a reference without
+    weakening the traversal protection for any single root. *extra_roots*
+    defaults to ``None`` — the original single-root contract.
+    """
+    return any(_path_exists_under_root(root, rel_path) for root in (project_root, *(extra_roots or [])))
+
+
+def _path_exists_under_root(project_root: Path, rel_path: str) -> bool:
     try:
         if any(char in rel_path for char in "*?[]{}"):
             return any(project_root.glob(rel_path))
@@ -259,3 +294,24 @@ def _resolve_bare_filename(
         match_count = 0
 
     return (match_count == 1, match_count)
+
+
+def _resolve_bare_filename_any_root(
+    roots: list[Path],
+    rel_path: str,
+    caches: list[dict[str, tuple[bool, int]]],
+) -> tuple[bool, int]:
+    """Resolve a bare filename across multiple workspace roots.
+
+    Returns ``(resolved, count)`` where *resolved* is True if the basename
+    matches exactly once across ALL roots combined, and *count* is the
+    aggregate match count (so an ambiguous-across-repos token still surfaces
+    the disambiguation warning). Each root keeps its own lazily-built basename
+    index via the parallel *caches* list. Multi-root support for Potemkin-Gate
+    defect B (sub_zAfRqZYYq2KtF72d).
+    """
+    total = 0
+    for root, cache in zip(roots, caches, strict=True):
+        _resolved, count = _resolve_bare_filename(root, rel_path, cache=cache)
+        total += count
+    return (total == 1, total)

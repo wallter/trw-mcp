@@ -180,9 +180,7 @@ class TestListGitignoreEntries:
         assert list_gitignore_entries(repo) == []
 
     def test_empty_section_returns_empty_list(self, repo):
-        (repo / ".gitignore").write_text(
-            f"{GITIGNORE_BEGIN}\n{GITIGNORE_END}\n", encoding="utf-8"
-        )
+        (repo / ".gitignore").write_text(f"{GITIGNORE_BEGIN}\n{GITIGNORE_END}\n", encoding="utf-8")
         assert list_gitignore_entries(repo) == []
 
     def test_returns_entries_in_order(self, repo):

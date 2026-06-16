@@ -38,22 +38,13 @@ def _make_sidecar(
     survivors: int = 1,
     undocumented: int = 1,
 ) -> dict[str, Any]:
-    conv_list = [
-        {"slug": f"conv-{i}", "title": f"Convention {i}", "body": f"Body {i}"}
-        for i in range(conventions)
-    ]
+    conv_list = [{"slug": f"conv-{i}", "title": f"Convention {i}", "body": f"Body {i}"} for i in range(conventions)]
     hotspot_list = [
         {"file_path": f"pkg_{d}/module.py", "risk_score": 0.9 - d * 0.05, "reason": f"r{d}"}
         for d in range(hotspot_dirs)
     ]
-    survivor_list = [
-        {"file_path": f"svc_{i}/handler.py", "description": f"survivor {i}"}
-        for i in range(survivors)
-    ]
-    undoc_list = [
-        {"file_path": f"lib_{i}/utils.py", "description": f"undoc {i}"}
-        for i in range(undocumented)
-    ]
+    survivor_list = [{"file_path": f"svc_{i}/handler.py", "description": f"survivor {i}"} for i in range(survivors)]
+    undoc_list = [{"file_path": f"lib_{i}/utils.py", "description": f"undoc {i}"} for i in range(undocumented)]
     return {
         "schema_version": "risk-report-sidecar/v0",
         "sha": sha,
@@ -96,12 +87,8 @@ class TestEventTypeOverloading:
         # Exactly one event must have been emitted for this skip
         lock_skip_events = [e for e in captured if e["event_type"] == "channel_lock_skip"]
         conflict_events = [e for e in captured if e["event_type"] == "channel_conflict"]
-        assert len(lock_skip_events) == 1, (
-            f"Expected 1 channel_lock_skip event, got {lock_skip_events}"
-        )
-        assert len(conflict_events) == 0, (
-            f"channel_conflict must NOT be emitted for lock-skip; got {conflict_events}"
-        )
+        assert len(lock_skip_events) == 1, f"Expected 1 channel_lock_skip event, got {lock_skip_events}"
+        assert len(conflict_events) == 0, f"channel_conflict must NOT be emitted for lock-skip; got {conflict_events}"
 
     def test_lock_skip_outcome_is_skipped_lock(self, tmp_path: Path) -> None:
         from trw_mcp.channels._lock import ChannelLockSkip
@@ -141,9 +128,7 @@ class TestEventTypeOverloading:
                     except json.JSONDecodeError:
                         pass
             conflict_events = [e for e in new_events if e.get("event_type") == "mdc_conflict_skip"]
-            assert len(conflict_events) >= 1, (
-                "Expected mdc_conflict_skip event on human-edit conflict"
-            )
+            assert len(conflict_events) >= 1, "Expected mdc_conflict_skip event on human-edit conflict"
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +169,7 @@ class TestCur04WiringCallPresent:
             },
         }
         import json as _json
+
         (sidecar_dir / "latest.json").write_text(_json.dumps(sidecar))
 
         call_log: list[dict[str, Any]] = []
@@ -243,8 +229,7 @@ class TestTelemetryRecordIdFormat:
     def test_instantiation_cap_event_has_dropped_dirs(self, tmp_path: Path) -> None:
         """FR03: when cap exceeded, dropped_dirs appears in telemetry event kwargs."""
         payload_hotspots = [
-            {"file_path": f"dir_{i}/module.py", "risk_score": 0.9 - i * 0.01, "reason": "r"}
-            for i in range(20)
+            {"file_path": f"dir_{i}/module.py", "risk_score": 0.9 - i * 0.01, "reason": "r"} for i in range(20)
         ]
         sidecar: dict[str, Any] = {
             "schema_version": "risk-report-sidecar/v0",
@@ -286,9 +271,7 @@ class TestManifestLockPath:
 
         lock_paths_used: list[Path] = []
 
-        original_lock_cls = __import__(
-            "trw_mcp.channels._lock", fromlist=["ChannelLock"]
-        ).ChannelLock
+        original_lock_cls = __import__("trw_mcp.channels._lock", fromlist=["ChannelLock"]).ChannelLock
 
         class CapturingLock:
             def __init__(self, path: Path) -> None:
@@ -306,9 +289,7 @@ class TestManifestLockPath:
             emitter.emit_conventions(_make_sidecar())
 
         assert len(lock_paths_used) >= 1
-        assert lock_paths_used[0] == expected_lock, (
-            f"Lock path {lock_paths_used[0]} != entry lock_file {expected_lock}"
-        )
+        assert lock_paths_used[0] == expected_lock, f"Lock path {lock_paths_used[0]} != entry lock_file {expected_lock}"
 
 
 # ---------------------------------------------------------------------------
@@ -433,9 +414,7 @@ class TestIpBoundaryEnforcement:
                     module = getattr(node, "module", "") or ""
                     if module.startswith("trw_distill"):
                         violations.append(f"{py_file.name}: imports {module}")
-        assert violations == [], (
-            f"FR18 violation — trw_distill imports found in channels/cursor/: {violations}"
-        )
+        assert violations == [], f"FR18 violation — trw_distill imports found in channels/cursor/: {violations}"
 
     def test_cursor_package_imports_cleanly(self) -> None:
         """channels/cursor imports succeed without trw_distill installed."""
@@ -458,9 +437,7 @@ class TestChannelStatusTruthfulness:
 
         for entry in DEFAULT_ENTRIES:
             # All cursor channels are active — none require aspirational status
-            assert entry.status == ChannelStatus.ACTIVE, (
-                f"Entry {entry.id} status={entry.status!r}; expected ACTIVE"
-            )
+            assert entry.status == ChannelStatus.ACTIVE, f"Entry {entry.id} status={entry.status!r}; expected ACTIVE"
 
     def test_cur04_write_strategy_is_none(self) -> None:
         """CUR-04 has no file to write — write_strategy NONE is correct (no phantom file claim)."""
@@ -505,9 +482,7 @@ class TestSubstrateConsumption:
             result = emitter.emit_conventions(sidecar)
 
         # ttl_unknown=True means proceed normally — never tombstone
-        assert result["status"] != "tombstone", (
-            "FR10: ttl_unknown=True must NOT produce tombstone"
-        )
+        assert result["status"] != "tombstone", "FR10: ttl_unknown=True must NOT produce tombstone"
 
     def test_valid_event_types_include_channel_lock_skip(self) -> None:
         """Substrate VALID_EVENT_TYPES includes channel_lock_skip (substrate change consumed)."""
@@ -566,6 +541,4 @@ class TestRenderCursorCliT1Additional:
             },
         }
         content = render_cursor_cli_t1(sidecar)
-        assert content.index("high.py") < content.index("mid.py"), (
-            "high.py (0.95) must appear before mid.py (0.5)"
-        )
+        assert content.index("high.py") < content.index("mid.py"), "high.py (0.95) must appear before mid.py (0.5)"

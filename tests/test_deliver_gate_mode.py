@@ -2,8 +2,10 @@
 
 The ``deliver_gate_mode`` config flag (advisory | block_coding | block_all)
 governs whether a missing passing build check blocks delivery, conditioned on
-the run's ``task_type``. Default is ``advisory`` — ZERO behavior change, proven
-by the regression tests below.
+the run's ``task_type``. Default is ``block_coding`` (flipped from
+``advisory`` 2026-06-10): coding/rca/eval runs without build evidence block;
+docs/research/planning/unknown stay advisory; explicit ``advisory`` config
+restores the warn-only posture.
 """
 
 from __future__ import annotations
@@ -77,9 +79,7 @@ def _make_run(tmp_path: Path, task_type: str, *, build_passed: bool) -> Path:
         ("block_all", "coding", False, False),
     ],
 )
-def test_resolve_deliver_gate_decision(
-    mode: str, task_type: str, build_missing: bool, expect_block: bool
-) -> None:
+def test_resolve_deliver_gate_decision(mode: str, task_type: str, build_missing: bool, expect_block: bool) -> None:
     blocked = resolve_deliver_gate_decision(
         mode=mode,
         task_type=task_type,
@@ -90,10 +90,7 @@ def test_resolve_deliver_gate_decision(
 
 def test_resolve_deliver_gate_decision_unknown_mode_fails_open() -> None:
     """An unrecognised mode must not block (fail-open / no regression)."""
-    assert (
-        resolve_deliver_gate_decision(mode="bogus", task_type="coding", build_check_missing=True)
-        is False
-    )
+    assert resolve_deliver_gate_decision(mode="bogus", task_type="coding", build_check_missing=True) is False
 
 
 # ── check_delivery_gates integration (reads run.yaml + config) ──────────────
@@ -111,9 +108,7 @@ def test_block_coding_blocks_coding_task(tmp_project: Path, monkeypatch: pytest.
     assert result.get("missing_gate") == "build_check"
 
 
-def test_block_coding_advisory_for_docs_task(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_block_coding_advisory_for_docs_task(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """FR03 AC: docs + no build check + block_coding -> advisory only (no block)."""
     cfg = get_config()
     object.__setattr__(cfg, "deliver_gate_mode", "block_coding")
@@ -126,13 +121,23 @@ def test_block_coding_advisory_for_docs_task(
     assert "build_gate_warning" in result
 
 
-def test_advisory_default_no_regression(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """REGRESSION: default deliver_gate_mode=advisory never sets delivery_blocked."""
+def test_block_coding_default_blocks_coding_missing_build(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default deliver_gate_mode=block_coding blocks a coding run without build evidence."""
     cfg = get_config()
-    # Do NOT set deliver_gate_mode — must default to advisory.
-    assert cfg.deliver_gate_mode == "advisory"
+    # Do NOT set deliver_gate_mode — must default to block_coding (2026-06-10 flip).
+    assert cfg.deliver_gate_mode == "block_coding"
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
+
+    run_dir = _make_run(tmp_project, "coding", build_passed=False)
+    result = check_delivery_gates(run_dir, FileStateReader(), tmp_project / ".trw")
+    assert result.get("delivery_blocked")
+    assert result.get("missing_gate") == "build_check"
+
+
+def test_explicit_advisory_restores_warn_only(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit deliver_gate_mode=advisory never sets delivery_blocked (opt-out path)."""
+    cfg = get_config()
+    object.__setattr__(cfg, "deliver_gate_mode", "advisory")
     monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
 
     run_dir = _make_run(tmp_project, "coding", build_passed=False)
@@ -142,9 +147,7 @@ def test_advisory_default_no_regression(
     assert "build_gate_warning" in result
 
 
-def test_block_coding_passing_build_not_blocked(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_block_coding_passing_build_not_blocked(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = get_config()
     object.__setattr__(cfg, "deliver_gate_mode", "block_coding")
     monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)

@@ -12,6 +12,7 @@ imports between sibling section modules.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 from typing import NamedTuple
 
 import structlog
@@ -28,6 +29,59 @@ import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.state import _paths
 
 _logger = structlog.get_logger(__name__)
+
+# PRD-QUAL-104 FR04: whole-line content-hash marker emitted ahead of a synced
+# memory-routing block. Lint recomputes + compares (sha256 first-12-hex).
+MEMORY_ROUTING_SYNC_MARKER_PREFIX = "<!-- trw:memory-routing-sync:sha256-"
+
+# PRD-QUAL-104 FR02 NFR02: last-known-good in-module fallback. Verbatim snapshot
+# of the canonical memory-routing body.
+_FALLBACK_MEMORY_ROUTING = """# TRW Memory Routing
+
+**NEVER** store technical knowledge in native auto-memory. Use `trw_learn()` exclusively for engineering insights.
+
+| | `trw_learn()` (Use for Engineering) | Native auto-memory (Use for Personal) |
+|---|---|---|
+| Search | `trw_recall(query)` — semantic + keyword | Filename scan only |
+| Visibility | All agents, subagents, teammates | Primary session only |
+| Lifecycle | Impact-scored, recalled at session start | Static until manually edited |
+
+Gotcha or error pattern → `trw_learn()`. Build trick that saves time → `trw_learn()`. Communication preference → native memory.
+
+Use `trw_learn_update(memory_id, ...)` to correct or amend an existing entry — avoid storing a duplicate when the intent is to fix stale or inaccurate knowledge.
+"""
+
+
+def _read_bundled_surface(filename: str) -> str:
+    """Read a bundled instruction surface from ``trw_mcp/data/surfaces``.
+
+    Isolated for monkeypatching in tests (patch to simulate a packaging
+    anomaly and exercise the fail-open fallback).
+    """
+    from importlib.resources import files as pkg_files
+
+    surface = pkg_files("trw_mcp.data") / "surfaces" / filename
+    return surface.read_text(encoding="utf-8")
+
+
+def load_memory_routing() -> str:
+    """Load the bundled ``memory-routing.md`` body (PRD-QUAL-104 FR02).
+
+    Fail-open (NFR02): any read/decode/packaging error falls back to the
+    last-known-good in-module constant and logs a warning rather than raising.
+    """
+    try:
+        body = _read_bundled_surface("memory-routing.md")
+    except Exception:  # justified: fail-open — missing bundled resource must not break rendering
+        _logger.warning("memory_routing_surface_load_failed", exc_info=True)
+        return _FALLBACK_MEMORY_ROUTING
+    return body
+
+
+def bundled_memory_routing_hash_prefix() -> str:
+    """Return the sha256 first-12-hex prefix of the loaded memory-routing body."""
+    return hashlib.sha256(load_memory_routing().encode("utf-8")).hexdigest()[:12]
+
 
 # ---------------------------------------------------------------------------
 # FR01: Turn-scoped analytics cache (PRD-FIX-072)
@@ -144,6 +198,13 @@ def render_memory_harmonization() -> str:
         "User’s preferred commit style → native memory. "
         "Build trick that saves time → `trw_learn()`. "
         "Communication preference → native memory.\n"
+        "\n"
+        "`trw_learn(scope=...)` routes between the project tier (default, in `.trw/`) "
+        "and an opt-in machine-local user tier (`~/.trw`, shared across every repo on the box). "
+        '`scope="auto"` classifies portability; `"project"`/`"user"` force it. '
+        '`trw_recall()` federates both tiers; `include_tiers=["project"]` restricts to project-only. '
+        "To correct or amend an existing entry, use `trw_learn_update(memory_id, ...)` "
+        "rather than storing a duplicate.\n"
         "\n"
     )
 

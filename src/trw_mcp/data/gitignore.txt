@@ -1,5 +1,7 @@
 # TRW runtime artifacts — not tracked in version control.
 # Tracked: config.yaml, frameworks/, learnings/, scripts/, templates/
+# Secret: credentials.yaml holds the platform_api_key (mode 0600) — never track it (PRD-SEC-005).
+credentials.yaml
 context/
 reflections/
 logs/

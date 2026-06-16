@@ -24,9 +24,10 @@ class TestPublishOfflineMode:
         assert result["errors"] == 0
         assert result["skipped_reason"] == "offline_mode"
 
-    def test_publish_offline_mode_telemetry_disabled(self) -> None:
-        """platform_telemetry_enabled=False returns skipped_reason='offline_mode'."""
-        cfg = _make_config(platform_telemetry_enabled=False)
+    def test_publish_offline_mode_sharing_disabled(self) -> None:
+        """PRD-SEC-004-FR05: learning_sharing_enabled=False returns
+        skipped_reason='offline_mode' (content gate, independent of usage telemetry)."""
+        cfg = _make_config(learning_sharing_enabled=False, platform_telemetry_enabled=True)
         with patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg):
             result = publish_learnings()
 

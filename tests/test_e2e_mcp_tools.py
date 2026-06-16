@@ -236,22 +236,31 @@ class TestBuildQuality:
 # ── 5. Ceremony Tools ───────────────────────────────────────────────────────
 
 
-class TestCeremonyTools:
-    """E2E 5.1-5.5: ceremony_status, approve, revert."""
+class TestCeremonyFeedbackInternalLogic:
+    """E2E 5.x (PRD-FIX-076): the trw_ceremony_* MCP tools were removed; the
+    underlying state logic is exercised directly as an internal API."""
 
-    def test_ceremony_status_default(self, tmp_project: Path) -> None:
-        """5.1: Get ceremony status."""
+    def test_ceremony_feedback_tools_deregistered(self, tmp_project: Path) -> None:
+        """The 3 ceremony-feedback tools are no longer on the registered surface."""
         server = make_test_server("ceremony_feedback")
-        fn = extract_tool_fn(server, "trw_ceremony_status")
-        result = fn()
+        from tests.conftest import get_tools_sync
+
+        names = set(get_tools_sync(server))
+        assert not ({"trw_ceremony_status", "trw_ceremony_approve", "trw_ceremony_revert"} & names)
+
+    def test_ceremony_status_internal_logic(self, tmp_project: Path) -> None:
+        """5.1: the internal get_ceremony_status state API still works."""
+        from trw_mcp.state.ceremony_feedback import get_ceremony_status
+
+        result = get_ceremony_status(tmp_project / ".trw")
         assert result is not None
 
-    def test_ceremony_approve_invalid(self, tmp_project: Path) -> None:
-        """5.4: Approve nonexistent proposal raises ValueError."""
-        server = make_test_server("ceremony_feedback")
-        fn = extract_tool_fn(server, "trw_ceremony_approve")
+    def test_ceremony_approve_internal_invalid(self, tmp_project: Path) -> None:
+        """5.4: approving a nonexistent proposal raises ValueError (internal API)."""
+        from trw_mcp.state.ceremony_feedback import approve_proposal
+
         with pytest.raises(ValueError, match="No pending proposal"):
-            fn(proposal_id="nonexistent-id")
+            approve_proposal(tmp_project / ".trw", "nonexistent-id")
 
 
 # ── 6. Requirements/PRD ─────────────────────────────────────────────────────
@@ -296,13 +305,22 @@ class TestReviewTool:
 
 
 class TestKnowledgeTools:
-    """E2E 10.1-10.4: knowledge_sync, claude_md_sync."""
+    """E2E 10.x (PRD-FIX-076): the trw_knowledge_sync MCP tool was removed; the
+    underlying state logic is exercised directly as an internal API."""
 
-    def test_knowledge_sync_dry_run(self, tmp_project: Path) -> None:
-        """10.1: Knowledge sync dry run."""
+    def test_knowledge_sync_tool_deregistered(self, tmp_project: Path) -> None:
+        """The knowledge-sync tool is no longer on the registered surface."""
         server = make_test_server("knowledge")
-        fn = extract_tool_fn(server, "trw_knowledge_sync")
-        result = fn(dry_run=True)
+        from tests.conftest import get_tools_sync
+
+        assert "trw_knowledge_sync" not in get_tools_sync(server)
+
+    def test_knowledge_sync_internal_dry_run(self, tmp_project: Path) -> None:
+        """10.1: the internal execute_knowledge_sync state API still works (dry run)."""
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.knowledge_topology import execute_knowledge_sync
+
+        result = execute_knowledge_sync(tmp_project / ".trw", get_config(), dry_run=True)
         assert result is not None
 
 

@@ -182,7 +182,9 @@ class TestEntityRiskMapModelContracts:
         assert "source_body" not in EntityRiskScorePayload.model_fields
 
     def test_register_dump_shape_is_privacy_safe(self) -> None:
-        row = EntityRiskScorePayload.model_validate(_entity("pkg.safe", risk_score=0.5, blast_radius_count=1, changed=True))
+        row = EntityRiskScorePayload.model_validate(
+            _entity("pkg.safe", risk_score=0.5, blast_radius_count=1, changed=True)
+        )
         dumped = cast("dict[str, object]", row.model_dump())
         assert dumped["qualified_name"] == "pkg.safe"
         assert "source" not in dumped

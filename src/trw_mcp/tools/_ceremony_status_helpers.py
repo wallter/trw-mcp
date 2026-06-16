@@ -15,7 +15,63 @@ module under the 350 effective-LOC ceiling.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+import structlog
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.ceremony_progress import CeremonyState
+
+_logger = structlog.get_logger(__name__)
+
+
+def _emit_nudge_surface_event(
+    effective_dir: Path,
+    *,
+    cfg: TRWConfig,
+    state: CeremonyState,
+    messenger: str,
+    client_id: str,
+    learning_id: str,
+    target_file: str | None,
+    pending_step: str,
+) -> None:
+    """Log a nudge surface event with live timing (#4) + A/B arm/messenger (#6).
+
+    Shared by the learning-injection and contextual messenger branches of
+    ``append_ceremony_status`` (previously duplicated). Stamps the live
+    timing-validity (``is_timely`` / ``step_distance_from_call``) and the A/B
+    arm + messenger so population comparison can slice real traffic.
+
+    Fail-open: surface telemetry must never break ceremony-status decoration.
+    """
+    try:
+        from trw_mcp.state._session_id import resolve_effective_session_id
+        from trw_mcp.state.nudge_analysis import compute_nudge_timing
+        from trw_mcp.state.surface_tracking import log_surface_event
+
+        is_timely, step_distance = compute_nudge_timing(pending_step, state)
+        log_surface_event(
+            effective_dir,
+            learning_id=learning_id,
+            surface_type="nudge",
+            phase=state.phase,
+            files_context=[target_file] if target_file else [],
+            exploration=False,
+            bandit_score=1.0,
+            client_profile=client_id,
+            model_family=cfg.model_family or "generic",
+            trw_version=cfg.framework_version,
+            session_id=resolve_effective_session_id(effective_dir),
+            nudge_step=pending_step,
+            is_timely=is_timely,
+            step_distance_from_call=step_distance,
+            nudge_variant=cfg.nudge_variant or "",
+            messenger=messenger,
+        )
+    except Exception:  # justified: fail-open — telemetry never blocks ceremony status
+        _logger.debug("surface_event_log_failed", exc_info=True)
 
 
 def _synthetic_nudge_learning_id(

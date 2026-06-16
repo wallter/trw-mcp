@@ -45,6 +45,5 @@ def test_bundled_aaref_is_project_agnostic() -> None:
     lowered = body.lower()
     for forbidden in ("ai_v7", "psychological analysis"):
         assert forbidden not in lowered, (
-            f"AARE-F body contains legacy contamination {forbidden!r}; "
-            f"the portable edition must be project-agnostic."
+            f"AARE-F body contains legacy contamination {forbidden!r}; the portable edition must be project-agnostic."
         )

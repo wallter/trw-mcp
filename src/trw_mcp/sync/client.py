@@ -5,6 +5,7 @@ out across every configured ``platform_urls`` entry. The legacy accessors
 :attr:`TRWConfig.resolved_backend_url` and :attr:`TRWConfig.resolved_backend_api_key`
 remain supported and return the first target for backward compatibility.
 """
+# ruff: noqa: I001 - facade imports stay grouped for re-export seams and LOC ratchet.
 
 from __future__ import annotations
 
@@ -20,32 +21,16 @@ import structlog
 
 from trw_mcp.sync._client_push import (
     _push_to_target as _push_to_target_impl,
-)
-from trw_mcp.sync._client_push import (
     fanout_push as _fanout_push_impl,
 )
 from trw_mcp.sync._client_runtime import (
     apply_sync_hints as _apply_sync_hints_impl,
-)
-from trw_mcp.sync._client_runtime import (
     coerce_positive_number as _coerce_positive_number_impl,
-)
-from trw_mcp.sync._client_runtime import (
     consume_next_cycle_force as _consume_next_cycle_force_impl,
-)
-from trw_mcp.sync._client_runtime import (
     get_dirty_entries as _get_dirty_entries_impl,
-)
-from trw_mcp.sync._client_runtime import (
     mark_synced as _mark_synced_impl,
-)
-from trw_mcp.sync._client_runtime import (
     parse_sync_hint_timestamp as _parse_sync_hint_timestamp_impl,
-)
-from trw_mcp.sync._client_runtime import (
     reset_poll_schedule as _reset_poll_schedule_impl,
-)
-from trw_mcp.sync._client_runtime import (
     restore_poll_schedule as _restore_poll_schedule_impl,
 )
 from trw_mcp.sync.cache import IntelligenceCache
@@ -194,11 +179,20 @@ class BackendSyncClient:
             sync_interval=config.sync_interval_seconds,
         )
         self._targets: list[SyncTarget] = _build_targets(config)
+        # PRD-SEC-004-FR05/FR01: resolve the two independent consent flags once.
+        # learning_sharing_enabled (default False) gates learning CONTENT push;
+        # platform_telemetry_enabled (default False) gates session-outcome push.
+        # getattr-with-default keeps legacy/stub configs working AND is
+        # fail-closed for egress when a flag is absent.
+        self._learning_sharing_enabled = bool(getattr(config, "learning_sharing_enabled", False))
+        self._platform_telemetry_enabled = bool(getattr(config, "platform_telemetry_enabled", False))
         logger.info(
             "sync_targets_resolved",
             count=len(self._targets),
             targets=[t.label for t in self._targets],
             client_id=self._client_id,
+            learning_sharing_enabled=self._learning_sharing_enabled,
+            platform_telemetry_enabled=self._platform_telemetry_enabled,
         )
         # Pushers and pullers are built per-target; cache a by-label map for reuse.
         self._pushers: dict[str, SyncPusher] = {
@@ -208,6 +202,8 @@ class BackendSyncClient:
                 batch_size=config.sync_push_batch_size,
                 timeout=config.sync_push_timeout_seconds,
                 client_id=self._client_id,
+                learning_sharing_enabled=self._learning_sharing_enabled,
+                platform_telemetry_enabled=self._platform_telemetry_enabled,
             )
             for t in self._targets
         }
@@ -223,6 +219,8 @@ class BackendSyncClient:
                 batch_size=config.sync_push_batch_size,
                 timeout=config.sync_push_timeout_seconds,
                 client_id=self._client_id,
+                learning_sharing_enabled=self._learning_sharing_enabled,
+                platform_telemetry_enabled=self._platform_telemetry_enabled,
             )
         )
         self._puller = SyncPuller(
@@ -286,18 +284,38 @@ class BackendSyncClient:
             if not acquired:
                 return
 
-            dirty = await _offload_sync_work("get_dirty_entries", self._get_dirty_entries)
-            if dirty:
-                logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
+            # PRD-SEC-004-FR05: learning CONTENT push is gated on
+            # learning_sharing_enabled. When sharing is off (the default) skip
+            # even loading dirty entries — the content must never enter the push
+            # pipeline (no local work, no off-machine POST). The pull/intel path
+            # below is unaffected; only egress of local content is suppressed.
+            if self._learning_sharing_enabled:
+                dirty = await _offload_sync_work("get_dirty_entries", self._get_dirty_entries)
+                if dirty:
+                    logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
+                else:
+                    logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
             else:
-                logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
+                dirty = []
+                logger.debug("sync_push_skipped", reason="learning_sharing_disabled", client_id=self._client_id)
 
-            pending_outcomes = await _offload_sync_work(
-                "load_pending_outcomes",
-                load_pending_outcomes,
-                self._trw_dir,
-                since_line=self._coordinator.get_last_outcome_line(),
-            )
+            # PRD-SEC-004-FR01: session-outcome push is anonymous usage telemetry,
+            # gated on platform_telemetry_enabled. When off, skip loading the
+            # pending-outcome queue so no usage metrics egress.
+            if self._platform_telemetry_enabled:
+                pending_outcomes = await _offload_sync_work(
+                    "load_pending_outcomes",
+                    load_pending_outcomes,
+                    self._trw_dir,
+                    since_line=self._coordinator.get_last_outcome_line(),
+                )
+            else:
+                pending_outcomes = []
+                logger.debug(
+                    "sync_outcome_push_skipped",
+                    reason="platform_telemetry_disabled",
+                    client_id=self._client_id,
+                )
 
             report, push_result, any_target_succeeded = await self._fanout_push(
                 dirty=dirty,
@@ -353,9 +371,7 @@ class BackendSyncClient:
             merged = 0
             pull_seq = self._coordinator.get_last_pull_seq()
             raw_company_pull_seq = self._coordinator.get_last_company_pull_seq()
-            company_pull_seq = (
-                int(raw_company_pull_seq) if isinstance(raw_company_pull_seq, (int, float)) else 0
-            )
+            company_pull_seq = int(raw_company_pull_seq) if isinstance(raw_company_pull_seq, (int, float)) else 0
             pull_result = await self._puller.pull_intel_state(
                 etag=self._cache.etag if self._config.intel_cache_enabled else None,
                 since_seq=pull_seq,
@@ -406,8 +422,7 @@ class BackendSyncClient:
                     *[
                         int(item.get("sync_seq", 0))
                         for item in (pull_result.team_learnings or [])
-                        if isinstance(item, dict)
-                        and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
+                        if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
                     ],
                 ]
             )
@@ -451,6 +466,8 @@ class BackendSyncClient:
             timeout=self._config.sync_push_timeout_seconds,
             dirty=dirty,
             outcomes=outcomes,
+            learning_sharing_enabled=self._learning_sharing_enabled,
+            platform_telemetry_enabled=self._platform_telemetry_enabled,
         )
 
     async def _push_to_target(
@@ -470,6 +487,8 @@ class BackendSyncClient:
             timeout=self._config.sync_push_timeout_seconds,
             dirty=dirty,
             outcomes=outcomes,
+            learning_sharing_enabled=self._learning_sharing_enabled,
+            platform_telemetry_enabled=self._platform_telemetry_enabled,
         )
 
     def _apply_sync_hints(self, sync_hints: dict[str, Any] | None) -> None:

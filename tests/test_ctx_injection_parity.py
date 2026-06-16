@@ -275,11 +275,7 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
                 # telemetry helper). Marker-based exemption is line-drift-proof,
                 # unlike a hardcoded line number.
                 src_line_lower = src_line.lower()
-                if (
-                    "# compat" in src_line_lower
-                    or "# legacy" in src_line_lower
-                    or "prd-fix-085" in src_line_lower
-                ):
+                if "# compat" in src_line_lower or "# legacy" in src_line_lower or "prd-fix-085" in src_line_lower:
                     continue
                 violations.append((str(py_path.relative_to(tools_dir.parent.parent)), node.lineno, callee))
 
@@ -295,7 +291,7 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
     violations = [v for v in violations if not any(exempt in v[0] for exempt in _process_scoped_exempt)]
     # The auto-checkpoint telemetry helper (_maybe_auto_checkpoint in
     # checkpoint.py) is an intentional process-scoped pin-only no-arg call;
-    # it carries an inline ``# noqa: PRD-FIX-085`` marker which the marker-based
+    # it carries an inline PRD-FIX-085 compatibility marker which the marker-based
     # skip above already exempts (line-drift-proof, no hardcoded line number).
 
     assert not violations, (

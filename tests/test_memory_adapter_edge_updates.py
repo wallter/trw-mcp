@@ -17,9 +17,6 @@ from trw_mcp.state.memory_adapter import (
     update_access_tracking,
     update_learning,
 )
-from ._memory_adapter_edge_support import trw_dir  # noqa: F401
-
-from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 
 from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 

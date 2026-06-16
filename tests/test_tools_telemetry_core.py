@@ -148,14 +148,16 @@ class TestDetailedTelemetry:
         monkeypatch: pytest.MonkeyPatch,
         run_dir: Path,
     ) -> None:
-        """T-08: config.telemetry=True writes a record to .trw/logs/tool-telemetry.jsonl."""
+        """T-08: platform_telemetry_enabled=True writes a detailed record to
+        .trw/logs/tool-telemetry.jsonl (PRD-SEC-004-FR01: the choke point for
+        richer collection is platform_telemetry_enabled, not the legacy bool)."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
         (trw_dir / "context").mkdir(parents=True)
 
         cfg = _config_with(
             telemetry_enabled=True,
-            telemetry=True,
+            platform_telemetry_enabled=True,
             logs_dir="logs",
             telemetry_file="tool-telemetry.jsonl",
         )
@@ -188,14 +190,17 @@ class TestDetailedTelemetry:
         monkeypatch: pytest.MonkeyPatch,
         run_dir: Path,
     ) -> None:
-        """T-08 inverse: config.telemetry=False means tool-telemetry.jsonl is not written."""
+        """T-08 inverse (PRD-SEC-004-FR01): platform_telemetry_enabled=False
+        means tool-telemetry.jsonl is not written even if the legacy 'telemetry'
+        bool is True — the legacy flag must not enable richer collection alone."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True)
         (trw_dir / "context").mkdir(parents=True)
 
         cfg = _config_with(
             telemetry_enabled=True,
-            telemetry=False,
+            telemetry=True,
+            platform_telemetry_enabled=False,
             logs_dir="logs",
             telemetry_file="tool-telemetry.jsonl",
         )

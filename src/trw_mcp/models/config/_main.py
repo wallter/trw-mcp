@@ -70,6 +70,7 @@ class TRWConfig(_TRWConfigFields):
     if TYPE_CHECKING:
         nudge_enabled: bool | None = None
         nudge_messenger: NudgeMessengerLiteral | None = None
+        nudge_variant: str | None = None
         nudge_density: Literal["low", "medium", "high"] | None = None
         pricing_table_path: str = ""
         session_start_defer_under_writer_pressure: bool = True

@@ -80,7 +80,13 @@ class RegistrySignatureBlock(BaseModel):
 class MCPServer(BaseModel):
     """Authorized MCP server entry."""
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    # extra="forbid" (matching the sibling models) so an unknown/typo'd field
+    # in a signed allowlist surfaces as a validation error rather than being
+    # silently dropped. The legacy ``capabilities`` key is the one historically
+    # accepted extra; ``_upgrade_legacy_capabilities`` consumes and removes it
+    # below before validation, so forbidding extras does not break legacy
+    # allowlists.
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
     url_or_command: str
@@ -98,9 +104,13 @@ class MCPServer(BaseModel):
             upgraded["public_key_fingerprint"] = _descriptor_fingerprint(
                 str(upgraded.get("url_or_command", upgraded.get("name", "")))
             )
+        # ``capabilities`` is the legacy alias for ``allowed_tools``. Pop it so
+        # it never reaches the model (which now forbids extras). When
+        # ``allowed_tools`` is already present, the explicit field wins and the
+        # legacy key is simply discarded.
+        capabilities = upgraded.pop("capabilities", None)
         if "allowed_tools" in value:
             return upgraded
-        capabilities = upgraded.get("capabilities")
         if not isinstance(capabilities, list):
             return upgraded
         upgraded["allowed_tools"] = [

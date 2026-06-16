@@ -70,9 +70,7 @@ class TestT0Render:
 class TestT1Render:
     def test_t1_within_600_chars(self) -> None:
         """FR13: T1 total ≤ 600 chars."""
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR)
         # Count body chars (after frontmatter)
         lines = content.split("\n")
         fm_end = 0
@@ -83,20 +81,14 @@ class TestT1Render:
                 fm_end = i
                 break
         body = "\n".join(lines[fm_end + 1 :])
-        assert len(body) <= SNAPSHOT_T1_MAX_CHARS, (
-            f"T1 body exceeds {SNAPSHOT_T1_MAX_CHARS} chars: {len(body)}"
-        )
+        assert len(body) <= SNAPSHOT_T1_MAX_CHARS, f"T1 body exceeds {SNAPSHOT_T1_MAX_CHARS} chars: {len(body)}"
 
     def test_t1_includes_top_risk_file(self) -> None:
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR)
         assert "src/module_a.py" in content
 
     def test_t1_includes_convention(self) -> None:
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T1", sidecar=_SAMPLE_SIDECAR)
         assert "structlog" in content or "CONVENTION" in content
 
     def test_t1_without_sidecar_has_fallback(self) -> None:
@@ -107,47 +99,33 @@ class TestT1Render:
 class TestT2Render:
     def test_t2_within_quota(self) -> None:
         """FR12: T2 ≤ 8192 bytes."""
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
         assert len(content.encode("utf-8")) <= SNAPSHOT_QUOTA_BYTES
 
     def test_t2_includes_required_sections(self) -> None:
         """FR12: T2 must include top-5 risk files table, conventions, caution dirs."""
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
         assert "Top Risk Files" in content or "risk_files" in content or "module_a" in content
         assert "Convention" in content or "structlog" in content
         assert "Caution" in content or "state" in content
 
     def test_t2_includes_top5_risk_files(self) -> None:
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
         # All 5 risk files should appear
         for i in range(1, 6):
             assert f"module_{chr(ord('a') + i - 1)}.py" in content
 
     def test_t3_same_content_as_t2(self) -> None:
         """T3 is maximum tier; content is same structure as T2."""
-        t2_content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
-        t3_content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T3", sidecar=_SAMPLE_SIDECAR
-        )
+        t2_content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
+        t3_content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T3", sidecar=_SAMPLE_SIDECAR)
         # Both should have the same structural elements
         assert ("Top Risk Files" in t2_content) == ("Top Risk Files" in t3_content)
 
     def test_render_idempotent_same_data(self) -> None:
         """NFR09: same sidecar + tier → byte-identical output (timestamps are day-truncated)."""
-        content1 = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
-        content2 = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR
-        )
+        content1 = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
+        content2 = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=_SAMPLE_SIDECAR)
         assert content1 == content2
 
     def test_t2_no_sidecar_has_fallback(self) -> None:
@@ -162,9 +140,7 @@ class TestT2Render:
             "conventions": [],
             "caution_directories": [],
         }
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_risk
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_risk)
         assert "No risk file data" in content or "risk" in content.lower()
 
     def test_t2_empty_conventions_list(self) -> None:
@@ -174,9 +150,7 @@ class TestT2Render:
             "conventions": [],
             "caution_directories": ["src/"],
         }
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_conv
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_conv)
         assert "No convention" in content or "x.py" in content
 
     def test_t2_empty_caution_dirs(self) -> None:
@@ -186,7 +160,5 @@ class TestT2Render:
             "conventions": ["Use structlog"],
             "caution_directories": [],
         }
-        content = render_snapshot(
-            channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_dirs
-        )
+        content = render_snapshot(channel_id=_CHANNEL_ID, sha=_SHA, tier="T2", sidecar=sidecar_no_dirs)
         assert "No caution directory" in content or "structlog" in content

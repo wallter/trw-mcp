@@ -92,9 +92,7 @@ class TestStoreLearningGraphWiring:
             "two entries sharing >=2 tags must produce a tag_cooccurrence edge"
         )
 
-    def test_store_learning_calls_graph_enrichment(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_store_learning_calls_graph_enrichment(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Graph enrichment is invoked with the stored entry (FR01 wiring).
 
         The MCP store path enriches SYNCHRONOUSLY on the singleton connection via
@@ -111,9 +109,7 @@ class TestStoreLearningGraphWiring:
             return {"similarity_edges": 0, "tag_edges": 0, "consolidation_edges": 0}
 
         # Patch at the consumer site (memory_adapter imports the symbol).
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter.update_entry_graph", fake_update
-        )
+        monkeypatch.setattr("trw_mcp.state.memory_adapter.update_entry_graph", fake_update)
 
         store_learning(trw_dir, "L-wire-1", "summary text", "detail text", tags=["x"])
 
@@ -128,9 +124,7 @@ class TestStoreLearningGraphWiring:
         embedder.embed.return_value = [0.1, 0.2, 0.3]
 
         # get_embedder is called inside _embed_and_store_returning; force a stub.
-        monkeypatch.setattr(
-            "trw_mcp.state._memory_connection.get_embedder", lambda: embedder
-        )
+        monkeypatch.setattr("trw_mcp.state._memory_connection.get_embedder", lambda: embedder)
         # upsert_vector dim mismatch is irrelevant to the call-count assertion;
         # swallow any backend vector error so we measure embed() calls only.
         backend = get_backend(trw_dir)
@@ -138,21 +132,15 @@ class TestStoreLearningGraphWiring:
 
         store_learning(trw_dir, "L-embed-1", "summary", "detail", tags=["y"])
 
-        assert embedder.embed.call_count == 1, (
-            "embedder must be called exactly once per store_learning (FR02)"
-        )
+        assert embedder.embed.call_count == 1, "embedder must be called exactly once per store_learning (FR02)"
 
-    def test_store_learning_graph_failure_is_fail_open(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_store_learning_graph_failure_is_fail_open(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """NFR02: a RuntimeError from graph dispatch must not fail the store."""
 
         def boom(*args: object, **kwargs: object) -> dict[str, int]:
             raise RuntimeError("graph enrichment exploded")
 
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter.update_entry_graph", boom
-        )
+        monkeypatch.setattr("trw_mcp.state.memory_adapter.update_entry_graph", boom)
 
         result = store_learning(trw_dir, "L-failopen-1", "s", "d", tags=["z"])
 

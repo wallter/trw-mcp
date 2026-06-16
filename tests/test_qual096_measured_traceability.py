@@ -30,10 +30,7 @@ def _fr_block(num: int, *, traced: bool) -> str:
     """One FR section. When ``traced`` it carries both an impl + a test ref."""
     header = f"### PRD-CORE-001-FR{num:02d}: Requirement {num}"
     if traced:
-        refs = (
-            f"**Files**: `src/trw_mcp/state/widget_{num}.py` "
-            f"and `tests/test_widget_{num}.py`."
-        )
+        refs = f"**Files**: `src/trw_mcp/state/widget_{num}.py` and `tests/test_widget_{num}.py`."
     else:
         refs = "This requirement has prose only, no file references."
     return f"{header}\nThe system shall do thing {num}.\n{refs}\n"
@@ -41,9 +38,7 @@ def _fr_block(num: int, *, traced: bool) -> str:
 
 def _synthetic_prd(total_frs: int, traced_frs: int) -> str:
     """Build a PRD body with ``traced_frs`` of ``total_frs`` FRs fully traced."""
-    blocks = [
-        _fr_block(i + 1, traced=(i < traced_frs)) for i in range(total_frs)
-    ]
+    blocks = [_fr_block(i + 1, traced=(i < traced_frs)) for i in range(total_frs)]
     fr_section = "\n".join(blocks)
     return (
         "---\n"
@@ -156,12 +151,7 @@ def test_no_traces_binary_zero() -> None:
 # FR02: real PRDs that were valid stay valid (no-regression on the gate)
 # ---------------------------------------------------------------------------
 
-_PRDS_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "docs"
-    / "requirements-aare-f"
-    / "prds"
-)
+_PRDS_DIR = Path(__file__).resolve().parents[2] / "docs" / "requirements-aare-f" / "prds"
 
 
 def _sample_valid_real_prds(minimum: int) -> list[tuple[str, str]]:

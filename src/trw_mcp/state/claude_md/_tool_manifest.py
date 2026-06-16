@@ -119,10 +119,35 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_init": "Initialize TRW in a project directory",
     "trw_instructions_sync": "Synchronize the client instruction file (CLAUDE.md/AGENTS.md/etc.) with current TRW configuration",
     "trw_claude_md_sync": "Deprecated alias for trw_instructions_sync — use the canonical name",
-    "trw_knowledge_sync": "Generate knowledge topic docs from clustered learnings",
+    # trw_knowledge_sync removed by PRD-FIX-076 (dead MCP surface).
     "trw_heartbeat": "Refresh run liveness and report whether a checkpoint is due",
     "trw_adopt_run": "Attach this session to an existing run for an explicit handoff or resume",
     "trw_meta_tune_rollback": "Restore a promoted SAFE-001 advisory edit from its recorded pre-edit snapshot",
+    # Probe (PRD-CORE-144) — gated OFF by default via TRW_PROBE_ENABLED
+    "trw_probe": "Run a bounded sandboxed experiment to resolve a disputed plan assumption (gated by TRW_PROBE_ENABLED)",
+    "trw_probe_budget_status": "Report live probe budget usage for a session (read-only)",
+    # Phase control (PRD-INTENT-002 FR06) — recommended by the phase-mask denial
+    "trw_request_tool_access": "Grant one masked tool call when the current phase has hidden it (phase-exposure override)",
+    # Profile (PRD-HPO-PROF-001 FR-11)
+    "trw_profile_explain": "Explain how the resolved session profile was layered (read-only introspection)",
+    # Intelligence pipeline (PRD-FIX-COMPOUNDING-6 FR02)
+    "trw_pipeline_health": "Report intelligence-pipeline health for a project (read-only probe)",
+    # Code intelligence + risk (read-only / advisory)
+    "trw_skill_discovery": "Discover available TRW skills and their metadata (read-only)",
+    "trw_code_search": "Search local code by query and look up symbols",
+    "trw_code_symbol": "Look up a symbol definition in the local code index",
+    "trw_code_index_update": "Refresh the local SHA-256 code index for fast search",
+    "trw_before_edit_hint": "Surface risk hints for a file before you edit it",
+    "trw_before_edit_hint_batch": "Surface risk hints for a batch of files before editing",
+    "trw_codebase_risk_report": "Report aggregate codebase risk for a repository",
+    "trw_entity_risk_map": "Map per-entity risk across a repository",
+    "trw_ordering_compare": "Compare candidate build/work ordering strategies",
+    "trw_cross_repo_ordering": "Compute cross-repository work ordering",
+    # Evidence + coordination
+    "trw_agent_work_evidence": "Export AgentWorkEvidence v1 for a run (delivered=wired coordination)",
+    "trw_validate_agent_work_evidence": "Validate an AgentWorkEvidence v1 record",
+    "trw_prd_diff": "Structural diff between two PRD versions (read-only)",
+    "trw_submit_feedback": "Submit feedback to the TRW backend portal (thin client)",
 }
 
 # Validate at import time: every tool in the "all" preset has a description

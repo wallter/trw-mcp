@@ -50,7 +50,7 @@ _ASSERTION_JSON_TYPE_RE = re.compile(
 # existence assertions. Matches both bullet (``- grep_present:``) and JSON
 # (``"type": "grep_present"``) assertion forms.
 _ASSERTION_CLASSIFY_RE = re.compile(
-    rf'(?:^\s*(?:[-*]\s*)?`?(?P<bullet>{_ASSERTION_KEYWORD_ALTERNATION})\b'
+    rf"(?:^\s*(?:[-*]\s*)?`?(?P<bullet>{_ASSERTION_KEYWORD_ALTERNATION})\b"
     rf'|"type"\s*:\s*"(?P<json>{_ASSERTION_KEYWORD_ALTERNATION})")',
     re.IGNORECASE | re.MULTILINE,
 )

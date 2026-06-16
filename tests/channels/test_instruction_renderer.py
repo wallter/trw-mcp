@@ -166,13 +166,9 @@ class TestDryRun:
 class TestLockSkip:
     def test_lock_skip_returns_skipped_lock_status(self, tmp_path):
         entry = _make_entry()
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.ChannelLock"
-        ) as MockLock:
+        with patch("trw_mcp.channels.instruction_segment._renderer.ChannelLock") as MockLock:
             mock_instance = MagicMock()
-            mock_instance.__enter__ = MagicMock(
-                side_effect=ChannelLockSkip(Path("some.lock"))
-            )
+            mock_instance.__enter__ = MagicMock(side_effect=ChannelLockSkip(Path("some.lock")))
             MockLock.return_value = mock_instance
 
             result = render_instruction_segment(
@@ -295,9 +291,7 @@ class TestQuotaEnforcement:
 class TestTelemetryEmitted:
     def test_telemetry_event_emitted_on_write(self, tmp_path):
         entry = _make_entry()
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.append_channel_event"
-        ) as mock_emit:
+        with patch("trw_mcp.channels.instruction_segment._renderer.append_channel_event") as mock_emit:
             render_instruction_segment(
                 entry=entry,
                 repo_root=tmp_path,
@@ -306,18 +300,12 @@ class TestTelemetryEmitted:
             )
         mock_emit.assert_called()
         # At least one call with event_type="push_write"
-        push_calls = [
-            c
-            for c in mock_emit.call_args_list
-            if c.kwargs.get("event_type") == "push_write"
-        ]
+        push_calls = [c for c in mock_emit.call_args_list if c.kwargs.get("event_type") == "push_write"]
         assert len(push_calls) >= 1
 
     def test_telemetry_emitted_on_dry_run(self, tmp_path):
         entry = _make_entry()
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.append_channel_event"
-        ) as mock_emit:
+        with patch("trw_mcp.channels.instruction_segment._renderer.append_channel_event") as mock_emit:
             render_instruction_segment(
                 entry=entry,
                 repo_root=tmp_path,
@@ -377,17 +365,11 @@ class TestDistinctEventTypes:
 
     def test_lock_skip_emits_channel_lock_skip_not_channel_conflict(self, tmp_path):
         entry = _make_entry()
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.ChannelLock"
-        ) as MockLock:
+        with patch("trw_mcp.channels.instruction_segment._renderer.ChannelLock") as MockLock:
             mock_instance = MagicMock()
-            mock_instance.__enter__ = MagicMock(
-                side_effect=ChannelLockSkip(Path("some.lock"))
-            )
+            mock_instance.__enter__ = MagicMock(side_effect=ChannelLockSkip(Path("some.lock")))
             MockLock.return_value = mock_instance
-            with patch(
-                "trw_mcp.channels.instruction_segment._renderer.append_channel_event"
-            ) as mock_emit:
+            with patch("trw_mcp.channels.instruction_segment._renderer.append_channel_event") as mock_emit:
                 result = render_instruction_segment(
                     entry=entry,
                     repo_root=tmp_path,
@@ -406,12 +388,13 @@ class TestDistinctEventTypes:
 
     def test_human_edit_detected_emits_channel_conflict(self, tmp_path):
         entry = _make_entry(human_edit_detection=HumanEditDetection.RENDER_LOG)
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.detect_human_edit",
-            return_value=True,
-        ), patch(
-            "trw_mcp.channels.instruction_segment._renderer.append_channel_event"
-        ) as mock_emit:
+        with (
+            patch(
+                "trw_mcp.channels.instruction_segment._renderer.detect_human_edit",
+                return_value=True,
+            ),
+            patch("trw_mcp.channels.instruction_segment._renderer.append_channel_event") as mock_emit,
+        ):
             result = render_instruction_segment(
                 entry=entry,
                 repo_root=tmp_path,
@@ -421,18 +404,17 @@ class TestDistinctEventTypes:
 
         assert result.status == "skipped_conflict"
         emitted_types = [c.kwargs.get("event_type") for c in mock_emit.call_args_list]
-        assert "channel_conflict" in emitted_types, (
-            f"Expected channel_conflict for human-edit, got {emitted_types}"
-        )
+        assert "channel_conflict" in emitted_types, f"Expected channel_conflict for human-edit, got {emitted_types}"
 
     def test_internal_error_emits_channel_error_not_channel_conflict(self, tmp_path):
         entry = _make_entry()
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer._render_under_lock",
-            side_effect=RuntimeError("simulated internal error"),
-        ), patch(
-            "trw_mcp.channels.instruction_segment._renderer.append_channel_event"
-        ) as mock_emit:
+        with (
+            patch(
+                "trw_mcp.channels.instruction_segment._renderer._render_under_lock",
+                side_effect=RuntimeError("simulated internal error"),
+            ),
+            patch("trw_mcp.channels.instruction_segment._renderer.append_channel_event") as mock_emit,
+        ):
             result = render_instruction_segment(
                 entry=entry,
                 repo_root=tmp_path,
@@ -442,9 +424,7 @@ class TestDistinctEventTypes:
 
         assert result.status == "error"
         emitted_types = [c.kwargs.get("event_type") for c in mock_emit.call_args_list]
-        assert "channel_error" in emitted_types, (
-            f"Expected channel_error for internal error, got {emitted_types}"
-        )
+        assert "channel_error" in emitted_types, f"Expected channel_error for internal error, got {emitted_types}"
         assert "channel_conflict" not in emitted_types, (
             f"channel_conflict must NOT be emitted for internal error, got {emitted_types}"
         )
@@ -472,9 +452,7 @@ class TestReconcileCrashRecovery:
         """
         entry = _make_entry(human_edit_detection=HumanEditDetection.NONE)
 
-        with patch(
-            "trw_mcp.channels.instruction_segment._renderer.reconcile"
-        ) as mock_reconcile:
+        with patch("trw_mcp.channels.instruction_segment._renderer.reconcile") as mock_reconcile:
             result = render_instruction_segment(
                 entry=entry,
                 repo_root=tmp_path,
@@ -483,9 +461,12 @@ class TestReconcileCrashRecovery:
             )
 
         assert result.status == "written"
-        mock_reconcile.assert_called_once(), (
-            "reconcile() must be called in _render_under_lock before conflict detection. "
-            "HIGH-3 fix: this was previously dead code — never called from the renderer."
+        (
+            mock_reconcile.assert_called_once(),
+            (
+                "reconcile() must be called in _render_under_lock before conflict detection. "
+                "HIGH-3 fix: this was previously dead code — never called from the renderer."
+            ),
         )
 
     def test_reconcile_crash_state_clears_phantom_render_log_entry(self, tmp_path):
