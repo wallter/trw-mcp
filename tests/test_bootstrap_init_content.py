@@ -12,6 +12,18 @@ from trw_mcp.models.config import TRWConfig
 
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 
+# The EXACT deployed hook/agent set is environment-dependent: a standalone
+# install (the public PyPI/GitHub mirror) legitimately installs the opt-in
+# distill-channel hooks (pre-tool-distill-hint.sh, lib-distill-hint.sh) +
+# trw-distill-explorer agent, which the monorepo dev-repo init does not. The
+# EXPECTED_* lists below are the monorepo baseline, enforced in the monorepo CI.
+# Skip the exact-equality assertions in the standalone mirror (no repo-root
+# scripts/) where the superset is correct, not a regression.
+_EXACT_SET_MONOREPO_ONLY = pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[2] / "scripts").is_dir(),
+    reason="exact hook/agent deploy set is env-dependent (distill channels install in standalone mirror); enforced in monorepo CI",
+)
+
 
 class TestInitProjectStructure:
     """Test that init_project creates all expected directories and files."""
@@ -231,6 +243,7 @@ class TestHooks:
         "validate-prd-write.sh",
     ]
 
+    @_EXACT_SET_MONOREPO_ONLY
     def test_all_hooks_copied(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
         hooks_dir = fake_git_repo / ".claude" / "hooks"
@@ -445,6 +458,7 @@ class TestAgents:
         "trw-traceability-checker.md",
     ]
 
+    @_EXACT_SET_MONOREPO_ONLY
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
         """After init_project(), .claude/agents/ has agent .md files."""
         result = init_project(fake_git_repo)
