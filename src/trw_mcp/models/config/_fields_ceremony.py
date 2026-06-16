@@ -124,6 +124,11 @@ class _CeremonyFields:
     # advisory-only and NEVER fails delivery; a future strict mode would gate
     # behind a separate flag.
     changelog_advisory_enabled: bool = False
+    # PRD-CORE-201-NFR04: gate the up-front REVIEW-mandatory advisory that
+    # trw_init surfaces for STANDARD/COMPREHENSIVE runs. Default ON. This is an
+    # ADVISORY only — it never gates delivery (the CORE-192 deliver gate is
+    # untouched); operators can disable it without code changes if it proves noisy.
+    review_mandate_advisory_enabled: bool = True
     commit_fr_trailer_enabled: bool = True
     sprint_integration_branch_pattern: str = "sprint-{N}-integration"
     compliance_review_retention_days: int = 365

@@ -402,6 +402,20 @@ def init_project(
     if "gemini" in ide_targets:
         _install_gemini_artifacts(target_dir, force=force, result=result)
 
+        # 7f-1. Gemini distill channels (GM-01 BeforeTool hint hook).
+        # Opt-in via the shared cc03_hook_enabled gate — registering the hook
+        # is a clean no-op until the operator enables it (PRD-DIST-2459 FR-3).
+        try:
+            from ._gemini_distill_channels import install_gemini_distill_channels
+
+            gm_dc = install_gemini_distill_channels(target_dir, force=force)
+            result["created"].extend(gm_dc.get("created", []))
+            result.setdefault("updated", []).extend(gm_dc.get("updated", []))
+            result.setdefault("skipped", []).extend(gm_dc.get("preserved", []))
+            result["errors"].extend(gm_dc.get("errors", []))
+        except Exception as _exc:  # justified: fail-open, distill channels are additive
+            result.setdefault("warnings", []).append(f"gemini distill channels skipped: {_exc}")
+
     # 7g. Antigravity CLI artifacts
     if "antigravity-cli" in ide_targets:
         _install_antigravity_artifacts(target_dir, force=force, result=result)

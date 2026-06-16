@@ -360,6 +360,19 @@ def _run_post_update_phases(
         except Exception as exc:  # justified: fail-open, distill channels are additive
             result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
 
+    # Gemini distill channels — update when gemini is a target (PRD-DIST-2459 FR-3).
+    if "gemini" in ide_targets:
+        try:
+            from ._gemini_distill_channels import install_gemini_distill_channels
+
+            gm_dc = install_gemini_distill_channels(target_dir)
+            for _key in ("created", "updated", "preserved", "errors"):
+                _items = gm_dc.get(_key)
+                if isinstance(_items, list):
+                    result.setdefault(_key, []).extend(_items)
+        except Exception as exc:  # justified: fail-open, distill channels are additive
+            result.setdefault("warnings", []).append(f"gemini distill channels update skipped: {exc}")
+
     # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
     # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.
     _rewrite_hook_env_for_primary_profile(target_dir, ide_targets)

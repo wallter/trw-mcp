@@ -223,6 +223,16 @@ def write_hint_file(
         "tokens_emitted": tokens_emitted,
         "distill_status": distill_status,
         "tool_use_id": tool_use_id,
+        # PRD-DIST-2460 FR-1 (Phase 3 instrumentation): outcome vocabulary for a FUTURE
+        # consumer-outcome feedback loop. Defaulted/unknown at PreToolUse write time; a later
+        # PostToolUse correlator (DEFERRED FR-2..6, a separate proprietary trw-distill PRD gated on
+        # an N>=30 corpus) would populate them. Additive + backward-compatible: pre-existing hint
+        # files lacking these keys still parse, and no current consumer regresses.
+        "outcome_captured": False,
+        "was_edited": None,
+        "edit_survived": None,
+        "test_outcome": "unknown",
+        "hint_acknowledged": None,
     }
     hint_file.write_text(json.dumps(record), encoding="utf-8")
 

@@ -278,6 +278,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
             result["complexity_class"] = complexity_class_val.value
         result["task_profile_hash"] = task_profile.profile_hash
 
+        # PRD-CORE-184 FR01/FR02: surface an UP-FRONT REVIEW-mandatory signal
+        # when the resolved run requires a REVIEW phase (STANDARD/COMPREHENSIVE).
+        # The SessionStart hook may have advertised "Skip: REVIEW" before the
+        # run complexity was known; this reconciles that at the trw_init boundary
+        # by stating the run complexity overrides the session ceremony tier. This
+        # is advisory only and does NOT alter the CORE-192 deliver gate (NFR05).
+        _scaling.apply_review_mandate_advisory(result, phase_requirements=prof.phase_requirements, config=config)
+
         # PRD-SCALE-001 FR13/FR03: run the Cognitive Scaling Scout (honoring a
         # --planning-mode override) and write meta/session_profile.yaml — the H2
         # profile resolver reads it as the session-layer overlay on the next

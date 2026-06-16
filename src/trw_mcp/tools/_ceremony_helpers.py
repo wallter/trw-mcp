@@ -285,9 +285,21 @@ def _check_version_sentinel(
     except Exception:  # justified: importlib.metadata may fail in edge cases
         return
 
-    if installed_version != running_version and "update_advisory" not in maintenance:
+    # Potemkin defect D (sub_zAfRqZYYq2KtF72d): fire ONLY when the on-disk
+    # installed version is genuinely NEWER than the running process — a real
+    # pending upgrade that a ``/mcp`` reload would apply. The previous bare
+    # ``!=`` check also fired when on-disk was OLDER than (or differently
+    # formatted from) the running version, e.g. a stale sentinel left by a
+    # downgrade or a server that out-lived the on-disk install. That produced
+    # the confusing "vOLD was installed but still running vNEW — reload"
+    # advisory the operator reported (reloading would DOWN-grade, not update).
+    # Reuse the canonical semver comparator so the direction logic lives in one
+    # place; it fails closed (no advisory) on any unparseable version.
+    from trw_mcp.state.auto_upgrade import _compare_versions
+
+    if _compare_versions(running_version, installed_version) and "update_advisory" not in maintenance:
         maintenance["update_advisory"] = (
-            f"TRW v{installed_version} was installed but this MCP server is still "
+            f"TRW v{installed_version} is installed on disk but this MCP server is still "
             f"running v{running_version}. Run /mcp to reload."
         )
 

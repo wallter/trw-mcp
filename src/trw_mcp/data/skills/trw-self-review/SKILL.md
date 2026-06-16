@@ -54,6 +54,46 @@ For each new file created during implementation:
 grep -r "from trw_mcp.scoring._io_boundary import" trw-mcp/src/ --include="*.py" | grep -v test
 ```
 
+### Step 3b: Property-Reachability (Consumption) Check — safety-relevant properties only
+
+Wiring (Step 3) proves a module is *imported*. This step proves an asserted
+*safety property* is actually *exercised on the path that reaches the sink*. It
+exists because of the "Potemkin gate" defect (operator report
+`sub_zAfRqZYYq2KtF72d`): a fail-closed redaction gate was 100%-tested in
+isolation, but its **output was consumed by no production code** while an
+unguarded upstream object was the only content reaching the LLM prompt and the
+user-facing artifact. Every test passed; the central safety property was false
+by construction. Unit and contract tests cannot catch this — only data-flow can.
+
+Apply this step to any FR/NFR asserting a **redaction, sanitization, input
+validation, access-control, or egress-filtering** property.
+
+1. **Enumerate the sinks.** List every place protected content can leave the
+   system: LLM prompts, user-facing artifacts/responses, persisted stores,
+   logs, network egress.
+2. **Trace each sink back to ALL its sources** (not just the obvious one). For
+   each source→sink path, confirm it crosses the gate. A path that reaches a
+   sink without crossing the gate is a FAIL even if the gate itself is perfect.
+3. **Confirm the gate's output is consumed.** Grep for who reads the gate's
+   return value in production. **Gate output consumed by nothing in production
+   code = automatic FAIL** (a Potemkin gate), regardless of test coverage.
+4. **Adversarial fixture in EVERY injected channel.** If the feature has
+   multiple injected input channels (e.g. a gated content stream *and* an
+   injected summary object), each must have a planted-bad-input fixture that
+   proves it is gated. A fixture that lives only in the gated channel hides the
+   exact defect above.
+
+```bash
+# Who actually consumes the gate's output in production? (empty = Potemkin gate)
+grep -rn "redact_content\|redacted_output" trw-mcp/src/ --include="*.py" | grep -v test
+# Does any OTHER object reach the same sink without crossing the gate?
+grep -rn "prompt =\|llm_input\|render_artifact" trw-mcp/src/ --include="*.py" | grep -v test
+```
+
+Report each safety property as `WIRED` (gate output consumed on every
+source→sink path) or `POTEMKIN` (gate correct but bypassed/unconsumed). Any
+`POTEMKIN` is a blocking finding — fix before requesting the adversarial audit.
+
 ### Step 4: NFR Mini-Checklist
 
 Check the 5 highest-frequency NFR findings from historical audits:
@@ -115,6 +155,11 @@ Output a structured report:
 
 ### Wiring Check: {issues_count} issues
 - {file} is not imported from any production module
+
+### Property-Reachability: {wired_count}/{total} safety properties WIRED
+- {property}: WIRED — gate output consumed on every source→sink path
+- {property}: POTEMKIN — gate correct but bypassed by {unguarded source} (BLOCKING)
+- (omit this section entirely when no redaction/sanitization/validation/egress FR is in scope)
 
 ### NFR Mini-Checklist: {pass_count}/5
 - [x] Input validation

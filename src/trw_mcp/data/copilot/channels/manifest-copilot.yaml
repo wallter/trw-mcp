@@ -194,3 +194,49 @@ channels:
   - mcp-tool-return
   - on-demand
   notes:
+- id: copilot-pretooluse-hint
+  client: copilot
+  surface: hook_stdout_ephemeral
+  telemetry_tag: copilot_pretooluse_hint
+  file: .github/hooks/trw-copilot-distill-hint.sh
+  lock_file:
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T2
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 9500
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: C5 Copilot preToolUse hint hook — chained AFTER the authoritative deliver-gate in the single preToolUse slot via trw-copilot-adapter.sh. Opt-in (cc03_hook_enabled), 180s debounce, advisory permissionDecisionReason only.
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: cc03_hook_enabled
+  tags:
+  - copilot
+  - hook
+  - opt-in
+  notes: Operator enables via .trw/config.yaml channels.cc03_hook_enabled=true (shared gate with CC-03). Never denies / never exits 2 — advisory only. Deliver-gate decision stays authoritative; the hint cannot flip an allow into a deny.

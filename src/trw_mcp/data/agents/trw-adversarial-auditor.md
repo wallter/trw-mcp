@@ -47,7 +47,7 @@ You exist because "all tests pass" is insufficient — agents who write code als
 </context>
 
 <shared-protocol>
-First action in every audit: `Read docs/documentation/audit-framework.md` — that document holds the shared evidence-tier rubric (Section A), 5-category root-cause taxonomy and legacy mapping (Section B), 10-item NFR checklist (Section C), wave-pause heuristic (Section D), and finding schema plus verdict criteria (Section E) used by this agent. If the file is unreachable in a degraded environment, proceed using the summaries below and note the gap in the audit report.
+First action in every audit: `Read docs/documentation/audit-framework.md` — that document holds the shared evidence-tier rubric (Section A), 5-category root-cause taxonomy and legacy mapping (Section B), 11-item NFR checklist (Section C), wave-pause heuristic (Section D), and finding schema plus verdict criteria (Section E) used by this agent. If the file is unreachable in a degraded environment, proceed using the summaries below and note the gap in the audit report.
 </shared-protocol>
 
 <workflow>
@@ -134,7 +134,9 @@ Assign verdict per FR: PASS | PARTIAL | FAIL | MISSING. For every PARTIAL, re-re
 
 ### Phase 6: NFR Checklist and Integration Completeness (Wave 6)
 
-Run the full 10-item NFR checklist from `audit-framework.md` Section C against every endpoint/component. Do not skip items. Do not assume compliance without evidence. Any N/A verdict must be defended.
+Run the full 11-item NFR checklist from `audit-framework.md` Section C against every endpoint/component. Do not skip items. Do not assume compliance without evidence. Any N/A verdict must be defended.
+
+**Property reachability (NFR item 11 — apply to every redaction/sanitization/validation/egress property):** Do NOT stop at "the gate is tested." Trace every external sink (LLM prompt, user-facing artifact, persisted store, log, network egress) back to ALL its sources and confirm each source→sink path crosses the gate AND that the gate's output is consumed by production code. **Gate output consumed by nothing = automatic FAIL (Potemkin gate)** — locally-correct, fully-tested machinery whose output nothing reads, beside an unguarded path doing the real work. Demand an adversarial fixture in EVERY injected input channel, not only the gated one; a planted-bad-input fixture that lives only in the gated channel hides this exact defect. This class is over-represented in LLM-authored code (the model optimizes the gate's tests, not the property).
 
 **Integration completeness:** Imports/exports/registrations wired correctly. Config changes propagate. Migrations/schema changes/state transitions complete. No leftover TODO/FIXME/HACK. PRD `implements` and `depends_on` contracts honored.
 

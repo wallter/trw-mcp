@@ -159,12 +159,26 @@ _IDE_HOOK_EVENTS: dict[str, list[HookHandlerEntry]] = {
             "timeout": 5,
         }
     ],
+    # preToolUse carries TWO chained handlers (PRD-DIST-2459 FR-4):
+    #   1. trw-pre-tool-use.sh   — the existing observer/logger (emits allow).
+    #   2. trw-before-edit-hint.sh — the CUR-06 trw-distill advisory hint hook
+    #      (opt-in via cc03_hook_enabled; emits {"permission":"allow",
+    #      "agent_message":...}; NEVER denies / NEVER exits 2).
+    # Both run as independent array entries; both are strictly non-blocking, so
+    # neither displaces the other. The hint hook is registered unconditionally
+    # but is a clean plain-allow no-op until the operator enables the shared gate.
     "preToolUse": [
         {
             "command": ".cursor/hooks/trw-pre-tool-use.sh",
             "type": "command",
             "timeout": 5,
-        }
+        },
+        {
+            "command": ".cursor/hooks/trw-before-edit-hint.sh",
+            "type": "command",
+            "timeout": 3,
+            "failClosed": False,
+        },
     ],
     "afterFileEdit": [
         {
@@ -205,6 +219,10 @@ _IDE_HOOK_SCRIPTS: list[str] = [
     "trw-before-mcp.sh",
     "trw-post-tool-use.sh",
     "trw-pre-tool-use.sh",
+    # CUR-06 (PRD-DIST-2459 FR-4): trw-distill before-edit hint hook + its
+    # standalone lib sibling. Chained alongside the observer in preToolUse.
+    "trw-before-edit-hint.sh",
+    "lib-distill-hint.sh",
     "trw-after-file-edit.sh",
     "trw-pre-compact.sh",
     "trw-stop.sh",

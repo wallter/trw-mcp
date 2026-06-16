@@ -4,11 +4,23 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.55.15] — 2026-06-16
+
 ### Fixed
 
+- **Version advisory no longer fires on a downgrade.** `trw_session_start`'s installed-version sentinel check previously emitted "TRW vX was installed but this MCP server is still running vY — run /mcp to reload" on *any* version mismatch, including when the on-disk version was OLDER than the running process (a stale sentinel or a longer-lived server) — where reloading would downgrade, not update. The advisory now fires only when the on-disk version is genuinely newer than the running process, reusing the canonical semver comparator (fails closed on unparseable versions). (operator report `sub_zAfRqZYYq2KtF72d` defect D)
 - Skip monorepo-only invariant tests (agent/module LOC gates, import-boundary, seam-expiry, agent-sync, plus docs/framework/hook/skill parity checks) in the standalone public mirror where repo-root `scripts/` is absent — they were aborting public CI collection.
 - Public-mirror CI: add `--cov-fail-under=0` to the unit-tier `pytest` command so the unit subset's coverage is reported-but-not-gated (the 80% `fail_under` from `pyproject.toml` belongs to the monorepo full-suite gate, not the unit-only public run that cannot reach it).
 - Skip `test_framework_md.py` (repo-root `.trw/frameworks/FRAMEWORK.md` parity) in the standalone mirror via the same monorepo-only guard — it was raising `FileNotFoundError` in public CI.
+
+### Added
+
+- **Property-reachability (consumption / sink-to-source) check for safety properties.** The audit/self-review checklists now carry a dedicated step for any redaction/sanitization/validation/egress property: trace every external sink (LLM prompt, user-facing artifact, persisted store, log, network egress) back to all its sources, confirm each path crosses the gate, and confirm the gate's output is actually consumed by production code — "gate output consumed by nothing = automatic FAIL" (a Potemkin gate). Added as NFR item 11 in the shared audit framework, an inline summary in the `trw-adversarial-auditor` agent, and Step 3b in the `trw-self-review` skill. (operator report `sub_zAfRqZYYq2KtF72d` framework gap #1/#2)
+- Up-front REVIEW-mandatory signal on COMPREHENSIVE/STANDARD runs so the review gate is surfaced before deliver rather than as a post-hoc warning. (PRD-CORE-201)
+
+### Changed
+
+- trw-distill before-edit hint is now chained into the Cursor IDE, Copilot, and Gemini pre-tool hooks for cross-client pre-edit intelligence. (PRD-DIST-2459/2460)
 
 ## [0.55.14] — 2026-06-14
 

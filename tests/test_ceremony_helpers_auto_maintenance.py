@@ -217,6 +217,37 @@ class TestRunAutoMaintenance:
 
         assert "update_advisory" not in result
 
+    def test_version_sentinel_older_on_disk_no_advisory(
+        self,
+        trw_dir: Path,
+        config: TRWConfig,
+    ) -> None:
+        """Potemkin defect D: an on-disk version OLDER than the running process
+        must NOT inject a reload advisory.
+
+        The reported symptom was "TRW vOLD was installed but still running vNEW —
+        Run /mcp to reload", where reloading would downgrade, not update. The
+        advisory must fire only on a genuine pending upgrade (on-disk newer).
+        """
+        write_installed_version(trw_dir, "0.48.7")
+        with (
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                return_value={"available": False},
+            ),
+            patch(
+                "trw_mcp.state.memory_adapter.check_embeddings_status",
+                return_value={"enabled": False},
+            ),
+            patch(
+                "importlib.metadata.version",
+                return_value="0.55.14",
+            ),
+        ):
+            result = run_auto_maintenance(trw_dir, config)
+
+        assert "update_advisory" not in result
+
     def test_version_sentinel_missing_no_error(
         self,
         trw_dir: Path,

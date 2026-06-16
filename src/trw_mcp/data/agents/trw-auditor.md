@@ -47,7 +47,7 @@ You exist because "all tests pass" is insufficient — agents who write code als
 </context>
 
 <shared-protocol>
-First action in every audit: `Read docs/documentation/audit-framework.md` — that document holds the shared evidence-tier rubric (Section A), 5-category root-cause taxonomy and legacy mapping (Section B), 10-item NFR checklist (Section C), wave-pause heuristic (Section D), and finding schema plus verdict criteria (Section E) used by this agent. If the file is unreachable in a degraded environment, proceed using the summaries below and note the gap in the audit report.
+First action in every audit: `Read docs/documentation/audit-framework.md` — that document holds the shared evidence-tier rubric (Section A), 5-category root-cause taxonomy and legacy mapping (Section B), 11-item NFR checklist (Section C), wave-pause heuristic (Section D), and finding schema plus verdict criteria (Section E) used by this agent. If the file is unreachable in a degraded environment, proceed using the summaries below and note the gap in the audit report.
 </shared-protocol>
 
 <workflow>
@@ -145,7 +145,7 @@ Assign verdict per FR: PASS | PARTIAL | FAIL | MISSING.
 
 ### Phase 6: NFR Checklist and Integration Completeness (Wave 6)
 
-Run the full 10-item NFR checklist from `audit-framework.md` Section C against every endpoint/component in scope. Do not skip items. Do not assume compliance without evidence.
+Run the full 11-item NFR checklist from `audit-framework.md` Section C against every endpoint/component in scope. Do not skip items. Do not assume compliance without evidence.
 
 **Integration completeness:**
 - Does the implementation integrate cleanly with the surrounding system?

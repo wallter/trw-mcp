@@ -90,6 +90,51 @@ def resolve_init_profile(
     )
 
 
+def apply_review_mandate_advisory(
+    result: dict[str, str],
+    *,
+    phase_requirements: Any,
+    config: TRWConfig,
+) -> None:
+    """Surface the up-front REVIEW-mandatory signal on a ``trw_init`` result.
+
+    PRD-CORE-201 FR01/FR02. When the resolved run's ``phase_requirements`` list
+    REVIEW as a mandatory phase (true for STANDARD/COMPREHENSIVE runs), this
+    sets two result fields:
+
+    - ``review_required = "true"`` (FR01) — a deterministic machine-readable
+      signal that the run requires a REVIEW phase before deliver, regardless of
+      the SessionStart ceremony tier the agent may have read up-front.
+    - ``review_mandate_advisory`` (FR02) — a human-readable line that RECONCILES
+      a possibly-misleading "Skip: REVIEW" session banner, stating the run
+      complexity overrides the session ceremony tier.
+
+    For runs where REVIEW is NOT mandatory (MINIMAL) or complexity is unresolved
+    (``phase_requirements is None``), NO field is added — the absence of the
+    field is the correct fail-open signal (NFR02), not ``"false"``.
+
+    This is an ADVISORY ONLY. It does NOT change the CORE-192 deliver gate
+    (NFR05). ``config.review_mandate_advisory_enabled`` (NFR04, default True)
+    is the kill switch. Fully fail-open: any error leaves ``result`` unchanged.
+    """
+    try:
+        if not config.review_mandate_advisory_enabled:
+            return
+        if phase_requirements is None:
+            return
+        mandatory = getattr(phase_requirements, "mandatory", None) or []
+        if "REVIEW" not in [str(p).upper() for p in mandatory]:
+            return
+        result["review_required"] = "true"
+        result["review_mandate_advisory"] = (
+            "REVIEW: MANDATORY for this run. This run requires a REVIEW phase "
+            "before deliver (run complexity overrides the session ceremony tier). "
+            "Run trw_review before trw_deliver to avoid a deliver-time block."
+        )
+    except Exception:  # justified: fail-open per NFR02 — advisory must not block init
+        logger.debug("review_mandate_advisory_skipped", exc_info=True)
+
+
 #: Accepted ``--planning-mode`` override strings (FR13). Case-insensitive on
 #: input; resolved to the closed ``PlanningMode`` enum.
 _VALID_OVERRIDE_NAMES = ("DIRECT", "DUAL_DRAFT", "TRIANGULATED", "TRIANGULATED_WITH_PROBE")
@@ -177,4 +222,9 @@ def run_scout_for_init(
         return None
 
 
-__all__ = ["InitProfile", "resolve_init_profile", "run_scout_for_init"]
+__all__ = [
+    "InitProfile",
+    "apply_review_mandate_advisory",
+    "resolve_init_profile",
+    "run_scout_for_init",
+]

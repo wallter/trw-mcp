@@ -161,6 +161,40 @@ class TestWriteHintFile:
         assert data["hint_emitted"] is True
         assert data["tier"] == "T2"
 
+    def test_hint_file_carries_phase3_outcome_vocabulary(self, tmp_path: Path) -> None:
+        """PRD-DIST-2460 FR-1: the record carries defaulted outcome fields for the future
+        consumer-outcome loop, without yet encoding any outcome (instrumentation only)."""
+        hints_dir = tmp_path / "hints"
+        write_hint_file(
+            hints_dir=hints_dir,
+            tool_use_id="tool-p3",
+            file_path="/repo/src/module.py",
+            tier="T2",
+            hint_emitted=True,
+            tokens_emitted=68,
+            distill_status="hint_available",
+        )
+        data = json.loads((hints_dir / "tool-p3.json").read_text(encoding="utf-8"))
+        # Vocabulary EXISTS, defaulted to unknown/false sentinels (no outcome captured at write time).
+        assert data["outcome_captured"] is False
+        assert data["was_edited"] is None
+        assert data["edit_survived"] is None
+        assert data["test_outcome"] == "unknown"
+        assert data["hint_acknowledged"] is None
+
+    def test_legacy_hint_file_without_outcome_fields_still_parses(self) -> None:
+        """Backward-compat: a pre-DIST-2460 record (no outcome keys) loads + reads via .get()
+        with sentinel defaults — no consumer regresses on old files."""
+        legacy = json.dumps(
+            {"ts": "2026-06-01T00:00:00Z", "file_path": "/x.py", "tier": "T1",
+             "hint_emitted": True, "tokens_emitted": 10, "distill_status": "learnings_only",
+             "tool_use_id": "old-1"}
+        )
+        rec = json.loads(legacy)
+        assert rec["tool_use_id"] == "old-1"
+        assert rec.get("outcome_captured", False) is False
+        assert rec.get("test_outcome", "unknown") == "unknown"
+
     def test_no_cross_contamination_between_tools(self, tmp_path: Path) -> None:
         """FR08 (P1-04): two concurrent hint files don't cross-contaminate."""
         hints_dir = tmp_path / "hints"

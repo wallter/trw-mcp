@@ -121,6 +121,71 @@ class TestTrwCheckpointShardId:
         assert "shard_id" not in checkpoints[0]
 
 
+class TestTrwInitReviewMandateAdvisory:
+    """PRD-CORE-201 FR01/FR02: trw_init surfaces an UP-FRONT REVIEW-mandatory
+    signal for STANDARD/COMPREHENSIVE runs, reconciling a possibly-misleading
+    'Skip: REVIEW' SessionStart banner. Advisory only — does NOT touch the
+    CORE-192 deliver gate."""
+
+    def test_init_review_required_comprehensive(self, orch_tools: dict[str, Any]) -> None:
+        """HARD complexity_hint -> COMPREHENSIVE -> review_required + override nudge."""
+        result = orch_tools["trw_init"].fn(
+            task_name="hard-review-task",
+            complexity_hint="HARD",
+        )
+        assert result["review_required"] == "true"
+        advisory = result["review_mandate_advisory"].lower()
+        assert "review" in advisory
+        assert "mandatory" in advisory
+        assert "overrides the session ceremony tier" in advisory
+
+    def test_init_review_required_standard(self, orch_tools: dict[str, Any]) -> None:
+        """STANDARD complexity_hint -> REVIEW mandatory -> review_required true."""
+        result = orch_tools["trw_init"].fn(
+            task_name="standard-review-task",
+            complexity_hint="STANDARD",
+        )
+        assert result["review_required"] == "true"
+        advisory = result["review_mandate_advisory"].lower()
+        assert "review" in advisory and "mandatory" in advisory
+
+    def test_init_review_not_required_minimal(self, orch_tools: dict[str, Any]) -> None:
+        """EASY complexity_hint -> MINIMAL -> NO review_required key (not 'false')."""
+        result = orch_tools["trw_init"].fn(
+            task_name="easy-no-review-task",
+            complexity_hint="EASY",
+        )
+        assert "review_required" not in result
+        assert "review_mandate_advisory" not in result
+
+    def test_init_review_not_required_no_hint(self, orch_tools: dict[str, Any]) -> None:
+        """No complexity hint -> phase_requirements is None -> fail-open, no key."""
+        result = orch_tools["trw_init"].fn(task_name="no-hint-task")
+        assert "review_required" not in result
+        assert "review_mandate_advisory" not in result
+
+    def test_init_review_advisory_respects_kill_switch(
+        self,
+        orch_tools: dict[str, Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """NFR04: review_mandate_advisory_enabled=False suppresses the advisory."""
+        from trw_mcp.models.config import get_config
+
+        cfg = get_config()
+        disabled = cfg.model_copy(update={"review_mandate_advisory_enabled": False})
+        # Patch at the consumer site: orchestration.py calls get_config() at
+        # runtime, so redirecting it here flows the disabled config into trw_init.
+        monkeypatch.setattr("trw_mcp.tools.orchestration.get_config", lambda: disabled)
+
+        result = orch_tools["trw_init"].fn(
+            task_name="killswitch-task",
+            complexity_hint="HARD",
+        )
+        assert "review_required" not in result
+        assert "review_mandate_advisory" not in result
+
+
 class TestTrwStatusWaveManifest:
     """Tests for trw_status when wave_manifest exists (lines 214, 242-248)."""
 

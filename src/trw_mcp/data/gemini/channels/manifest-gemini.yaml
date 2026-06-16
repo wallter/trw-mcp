@@ -1,0 +1,50 @@
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: ''
+channels:
+- id: gm-01-before-tool-hint
+  client: gemini
+  surface: hook_stdout_ephemeral
+  telemetry_tag: gm01_before_tool_hint
+  file: .gemini/hooks/trw-before-tool-hint.sh
+  lock_file:
+  status: active
+  write_strategy: FULL_REWRITE
+  tier_default: T2
+  tier_min: T0
+  operator_tier_override_key:
+  markers:
+    start: ''
+    end: ''
+  distill_record_types: []
+  ttl_commits:
+  ttl_days:
+  quota_total_bytes: 9500
+  quota_warn_bytes:
+  provenance:
+    enabled: false
+    detection: NONE
+  cleanup:
+    trigger: NONE
+    action: NONE
+  lock_lifecycle: auto_cleanup_on_channel_disable
+  human_edit_detection: NONE
+  description: GM-01 Gemini BeforeTool hint hook — opt-in (cc03_hook_enabled), 180s debounce, emits hookSpecificOutput.additionalContext
+  regenerate_cmd:
+  client_version_min:
+  mdc_description:
+  mdc_globs:
+  mdc_always_apply: false
+  session_correlation: true
+  emit_on_ttl_skip: false
+  emit_on_conflict_skip: false
+  emit_on_lock_skip: false
+  sidecar_schema: risk-report-sidecar/v0
+  sidecar_path:
+  hook_schema_confirmed_at:
+  activation_gate: cc03_hook_enabled
+  tags:
+  - gemini
+  - hook
+  - opt-in
+  notes: Operator enables via .trw/config.yaml channels.cc03_hook_enabled=true (shared gate with CC-03). Never denies / never exits 2 — advisory only.

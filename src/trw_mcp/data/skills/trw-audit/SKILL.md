@@ -168,7 +168,7 @@ nfr_audit:
     verdict: PASS|FAIL|NA
     evidence: "Specific code reference"
     finding: "Description if FAIL"
-  # ... all 10 items
+  # ... all 11 items
 
 summary:
   total_frs: 5
