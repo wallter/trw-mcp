@@ -7,6 +7,16 @@ import pytest
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Public-mirror guard: this file asserts a MONOREPO invariant (repo-root
+# .trw/frameworks/FRAMEWORK.md parity) absent from the standalone trw-mcp
+# PyPI/GitHub mirror. Skip cleanly there; the monorepo CI still enforces it.
+if not (_REPO_ROOT / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 _FRAMEWORK_ROOT = _REPO_ROOT / ".trw" / "frameworks" / "FRAMEWORK.md"
 _FRAMEWORK_BUNDLED = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework.md"
 

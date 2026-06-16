@@ -7,6 +7,8 @@ All notable changes to the TRW MCP server package.
 ### Fixed
 
 - Skip monorepo-only invariant tests (agent/module LOC gates, import-boundary, seam-expiry, agent-sync, plus docs/framework/hook/skill parity checks) in the standalone public mirror where repo-root `scripts/` is absent — they were aborting public CI collection.
+- Public-mirror CI: add `--cov-fail-under=0` to the unit-tier `pytest` command so the unit subset's coverage is reported-but-not-gated (the 80% `fail_under` from `pyproject.toml` belongs to the monorepo full-suite gate, not the unit-only public run that cannot reach it).
+- Skip `test_framework_md.py` (repo-root `.trw/frameworks/FRAMEWORK.md` parity) in the standalone mirror via the same monorepo-only guard — it was raising `FileNotFoundError` in public CI.
 
 ## [0.55.14] — 2026-06-14
 
