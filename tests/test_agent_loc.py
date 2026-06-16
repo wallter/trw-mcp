@@ -14,6 +14,16 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
+# scripts/ + .claude/ layout) absent from the standalone trw-mcp PyPI/GitHub
+# mirror. Skip cleanly there; the monorepo CI still enforces it.
+if not (REPO_ROOT / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 LOC_LIMIT = 350
 

@@ -8,6 +8,18 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
+# Public-mirror guard: this test asserts a MONOREPO invariant (it cross-checks
+# the repo-root .claude/hooks/ + trw-eval/ copies against the bundled hook —
+# a layout absent from the standalone trw-mcp PyPI/GitHub mirror). Skip cleanly
+# there; the monorepo CI still enforces it.
+if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 _ROOT = Path(__file__).resolve().parent.parent
 _HOOK_PATHS = (
     _ROOT.parent / ".claude" / "hooks" / "user-prompt-submit.sh",

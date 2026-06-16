@@ -12,6 +12,15 @@ from pathlib import Path
 
 import pytest
 
+# Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
+# scripts/ + .claude/ layout) absent from the standalone trw-mcp PyPI/GitHub
+# mirror. Skip cleanly there; the monorepo CI still enforces it.
+if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from check_import_boundaries import check_import_boundaries
 

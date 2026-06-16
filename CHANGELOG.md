@@ -4,6 +4,10 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Fixed
+
+- Skip monorepo-only invariant tests (agent/module LOC gates, import-boundary, seam-expiry, agent-sync, plus docs/framework/hook/skill parity checks) in the standalone public mirror where repo-root `scripts/` is absent — they were aborting public CI collection.
+
 ## [0.55.14] — 2026-06-14
 
 ### Security

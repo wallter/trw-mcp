@@ -26,6 +26,16 @@ pytestmark = pytest.mark.unit
 _MAX_LINES = 350
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
+# scripts/ + .claude/ layout) absent from the standalone trw-mcp PyPI/GitHub
+# mirror. Skip cleanly there; the monorepo CI still enforces it.
+if not (_REPO_ROOT / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 _CLAUDE_MD_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "state" / "claude_md"
 _TOOLS_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "tools"
 

@@ -19,6 +19,17 @@ pytestmark = pytest.mark.unit
 
 # Repo root resolved from this test file's location (…/trw-mcp/tests/<file>).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Public-mirror guard: this test asserts a MONOREPO invariant (it AST-walks
+# the package at <repo-root>/trw-mcp/src/..., the monorepo layout) absent from
+# the standalone trw-mcp PyPI/GitHub mirror where the package is the repo root.
+# Skip cleanly there; the monorepo CI still enforces it.
+if not (_REPO_ROOT / "scripts").is_dir():
+    pytest.skip(
+        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
+        allow_module_level=True,
+    )
+
 _TOOLS_DIR = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "tools"
 
 # Accepted synonyms. Default canonical is "Use when"; relax only with justification.
