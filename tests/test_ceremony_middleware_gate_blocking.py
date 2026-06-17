@@ -89,7 +89,9 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
         """trw_session_start always passes through even without prior session."""
-        tool_result = FakeToolResult(content=[TextContent(type="text", text="session started")])
+        tool_result = FakeToolResult(
+            content=[TextContent(type="text", text='{"status":"success","detail":"session started"}')]
+        )
         trw_dir = _seed_compaction_marker(tmp_path)
 
         async def call_next(_ctx: Any) -> Any:
@@ -109,7 +111,7 @@ class TestCompactionGate:
             out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
         assert len(out.content) == 1
-        assert _text(out.content[0]) == "session started"
+        assert _text(out.content[0]) == '{"status":"success","detail":"session started"}'
         assert is_session_active("test-session-gate")
         assert not (trw_dir / "context" / "pre_compact_state.json").exists()
 

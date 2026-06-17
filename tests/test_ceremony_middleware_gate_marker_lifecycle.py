@@ -37,7 +37,7 @@ class TestCompactionGate:
         """Blocked or non-ceremony calls do not clear the marker; session_start does."""
         trw_dir = _seed_compaction_marker(tmp_path)
         read_result = FakeToolResult(content=[TextContent(type="text", text="read ok")])
-        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        start_result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success"}')])
         call_names: list[str] = []
 
         async def call_next(ctx: Any) -> Any:
@@ -69,7 +69,7 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
         """After session_start, trw_checkpoint passes through normally."""
-        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        start_result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success"}')])
         checkpoint_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
         trw_dir = _seed_compaction_marker(tmp_path)
         call_count = 0

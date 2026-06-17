@@ -55,6 +55,51 @@ def _make_store_fn() -> Any:
     return _store
 
 
+class TestLearnUtilityFilterGate:
+    """trw-mcp-5: the LLM utility filter must be opt-in (default off)."""
+
+    def _run(self, trw_dir: Path, config: TRWConfig) -> dict[str, object]:
+        return execute_learn(
+            summary="A genuinely useful learning about the build gate",
+            detail="Detail body that explains the root cause and the fix in full.",
+            trw_dir=trw_dir,
+            config=config,
+            _adapter_store=_make_noop_store,
+            _generate_learning_id=lambda: "L-util",
+            _save_learning_entry=MagicMock(return_value=trw_dir / "learnings" / "entries" / "L-util.yaml"),
+            _update_analytics=MagicMock(),
+            _list_active_learnings=MagicMock(return_value=[]),
+            _check_and_handle_dedup=MagicMock(return_value=None),
+        )
+
+    def test_filter_disabled_by_default_never_builds_llm_client(
+        self, trw_dir: Path, config: TRWConfig
+    ) -> None:
+        """Default config must NOT instantiate LLMClient (no undisclosed API call)."""
+        assert config.llm_utility_filter_enabled is False
+        with patch("trw_mcp.clients.llm.LLMClient") as mock_client:
+            result = self._run(trw_dir, config)
+        mock_client.assert_not_called()
+        assert result["status"] == "recorded"
+
+    def test_filter_enabled_invokes_utility_check(self, trw_dir: Path, config: TRWConfig) -> None:
+        """When opted in, the filter path runs and a low-utility verdict rejects."""
+        object.__setattr__(config, "llm_utility_filter_enabled", True)
+        fake_llm = MagicMock()
+        fake_llm._available = True
+        with (
+            patch("trw_mcp.clients.llm.LLMClient", return_value=fake_llm),
+            patch(
+                "trw_mcp.tools._learn_validator.is_high_utility",
+                return_value=(False, "low signal"),
+            ) as mock_util,
+        ):
+            result = self._run(trw_dir, config)
+        mock_util.assert_called_once()
+        assert result["status"] == "rejected"
+        assert result["reason"] == "llm_utility_filter"
+
+
 class TestLearnWithNewFields:
     """Integration tests for execute_learn with PRD-CORE-110 fields."""
 
@@ -314,7 +359,11 @@ class TestLearnWithNewFields:
         trw_dir: Path,
         config: TRWConfig,
     ) -> None:
-        """execute_learn rejects summaries if LLM utility validation fails."""
+        """execute_learn rejects summaries if LLM utility validation fails.
+
+        The filter is opt-in (trw-mcp-5); enable it explicitly for this test.
+        """
+        object.__setattr__(config, "llm_utility_filter_enabled", True)
         mock_is_high_utility.return_value = (False, "Too vague")
         mock_llm_client.return_value._available = True
         store_fn = _make_store_fn()

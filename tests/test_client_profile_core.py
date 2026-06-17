@@ -183,6 +183,25 @@ def test_multi_platform_uses_first() -> None:
 
 
 @pytest.mark.unit
+def test_multi_platform_log_dedup_set_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """trw-mcp-6: the multi-platform WARN dedup set cannot grow unbounded."""
+    from trw_mcp.models.config import _main as config_main
+
+    saved = config_main._LOGGED_MULTI_PLATFORM.copy()
+    config_main._LOGGED_MULTI_PLATFORM.clear()
+    monkeypatch.setattr(config_main, "_MAX_LOGGED_MULTI_PLATFORM", 3)
+    try:
+        # Resolve client_profile for many distinct multi-platform signatures.
+        for i in range(20):
+            cfg = TRWConfig(target_platforms=["opencode", f"target-{i}"])
+            _ = cfg.client_profile
+        assert len(config_main._LOGGED_MULTI_PLATFORM) <= 3, "dedup set must respect the cap"
+    finally:
+        config_main._LOGGED_MULTI_PLATFORM.clear()
+        config_main._LOGGED_MULTI_PLATFORM.update(saved)
+
+
+@pytest.mark.unit
 def test_client_profile_frozen_raises_on_assignment() -> None:
     """Frozen ClientProfile raises ValidationError on attribute assignment."""
     profile = resolve_client_profile("claude-code")

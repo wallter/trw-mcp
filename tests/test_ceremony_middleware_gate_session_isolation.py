@@ -129,7 +129,7 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext
     ) -> None:
         """Normal flow: session started first, then tools work without interference."""
-        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        start_result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success"}')])
         learn_result = FakeToolResult(content=[TextContent(type="text", text="learned")])
         build_result = FakeToolResult(content=[TextContent(type="text", text="built")])
         results = [start_result, learn_result, build_result]

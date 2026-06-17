@@ -49,6 +49,13 @@ _SubT = TypeVar("_SubT")
 # 100+ times per tool call when many config-aware code paths each touch
 # ``self.client_profile``. Keyed by (primary, target_platforms) so a real
 # config change still surfaces a fresh warning.
+#
+# Capped so a long-lived shared-HTTP server seeing many distinct
+# (primary, target_platforms) tuples cannot grow this set without bound. The
+# set exists only to suppress duplicate log lines; once the cap is reached we
+# stop tracking new signatures (a never-before-seen signature may then warn
+# more than once, which is acceptable degradation for a dedup-only structure).
+_MAX_LOGGED_MULTI_PLATFORM = 1024
 _LOGGED_MULTI_PLATFORM: set[tuple[str, tuple[str, ...]]] = set()
 
 
@@ -381,7 +388,8 @@ class TRWConfig(_TRWConfigFields):
         if len(self.target_platforms) > 1:
             signature = (primary, tuple(self.target_platforms))
             if signature not in _LOGGED_MULTI_PLATFORM:
-                _LOGGED_MULTI_PLATFORM.add(signature)
+                if len(_LOGGED_MULTI_PLATFORM) < _MAX_LOGGED_MULTI_PLATFORM:
+                    _LOGGED_MULTI_PLATFORM.add(signature)
                 structlog.get_logger(__name__).warning(
                     "multi_platform_profile_resolution",
                     primary=primary,

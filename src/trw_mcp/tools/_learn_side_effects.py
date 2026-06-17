@@ -47,6 +47,19 @@ _LEARN_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"<system>", re.IGNORECASE),
     re.compile(r"\[INST\]", re.IGNORECASE),
     re.compile(r"\[\[AI:", re.IGNORECASE),
+    # Model-family chat-template control tokens (Llama/Mistral/Qwen/ChatML/
+    # GPT). Learnings are recalled verbatim into future agent prompts via
+    # trw_session_start, trw_recall, and the trw://learnings/summary resource,
+    # so an embedded role-delimiter token is a direct prompt-injection payload.
+    # These are control sequences that never appear in legitimate engineering
+    # prose, so blocking them cannot false-positive on real notes.
+    re.compile(r"<\|im_start\|>", re.IGNORECASE),
+    re.compile(r"<\|im_end\|>", re.IGNORECASE),
+    re.compile(r"<\|endoftext\|>", re.IGNORECASE),
+    re.compile(r"<\|system\|>", re.IGNORECASE),
+    re.compile(r"^###\s*system\s*:", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"<s>\s*\[INST\]", re.IGNORECASE),
+    re.compile(r"system_prompt\s*:", re.IGNORECASE),
 )
 
 # Per-field caps: chosen to exceed p99 of real engineering notes while

@@ -191,7 +191,11 @@ def _session_start_succeeded(result: object) -> bool:
 
     payload = _extract_session_start_payload(result)
     if payload is None:
-        return True
+        # Fail-closed: a non-JSON / unparseable result (e.g. an error or
+        # exception ToolResult) is NOT an explicit success. Treating it as
+        # success would clear the on-disk compaction-recovery marker and
+        # silently destroy post-compaction recovery state.
+        return False
 
     success = payload.get("success")
     if isinstance(success, bool):
@@ -201,7 +205,10 @@ def _session_start_succeeded(result: object) -> bool:
     if isinstance(status, str):
         return status.lower() == "success"
 
-    return True
+    # Fail-closed: a parsed payload that reports neither "success" nor
+    # "status" is an unknown result — keep the ceremony/compaction gate
+    # closed rather than marking the session active on ambiguous output.
+    return False
 
 
 def _is_compaction_gate_required_for_session(session_id: str) -> bool:

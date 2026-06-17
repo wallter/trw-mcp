@@ -4,6 +4,37 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.55.17] — 2026-06-17
+
+### Changed
+
+- **Wired in the orphaned operational-subcommand registration and split the CLI parser builder under the module-size gate.** A prior hardening run extracted `add_operational_subcommands` into `server/_cli_argparse_operational.py` (build-release / channel-doctor / session-changelog / tendencies / version-status / tier) but never imported it, leaving the registration duplicated inline in `server/_cli_argparse.py` (586 effective LOC, over the 350-eLOC module gate). The builder now calls `add_operational_subcommands` and a new sibling `add_project_subcommands` (init-project / update-project / audit / export / import-learnings); `_cli_argparse.py` drops to 225 eLOC. The change is behavior-preserving — the full parser structure (subcommands, args, defaults, choices, help) is byte-identical before and after, guarded by new behavior tests in `tests/test_cli_argparse_subcommands.py`.
+
+### Fixed
+
+- **Python 3.10 compatibility in `tests/test_sync_client_cycle.py`.** The test imported `datetime.UTC`, which is 3.11+ only and `ImportError`s under the package's declared `requires-python = ">=3.10"`. Replaced with `timezone.utc`.
+
+## [0.55.16] — 2026-06-17
+
+### Security
+
+- **Block model-family chat-template injection tokens in the learn content policy.** `_LEARN_INJECTION_PATTERNS` previously covered `[INST]`/`<system>`/`[[AI:` but not Llama/Mistral/Qwen/ChatML/GPT control tokens. Because learnings are recalled verbatim into future agent prompts (via `trw_session_start`, `trw_recall`, and the `trw://learnings/summary` resource), an embedded `<|im_start|>system`, `<|im_end|>`, `<|endoftext|>`, `<|SYSTEM|>`, `### System:`, `<s>[INST]`, or `SYSTEM_PROMPT:` token was a stored prompt-injection payload. These token families are now rejected at write time; the `### System:` header is line-anchored and `SYSTEM_PROMPT:` requires a colon so legitimate prose mentioning system prompts is not falsely blocked. (trw-mcp-7)
+
+### Fixed
+
+- **Ceremony compaction gate now fails closed on ambiguous `session_start` results.** `_session_start_succeeded` returned `True` for a non-JSON / error `ToolResult` and for a JSON payload lacking both `success` and `status` keys, which marked the session active and deleted the on-disk compaction-recovery marker. An errored `session_start` could silently destroy post-compaction recovery state. Both ambiguous paths now return `False`. (trw-mcp-1)
+- **`HOT_PATH` ContextVar reset is now guarded by try/finally in `trw_session_start`.** The `set(True)`/`reset()` pair spanned ~180 lines with no try/finally despite the docstring claiming one existed; an unhandled raise between them could leak `HOT_PATH=True` into the surrounding context and permanently suppress legacy mtime-scan warnings on that task. (trw-mcp-2)
+- **LLM utility filter on `trw_learn` is now opt-in.** `execute_learn` unconditionally constructed an `LLMClient` and called `is_high_utility` on every learn, firing an undisclosed live Claude Haiku API call (with latency/cost and silent fail-open) whenever the Anthropic SDK + API key were present. Gated behind the new `llm_utility_filter_enabled` config flag (default `False`). (trw-mcp-5)
+
+### Performance
+
+- **`embed_text_batch` uses the vectorized `embed_batch` API.** It previously built embeddings with a per-text list comprehension (N serial single-text inference calls); it now issues one batched `model.encode` call, materially cutting backfill latency on lists of 50-200 entries. (trw-mcp-3)
+
+### Changed
+
+- **Bounded the `_state_locks` ceremony-progress lock registry (LRU cap 256).** Previously one `threading.Lock` was retained per unique resolved `trw_dir` path forever, leaking memory in long-lived shared-HTTP servers. Eviction only ever drops currently-unheld locks, so in-flight read-modify-write serialization is never broken. (trw-mcp-4)
+- **Bounded the `_LOGGED_MULTI_PLATFORM` warning-dedup set (cap 1024).** Prevents unbounded growth across many distinct `(primary, target_platforms)` signatures in a long-lived server. (trw-mcp-6)
+
 ## [0.55.15] — 2026-06-16
 
 ### Fixed

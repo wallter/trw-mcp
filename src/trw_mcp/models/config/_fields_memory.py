@@ -102,6 +102,13 @@ class _MemoryFields:
     retrieval_fallback_enabled: bool = True
     wal_checkpoint_threshold_mb: int = 10
 
+    # -- LLM utility filter (QUAL-062) --
+    # When enabled, trw_learn routes each candidate learning through a live
+    # Claude Haiku call (is_high_utility) that can reject low-utility entries.
+    # Default False: the call has undisclosed latency + API cost and fails open,
+    # so it must be opted into explicitly rather than firing on every learn.
+    llm_utility_filter_enabled: bool = False
+
     # -- Semantic dedup (CORE-042) --
 
     dedup_enabled: bool = True

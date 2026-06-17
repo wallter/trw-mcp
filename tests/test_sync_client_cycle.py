@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -196,7 +196,7 @@ async def test_run_one_cycle_applies_server_next_poll_hint(tmp_path) -> None:
             state={"etag": "etag-1"},
             etag="etag-1",
             sync_hints={
-                "next_poll_recommended_at": (datetime.now(tz=UTC) + timedelta(seconds=5)).isoformat(),
+                "next_poll_recommended_at": (datetime.now(tz=timezone.utc) + timedelta(seconds=5)).isoformat(),
                 "polling_cap_seconds": 120,
                 "interval_seconds": 120,
             },

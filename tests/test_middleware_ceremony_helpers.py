@@ -35,6 +35,16 @@ class TestSessionStartPayloadHelpers:
         assert _session_start_succeeded(success_result) is True
         assert _session_start_succeeded(failure_result) is False
 
+    def test_session_start_succeeded_unparseable_payload_fails_closed(self) -> None:
+        """A non-JSON / error result is NOT a success — keep the gate closed."""
+        error_result = FakeToolResult(content=[TextContent(type="text", text="boom: not json")])
+        assert _session_start_succeeded(error_result) is False
+
+    def test_session_start_succeeded_no_status_or_success_key_fails_closed(self) -> None:
+        """A parsed payload lacking both success and status keys is ambiguous → False."""
+        ambiguous = FakeToolResult(content=[TextContent(type="text", text='{"other":"value"}')])
+        assert _session_start_succeeded(ambiguous) is False
+
     def test_compaction_gate_marks_all_known_sessions_pending(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "trw_mcp.middleware.ceremony._is_compaction_gate_required",

@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -30,8 +31,38 @@ _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review
 # on the RESOLVED (absolute) state path, so all callers targeting the same file
 # share one lock regardless of how ``trw_dir`` was spelled. The registry itself
 # is guarded by ``_state_locks_guard``.
-_state_locks: dict[str, threading.Lock] = {}
+#
+# In a long-lived shared-HTTP server serving agents whose projects each have a
+# distinct ``trw_dir`` on disk, an unbounded registry leaks one Lock per unique
+# path for the life of the process. Cap it with LRU eviction (mirroring
+# ``_MAX_TRACKED_SESSIONS`` in middleware/ceremony.py). Eviction only ever drops
+# a lock that is NOT currently held: a free lock for path P has no in-flight RMW
+# to serialize, so the next caller for P simply creates a fresh lock — the
+# serialization guarantee is preserved. A held lock is never evicted.
+_MAX_STATE_LOCKS = 256
+_state_locks: OrderedDict[str, threading.Lock] = OrderedDict()
 _state_locks_guard = threading.Lock()
+
+
+def _evict_unheld_state_locks_locked() -> None:
+    """Drop least-recently-used, currently-UNHELD locks until under the cap.
+
+    Caller must hold ``_state_locks_guard``. A lock is "unheld" when a
+    non-blocking ``acquire()`` succeeds; we immediately release it. Held locks
+    (an in-flight RMW) are skipped so we never break serialization for an
+    active caller.
+    """
+    while len(_state_locks) > _MAX_STATE_LOCKS:
+        evicted = False
+        for key, lock in list(_state_locks.items()):
+            if lock.acquire(blocking=False):
+                lock.release()
+                del _state_locks[key]
+                evicted = True
+                break
+        if not evicted:
+            # Every remaining lock is currently held — nothing safe to evict.
+            break
 
 
 def _state_lock_for(trw_dir: Path) -> threading.Lock:
@@ -42,6 +73,9 @@ def _state_lock_for(trw_dir: Path) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _state_locks[key] = lock
+            _evict_unheld_state_locks_locked()
+        else:
+            _state_locks.move_to_end(key)
         return lock
 
 

@@ -94,32 +94,33 @@ class TestEmbedTextBatch:
             result = embed_text_batch(["a", "b", "c"])
             assert result == [None, None, None]
 
-    def test_returns_vectors_on_success(self) -> None:
-        """embed_text_batch delegates to embed_text per item."""
+    def test_uses_vectorized_embed_batch_single_call(self) -> None:
+        """embed_text_batch issues ONE embed_batch call, not N serial embed() calls."""
         mock_embedder = MagicMock()
         vec1 = [0.1, 0.2]
         vec2 = [0.3, 0.4]
-        mock_embedder.embed.side_effect = [vec1, vec2]
+        mock_embedder.embed_batch.return_value = [vec1, vec2]
         with patch(
             "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             result = embed_text_batch(["hello", "world"])
-            assert len(result) == 2
-            assert isinstance(result, list)
+            assert result == [vec1, vec2]
+            # The vectorized batch path is used exactly once with all texts...
+            mock_embedder.embed_batch.assert_called_once_with(["hello", "world"])
+            # ...and the per-text serial path is NOT used (the regression we fixed).
+            mock_embedder.embed.assert_not_called()
 
     def test_batch_exception_returns_none_list(self) -> None:
         """embed_text_batch catches exceptions and returns [None, ...]."""
+        mock_embedder = MagicMock()
+        mock_embedder.embed_batch.side_effect = RuntimeError("batch explosion")
         with patch(
             "trw_mcp.state._memory_connection.get_embedder",
-            return_value=MagicMock(),
+            return_value=mock_embedder,
         ):
-            with patch(
-                "trw_mcp.state._memory_connection.embed_text",
-                side_effect=RuntimeError("batch explosion"),
-            ):
-                result = embed_text_batch(["a", "b"])
-                assert result == [None, None]
+            result = embed_text_batch(["a", "b"])
+            assert result == [None, None]
 
 
 class TestEmbeddingAvailable:

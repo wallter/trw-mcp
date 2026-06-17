@@ -479,6 +479,11 @@ def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
     """Generate embeddings for multiple texts (PRD-CORE-080).
 
     Returns a list of embedding vectors (or None per text on failure).
+
+    Uses the embedder's vectorized ``embed_batch`` so a list of N texts costs a
+    single batched inference call instead of N serial ``embed`` calls. Blank
+    strings receive ``None`` in the output, matching the per-text ``embed_text``
+    contract.
     """
     if not texts:
         return []
@@ -486,7 +491,8 @@ def embed_text_batch(texts: list[str]) -> list[list[float] | None]:
     if embedder is None:
         return [None] * len(texts)
     try:
-        return [embed_text(t) for t in texts]
+        result: list[list[float] | None] = embedder.embed_batch(texts)
+        return result
     except (OSError, ValueError, RuntimeError):
         logger.debug("embed_text_batch_failed", text_count=len(texts))
         return [None] * len(texts)

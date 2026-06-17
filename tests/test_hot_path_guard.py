@@ -159,3 +159,30 @@ def test_hot_path_set_during_session_start() -> None:
 
     # Sanity: the call returned a result dict.
     assert isinstance(result, dict)
+
+
+def test_hot_path_reset_even_when_step_raises() -> None:
+    """trw-mcp-2: HOT_PATH must reset even if an unguarded step raises.
+
+    The reset lives in a try/finally so an unhandled raise between
+    HOT_PATH.set(True) and the return cannot leak HOT_PATH=True into the
+    surrounding context. Patch an early, individually-unguarded step
+    (run_boot_audit) to raise and confirm the exception propagates while
+    HOT_PATH is restored to its pre-call value.
+    """
+    from unittest.mock import patch
+
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    fn = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")
+
+    assert HOT_PATH.get() is False
+
+    with patch(
+        "trw_mcp.telemetry.boot_audit.run_boot_audit",
+        side_effect=RuntimeError("boom"),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            fn(ctx=None, query="hot-path-raise-probe")
+
+    assert HOT_PATH.get() is False, "HOT_PATH must be reset even when a session_start step raises"

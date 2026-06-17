@@ -169,22 +169,28 @@ def execute_learn(
         )
         return cast("LearnResultDict", _policy_reject)
 
-    # PRD-QUAL-062: LLM-based Utility Scoring
-    try:
-        from trw_mcp.clients.llm import LLMClient
-        from trw_mcp.tools._learn_validator import is_high_utility
+    # PRD-QUAL-062: LLM-based Utility Scoring (opt-in). Gated behind
+    # config.llm_utility_filter_enabled (default False): unconditionally
+    # constructing an LLMClient + calling is_high_utility fires a live Claude
+    # Haiku API call on every trw_learn with no operator kill-switch, adding
+    # undisclosed latency + cost. Only build the client when the operator has
+    # explicitly enabled the filter.
+    if config.llm_utility_filter_enabled:
+        try:
+            from trw_mcp.clients.llm import LLMClient
+            from trw_mcp.tools._learn_validator import is_high_utility
 
-        llm = LLMClient(model="haiku", system_prompt="")
-        if getattr(llm, "_available", True):
-            is_valid, reject_reason = is_high_utility(summary, detail, llm)
-            if not is_valid:
-                return {
-                    "status": "rejected",
-                    "reason": "llm_utility_filter",
-                    "message": f"Rejected by utility filter: {reject_reason}",
-                }
-    except Exception as exc:  # justified: fail-open, LLM utility filter is advisory only
-        logger.warning("llm_utility_filter_failed", error=str(exc))
+            llm = LLMClient(model="haiku", system_prompt="")
+            if getattr(llm, "_available", True):
+                is_valid, reject_reason = is_high_utility(summary, detail, llm)
+                if not is_valid:
+                    return {
+                        "status": "rejected",
+                        "reason": "llm_utility_filter",
+                        "message": f"Rejected by utility filter: {reject_reason}",
+                    }
+        except Exception as exc:  # justified: fail-open, LLM utility filter is advisory only
+            logger.warning("llm_utility_filter_failed", error=str(exc))
 
     reader = FileStateReader()
     writer = FileStateWriter()
