@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from trw_mcp.state._paths import TRWCallContext
 
 
-def _detect_surface_phase() -> str:
+def _detect_surface_phase(call_ctx: TRWCallContext | None = None) -> str:
     """Best-effort detection of the current ceremony phase.
 
     Returns the phase string (e.g. ``"IMPLEMENT"``) or ``""`` when detection fails.
@@ -40,7 +40,7 @@ def _detect_surface_phase() -> str:
     try:
         from trw_mcp.state._paths import detect_current_phase
 
-        phase = detect_current_phase()
+        phase = detect_current_phase(context=call_ctx)
         return phase.upper() if phase else ""
     except Exception:  # justified: fail-open, phase detection is optional
         return ""
@@ -76,7 +76,7 @@ def build_recall_context(
     """
     from trw_mcp.scoring._recall import RecallContext, infer_domains
 
-    current_phase: str | None = _detect_surface_phase() or None
+    current_phase: str | None = _detect_surface_phase(call_ctx) or None
     modified_files: list[str] = []
 
     try:

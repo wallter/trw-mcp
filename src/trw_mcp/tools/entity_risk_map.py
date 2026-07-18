@@ -20,29 +20,14 @@ from fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
-from trw_mcp.tools._sidecar_substrate import (
-    DEFAULT_CACHE_DIR_REL,
-    check_tier_for_feature,
-    load_sidecar_with_sha_check,
-    resolve_git_sha,
-    resolve_repo_root,
-)
+from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus, resolve_current_sidecar
 
 _ARTIFACT_NAME: str = "entity-risk-map"
 _TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
 _COMPONENT: str = "trw_entity_risk_map"
 _LOGGER = logging.getLogger(__name__)
 
-EntityRiskStatus = Literal[
-    "hint_available",
-    "tier_required",
-    "sidecar_missing",
-    "sidecar_malformed",
-    "schema_mismatch",
-    "stale_sha",
-    "no_repo_root",
-    "no_git_sha",
-]
+EntityRiskStatus = CurrentSidecarStatus
 EntityKind = Literal["module", "class", "function", "method", "endpoint", "symbol"]
 EntityExposure = Literal["private", "internal", "public", "external"]
 
@@ -176,78 +161,48 @@ def compute_entity_risk_map(
     """
 
     started = time.perf_counter()
-    resolved_repo_root = resolve_repo_root(repo_root)
-    if resolved_repo_root is None:
-        return _status_result(
-            tier="free",
-            status="no_repo_root",
-            action="Pass --repo or run from inside a git checkout",
-        )
-
-    gate = check_tier_for_feature(resolved_repo_root, _TIER_FEATURE)
-    if not gate.allowed:
-        return _status_result(
-            tier=gate.tier,
-            status="tier_required",
-            action=(
-                "Acquire team/pro/enterprise tier to enable trw-distill "
-                "sidecar consumption (see https://trwframework.com/tier)"
-            ),
-        )
-
-    git_sha = resolve_git_sha(resolved_repo_root)
-    if git_sha is None:
-        return _status_result(
-            tier=gate.tier,
-            status="no_git_sha",
-            action="Could not run `git rev-parse HEAD` — verify .git/ present",
-        )
-
-    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
-    sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME}-{git_sha}.json"
-    existed_before_load = sidecar_path.exists()
-
-    load = load_sidecar_with_sha_check(
-        sidecar_path,
-        expected_sha=git_sha,
-        file_path_hint="<entity-risk-map>",
+    sidecar = resolve_current_sidecar(
+        repo_root=repo_root,
+        cache_dir=cache_dir,
+        feature=_TIER_FEATURE,
+        artifact_name=_ARTIFACT_NAME,
         cli_remediation=_producer_command(),
     )
-    if load.status != "ok" or load.payload is None:
+    if sidecar.status != "hint_available" or sidecar.payload is None:
         status: EntityRiskStatus
         action: str | None
-        if load.status == "sidecar_missing" and existed_before_load:
+        if sidecar.status == "sidecar_missing" and sidecar.sidecar_existed:
             status = "sidecar_malformed"
-            action = f"Sidecar {sidecar_path} is malformed JSON; re-run: {_producer_command()}"
+            action = f"Sidecar {sidecar.sidecar_path} is malformed JSON; re-run: {_producer_command()}"
         else:
-            status = cast("EntityRiskStatus", load.status)
-            action = load.action
+            status = sidecar.status
+            action = sidecar.action
         return _status_result(
-            tier=gate.tier,
+            tier=sidecar.tier,
             status=status,
             action=action,
-            sidecar_path=load.sidecar_path,
-            sidecar_sha=load.sidecar_sha,
+            sidecar_path=sidecar.sidecar_path,
+            sidecar_sha=sidecar.sidecar_sha,
         )
 
-    rows, error = _validate_entity_rows(load.payload)
+    rows, error = _validate_entity_rows(sidecar.payload)
     if rows is None:
         return _status_result(
-            tier=gate.tier,
+            tier=sidecar.tier,
             status="sidecar_malformed",
             action=f"{error}; check producer/consumer schema compatibility",
-            sidecar_path=load.sidecar_path,
-            sidecar_sha=load.sidecar_sha,
+            sidecar_path=sidecar.sidecar_path,
+            sidecar_sha=sidecar.sidecar_sha,
         )
 
     filtered_rows = _filter_entities(rows, changed_only=changed_only, top_n=top_n)
     result = EntityRiskMapResult(
-        tier=gate.tier,
+        tier=sidecar.tier,
         entity_risk=filtered_rows,
         distill_status="hint_available",
         distill_action=None,
-        distill_sidecar_path=load.sidecar_path,
-        distill_sidecar_sha=load.sidecar_sha,
+        distill_sidecar_path=sidecar.sidecar_path,
+        distill_sidecar_sha=sidecar.sidecar_sha,
         entity_count=len(rows),
     )
     _log_result(result, elapsed_ms=(time.perf_counter() - started) * 1000.0)

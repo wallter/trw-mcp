@@ -13,28 +13,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+from trw_mcp.models.config._capability import CapabilityTier, LegacyModelTier, ModelTier, normalize_capability_tier
 from trw_mcp.models.run import Phase
-
-ModelTier = Literal[
-    "frontier",
-    "balanced",
-    "local-large",
-    "local-small",
-    "cloud-opus",
-    "cloud-sonnet",
-    "local-30b",
-    "local-8b",
-]
 
 _VALID_PHASES: frozenset[str] = frozenset(p.value for p in Phase)
 
 __all__ = [
+    "CapabilityTier",
     "CeremonyWeights",
     "ClientProfile",
+    "LegacyModelTier",
     "ModelTier",
     "NudgePoolWeights",
     "ScoringDimensionWeights",
     "WriteTargets",
+    "normalize_capability_tier",
 ]
 
 
@@ -118,7 +111,6 @@ class WriteTargets(BaseModel):
     cli_config: bool = False  # .cursor/cli.json managed (cursor-cli only)
     cursor_rules: bool = False
     copilot_instructions: bool = False
-    gemini_md: bool = False
     antigravitycli_md: bool = False
     instruction_path: str = ""
 
@@ -186,13 +178,15 @@ class ClientProfile(BaseModel):
     include_framework_ref: bool = True
     include_delegation: bool = True
 
-    # -- Surface control flags (PRD-CORE-125) --
+    # -- Surface control flags --
+    # (Tool exposure is no longer per-profile: PRD-CORE-218 made the global
+    # tool_resolution_mode + SurfaceAuthorityMiddleware the sole authority, so the
+    # former per-profile tool_exposure_mode field was removed.)
     nudge_enabled: bool = True
     # PRD-CORE-146 FR04: per-profile nudge density default. ``None`` leaves
     # density unset so TRWConfig.effective_nudge_density falls back through
     # to the module default. No profile opts in by default today.
     nudge_density: Literal["low", "medium", "high"] | None = None
-    tool_exposure_mode: Literal["all", "core", "minimal", "standard", "custom"] = "all"
     learning_recall_enabled: bool = True
     mcp_instructions_enabled: bool = True
     skills_enabled: bool = True
@@ -219,6 +213,16 @@ class ClientProfile(BaseModel):
     # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to
     # ``"mcp__trw__"`` for claude-code; bare names for all other clients.
     tool_namespace_prefix: str = ""
+
+    # -- In-file import capability (PRD-CORE-203 FR01) --
+    # Whether this client's instruction file supports an in-file import
+    # directive that recursively embeds another file into context.
+    #   ``"at_path"`` -> Claude Code's ``@<repo-root-relative-path>`` syntax
+    #                    (recursive, <=5 hops). Eligible for TRW-block
+    #                    externalization to ``.trw/INSTRUCTIONS.md``.
+    #   ``"none"``    -> no in-file import (opencode/codex/gemini/copilot/aider/
+    #                    cursor read a concrete file; the block is inlined).
+    instruction_import_syntax: Literal["none", "at_path"] = "none"
 
     @computed_field  # type: ignore[prop-decorator]  # Pydantic v2 supports @computed_field on @property; the decorator-order lint is a known Pyright limitation.
     @property

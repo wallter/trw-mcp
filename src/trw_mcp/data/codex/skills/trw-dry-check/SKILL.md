@@ -1,13 +1,11 @@
 ---
 name: trw-dry-check
-description: "Scan files for duplicated code blocks and suggest extraction. Read-only analysis — reports findings without modifying code. Use: /trw-dry-check [file-patterns...]\n"
+description: "Scan files for duplicated code blocks and classify consolidation candidates. Read-only analysis — reports evidence without modifying code. Use: /trw-dry-check [file-patterns...]\n"
 ---
-
-> Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
 
 # /trw-dry-check
 
-Scan files for duplicated code blocks that violate DRY principles.
+Analyze duplicate candidates without treating scanner matches as DRY violations.
 
 ## Usage
 
@@ -17,18 +15,21 @@ Scan files for duplicated code blocks that violate DRY principles.
 
 ## Workflow
 
-1. **Identify files**: If patterns provided, use Glob to find matching files. Otherwise, use `git diff --name-only HEAD` to find changed files.
+1. **Scope files**: Resolve supplied patterns with project-native search. Otherwise inspect files changed from `HEAD`.
+   Stay read-only and do not disturb unrelated work in a shared or dirty workspace.
 
-2. **Read each file**: Read all matched files and compare blocks of 5+ consecutive lines for similarity.
+2. **Detect candidates**: Compare relevant blocks and label the method used: exact, near-duplicate, or structural.
+   Cite files/ranges and confidence. A similarity score or scanner match is evidence, not a verdict.
 
-3. **Detect duplicates**: For each pair of files, identify:
-   - Exact duplicate blocks (5+ lines identical after whitespace normalization)
-   - Near-duplicate blocks (>80% similar after identifier normalization)
-   - Repeated structural patterns (same shape, different names)
+3. **Trace context**: Inspect surrounding ownership, callers, contracts, tests, generation/sync paths, and deployment
+   boundaries. Required client projections, schema/default mirrors, standalone artifacts, fixtures, and intentionally
+   separate safety or lifecycle code are not extraction targets merely because they repeat.
 
-4. **Report findings**: For each duplicated block, suggest:
-   - Which file should own the shared helper
-   - A function signature for the extracted helper
-   - Which locations should call the new helper
+4. **Classify each candidate**:
+   - **consolidate** only when maintained first-party copies implement the same behavior, one owner is appropriate, and
+     extraction reduces net complexity without weakening boundaries;
+   - **retain** when repetition is intentional or required; or
+   - **uncertain** when reachability, ownership, or contract evidence is incomplete.
 
-5. **Summarize**: Report total blocks found, total files affected, and suggested extractions.
+5. **Report**: Give candidate/file counts, classification, and evidence. Suggest an owner, helper signature, and call
+   sites only for **consolidate** findings. A justified no-change result is valid.

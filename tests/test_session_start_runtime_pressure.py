@@ -486,7 +486,9 @@ def test_candidate_run_hints_list_live_pinned_runs(tmp_path: Path, monkeypatch: 
 
     assert candidates
     assert candidates[0]["run_path"] == str(run_dir)
-    assert "trw_adopt_run" in str(candidates[0]["adopt_command"])
+    # adopt_command was dropped from candidate entries (2026-07-12): it only
+    # repeated run_path; the hint text states the trw_adopt_run convention.
+    assert "adopt_command" not in candidates[0]
 
 
 def test_append_ceremony_status_defers_nudges_under_writer_pressure(tmp_path: Path) -> None:

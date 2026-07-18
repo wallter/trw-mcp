@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
@@ -36,7 +38,8 @@ class TestCollectPromotableLearnings:
             },
         )
 
-        result = collect_promotable_learnings(trw_dir, config, _reader)
+        with pytest.warns(DeprecationWarning):
+            result = collect_promotable_learnings(trw_dir, config, _reader)
         assert any(e.get("id") == "L-mature" for e in result)
 
     def test_filters_below_threshold(self, tmp_path: Path) -> None:
@@ -59,7 +62,8 @@ class TestCollectPromotableLearnings:
             },
         )
 
-        result = collect_promotable_learnings(trw_dir, config, _reader)
+        with pytest.warns(DeprecationWarning):
+            result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-low" for e in result)
 
     def test_skips_non_active_entries(self, tmp_path: Path) -> None:
@@ -80,7 +84,8 @@ class TestCollectPromotableLearnings:
             },
         )
 
-        result = collect_promotable_learnings(trw_dir, config, _reader)
+        with pytest.warns(DeprecationWarning):
+            result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-obs" for e in result)
 
     def test_returns_empty_when_no_entries_dir(self, tmp_path: Path) -> None:
@@ -91,7 +96,8 @@ class TestCollectPromotableLearnings:
         trw_dir.mkdir()
         # No entries directory created
 
-        result = collect_promotable_learnings(trw_dir, config, _reader)
+        with pytest.warns(DeprecationWarning):
+            result = collect_promotable_learnings(trw_dir, config, _reader)
         assert result == []
 
 
@@ -270,7 +276,8 @@ class TestCollectPromotableLearningsExceptionContinue:
             "trw_mcp.state.memory_adapter.list_active_learnings",
             return_value=[good_entry, bad_entry],
         ):
-            result = collect_promotable_learnings(trw_dir, config, _reader)
+            with pytest.warns(DeprecationWarning):
+                result = collect_promotable_learnings(trw_dir, config, _reader)
 
         # bad entry should be skipped due to TypeError; good entry returned
         assert any(e.get("id") == "L-good" for e in result)

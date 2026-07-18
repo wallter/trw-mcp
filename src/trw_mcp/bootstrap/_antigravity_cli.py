@@ -17,6 +17,7 @@ from ._file_ops import (
     _new_result,
     _record_write,
     read_settings_for_merge,
+    write_agent_templates,
     write_instruction_file_with_merge,
 )
 
@@ -268,23 +269,9 @@ def generate_antigravity_agents(
     force: bool = False,
 ) -> dict[str, list[str]]:
     """Generate ``.antigravitycli/agents/trw-*.md`` subagent definitions."""
-    result = _new_result()
-    agents_dir = target_dir / _ANTIGRAVITY_AGENTS_DIR
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for filename, content in _ANTIGRAVITY_AGENT_TEMPLATES.items():
-        path = agents_dir / filename
-        existed = path.exists()
-        rel_path = f"{_ANTIGRAVITY_AGENTS_DIR}/{filename}"
-
-        if existed and not force:
-            result["preserved"].append(rel_path)
-            continue
-
-        try:
-            path.write_text(content, encoding="utf-8")
-            _record_write(result, rel_path, existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
-
-    return result
+    return write_agent_templates(
+        target_dir,
+        agents_dir=_ANTIGRAVITY_AGENTS_DIR,
+        templates=_ANTIGRAVITY_AGENT_TEMPLATES,
+        force=force,
+    )

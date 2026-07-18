@@ -14,6 +14,8 @@ from __future__ import annotations
 # ``trw_mcp.bootstrap.shutil.rmtree`` continue to resolve correctly.
 import shutil as shutil  # explicit re-export for test compat
 
+from trw_mcp.canons.registry import install_view, load_registry
+
 from ._codex import (
     generate_codex_agents as generate_codex_agents,
 )
@@ -56,9 +58,6 @@ from ._cursor import (
 from ._cursor import (
     generate_cursor_rules as generate_cursor_rules,
 )
-from ._gemini import generate_gemini_agents as generate_gemini_agents
-from ._gemini import generate_gemini_instructions as generate_gemini_instructions
-from ._gemini import generate_gemini_mcp_config as generate_gemini_mcp_config
 from ._init_project import (
     _copy_bundled_data_files as _copy_bundled_data_files,
 )
@@ -183,9 +182,6 @@ from ._update_project import (
     _update_framework_files as _update_framework_files,
 )
 from ._update_project import (
-    _update_gemini_artifacts as _update_gemini_artifacts,
-)
-from ._update_project import (
     _update_hooks as _update_hooks,
 )
 from ._update_project import (
@@ -286,8 +282,7 @@ _TRW_DIRS = [
 
 # Mapping of bundled data files to their destination paths (relative to target).
 _DATA_FILE_MAP: list[tuple[str, str]] = [
-    ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
-    ("framework.md", "FRAMEWORK.md"),
+    *install_view(load_registry()),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),

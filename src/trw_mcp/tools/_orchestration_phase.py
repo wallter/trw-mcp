@@ -142,6 +142,109 @@ def _compute_reversion_metrics(
     }
 
 
+def current_deployed_canon_fingerprint() -> str | None:
+    """Current deployed-canon generation digest (bundled registry digest), or None.
+
+    PRD-INFRA-164 FR08: the deployed generation identity the running process would
+    install. Unreadable/malformed registry yields ``None`` so currentness reports
+    unknown rather than a borrowed value (NFR07).
+    """
+    try:
+        from trw_mcp.canons.registry import load_registry
+
+        return load_registry().digest
+    except Exception:  # justified: unreadable registry -> unknown, never a fabricated digest
+        logger.debug("deployed_canon_fingerprint_unavailable", exc_info=True)
+        return None
+
+
+def current_live_process_fingerprint() -> str | None:
+    """Digest of the frozen live-process fingerprint, or None if never frozen."""
+    from trw_mcp.canons.fingerprint import get_frozen_fingerprint
+
+    frozen = get_frozen_fingerprint()
+    return frozen.digest if frozen is not None else None
+
+
+def read_run_canon_fingerprints(run_root: Path) -> tuple[str | None, str | None]:
+    """Read a run's stamped ``(deployed_canon_fingerprint, live_process_fingerprint)``.
+
+    A legacy run (no stamp file) or an unreadable/incomplete stamp yields
+    ``(None, None)`` so currentness stays unknown — absence never means current.
+    """
+    stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
+    reader = FileStateReader()
+    if not reader.exists(stamp_path):
+        return None, None
+    try:
+        data = reader.read_yaml(stamp_path)
+    except (StateError, ValueError, TypeError, OSError):
+        return None, None
+    deployed = data.get("deployed_canon_fingerprint")
+    process = data.get("live_process_fingerprint")
+    deployed_str = str(deployed) if isinstance(deployed, str) and deployed else None
+    process_str = str(process) if isinstance(process, str) and process else None
+    return deployed_str, process_str
+
+
+def evaluate_run_currentness(
+    run_deployed_fingerprint: str | None,
+    run_process_fingerprint: str | None,
+    *,
+    current_deployed_fingerprint: str | None,
+    current_process_fingerprint: str | None,
+) -> tuple[str, list[str]]:
+    """Return ``(currentness, reasons)`` comparing a run to the live generation/process.
+
+    PRD-INFRA-164 FR08 truth table (currentness is a stable ``Currentness`` value):
+
+    - a legacy run without a stamp, or any missing/unresolvable layer, is
+      ``unknown`` — absence NEVER returns current/green (NFR07);
+    - a run/deployment or deployment/process digest difference is ``stale`` and
+      the reason names the differing layer;
+    - only an exact three-way match is ``current``.
+    """
+    from trw_mcp.canons.fingerprint import Currentness
+
+    reasons: list[str] = []
+    # Any absent authoritative layer => unknown (never current).
+    if run_deployed_fingerprint is None or run_process_fingerprint is None:
+        reasons.append("run predates canon-fingerprint stamping or stamp is incomplete")
+        return Currentness.UNKNOWN.value, reasons
+    if current_deployed_fingerprint is None:
+        reasons.append("current deployed canon generation is unavailable/malformed")
+        return Currentness.UNKNOWN.value, reasons
+    if current_process_fingerprint is None:
+        reasons.append("connected process fingerprint is unavailable (reconnect/restart to attest)")
+        return Currentness.UNKNOWN.value, reasons
+    # All layers known: compare.
+    if run_deployed_fingerprint != current_deployed_fingerprint:
+        reasons.append("deployed canon generation moved since this run was initialized")
+        return Currentness.STALE.value, reasons
+    if run_process_fingerprint != current_process_fingerprint:
+        reasons.append("connected process changed/restarted since this run was initialized")
+        return Currentness.STALE.value, reasons
+    return Currentness.CURRENT.value, reasons
+
+
+def summarize_run_currentness(run_root: Path, run_framework: str) -> dict[str, object]:
+    """Build the run-currentness status block for a run (FR08 status surface)."""
+    run_deployed, run_process = read_run_canon_fingerprints(run_root)
+    currentness, reasons = evaluate_run_currentness(
+        run_deployed,
+        run_process,
+        current_deployed_fingerprint=current_deployed_canon_fingerprint(),
+        current_process_fingerprint=current_live_process_fingerprint(),
+    )
+    return {
+        "currentness": currentness,
+        "reasons": reasons,
+        "run_framework": run_framework,
+        "run_deployed_canon_fingerprint": run_deployed,
+        "run_live_process_fingerprint": run_process,
+    }
+
+
 def _check_framework_version_staleness(run_framework: str) -> str | None:
     """Compare run framework version against the current deployed version."""
     if not run_framework:

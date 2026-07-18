@@ -6,9 +6,6 @@ description: >
   category and a one-line summary, optionally attaches recent learnings + the
   last error trace, and returns a submission_id the operator can quote on
   follow-up. Use: /trw-feedback
-category: feedback
-user-invocable: true
-argument-hint: "[category] [\"summary\"]"
 ---
 
 # Feedback Skill

@@ -40,12 +40,12 @@ trw_init(task_name, prd_scope)
   → work
   → trw_checkpoint(message) after each milestone  ← MANDATORY, not optional
   → trw_learn(summary, detail) for any discovery or gotcha
-  → trw_build_check(scope='full') before delivery
+  → run project-native validation, then trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>') before delivery
   → trw_deliver()
 ```
 
 Phase gates apply: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER.
-Read `.trw/frameworks/FRAMEWORK.md` if context was compacted since last read.
+Read `.trw/frameworks/FRAMEWORK-CORE.md` if context was compacted since last read.
 
 ### Step 4 — Checkpoint Cadence
 Call `trw_checkpoint` at least once per 15 minutes of implementation work,

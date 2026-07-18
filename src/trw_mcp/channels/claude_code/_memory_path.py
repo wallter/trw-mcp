@@ -6,7 +6,7 @@ The project-ID encoding matches the Anthropic-documented convention:
 absolute POSIX path with each ``/`` replaced by ``-`` and a leading
 ``-`` prepended.
 
-    /home/wallter/projects/trw-framework → -home-wallter-projects-trw-framework
+    /home/dev/projects/my-app → -home-dev-projects-my-app
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ def derive_claude_project_id(project_root: Path) -> str:
         project_root: Absolute path to the repository root.
 
     Returns:
-        Project-ID string, e.g. ``"-home-wallter-projects-trw-framework"``.
+        Project-ID string, e.g. ``"-home-dev-projects-my-app"``.
 
     Examples::
 
         >>> from pathlib import Path
-        >>> derive_claude_project_id(Path("/home/wallter/projects/trw-framework"))
-        '-home-wallter-projects-trw-framework'
+        >>> derive_claude_project_id(Path("/home/dev/projects/my-app"))
+        '-home-dev-projects-my-app'
     """
     abs_path = project_root.resolve()
     return "-" + str(abs_path).replace("/", "-").lstrip("-")

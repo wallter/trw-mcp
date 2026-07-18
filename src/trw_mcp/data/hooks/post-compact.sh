@@ -12,14 +12,15 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
+# PRD-CORE-149 FR05: exit before timers, path discovery, or output.
+if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
+  exit 0
+fi
+
+
 init_hook_timer
 
 _project_root="$(get_repo_root)" || exit 0
-
-# PRD-CORE-125-FR05: Respect hooks-disabled gate.
-if [ "${TRW_HOOKS_ENABLED:-true}" = "false" ]; then
-  exit 0
-fi
 
 echo "## TRW POST-COMPACTION RECOVERY"
 echo ""
@@ -47,7 +48,7 @@ if [ -n "$_run_path" ]; then
   [ -n "$_last_cp" ] && echo "LAST CHECKPOINT: \"$_last_cp\""
   echo ""
   echo "NEXT STEPS:"
-  echo "  1. Read .trw/frameworks/FRAMEWORK.md (compaction erased methodology context)"
+  echo "  1. Read .trw/frameworks/FRAMEWORK-CORE.md (compaction erased methodology context)"
   echo "  2. Call trw_session_start(query='your task domain') to reload learnings"
   echo "  3. Call trw_status() to confirm current phase"
   echo "  4. Resume from the last checkpoint — do not re-plan"
@@ -57,7 +58,7 @@ else
 fi
 
 echo ""
-echo "MANDATORY: Read .trw/frameworks/FRAMEWORK.md before resuming work."
+echo "MANDATORY: Read .trw/frameworks/FRAMEWORK-CORE.md before resuming work."
 echo "WHY: Compaction erased your understanding of the 6-phase protocol, exit criteria,"
 echo "  and quality gates. Skipping this produces methodology drift and rework."
 

@@ -51,10 +51,6 @@ def test_login_writes_credentials_not_config(config_path: Path) -> None:
     """FR01: login persists the key to credentials.yaml, not config.yaml."""
     with (
         patch("trw_mcp.cli.auth.device_auth_login", return_value=_LOGIN_RESULT),
-        patch(
-            "trw_mcp.cli.auth.select_organization",
-            return_value=_LOGIN_RESULT["organizations"][0],  # type: ignore[index]
-        ),
     ):
         exit_code = run_auth_login("https://api.example.com", config_path)
 
@@ -71,10 +67,6 @@ def test_login_writes_credentials_not_config(config_path: Path) -> None:
 def test_login_credentials_file_is_0600(config_path: Path) -> None:
     with (
         patch("trw_mcp.cli.auth.device_auth_login", return_value=_LOGIN_RESULT),
-        patch(
-            "trw_mcp.cli.auth.select_organization",
-            return_value=_LOGIN_RESULT["organizations"][0],  # type: ignore[index]
-        ),
     ):
         run_auth_login("https://api.example.com", config_path)
 
@@ -88,10 +80,6 @@ def test_login_keeps_non_secret_metadata_in_config(config_path: Path) -> None:
     """Org/email metadata (non-secret) still lands in config.yaml."""
     with (
         patch("trw_mcp.cli.auth.device_auth_login", return_value=_LOGIN_RESULT),
-        patch(
-            "trw_mcp.cli.auth.select_organization",
-            return_value=_LOGIN_RESULT["organizations"][0],  # type: ignore[index]
-        ),
     ):
         run_auth_login("https://api.example.com", config_path)
 

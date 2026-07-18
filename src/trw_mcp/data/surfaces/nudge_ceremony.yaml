@@ -7,7 +7,7 @@ messages:
   checkpoint:
     text: "Save progress with trw_checkpoint() — protects against context loss."
   build_check:
-    text: "Verify with trw_build_check() — catches issues before delivery."
+    text: "Run project-native validation, then record its observed result with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope). The tool reports evidence; it does not run checks."
   review:
     text: "Invoke trw_review() on the current diff to surface logic gaps missed by self-review."
   deliver:

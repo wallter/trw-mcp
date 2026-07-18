@@ -186,9 +186,15 @@ class TestWriteHintFile:
         """Backward-compat: a pre-DIST-2460 record (no outcome keys) loads + reads via .get()
         with sentinel defaults — no consumer regresses on old files."""
         legacy = json.dumps(
-            {"ts": "2026-06-01T00:00:00Z", "file_path": "/x.py", "tier": "T1",
-             "hint_emitted": True, "tokens_emitted": 10, "distill_status": "learnings_only",
-             "tool_use_id": "old-1"}
+            {
+                "ts": "2026-06-01T00:00:00Z",
+                "file_path": "/x.py",
+                "tier": "T1",
+                "hint_emitted": True,
+                "tokens_emitted": 10,
+                "distill_status": "learnings_only",
+                "tool_use_id": "old-1",
+            }
         )
         rec = json.loads(legacy)
         assert rec["tool_use_id"] == "old-1"

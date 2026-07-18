@@ -48,32 +48,6 @@ _FILE_REF_RE = re.compile(r"[\w/]+\.\w+")
 _GOAL_KW_RE = re.compile(r"\b(goal|objective|achieve|deliver)\b", re.IGNORECASE)
 _SLO_KW_RE = re.compile(r"\b(slo|latency|availability|throughput)\b", re.IGNORECASE)
 
-# Fallback body used when data/prd_template.md is missing
-_FALLBACK_BODY = """# PRD-CATEGORY-SEQ: Title
-
-**Quick Reference**:
-- **Status**: Draft
-- **Priority**: P1
-- **Evidence**: Moderate
-- **Implementation Confidence**: 0.7
-
----
-
-## 1. Problem Statement
-## 2. Goals & Non-Goals
-## 3. User Stories
-## 4. Functional Requirements
-## 5. Non-Functional Requirements
-## 6. Technical Approach
-## 7. Test Strategy
-## 8. Rollout Plan
-## 9. Success Metrics
-## 10. Dependencies & Risks
-## 11. Open Questions
-## 12. Traceability Matrix
-"""
-
-
 # ---------------------------------------------------------------------------
 # Template loading
 # ---------------------------------------------------------------------------
@@ -90,25 +64,22 @@ def _load_template_body() -> str:
     """
     global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
 
-    if _CACHED_TEMPLATE_BODY is not None:
-        return _CACHED_TEMPLATE_BODY
-
     template_path = Path(__file__).parent.parent / "data" / "prd_template.md"
 
-    if not template_path.exists():
-        logger.warning("prd_template_not_found", path=str(template_path))
-        _CACHED_TEMPLATE_BODY = _FALLBACK_BODY
-        _CACHED_TEMPLATE_VERSION = None
-        return _CACHED_TEMPLATE_BODY
+    if not template_path.is_file():
+        logger.error("prd_template_not_found", path=str(template_path))
+        raise FileNotFoundError(f"canonical AARE-F PRD template is unavailable: {template_path}")
 
     raw = template_path.read_text(encoding="utf-8")
+    if not raw.startswith("---\n") or 'template_version: "3.2"' not in raw or "*Template version: 3.2 " not in raw:
+        raise ValueError(f"canonical AARE-F PRD template is malformed or not version 3.2: {template_path}")
 
     # Strip YAML frontmatter (between first --- pair)
     fm_match = _FRONTMATTER_RE.match(raw)
     if fm_match:
         body = raw[fm_match.end() :].lstrip("\n")
     else:
-        body = raw
+        raise ValueError(f"canonical AARE-F PRD template has invalid frontmatter: {template_path}")
 
     # Extract template version from footer
     ver_match = _TEMPLATE_VERSION_RE.search(body)
@@ -173,17 +144,6 @@ def _substitute_template(
     result = result.replace(
         "- **Implementation Confidence**: 0.8",
         f"- **Implementation Confidence**: {confidence}",
-    )
-
-    # FR04 (PRD-FIX-056): Inject **Status**: active after **Priority**: lines
-    # inside FR blocks (### *-FRN: headers).  Applies only to lines that are
-    # the FR-level Priority field (bold, not inside a table or list).
-    # The replacement inserts "**Status**: active\n" after each such line,
-    # but only when there is no **Status**: line already present in that block.
-    result = re.sub(
-        r"(\*\*Priority\*\*: Must Have \| Should Have \| Nice to Have)",
-        r"\1\n**Status**: active",
-        result,
     )
 
     return result

@@ -82,3 +82,34 @@ def test_intent002_middleware_receives_profile_allowlist() -> None:
     # The never-hide invariant survives consumption.
     for rigid in RIGID_TOOLS:
         assert rigid in visible
+
+
+def test_prd_core_218_nfr02() -> None:
+    """NFR02: pack / explicit-all resolution never bypasses phase-exposure policy.
+
+    A tool denied by the phase allowlist stays denied even when it is part of the
+    resolved ``all`` (widest) tool surface — resolution and authorization are
+    independent layers, and resolution can never widen the phase-visible set.
+    """
+    from trw_mcp.models.phase_policy import RIGID_TOOLS, from_resolved_allowlist
+    from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
+
+    # The widest possible surface: explicit-all exposes every public tool.
+    all_surface = set(resolve_tool_surface("coding", "all").tools)
+    # A mutating requirements-pack tool: NOT rigid and NOT in the phase-agnostic
+    # Safe Set, so the phase allowlist genuinely governs its visibility.
+    denied_tool = "trw_prd_create"
+    assert denied_tool in all_surface  # present in the widest resolved surface
+    assert denied_tool not in RIGID_TOOLS
+
+    # A phase policy whose RESEARCH bucket allows only trw_recall.
+    policy = from_resolved_allowlist({"RESEARCH": ["trw_recall"]})
+    visible = policy.list_for("RESEARCH")
+
+    # Monotonic: membership in the resolved 'all' surface does NOT add the tool to
+    # the phase-visible set — the denial survives resolution.
+    assert denied_tool not in visible
+    assert "trw_recall" in visible
+    # Rigid safety tools are never hidden by resolution either.
+    for rigid in RIGID_TOOLS:
+        assert rigid in visible

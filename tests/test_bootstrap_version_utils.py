@@ -117,15 +117,34 @@ class TestWriteVersionYaml:
         assert result["errors"] == []
 
     def test_appends_to_updated_for_update_result(self, fake_git_repo: Path) -> None:
-        """On an update-style result (has 'updated' key), path is appended to result['updated']."""
+        """On an update-style result, a PRE-EXISTING file is appended to result['updated'].
+
+        Files that did not exist before the write are truthfully reported as
+        'created' even in update flows (a user-deleted FRAMEWORK.md being
+        recreated is a creation) — so this test pre-creates the managed files.
+        """
+        frameworks_dir = fake_git_repo / ".trw" / "frameworks"
+        frameworks_dir.mkdir(parents=True)
+        for name in ("FRAMEWORK.md", "AARE-F-FRAMEWORK.md", "VERSION.yaml"):
+            (frameworks_dir / name).write_text("stale\n", encoding="utf-8")
+        result = self._make_update_result()
+        _write_version_yaml(fake_git_repo, result)
+
+        version_path = str(frameworks_dir / "VERSION.yaml")
+        assert version_path in result["updated"]
+        # Should NOT also appear in created
+        assert version_path not in result["created"]
+        assert result["errors"] == []
+
+    def test_missing_file_reports_created_even_in_update_flow(self, fake_git_repo: Path) -> None:
+        """A managed file absent before the write is reported as 'created'."""
         (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
         result = self._make_update_result()
         _write_version_yaml(fake_git_repo, result)
 
         version_path = str(fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml")
-        assert version_path in result["updated"]
-        # Should NOT also appear in created
-        assert version_path not in result["created"]
+        assert version_path in result["created"]
+        assert version_path not in result["updated"]
         assert result["errors"] == []
 
     def test_oserror_captured_in_errors(self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,12 +152,12 @@ class TestWriteVersionYaml:
         (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
         result = self._make_init_result()
 
-        from trw_mcp.state import persistence as persistence_mod
+        from trw_mcp import framework_integrity as integrity_mod
 
-        def _raise_os_error(self: object, path: Path, data: object) -> None:
+        def _raise_os_error(*args: object, **kwargs: object) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr(persistence_mod.FileStateWriter, "write_yaml", _raise_os_error)
+        monkeypatch.setattr(integrity_mod, "deploy_framework_generation", _raise_os_error)
         _write_version_yaml(fake_git_repo, result)
 
         assert len(result["errors"]) == 1

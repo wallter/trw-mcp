@@ -34,21 +34,23 @@ class TestExecuteKnowledgeSync:
         with patch("trw_mcp.state.knowledge_topology.count_entries", return_value=10):
             result = execute_knowledge_sync(trw_dir, config)
         assert result["threshold_met"] is False
-        assert result["topics_generated"] == 0
-        assert result["entries_clustered"] == 0
+        # Compact below-threshold shape (token-bloat trim): the always-0
+        # topics_generated/entries_clustered and the static output_dir/dry_run/
+        # errors fields are dropped on the live path — no cluster work ran.
+        assert "topics_generated" not in result
+        assert "entries_clustered" not in result
         assert not (trw_dir / "knowledge").exists()
 
     def test_below_threshold_returns_correct_fields(self, trw_dir: Path, tmp_path: Path) -> None:
         config = _make_config(tmp_path, knowledge_sync_threshold=50)
         with patch("trw_mcp.state.knowledge_topology.count_entries", return_value=10):
             result = execute_knowledge_sync(trw_dir, config)
-        assert "entry_count" in result
-        assert result["entry_count"] == 10
-        assert "threshold" in result
-        assert result["threshold"] == 50
-        assert "output_dir" in result
-        assert "errors" in result
-        assert result["dry_run"] is False
+        # The compact below-threshold shape carries only the actionable trio.
+        assert result == {
+            "threshold_met": False,
+            "entry_count": 10,
+            "threshold": 50,
+        }
 
     def test_count_entries_failure_returns_fail_open(self, trw_dir: Path, tmp_path: Path) -> None:
         config = _make_config(tmp_path, knowledge_sync_threshold=50)
@@ -121,9 +123,13 @@ class TestExecuteKnowledgeSync:
             result = execute_knowledge_sync(trw_dir, config)
 
         data = json.loads((trw_dir / "knowledge" / "clusters.json").read_text(encoding="utf-8"))
-        for slug in result.get("clusters", []):
-            assert slug in data
-            assert isinstance(data[slug], list)
+        # cluster names live in clusters.json; the response carries only a count
+        # (clusters.json also holds a non-cluster updated_at key)
+        assert result.get("cluster_count") == len(data) - 1
+        for slug, members in data.items():
+            if slug == "updated_at":
+                continue
+            assert isinstance(members, list)
 
     def test_output_dir_created_if_missing(self, trw_dir: Path, tmp_path: Path) -> None:
         config = _make_config(tmp_path, knowledge_sync_threshold=3, knowledge_min_cluster_size=2)
@@ -194,8 +200,8 @@ class TestExecuteKnowledgeSync:
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
-        assert "clusters" in result
-        assert isinstance(result["clusters"], list)
+        assert isinstance(result.get("cluster_count"), int)
+        assert "clusters" not in result
 
     def test_errors_list_returned_on_success(self, trw_dir: Path, tmp_path: Path) -> None:
         config = _make_config(tmp_path, knowledge_sync_threshold=5, knowledge_min_cluster_size=2)

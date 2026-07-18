@@ -51,6 +51,16 @@ def test_apply_scope_happy_path_returns_none() -> None:
     )
 
 
+def test_apply_scope_accepts_runtime_phase_case() -> None:
+    apply_scope(
+        server_name="trw",
+        tool_name="trw_recall",
+        scope=_make_scope(allowed_phases=("implement",)),
+        current_phase="IMPLEMENT",
+        requested_scope="read",
+    )
+
+
 def test_apply_scope_rejects_server_name_mismatch() -> None:
     """Calls routed to the wrong server raise CapabilityScopeError."""
     scope = _make_scope(server_name="trw")

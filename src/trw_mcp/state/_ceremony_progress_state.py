@@ -7,14 +7,33 @@ import json
 import os
 import tempfile
 import threading
-from collections import OrderedDict
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from weakref import WeakValueDictionary
 
 import structlog
+
+from trw_mcp._locking import _lock_ex, _lock_un
+from trw_mcp.state._ceremony_state_model import (
+    CeremonyState as CeremonyState,
+)
+from trw_mcp.state._ceremony_state_model import (
+    NudgeContext as NudgeContext,
+)
+from trw_mcp.state._ceremony_state_model import (
+    NudgeHistoryEntry as NudgeHistoryEntry,
+)
+from trw_mcp.state._ceremony_state_model import (
+    ToolName as ToolName,
+)
+from trw_mcp.state._ceremony_state_model import (
+    _from_dict as _from_dict,
+)
+from trw_mcp.state._ceremony_state_model import (
+    _parse_nudge_history as _parse_nudge_history,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -32,37 +51,11 @@ _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review
 # share one lock regardless of how ``trw_dir`` was spelled. The registry itself
 # is guarded by ``_state_locks_guard``.
 #
-# In a long-lived shared-HTTP server serving agents whose projects each have a
-# distinct ``trw_dir`` on disk, an unbounded registry leaks one Lock per unique
-# path for the life of the process. Cap it with LRU eviction (mirroring
-# ``_MAX_TRACKED_SESSIONS`` in middleware/ceremony.py). Eviction only ever drops
-# a lock that is NOT currently held: a free lock for path P has no in-flight RMW
-# to serialize, so the next caller for P simply creates a fresh lock — the
-# serialization guarantee is preserved. A held lock is never evicted.
-_MAX_STATE_LOCKS = 256
-_state_locks: OrderedDict[str, threading.Lock] = OrderedDict()
+# Weak values keep the registry bounded without an eviction race: callers and
+# waiters retain strong references to their lock, while idle project locks are
+# reclaimed automatically.
+_state_locks: WeakValueDictionary[str, threading.Lock] = WeakValueDictionary()
 _state_locks_guard = threading.Lock()
-
-
-def _evict_unheld_state_locks_locked() -> None:
-    """Drop least-recently-used, currently-UNHELD locks until under the cap.
-
-    Caller must hold ``_state_locks_guard``. A lock is "unheld" when a
-    non-blocking ``acquire()`` succeeds; we immediately release it. Held locks
-    (an in-flight RMW) are skipped so we never break serialization for an
-    active caller.
-    """
-    while len(_state_locks) > _MAX_STATE_LOCKS:
-        evicted = False
-        for key, lock in list(_state_locks.items()):
-            if lock.acquire(blocking=False):
-                lock.release()
-                del _state_locks[key]
-                evicted = True
-                break
-        if not evicted:
-            # Every remaining lock is currently held — nothing safe to evict.
-            break
 
 
 def _state_lock_for(trw_dir: Path) -> threading.Lock:
@@ -73,9 +66,6 @@ def _state_lock_for(trw_dir: Path) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _state_locks[key] = lock
-            _evict_unheld_state_locks_locked()
-        else:
-            _state_locks.move_to_end(key)
         return lock
 
 
@@ -87,161 +77,23 @@ def _state_rmw(trw_dir: Path) -> Iterator[None]:
     body of every mutator so concurrent tool calls (shared-HTTP mode) cannot
     interleave and silently drop one another's updates.
     """
-    lock = _state_lock_for(trw_dir)
-    with lock:
-        yield
-
-
-class NudgeHistoryEntry(TypedDict):
-    """Record of when/where a learning was shown as a legacy nudge."""
-
-    phases_shown: list[str]
-    turn_first_shown: int
-    last_shown_turn: int
-
-
-@dataclass
-class CeremonyState:
-    """Tracks ceremony progress for the current session."""
-
-    session_started: bool = False
-    checkpoint_count: int = 0
-    last_checkpoint_ts: str | None = None
-    last_checkpoint_turn: int = 0
-    files_modified_since_checkpoint: int = 0
-    build_check_result: str | None = None
-    last_build_check_ts: str | None = None
-    deliver_called: bool = False
-    learnings_this_session: int = 0
-    nudge_counts: dict[str, int] = field(default_factory=dict)
-    phase: str = "early"
-    previous_phase: str = ""
-    review_called: bool = False
-    review_verdict: str | None = None
-    review_p0_count: int = 0
-    nudge_history: dict[str, NudgeHistoryEntry] = field(default_factory=dict)
-    pool_nudge_counts: dict[str, int] = field(default_factory=dict)
-    pool_ignore_counts: dict[str, int] = field(default_factory=dict)
-    pool_cooldown_until: dict[str, int] = field(default_factory=dict)
-    # PRD-CORE-144 FR03: wall-clock timestamp (ISO-8601) when a pool entered
-    # cooldown. Used to force-expire pools that have been cooled longer than
-    # ``nudge_pool_cooldown_wall_clock_max_hours`` (default 24h). Missing
-    # keys are treated as "never cooled down" (NFR03).
-    pool_cooldown_set_at: dict[str, str] = field(default_factory=dict)
-    tool_call_counter: int = 0
-    last_nudge_pool: str = ""
-
-
-@dataclass
-class NudgeContext:
-    """Legacy nudge context preserved for offline compatibility."""
-
-    tool_name: str = ""
-    tool_success: bool = True
-    build_passed: bool | None = None
-    review_verdict: str | None = None
-    review_p0_count: int = 0
-    is_subagent: bool = False
-
-
-class ToolName:
-    """Constants for legacy nudge tool names."""
-
-    BUILD_CHECK = "build_check"
-    REVIEW = "review"
-    CHECKPOINT = "checkpoint"
-    LEARN = "learn"
-    SESSION_START = "session_start"
-    DELIVER = "deliver"
-    INIT = "init"
-    RECALL = "recall"
-    STATUS = "status"
-    PRD_CREATE = "prd_create"
-    PRD_VALIDATE = "prd_validate"
+    thread_lock = _state_lock_for(trw_dir)
+    lock_path = _state_path(trw_dir).with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with thread_lock:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            _lock_ex(fd)
+            yield
+        finally:
+            try:
+                _lock_un(fd)
+            finally:
+                os.close(fd)
 
 
 def _state_path(trw_dir: Path) -> Path:
     return trw_dir / "context" / "ceremony-state.json"
-
-
-def _parse_nudge_history(raw: object) -> dict[str, NudgeHistoryEntry]:
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, NudgeHistoryEntry] = {}
-    for key, val in raw.items():
-        if not isinstance(key, str) or not isinstance(val, dict):
-            continue
-        try:
-            result[key] = NudgeHistoryEntry(
-                phases_shown=[str(p) for p in val.get("phases_shown", []) if isinstance(p, str)],
-                turn_first_shown=int(val.get("turn_first_shown", 0)),
-                last_shown_turn=int(val.get("last_shown_turn", 0)),
-            )
-        except (TypeError, ValueError):
-            continue
-    return result
-
-
-def _from_dict(data: dict[str, object]) -> CeremonyState:
-    def _bool(key: str, default: bool = False) -> bool:
-        value = data.get(key, default)
-        return bool(value) if isinstance(value, bool) else default
-
-    def _int(key: str, default: int = 0) -> int:
-        value = data.get(key, default)
-        return int(value) if isinstance(value, (int, float)) else default
-
-    def _str(key: str, default: str = "") -> str:
-        value = data.get(key, default)
-        return str(value) if isinstance(value, str) else default
-
-    def _opt_str(key: str) -> str | None:
-        value = data.get(key)
-        return str(value) if isinstance(value, str) else None
-
-    def _dict_str_int(key: str) -> dict[str, int]:
-        raw = data.get(key, {})
-        if not isinstance(raw, dict):
-            return {}
-        return {k: int(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, (int, float))}
-
-    def _dict_str_str(key: str) -> dict[str, str]:
-        raw = data.get(key, {})
-        if not isinstance(raw, dict):
-            return {}
-        return {k: str(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
-
-    nudge_raw = data.get("nudge_counts", {})
-    nudge_counts = (
-        {k: v for k, v in nudge_raw.items() if isinstance(k, str) and isinstance(v, int)}
-        if isinstance(nudge_raw, dict)
-        else {}
-    )
-
-    return CeremonyState(
-        session_started=_bool("session_started"),
-        checkpoint_count=_int("checkpoint_count"),
-        last_checkpoint_ts=_opt_str("last_checkpoint_ts"),
-        last_checkpoint_turn=_int("last_checkpoint_turn"),
-        files_modified_since_checkpoint=_int("files_modified_since_checkpoint"),
-        build_check_result=_opt_str("build_check_result"),
-        last_build_check_ts=_opt_str("last_build_check_ts"),
-        deliver_called=_bool("deliver_called"),
-        learnings_this_session=_int("learnings_this_session"),
-        nudge_counts=nudge_counts,
-        phase=_str("phase", "early"),
-        previous_phase=_str("previous_phase", ""),
-        review_called=_bool("review_called"),
-        review_verdict=_opt_str("review_verdict"),
-        review_p0_count=_int("review_p0_count"),
-        nudge_history=_parse_nudge_history(data.get("nudge_history", {})),
-        pool_nudge_counts=_dict_str_int("pool_nudge_counts"),
-        pool_ignore_counts=_dict_str_int("pool_ignore_counts"),
-        pool_cooldown_until=_dict_str_int("pool_cooldown_until"),
-        pool_cooldown_set_at=_dict_str_str("pool_cooldown_set_at"),
-        tool_call_counter=_int("tool_call_counter"),
-        last_nudge_pool=_str("last_nudge_pool", ""),
-    )
 
 
 def read_ceremony_state(trw_dir: Path) -> CeremonyState:
@@ -286,7 +138,15 @@ def reset_ceremony_state(trw_dir: Path) -> None:
     write_ceremony_state(trw_dir, CeremonyState())
 
 
-def mark_session_started(trw_dir: Path) -> None:
+def _touch_session_build_result(state: CeremonyState, session_id: str, result: str) -> None:
+    """Record a session result and retain the most recently active sessions."""
+    state.session_build_results.pop(session_id, None)
+    state.session_build_results[session_id] = result
+    while len(state.session_build_results) > 2048:
+        state.session_build_results.pop(next(iter(state.session_build_results)))
+
+
+def mark_session_started(trw_dir: Path, session_id: str | None = None) -> None:
     # PRD-FIX-076: write_ceremony_state() rewrites the file from the
     # CeremonyState dataclass (which does NOT carry ``mcp_never_connected_yet``),
     # so the sentinel written by init-project is cleared automatically as soon
@@ -295,6 +155,12 @@ def mark_session_started(trw_dir: Path) -> None:
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
         state.session_started = True
+        if session_id:
+            _touch_session_build_result(
+                state,
+                session_id,
+                state.session_build_results.get(session_id, "pending"),
+            )
         write_ceremony_state(trw_dir, state)
 
 
@@ -308,10 +174,12 @@ def mark_checkpoint(trw_dir: Path) -> None:
         write_ceremony_state(trw_dir, state)
 
 
-def mark_build_check(trw_dir: Path, passed: bool) -> None:
+def mark_build_check(trw_dir: Path, passed: bool, session_id: str | None = None) -> None:
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
         state.build_check_result = "passed" if passed else "failed"
+        if session_id:
+            _touch_session_build_result(state, session_id, state.build_check_result)
         state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
         write_ceremony_state(trw_dir, state)
 
@@ -323,12 +191,13 @@ def mark_deliver(trw_dir: Path) -> None:
         write_ceremony_state(trw_dir, state)
 
 
-def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0) -> None:
+def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0, *, substantive: bool = True) -> None:
+    """Record REVIEW readiness without letting empty artifacts satisfy it."""
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
-        state.review_called = True
-        state.review_verdict = verdict
-        state.review_p0_count = p0_count
+        state.review_called = substantive
+        state.review_verdict = verdict if substantive else "non_substantive"
+        state.review_p0_count = p0_count if substantive else 0
         write_ceremony_state(trw_dir, state)
 
 

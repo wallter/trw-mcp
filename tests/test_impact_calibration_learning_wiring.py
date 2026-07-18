@@ -76,7 +76,7 @@ class TestTrwLearnForcedDistributionWiring:
                 detail="Detail",
                 impact=0.95,
             )
-        assert result["distribution_warning"] == ""
+        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
 
     def test_demotion_warning_contains_tier_name(self, tmp_path: Path) -> None:
         """Distribution warning message names the affected tier."""
@@ -106,4 +106,4 @@ class TestTrwLearnForcedDistributionWiring:
             detail="Not important",
             impact=0.5,
         )
-        assert result["distribution_warning"] == ""
+        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)

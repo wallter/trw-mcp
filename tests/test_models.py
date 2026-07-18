@@ -10,12 +10,12 @@ from pydantic import ValidationError
 
 from trw_mcp.models.config import PhaseTimeCaps, TRWConfig, _reset_config, get_config
 from trw_mcp.models.learning import (
-    Analytics,
     LearningEntry,
     Pattern,
     Reflection,
 )
 from trw_mcp.models.requirements import (
+    PRDConfidence,
     PRDFrontmatter,
     PRDStatus,
     Priority,
@@ -68,6 +68,10 @@ class TestTRWConfig:
         assert config.ambiguity_rate_max == 0.05
         assert config.completeness_min == 0.85
         assert config.traceability_coverage_min == 0.90
+
+    def test_prd_confidence_does_not_invent_coverage_target(self) -> None:
+        """Portable PRDs have no coverage floor unless project evidence supplies one."""
+        assert PRDConfidence().test_coverage_target is None
 
     def test_path_defaults(self) -> None:
         config = TRWConfig()
@@ -390,16 +394,3 @@ class TestTraceabilityResult:
         assert result.total_requirements == 0
         assert result.coverage == 0.0
         assert result.untraced_requirements == []
-
-
-class TestAnalytics:
-    """Tests for Analytics model."""
-
-    def test_defaults(self) -> None:
-        analytics = Analytics()
-        assert analytics.sessions_tracked == 0
-        assert analytics.total_learnings == 0
-        # PRD-QUAL-012-FR02/FR03: Revived fields have defaults
-        assert analytics.reflections_completed == 0
-        assert analytics.success_rate == 0.0
-        assert analytics.q_learning_activations == 0

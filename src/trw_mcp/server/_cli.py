@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import threading
 from pathlib import Path
 
 import structlog
@@ -95,26 +96,6 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
     )
 
 
-def _should_run_boot_sequence(args: argparse.Namespace, config: TRWConfig) -> bool:
-    """Return whether this process should run mutating boot maintenance.
-
-    In shared HTTP mode, the foreground stdio process is only a thin proxy to
-    an already-running or auto-started HTTP server. Running boot GC in every
-    proxy process blocks MCP initialize/reconnect for tens of seconds in large
-    repos and duplicates maintenance that belongs to the shared server.
-
-    Direct server processes still run boot maintenance:
-    - explicit ``--transport streamable-http|sse|stdio``;
-    - default standalone stdio when the project config uses ``mcp_transport:
-      stdio``.
-    """
-
-    requested_transport = getattr(args, "transport", None)
-    if requested_transport is not None:
-        return True
-    return config.mcp_transport == "stdio"
-
-
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -185,6 +166,16 @@ def main() -> None:
     # Default: run MCP server (no subcommand or "serve")
     config = _apply_cli_security_overrides(get_config(), args)
     reload_config(config)
+
+    # PRD-CORE-202 FR03: register any ``--memory-db`` startup paths as additive
+    # read-only external corpora BEFORE the server starts serving recall. The
+    # flag is parsed in _cli_argparse but is inert until registered here; this is
+    # the single serve-dispatch wiring site (delivered != wired — sub_nCt6qwkie2Hm5D1P).
+    # ``None`` (flag absent) is a no-op so the NFR01 hot-path stays clean.
+    from trw_mcp.state._external_store import register_cli_memory_db_paths
+
+    register_cli_memory_db_paths(getattr(args, "memory_db", None))
+
     debug = args.debug or config.debug
 
     # Resolve verbosity: --quiet overrides, --debug adds to -v count
@@ -212,25 +203,58 @@ def main() -> None:
 
     log = structlog.get_logger(__name__)
 
-    # PRD-CORE-141 FR09: direct server boot-time stale-run sweep runs BEFORE
-    # FastMCP starts accepting connections. In shared HTTP mode, foreground
-    # stdio processes are proxies and must not block reconnect on this sweep.
-    # Wrapped in try/except (NFR02 fail-open) — sweep failure MUST NOT block
-    # direct server startup.
-    if _should_run_boot_sequence(args, config):
-        _boot_sequence(config, log)
-    else:
-        log.info(
-            "boot_gc_skipped_proxy_mode",
-            reason="stdio_proxy_to_shared_http",
-            target_transport=config.mcp_transport,
-            target_host=config.mcp_host,
-            target_port=config.mcp_port,
-        )
+    # PRD-CORE-141 FR09: boot-time stale-run sweep. Runs off the MCP
+    # initialize handshake critical path in a daemon thread by default
+    # (config.boot_gc_deferred) so a large repo's historical-run scan does not
+    # hold stdio clients past their connect timeout (production feedback
+    # sub_psVs_nUWnLJGvOs3). Wrapped in try/except (NFR02 fail-open) — sweep
+    # failure MUST NOT block server startup.
+    _start_boot_sequence(config, log, deferred=config.boot_gc_deferred)
 
     from trw_mcp.server._transport import resolve_and_run_transport
 
-    resolve_and_run_transport(args, config, debug=debug, log=log)
+    resolve_and_run_transport(debug=debug, log=log)
+
+
+def _start_boot_sequence(
+    config: TRWConfig,
+    log: structlog.stdlib.BoundLogger,
+    *,
+    deferred: bool,
+) -> threading.Thread | None:
+    """Run boot maintenance, optionally off the MCP handshake critical path.
+
+    When *deferred* is True (default via ``config.boot_gc_deferred``) the
+    stale-pin + stale-run sweep runs in a named daemon thread (``trw-boot-gc``)
+    so :func:`main` can proceed straight to ``resolve_and_run_transport`` and
+    the MCP ``initialize`` handshake is not held hostage to a scan of every
+    historical run (production feedback ``sub_psVs_nUWnLJGvOs3``). The sweep
+    only ever mutates on-disk run dirs and the pin store — it already runs
+    concurrently with other live MCP client processes, so moving it to a
+    background thread introduces no new cross-process race.
+
+    When *deferred* is False the sweep runs synchronously on the caller thread
+    (legacy behavior; deterministic startup ordering).
+
+    The thread target wraps :func:`_boot_sequence` in its own ``try/except`` so
+    any exception is logged (never a raw traceback to stderr mid-session) and
+    never propagates to take the server down.
+
+    Returns the spawned thread when *deferred*, otherwise ``None``.
+    """
+    if not deferred:
+        _boot_sequence(config, log)
+        return None
+
+    def _run() -> None:
+        try:
+            _boot_sequence(config, log)
+        except Exception:  # justified: daemon thread must never crash the server or leak a raw traceback
+            log.warning("boot_gc_thread_failed", exc_info=True)
+
+    thread = threading.Thread(target=_run, name="trw-boot-gc", daemon=True)
+    thread.start()
+    return thread
 
 
 def _boot_sequence(
@@ -270,8 +294,7 @@ def _boot_sequence(
         project_root = resolve_project_root()
         runs_root = project_root / config.runs_root
 
-        # Persist eviction of orphan-pid / stale-path pins so they stop
-        # firing pin_orphan_evicted warnings on every load.
+        # Persist stale-path eviction so warnings do not repeat.
         try:
             prune_pin_store_orphans()
         except Exception:  # justified: NFR02 — prune failure must never block server start

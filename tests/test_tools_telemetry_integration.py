@@ -222,6 +222,62 @@ class TestToolTraceFields:
         [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
         assert event["task_profile_hash"] == "abc123profile"
 
+    def test_tool_event_has_normalized_profile_fields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "\n".join(
+                [
+                    "phase: implement",
+                    "task_profile:",
+                    "  profile_hash: normalized-profile",
+                    "  capability_tier: frontier",
+                    "  recommended_effort: high",
+                    "  effort_source: task_complexity",
+                    "  effort_adapter_status: advisory",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        @log_tool_call
+        def profiled_tool() -> str:
+            return "ok"
+
+        assert profiled_tool() == "ok"
+        [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
+        assert event["capability_tier"] == "frontier"
+        assert event["recommended_effort"] == "high"
+        assert event["effort_source"] == "task_complexity"
+        assert event["effort_adapter_status"] == "advisory"
+        assert "model_tier" not in event
+        assert "reasoning_effort" not in event
+
+    def test_tool_event_reads_legacy_profile_fields_without_claiming_application(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        run_dir: Path,
+    ) -> None:
+        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        monkeypatch.setattr(telemetry, "_get_cached_run_dir", lambda: run_dir)
+        (run_dir / "meta" / "run.yaml").write_text(
+            "phase: implement\ntask_profile:\n  model_tier: balanced\n  reasoning_effort: medium\n",
+            encoding="utf-8",
+        )
+
+        telemetry._write_tool_event("legacy_profile_tool", 1.0, True, None)
+
+        [event] = _read_jsonl(run_dir / "meta" / "events.jsonl")
+        assert event["capability_tier"] == "balanced"
+        assert event["recommended_effort"] == "medium"
+        assert event["effort_source"] == ""
+        assert event["effort_adapter_status"] == ""
+
     def test_direct_tool_event_reads_task_profile_hash_without_full_trace(
         self,
         monkeypatch: pytest.MonkeyPatch,

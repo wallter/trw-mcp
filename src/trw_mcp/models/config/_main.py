@@ -26,6 +26,7 @@ from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
+    DispatchConfig,
     MemoryConfig,
     MetaTuneConfig,
     OrchestrationConfig,
@@ -157,6 +158,11 @@ class TRWConfig(_TRWConfigFields):
         return self._sub_config(MemoryConfig)
 
     @cached_property
+    def dispatch(self) -> DispatchConfig:
+        """Cross-client dispatch (``trw-mcp dispatch``) operator-default sub-config."""
+        return self._sub_config(DispatchConfig)
+
+    @cached_property
     def telemetry_settings(self) -> TelemetryConfig:
         """Telemetry and OTEL sub-config (avoids ``telemetry`` field conflict)."""
         return self._sub_config(TelemetryConfig)
@@ -202,7 +208,6 @@ class TRWConfig(_TRWConfigFields):
             NudgeConfig,
             RecallConfig,
             SurfaceConfig,
-            ToolExposureConfig,
         )
 
         return SurfaceConfig(
@@ -211,10 +216,6 @@ class TRWConfig(_TRWConfigFields):
                 urgency_mode=self.nudge_urgency_mode,
                 budget_chars=self.nudge_budget_chars,
                 dedup_enabled=self.nudge_dedup_enabled,
-            ),
-            tool_exposure=ToolExposureConfig(
-                mode=self.effective_tool_exposure_mode,
-                custom_list=tuple(self.tool_exposure_list),
             ),
             recall=RecallConfig(
                 enabled=self.effective_learning_recall_enabled,
@@ -314,20 +315,6 @@ class TRWConfig(_TRWConfigFields):
         if self.hooks_enabled is not None:
             return self.hooks_enabled
         return self.client_profile.hooks_enabled
-
-    @property
-    def effective_tool_exposure_mode(self) -> str:
-        """Profile-aware tool exposure. Explicit config wins; None defers to profile.
-
-        ``tool_exposure_mode=None`` (the field default) means "not explicitly
-        set" — the client profile's value governs.  Any non-None value (including
-        "all") is an explicit operator choice and wins over the profile default.
-        This mirrors the hooks_enabled / skills_enabled sentinel pattern.
-        PRD-CORE-125-FR02.
-        """
-        if self.tool_exposure_mode is not None:
-            return self.tool_exposure_mode
-        return self.client_profile.tool_exposure_mode
 
     @property
     def effective_skills_enabled(self) -> bool:

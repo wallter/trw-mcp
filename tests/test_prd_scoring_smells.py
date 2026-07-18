@@ -270,3 +270,37 @@ def test_smell_suggestion_absent_when_no_warnings(config) -> None:
 
     clean = validate_prd_quality_v2(_clean_prd(), config)
     assert [s for s in clean.improvement_suggestions if s.dimension == "smell"] == []
+
+
+def test_smell_summarization_failure_is_non_blocking(config, monkeypatch) -> None:
+    from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
+
+    def fail_summary(_findings) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "trw_mcp.state.validation.prd_quality._smells.summarize_smells",
+        fail_summary,
+    )
+
+    result = validate_prd_quality_v2(_smelly_prd(), config)
+
+    assert result.smell_findings
+    assert [suggestion for suggestion in result.improvement_suggestions if suggestion.dimension == "smell"] == []
+
+
+def test_ears_failure_does_not_erase_smell_findings(config, monkeypatch) -> None:
+    from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
+
+    def fail_classification(_content: str) -> list[dict[str, object]]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "trw_mcp.state.validation.prd_quality.classify_ears",
+        fail_classification,
+    )
+
+    result = validate_prd_quality_v2(_smelly_prd(), config)
+
+    assert result.smell_findings
+    assert result.ears_classifications == []

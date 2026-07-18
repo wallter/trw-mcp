@@ -12,12 +12,10 @@ import asyncio
 import importlib.metadata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 
 import structlog
 from fastmcp import FastMCP
 
-from trw_mcp._logging import configure_logging
 from trw_mcp.meta_tune.boot_checks import validate_defaults as validate_meta_tune_defaults
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
@@ -72,7 +70,7 @@ _DEFAULT_INSTRUCTIONS = (
     "Call trw_session_start() first: it restores prior learnings and any active run, "
     "cutting repeat investigation by ~30%. "
     "Workflow: plan, implement, verify, deliver. "
-    "Read .trw/frameworks/FRAMEWORK.md after startup or compaction for phase gates. "
+    "Read .trw/frameworks/FRAMEWORK-CORE.md after startup or compaction for phase gates. "
     "Use trw_learn() when you discover a root cause or durable pattern. "
     "Finish with trw_deliver() so progress and maintenance persist for future sessions."
 )
@@ -128,6 +126,25 @@ def _try_init_mcp_security(config: TRWConfig) -> object | None:
     return init_security(config.security.mcp)
 
 
+def _try_init_surface_authority() -> object | None:
+    """Try to initialize SurfaceAuthorityMiddleware. Returns None on failure (fail-open).
+
+    PRD-CORE-218 FR03/FR04 activation: the kernel/pack resolver is the production
+    tool-exposure authority (replacing the removed PRD-CORE-125 preset filter).
+    Registered BEFORE PhaseExposureMiddleware so phase masking composes WITHIN the
+    CORE-218 surface. The middleware self-resolves ``tool_resolution_mode`` from
+    config at request time (default ``standard``; ``all`` is a strict no-op
+    operator escape), so it is always appended — a broken init is fail-open.
+    """
+    try:
+        from trw_mcp.middleware.surface_authority import SurfaceAuthorityMiddleware
+
+        return SurfaceAuthorityMiddleware()
+    except Exception:  # justified: fail-open, middleware init failure must not crash startup
+        logger.warning("middleware_init_failed", component="SurfaceAuthorityMiddleware")
+        return None
+
+
 def _try_init_phase_exposure() -> object | None:
     """Try to initialize PhaseExposureMiddleware. Returns None on failure (fail-open).
 
@@ -144,6 +161,23 @@ def _try_init_phase_exposure() -> object | None:
         return PhaseExposureMiddleware()
     except Exception:  # justified: fail-open, middleware init failure must not crash startup
         logger.warning("middleware_init_failed", component="PhaseExposureMiddleware")
+        return None
+
+
+def _try_init_version_drift() -> object | None:
+    """Try to initialize VersionDriftMiddleware. Returns None on failure (fail-open).
+
+    PRD-CORE-215-FR02: annotates tool results with a non-blocking booted-vs-installed
+    version-drift advisory. Placed after CeremonyMiddleware (session context resolved)
+    and before ResponseOptimizerMiddleware so its plain-text advisory block is not
+    re-serialized; the check is cached off the hot path (NFR01).
+    """
+    try:
+        from trw_mcp.middleware.version_drift import VersionDriftMiddleware
+
+        return VersionDriftMiddleware()
+    except Exception:  # justified: fail-open, middleware init failure must not crash startup
+        logger.warning("middleware_init_failed", component="VersionDriftMiddleware")
         return None
 
 
@@ -188,12 +222,25 @@ def _build_middleware() -> list[object]:
     if ceremony is not None:
         middleware.append(ceremony)
 
+    # PRD-CORE-218 FR03/FR04: surface-authority masking sits AFTER Ceremony
+    # (session state first) and BEFORE PhaseExposure so phase masking composes
+    # WITHIN the resolved CORE-218 surface (task packs first, then phase subset).
+    surface_authority = _try_init_surface_authority()
+    if surface_authority is not None:
+        middleware.append(surface_authority)
+
     # PRD-INTENT-002 FR08: phase masking sits AFTER Ceremony (session state
     # first) and BEFORE ContextBudget (phase filtering precedes context/
     # observation masking). Appended here so the relative order holds.
     phase_exposure = _try_init_phase_exposure()
     if phase_exposure is not None:
         middleware.append(phase_exposure)
+
+    # PRD-CORE-215-FR02: version-drift advisory. Outer relative to the response
+    # optimizer so its plain-text advisory block is appended after re-serialization.
+    version_drift = _try_init_version_drift()
+    if version_drift is not None:
+        middleware.append(version_drift)
 
     middleware.extend(
         mw
@@ -270,23 +317,6 @@ def create_app(
         instructions=instructions or _load_server_instructions(),
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
         lifespan=_build_sync_lifespan,
-    )
-
-
-def configure_logging_compat(*, debug: bool, config: TRWConfig) -> None:
-    """Legacy-compatible wrapper for configure_logging.
-
-    Translates the old (debug, config) signature to the new unified interface.
-    Kept for backward compatibility with tests and internal callers.
-    """
-    log_dir: Path | None = None
-    if debug:
-        log_dir = Path.cwd() / config.trw_dir / config.logs_dir
-
-    configure_logging(
-        debug=debug,
-        log_dir=log_dir,
-        package_name="trw-mcp",
     )
 
 

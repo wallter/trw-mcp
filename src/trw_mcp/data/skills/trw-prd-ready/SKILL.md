@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` to determine the entry point:
 ```
  ┌───────────┐     ┌─────────┐     ┌─────────┐     ┌────────┐     ┌───────────┐
  │ PREFLIGHT │ ──▶ │ CREATE  │ ──▶ │  GROOM  │ ──▶ │ REVIEW │ ──▶ │ EXEC PLAN │
- │ (if new)  │     │ (if new)│     │(≥85 ts) │     │(READY) │     │ (output)  │
+ │ (if new)  │     │ (if new)│     │(APPROVED)│    │(READY) │     │ (output)  │
  └───────────┘     └─────────┘     └────┬────┘     └───┬────┘     └───────────┘
                                         │              │
                                         │   NEEDS WORK │
@@ -87,55 +87,31 @@ If the user is unavailable and evidence is strong enough, proceed with explicit 
 ### Phase 2: GROOM
 
 **Entry**: PRD file exists. May be skeleton, draft, or partially groomed.
-**Skip if**: `trw_prd_validate` returns `total_score >= 85` (APPROVED tier). Do NOT use `completeness_score` (a deprecated 0-1 float) — the authoritative gate is the 0-100 `total_score` field.
+**Skip if**: full `trw_prd_validate` returns `validation_partial: false`, `valid: true`, and risk-scaled
+`quality_tier: approved`. Use `total_score` (0-100) only for progress/reporting; never gate on deprecated
+`completeness_score`.
 
-Delegate to a **trw-prd-groomer** helper for focused grooming work:
+Invoke the packaged internal `trw-prd-groom` contract with the PRD ID/path. If the current client cannot invoke
+hidden skills but the contract is installed, execute it inline; do not substitute a weaker grooming loop. After it
+returns, call full `trw_prd_validate(prd_path)` and proceed only when the readiness predicate above passes.
+On a REVIEW loop-back, invoke it with the reviewer's specific findings as refinement context, not only the PRD path.
 
-1. Resolve PRD path (from Phase 1 output or `$ARGUMENTS`).
-2. Read PRD and call `trw_prd_validate(prd_path)` for baseline score.
-3. If `total_score >= 85` (APPROVED tier), skip to Phase 3.
-4. Research phase:
-   - Call `trw_recall` with keywords from the PRD Background section
-   - Use Grep/Glob to find relevant codebase patterns, interfaces, seams, data structures, and test conventions
-   - Read related PRDs from traceability section
-5. Draft missing/weak sections following AARE-F 12-section guidance:
-   - Problem Statement, Goals & Non-Goals, User Stories, Functional Requirements (EARS patterns + confidence scores), Non-Functional Requirements, Technical Approach, Test Strategy, Rollout Plan, Success Metrics, Dependencies & Risks, Open Questions, Traceability Matrix
-   - Technical Approach MUST identify affected modules/interfaces/seams and any deep-module opportunity.
-   - Test Strategy MUST map requirements to project-appropriate test frameworks and at least one vertical tracer-bullet slice when feasible.
-6. Validation loop (max 3 iterations):
-   a. Write updated PRD
-   b. Call `trw_prd_validate(prd_path)`
-   c. If `total_score >= 85` (APPROVED tier), exit with success
-   d. If < 5% improvement after iteration, exit (convergence)
-   e. Parse failures and draft fixes
+**Exit to review**: the readiness predicate passes. Report:
+> "Groomed {PRD-ID} to {total_score} ({quality_tier}). Proceeding to review..."
 
-**Constraints:**
-- NEVER fabricate requirements not grounded in Background or codebase evidence
-- NEVER remove existing content — additive only
-- ALWAYS use EARS patterns for functional requirements
-- ALWAYS include confidence scores
-- If reaching `total_score >= 85` requires inventing ungrounded content, document gaps in Open Questions
-
-**Exit**: `total_score >= 85` (APPROVED tier) OR convergence reached. Report:
-> "Groomed {PRD-ID} to {score}. Proceeding to review..."
-
-**Gate failure**: If `total_score < 65` (below REVIEW tier) after 3 iterations, STOP. Report what's blocking and suggest the user provide more context. Do NOT proceed to review.
+**Gate failure**: If the predicate still fails after 3 iterations or convergence, stop, report the result fields and
+blockers, and request missing context. Do not proceed to review.
 
 ---
 
 ### Phase 3: REVIEW
 
-**Entry**: PRD `total_score >= 85` (APPROVED tier) from Phase 2.
+**Entry**: Phase 2 produced a full, valid, risk-scaled `approved` result.
 
-Delegate to a **trw-requirement-reviewer** helper for independent review:
-
-1. Perform 5-dimension quality assessment:
-   - **Structure** — AARE-F section completeness and formatting
-   - **Content Quality** — substantive depth vs. placeholder content
-   - **Requirements Quality** — EARS compliance, confidence scores, testability
-   - **Evidence & Confidence** — source citations, confidence calibration
-   - **Traceability** — bidirectional links to code and tests
-2. Return per-dimension scores (0-100%) and overall verdict: **READY** / **NEEDS WORK** / **BLOCK**
+Invoke the packaged internal `trw-prd-review` contract with the PRD ID/path and preserve its independent,
+read-only assessment. If the current client cannot invoke hidden skills but the contract is installed, execute it inline
+and disclose that same-context review could not provide independent-agent separation. Do not replace review with the
+grooming validator or a weaker summary.
 
 **Exit routing:**
 
@@ -151,69 +127,22 @@ Delegate to a **trw-requirement-reviewer** helper for independent review:
 
 ### Phase 4: EXEC PLAN
 
-**Entry**: Review verdict is READY.
+**Entry:** the independent review verdict is READY.
 
-**Execution model**: Execute directly (no helper delegation). The exec plan phase requires codebase exploration and file writing that benefit from the orchestrator's full context.
+Invoke the packaged internal `trw-exec-plan` contract with the PRD ID/path. If
+the current client cannot invoke hidden skills, execute that contract inline; do
+not substitute a weaker summary. Require verified paths/interfaces, behavior-
+sized tasks, source and test ownership, dependency/integration ordering, exact
+project-native proof commands, and migration/rollback concerns where applicable.
 
-Generate the execution plan:
+The phase produces `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`
+(or the configured sibling path). Optional test skeletons are created only when
+the project convention and caller request make them useful; unconditional failing
+or broadly skipped skeletons are not readiness evidence.
 
-1. Call `trw_recall` with keywords from the PRD Problem Statement.
-2. Use Grep/Glob to find existing code patterns mentioned in Technical Approach.
-3. For each FR, decompose into micro-tasks:
-   - **Affected files** — verified via Grep/Glob (never fabricated)
-   - **Affected interfaces/seams** — APIs, CLI commands, schemas, events, components, hooks, jobs, or data contracts touched by the FR
-   - **Function-level or component-level changes** — specific functions, classes, components, modules, commands, schemas, or adapters to add/modify/wire
-   - **Test cases** — framework-appropriate names (for example `test_...`, `it(...)`, `#[test]`, table-driven Go tests) with acceptance criterion text
-   - **Verification command** — exact project-appropriate command (`pytest`, `vitest`, `npm test`, `cargo test`, `go test`, `make ...`, bash script, etc.)
-   - **Dependencies** — which FRs/tasks must complete first
-   - **Slice shape** — prefer a vertical tracer-bullet task that proves the behavior end-to-end; horizontal/layer-only tasks require rationale plus an integration follow-up
-   - Target: each micro-task completable in <35 min (agent half-life)
-4. Build task dependency graph (ASCII DAG).
-5. Generate wave plan (parallelizable groups).
-6. Create file ownership mapping.
-7. Write execution plan to `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`.
-8. Generate test skeletons to `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}` where `{ext}` matches the project test language, or `.md` if only a framework-neutral skeleton spec is safe.
-9. Generate manifest to `docs/requirements-aare-f/test-skeletons/MANIFEST-{PRD-ID}.yaml`.
-
-**Execution plan structure:**
-
-```markdown
-# EXECUTION PLAN: {PRD-ID}
-
-## Metadata
-- PRD: {PRD-ID} ({title})
-- PRD Version: {version}
-- PRD Validation Score: {score}
-- Review Verdict: READY
-- Generated: {ISO 8601}
-- Agent half-life target: <35 min per wave
-
-## 1. FR Decomposition
-### FR01: {title}
-**Micro-tasks:**
-1. {description} — `{file_path}:{symbol_or_interface}`
-
-**Test cases:**
-- `test_fr01_happy` — asserts {what}
-- `test_fr01_edge` — asserts {what}
-
-**Verification:** `{exact project-specific test/build command}`
-**Dependencies:** None | FR02, FR03
-
-## 2. Task Dependency Graph
-## 3. Wave Plan
-## 4. File Ownership Mapping
-## 5. Verification Checklist
-## 6. Known Risks
-```
-
-**Constraints:**
-- NEVER fabricate file paths — verify with Grep/Glob
-- ALWAYS include verification commands (not "verify manually")
-- ALWAYS map dependencies
-- Prefer vertical tracer-bullet slices; horizontal tasks need rationale and explicit integration proof
-- Infer language, framework, file extensions, and test runner from the repo rather than assuming Python
-- If a FR exceeds 35 min, decompose further
+If the exec-plan contract reports fabricated/UNKNOWN critical paths, ownership
+conflicts, or missing proof commands, stop and report the blockers rather than
+claiming the PRD is execution-ready.
 
 ---
 
@@ -236,29 +165,21 @@ After all phases complete, output a consolidated summary:
 **Artifacts:**
 - PRD: `{prd_path}`
 - Execution Plan: `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`
-- Test Skeletons: `docs/requirements-aare-f/test-skeletons/TEST-SKELETON-{PRD-ID}.{ext}`
+- Test Skeletons: `{path}` (include only when created)
 
 **Next step**: `/trw-sprint-team` to assign agents, or implement directly.
 ```
 
-Call `trw_learn(summary="PRD ready pipeline: {PRD-ID} — {score}", tags=["prd-workflow"])` to record the outcome.
+Record the outcome in the run artifact; reserve `trw_learn` for non-obvious reusable discoveries.
 
 ---
 
-## Rationalization Watchlist
-
-| Thought | Why it's wrong | Consequence |
-|---------|---------------|-------------|
-| "Skip the review, the groom score is high enough" | Review catches structural issues that validation scoring misses (ambiguity, untestable requirements) | Agents implement ambiguous requirements differently, causing rework |
-| "The PRD is NEEDS WORK but close, just proceed to exec plan" | Execution plans built on weak PRDs have wrong file paths and missing dependencies | Agents waste time on incorrect decompositions |
-| "I'll fabricate file paths to complete the exec plan faster" | Fabricated paths cause agents to create wrong files or search fruitlessly | Implementation variance and rework cycles |
-| "One refinement loop is enough, the review found minor issues" | Minor review issues often mask structural gaps that surface during implementation | Better to fix now (minutes) than during implementation (hours) |
-
 ## Error Recovery
 
-- **MCP tool failure** (`[Errno 2]`): The MCP server may have died. Report to user: "MCP server unavailable — run `/mcp` to reconnect, then retry `/trw-prd-ready`."
+- **TRW MCP tool failure**: report the exact failure, reconnect through the client's supported MCP flow when available,
+  and retry once per TRW policy. If it remains unavailable, stop at the current gate.
 - **PRD create fails**: Check if PRD ID already exists. Report and suggest using the existing PRD ID.
-- **Groom convergence at `total_score < 65`** (below REVIEW tier): Stop and report. The feature description likely needs more detail from the user.
+- **Groom convergence before readiness**: Stop and report the result fields and missing context; never fall through to review.
 - **Review returns BLOCK**: Stop and report blocking issues. These require human decisions.
 - **Exec plan hits unverifiable files**: Flag in Known Risks section rather than fabricating.
 

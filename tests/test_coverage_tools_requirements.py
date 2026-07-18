@@ -138,9 +138,17 @@ None.
 
 
 class TestRequirementsTemplateNoFrontmatter:
-    """Line 327: _load_template_body else branch when no --- frontmatter found."""
+    """_load_template_body fails closed when the canonical template lacks 3.2 frontmatter.
 
-    def test_load_template_body_no_frontmatter_uses_raw_body(self) -> None:
+    WHY (behavior change): commit 0e531d10c "fix(requirements): fail closed without
+    canonical template" (adversarial v26.1 evidence-gap remediation, bcc7625eb)
+    deliberately removed the old raw-body / _FALLBACK_BODY else-branch. A missing or
+    non-3.2 canonical template must now raise rather than silently returning an
+    unversioned body — a truthfulness hardening, not a regression. This test now
+    protects the fail-closed contract for the no-frontmatter branch.
+    """
+
+    def test_load_template_body_no_frontmatter_fails_closed(self) -> None:
         import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools._prd_template_helpers import reset_template_cache
         from trw_mcp.tools.requirements import _FRONTMATTER_RE
@@ -167,14 +175,18 @@ class TestRequirementsTemplateNoFrontmatter:
                         "exists",
                         lambda self: True if self.name == "prd_template.md" else Path.exists(self),
                     ),
+                    patch.object(
+                        Path,
+                        "is_file",
+                        lambda self: True if self.name == "prd_template.md" else Path.is_file(self),
+                    ),
                 ):
                     reset_template_cache()
                     from trw_mcp.tools.requirements import _load_template_body
 
-                    body = _load_template_body()
-
-            assert "Problem Statement" in body
-            assert body == no_frontmatter_content
+                    # No `---` frontmatter (and no version markers) => fail closed.
+                    with pytest.raises(ValueError, match=r"malformed or not version 3\.2"):
+                        _load_template_body()
         finally:
             helpers._CACHED_TEMPLATE_BODY = original_body
             helpers._CACHED_TEMPLATE_VERSION = original_version

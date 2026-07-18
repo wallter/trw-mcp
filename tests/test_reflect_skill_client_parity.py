@@ -41,6 +41,9 @@ _CONTRACT_MARKERS: tuple[str, ...] = (
     "improvement-backlog.md",  # FR03 dedup + FR04 route 4
     "CONSTITUTION.md",  # FR06 canon-protection guardrail
     "recurred",  # FR05 recurrence escalation
+    "immutable active run/session ID",
+    "A task-name slug alone never proves ledger ownership",
+    "Run/session-id: <immutable identity>",
 )
 
 
@@ -87,3 +90,109 @@ def test_client_variants_drop_claude_specific_tool_names() -> None:
     for client in ("codex", "copilot", "opencode"):
         content = (_DATA_DIR / client / "skills" / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8")
         assert "AskUserQuestion" not in content, f"{client} variant names Claude-specific AskUserQuestion"
+
+
+def test_reflect_prd_fallback_is_repository_discovered() -> None:
+    for skill_md in _BUNDLED_REFLECT_SOURCES:
+        content = skill_md.read_text(encoding="utf-8")
+        assert "repository's discovered PRD instructions and search-scope contract" in content
+        assert "docs/requirements-aare-f/CLAUDE.md" not in content
+
+
+def test_shared_reflect_contract_keeps_portable_debt_and_handoff_rules() -> None:
+    content = (_DATA_DIR / "skills" / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8")
+    for phrase in (
+        "count-reflection-debt.py` when present",
+        "list free-form ledgers you could not parse",
+        "redacted observed evidence",
+        "A ledger-only pointer is insufficient",
+    ):
+        assert phrase in content
+    for historical_detail in (
+        "four different totals across 2026-06/07",
+        "highest-yield signal class of the 2026-07-10 reflection",
+        "PRD-CORE-216",
+        "FPI-7 precedent",
+        "CORE-216/217 + QUAL-117/118",
+    ):
+        assert historical_detail not in content
+
+
+def test_generic_delta_mode_requires_exact_session_identity() -> None:
+    content = (_DATA_DIR / "skills" / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8")
+    assert "recorded run/session ID equals the current immutable identity" in content
+    assert "exact path was created earlier in the current conversation" in content
+    assert "same run task-name slug" not in content
+
+
+def test_prd_qual_120_fr07(tmp_path: Path) -> None:
+    """FR07 acceptance: Given an action targets a draft PRD, missing target, or
+    verified implementation, When counted, Then only verified implementation
+    closes and each other item has a reason."""
+    from trw_mcp.state.reflection_followthrough import reconcile_debt
+
+    prds = tmp_path / "prds"
+    prds.mkdir()
+    (prds / "PRD-CORE-080.md").write_text(
+        "---\nprd:\n  id: PRD-CORE-080\n  title: T\n  status: draft\n---\n", encoding="utf-8"
+    )
+    (prds / "PRD-CORE-081.md").write_text(
+        "---\nprd:\n  id: PRD-CORE-081\n  title: T\n  status: implemented\n  functionality_level: live\n---\n",
+        encoding="utf-8",
+    )
+    actions = [
+        {"action_id": "a-draft", "state": "approved", "target_prd": "PRD-CORE-080"},
+        {"action_id": "a-missing", "state": "approved", "target_prd": "PRD-CORE-404"},
+        {"action_id": "a-verified", "state": "routed", "target_prd": "PRD-CORE-081"},
+    ]
+    open_debt, closed = reconcile_debt(actions, prds)
+    assert [item.action_id for item in closed] == ["a-verified"]
+    assert {item.action_id: item.reason for item in open_debt} == {
+        "a-draft": "target_not_implemented",
+        "a-missing": "target_missing",
+    }
+    # Every open item carries a typed reason.
+    assert all(item.reason for item in open_debt)
+
+
+def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
+    """Audit F5: the --typed CLI mode is exercised end-to-end as a subprocess,
+    and every trw-reflect mirror carries the typed-lifecycle doctrine."""
+    import json
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "count-reflection-debt.py"
+    prds = tmp_path / "prds"
+    prds.mkdir()
+    (prds / "PRD-CORE-090.md").write_text(
+        "---\nprd:\n  id: PRD-CORE-090\n  title: T\n  status: draft\n---\n", encoding="utf-8"
+    )
+    actions = tmp_path / "actions.json"
+    actions.write_text(
+        json.dumps([{"action_id": "a1", "state": "approved", "target_prd": "PRD-CORE-090"}]),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, str(script), "--typed", str(actions), "--prds-dir", str(prds)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "open=1 closed=0" in result.stdout
+    assert "reason=target_not_implemented" in result.stdout
+
+    root = Path(__file__).resolve().parents[2]
+    # Glob-discovered (auditor follow-up): every trw-reflect mirror that EXISTS
+    # anywhere in the repo is asserted — a future mirror can never drift silently.
+    mirrors = sorted(
+        set(root.glob(".agents/skills/trw-reflect/SKILL.md"))
+        | set(root.glob(".claude/skills/trw-reflect/SKILL.md"))
+        | set((root / "trw-mcp" / "src" / "trw_mcp" / "data").rglob("trw-reflect/SKILL.md"))
+    )
+    assert len(mirrors) >= 7, mirrors  # the currently-known mirror population
+    for mirror in mirrors:
+        content = mirror.read_text(encoding="utf-8")
+        assert "Typed follow-through lifecycle (PRD-QUAL-120-FR06)" in content, mirror
+        assert "FILING, not closure" in content, mirror

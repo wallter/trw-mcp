@@ -94,6 +94,14 @@ class TestTypeScriptExtraction:
         result = generate_anchors([str(f)], {})
         assert result[0]["symbol_name"] == "Widget"
 
+    def test_js_class(self, tmp_path: Path) -> None:
+        """FR02 (:241): JavaScript class definitions are recognized."""
+        f = tmp_path / "svc.js"
+        f.write_text("class EventBus {\n  constructor() {}\n}\n")
+        result = generate_anchors([str(f)], {})
+        assert result[0]["symbol_name"] == "EventBus"
+        assert result[0]["symbol_type"] == "class"
+
 
 class TestGoExtraction:
     def test_go_func(self, tmp_path: Path) -> None:
@@ -134,6 +142,22 @@ class TestRustExtraction:
         result = generate_anchors([str(f)], {})
         assert result[0]["symbol_name"] == "MyType"
 
+    def test_generate_anchors_rust_struct(self, tmp_path: Path) -> None:
+        """FR02 (:242-243, PRD :449): Rust struct extracts with symbol_type='class'."""
+        f = tmp_path / "lib.rs"
+        f.write_text("pub struct Config {\n    name: String,\n}\n")
+        result = generate_anchors([str(f)], {})
+        assert result[0]["symbol_name"] == "Config"
+        assert result[0]["symbol_type"] == "class"
+
+    def test_rust_pub_crate_fn(self, tmp_path: Path) -> None:
+        """FR02 (:243): pub(crate) fn is recognized."""
+        f = tmp_path / "lib.rs"
+        f.write_text("pub(crate) fn internal_helper() {\n}\n")
+        result = generate_anchors([str(f)], {})
+        assert result[0]["symbol_name"] == "internal_helper"
+        assert result[0]["symbol_type"] == "function"
+
 
 class TestEdgeCases:
     def test_binary_returns_empty(self, tmp_path: Path) -> None:
@@ -170,11 +194,13 @@ class TestEdgeCases:
         result = generate_anchors([str(f)], {})
         assert result == []
 
-    def test_symbol_context_unused_no_error(self, tmp_path: Path) -> None:
+    def test_ranges_for_unrelated_file_ignored(self, tmp_path: Path) -> None:
+        # Ranges keyed to a DIFFERENT file must not apply here; with no ranges
+        # for this file the fallback (first symbol) is used and nothing raises.
         f = tmp_path / "mod.py"
         f.write_text("def hello(): pass\n")
-        # symbol_context is reserved; passing arbitrary data must not raise
-        result = generate_anchors([str(f)], {"key": "value", "nested": [1, 2]})
+        result = generate_anchors([str(f)], {"/some/other/file.py": [(1, 5)]})
+        assert len(result) == 1
         assert result[0]["symbol_name"] == "hello"
 
     def test_file_path_in_anchor(self, tmp_path: Path) -> None:
@@ -183,10 +209,73 @@ class TestEdgeCases:
         result = generate_anchors([str(f)], {})
         assert result[0]["file"] == str(f)
 
-    def test_one_anchor_per_file(self, tmp_path: Path) -> None:
-        """Only one anchor extracted per file for diversity across files."""
+    def test_no_ranges_falls_back_to_first_symbol(self, tmp_path: Path) -> None:
+        """FR02 fallback: with no changed ranges, the first symbol is emitted.
+
+        Preserves behaviour for callers that supply no line ranges (e.g. git
+        diff unavailable). A multi-symbol file yields exactly one anchor — the
+        first symbol by line order.
+        """
         f = tmp_path / "multi.py"
         f.write_text("def func_a(): pass\ndef func_b(): pass\ndef func_c(): pass\n")
         result = generate_anchors([str(f)], {})
-        # Only one anchor per file
         assert len(result) == 1
+        assert result[0]["symbol_name"] == "func_a"
+
+
+class TestNearestSymbolSelection:
+    """FR02: nearest-symbol-to-changed-range selection (PRD :245-249, :259)."""
+
+    def test_two_changed_functions_yield_two_anchors(self, tmp_path: Path) -> None:
+        """FR02 acceptance (:259): a file with 2 changed functions yields 2 anchors.
+
+        Each anchor is bound to the correct (nearest at-or-before) function.
+        """
+        f = tmp_path / "mod.py"
+        # foo at line 1, bar at line 4
+        f.write_text("def foo(x):\n    return x\n\ndef bar(y):\n    return y\n")
+        # Changed line 2 (inside foo) and line 5 (inside bar).
+        ranges = {str(f): [(2, 2), (5, 5)]}
+        result = generate_anchors([str(f)], ranges)
+        assert len(result) == 2
+        names = {a["symbol_name"] for a in result}
+        assert names == {"foo", "bar"}
+        # Verify each anchor maps to the nearest-at-or-before definition.
+        by_name = {a["symbol_name"]: a for a in result}
+        assert by_name["foo"]["line_range"] == (1, 1)
+        assert by_name["bar"]["line_range"] == (4, 4)
+
+    def test_range_selects_nearest_at_or_before(self, tmp_path: Path) -> None:
+        """A single changed range picks the nearest definition at-or-before it."""
+        f = tmp_path / "multi.py"
+        f.write_text("def func_a():\n    pass\ndef func_b():\n    pass\ndef func_c():\n    pass\n")
+        # Change on line 4 — inside func_b (defined line 3).
+        result = generate_anchors([str(f)], {str(f): [(4, 4)]})
+        assert len(result) == 1
+        assert result[0]["symbol_name"] == "func_b"
+
+    def test_change_above_first_symbol_uses_first(self, tmp_path: Path) -> None:
+        """A change before any definition still anchors to the first symbol."""
+        f = tmp_path / "mod.py"
+        f.write_text("# header comment\n# another\ndef only_fn():\n    pass\n")
+        result = generate_anchors([str(f)], {str(f): [(1, 1)]})
+        assert len(result) == 1
+        assert result[0]["symbol_name"] == "only_fn"
+
+    def test_per_file_capped_at_three(self, tmp_path: Path) -> None:
+        """Even with 5 changed ranges in one file, at most 3 anchors emit."""
+        f = tmp_path / "many.py"
+        f.write_text("".join(f"def fn_{i}():\n    pass\n" for i in range(5)))
+        # 5 ranges, each on a distinct def line (lines 1,3,5,7,9).
+        ranges = {str(f): [(1, 1), (3, 3), (5, 5), (7, 7), (9, 9)]}
+        result = generate_anchors([str(f)], ranges)
+        assert len(result) == 3
+
+    def test_duplicate_ranges_same_symbol_dedup(self, tmp_path: Path) -> None:
+        """Multiple ranges resolving to the same symbol yield a single anchor."""
+        f = tmp_path / "mod.py"
+        f.write_text("def foo():\n    a = 1\n    b = 2\n    return a + b\n")
+        # Two changed ranges both inside foo.
+        result = generate_anchors([str(f)], {str(f): [(2, 2), (4, 4)]})
+        assert len(result) == 1
+        assert result[0]["symbol_name"] == "foo"

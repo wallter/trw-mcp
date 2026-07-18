@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._ceremony_helpers import (
     _check_complexity_drift,
@@ -301,6 +302,20 @@ class TestStaleBuildEvidence:
         events = [_build_pass("2026-06-11T00:00:00Z"), _edit("2026-06-11T00:00:00Z")]
         assert _build_evidence_is_stale(events) is False
 
+    def test_fractional_python_build_after_hook_z_edit_is_fresh(self) -> None:
+        events = [
+            _edit("2026-07-11T12:00:00Z"),
+            _build_pass("2026-07-11T12:00:00.900000+00:00"),
+        ]
+        assert _build_evidence_is_stale(events) is False
+
+    def test_fractional_python_edit_after_hook_z_build_is_stale(self) -> None:
+        events = [
+            _build_pass("2026-07-11T12:00:00Z"),
+            _edit("2026-07-11T12:00:00.900000+00:00"),
+        ]
+        assert _build_evidence_is_stale(events) is True
+
     def test_no_passing_build_not_stale_here(self) -> None:
         # Missing-build is handled by the no-passing-build branch, not staleness.
         events = [_edit("2026-06-11T00:00:00Z")]
@@ -360,8 +375,11 @@ class TestStaleBuildEvidence:
         self,
         tmp_path: Path,
         reader: FileStateReader,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """edit-then-pass on a coding-task run is clean (no delivery_blocked)."""
+        legacy_config = TRWConfig().model_copy(update={"evidence_receipt_mode": "observe"})
+        monkeypatch.setattr("trw_mcp.tools._delivery_helpers.get_config", lambda: legacy_config)
         run_dir = tmp_path / "run"
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
@@ -380,3 +398,241 @@ class TestStaleBuildEvidence:
 
         assert "delivery_blocked" not in result
         assert "build_gate_warning" not in result
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-119-FR06: delivery consumes universal completion truth
+# ---------------------------------------------------------------------------
+
+
+def _write_scoped_run(tmp_path: Path, prd_id: str, status: str) -> tuple[Path, Path]:
+    """Run dir with prd_scope + a PRD file at the given lifecycle status."""
+    import yaml
+
+    run_dir = tmp_path / "run"
+    (run_dir / "meta").mkdir(parents=True)
+    (run_dir / "meta" / "run.yaml").write_text(
+        yaml.safe_dump({"run_id": "r1", "prd_scope": [prd_id], "task_type": "coding"}),
+        encoding="utf-8",
+    )
+    prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+    prds_dir.mkdir(parents=True)
+    (prds_dir / f"{prd_id}.md").write_text(
+        f"---\nprd:\n  id: {prd_id}\n  title: T\n  status: {status}\n  priority: P0\n"
+        f"functionality_level: planned\n---\n# {prd_id}\n",
+        encoding="utf-8",
+    )
+    return run_dir, prds_dir
+
+
+def test_prd_qual_119_fr06(tmp_path: Path) -> None:
+    """FR06 acceptance: delivery-driven promotion consumes the typed decision —
+    only current complete satisfies the lifecycle claim, each non-complete
+    field stays distinct, and a MISSING guard fails closed (the L-EQwV
+    incident: deferred auto-progress walked planned PRDs to done)."""
+    from trw_mcp.state.validation.prd_progression import auto_progress_prds
+
+    prd_id = "PRD-CORE-901"
+    run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "approved")
+    config = TRWConfig()
+
+    # FAIL-CLOSED regression (the incident): no guard injected -> NO promotion.
+    results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+    assert len(results) == 1
+    assert results[0]["applied"] is False
+    assert results[0]["reason"] == "effective_completion:completion_decision_unavailable"
+    content = (prds_dir / f"{prd_id}.md").read_text(encoding="utf-8")
+    assert "status: approved" in content  # lifecycle untouched
+
+    # Distinct non-complete outcomes refuse with the outcome named.
+    for block_reason in (
+        "incomplete: absent: build_evidence",
+        "externally_blocked: pypi_release",
+        "rolled_back: safety rollback",
+        "unknown: stale: repo_health_receipt",
+    ):
+        results = auto_progress_prds(
+            run_dir, "deliver", prds_dir, config, completion_guard=lambda _pid, r=block_reason: r
+        )
+        assert results[0]["applied"] is False
+        assert results[0]["reason"] == f"effective_completion:{block_reason}"
+
+    # Only a COMPLETE decision (guard returns None) permits the claim; the
+    # remaining state-machine guards then govern as before.
+    results = auto_progress_prds(run_dir, "deliver", prds_dir, config, completion_guard=lambda _pid: None)
+    assert len(results) == 1
+    # Promotion may proceed (or stop at an existing transition guard) — but the
+    # completion gate itself no longer refuses.
+    assert not str(results[0].get("reason", "")).startswith("effective_completion:")
+
+
+def test_qual_119_fr06_non_completion_phases_unaffected(tmp_path: Path) -> None:
+    """A phase whose target is NOT implemented-family needs no completion guard."""
+    from trw_mcp.state.validation.prd_progression import auto_progress_prds
+
+    prd_id = "PRD-CORE-902"
+    run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "draft")
+    results = auto_progress_prds(run_dir, "plan", prds_dir, TRWConfig())
+    # draft -> review carries no completion claim; guard absence changes nothing.
+    assert all(not str(r.get("reason", "")).startswith("effective_completion:") for r in results)
+
+
+def test_qual_119_fr06_real_guard_blocks_planned_prd_with_build_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-audit F1/F2 regression (incident L-EQwV): drive the REAL production
+    guard (_do_auto_progress) over a still-approved, functionality_level:planned
+    PRD in a run that HAS passing build evidence — the exact condition under
+    which deferred auto-progress previously walked planned PRDs to done. The
+    promotion must be refused and the PRD bytes untouched."""
+    import json
+
+    from trw_mcp.tools._deferred_steps_learning import _do_auto_progress
+
+    prd_id = "PRD-CORE-903"
+    run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "approved")
+    # Passing build evidence (the norm at deliver time).
+    (run_dir / "meta" / "events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "build_check_complete",
+                "data": {"tests_passed": True, "static_checks_clean": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+
+    result = _do_auto_progress(run_dir)
+
+    assert result["status"] == "success"
+    progressions = result["progressions"]
+    assert len(progressions) == 1
+    assert progressions[0]["applied"] is False
+    reason = str(progressions[0]["reason"])
+    assert reason.startswith("effective_completion:")
+    assert "incomplete" in reason  # target-status evaluation fires FPI #7
+    content = (prds_dir / f"{prd_id}.md").read_text(encoding="utf-8")
+    assert "status: approved" in content and "functionality_level: planned" in content
+
+
+def test_qual_119_p09_gate_default_is_block() -> None:
+    """P09 activation + superseded-default removal proof: the shipped default
+    enforces completion truth; the warn-era default cannot win silently."""
+    assert TRWConfig().prd_transition_gate == "block"
+
+
+def test_qual_120_deliver_writes_acceptance_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """QUAL-120 P09 activation: the deliver default path persists an out-of-band
+    AcceptanceManifest per scoped PRD, carrying the derived completion outcome,
+    without touching the authored PRD bytes."""
+    import json
+
+    from trw_mcp.state.acceptance_manifest import load_manifest
+    from trw_mcp.tools._deferred_steps_learning import _do_auto_progress
+
+    prd_id = "PRD-CORE-904"
+    run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "approved")
+    (run_dir / "meta" / "events.jsonl").write_text(
+        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    prd_bytes_before = (prds_dir / f"{prd_id}.md").read_bytes()
+
+    result = _do_auto_progress(run_dir)
+
+    assert result["status"] == "success"
+    manifest = load_manifest(tmp_path / ".trw", prd_id)
+    assert manifest is not None
+    assert manifest.prd_id == prd_id
+    # The guard refused promotion (planned PRD), and the manifest records the
+    # non-complete outcome out-of-band.
+    assert manifest.completion_outcome == "incomplete"
+    assert (prds_dir / f"{prd_id}.md").read_bytes() == prd_bytes_before
+
+
+def test_qual_120_f7_partial_transition_never_projects_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit F7 empirical reproduction (P0): a PRD whose coherence checks pass
+    HYPOTHETICALLY (live level, empty stubs, valid default_path_proof) but
+    whose transition stalls short of the implemented family must never get
+    completion_outcome=complete — the manifest binds ACTUAL resulting status."""
+    import json
+
+    from trw_mcp.state.acceptance_manifest import load_manifest
+    from trw_mcp.tools._deferred_steps_learning import _do_auto_progress
+
+    prd_id = "PRD-CORE-905"
+    run_dir = tmp_path / "run"
+    (run_dir / "meta").mkdir(parents=True)
+    import yaml
+
+    (run_dir / "meta" / "run.yaml").write_text(
+        yaml.safe_dump({"run_id": "r1", "prd_scope": [prd_id], "task_type": "coding"}),
+        encoding="utf-8",
+    )
+    (run_dir / "meta" / "events.jsonl").write_text(
+        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        encoding="utf-8",
+    )
+    prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+    prds_dir.mkdir(parents=True)
+    # Hypothetically coherent (live + empty stubs + content-bound proof) but a
+    # sparse draft body: the quality-tier transition guard stalls the BFS
+    # before the implemented family. Actual resulting status != implemented.
+    (prds_dir / f"{prd_id}.md").write_text(
+        f"---\nprd:\n  id: {prd_id}\n  title: T\n  status: draft\n  priority: P3\n"
+        "functionality_level: live\nstubs: []\n"
+        "default_path_proof:\n  receipt: tests/t.py::t\n"
+        f"  source_digest: sha256:{'a' * 64}\n"
+        "  removal_assertion: tests/t.py::absent\n---\n# sparse\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+
+    result = _do_auto_progress(run_dir)
+    assert result["status"] == "success"
+
+    manifest = load_manifest(tmp_path / ".trw", prd_id)
+    assert manifest is not None
+    # Whatever the hypothetical coherence said, the file never reached the
+    # implemented family — the manifest must not claim complete.
+    final_status = (prds_dir / f"{prd_id}.md").read_text(encoding="utf-8")
+    if "status: implemented" not in final_status and "status: done" not in final_status:
+        assert manifest.completion_outcome != "complete", manifest.completion_outcome
+
+
+def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auditor follow-up: a PRD that GENUINELY reaches the implemented family
+    persists completion_outcome=complete — the F7 cross-check only ever narrows
+    complete->incomplete, never inverts a genuine success."""
+    import json
+
+    from trw_mcp.state.acceptance_manifest import load_manifest
+    from trw_mcp.tools._deferred_steps_learning import _do_auto_progress
+
+    prd_id = "PRD-CORE-906"
+    run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "approved")
+    # Rewrite as a coherent, ALREADY-implemented live PRD (no transition needed).
+    (prds_dir / f"{prd_id}.md").write_text(
+        f"---\nprd:\n  id: {prd_id}\n  title: T\n  status: done\n  priority: P3\n"
+        "functionality_level: live\nstubs: []\n"
+        "default_path_proof:\n  receipt: tests/t.py::t\n"
+        f"  source_digest: sha256:{'b' * 64}\n"
+        "  removal_assertion: tests/t.py::absent\n---\n# body\n",
+        encoding="utf-8",
+    )
+    (run_dir / "meta" / "events.jsonl").write_text(
+        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+
+    result = _do_auto_progress(run_dir)
+    assert result["status"] == "success"
+    manifest = load_manifest(tmp_path / ".trw", prd_id)
+    assert manifest is not None
+    assert manifest.completion_outcome == "complete"

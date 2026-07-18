@@ -87,6 +87,11 @@ def _run_with_progress_testable(
         proc.wait()
     finally:
         watchdog.cancel()
+        watchdog.join()
+        proc.stdout.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
     if killed_by_watchdog:
         ui.step_warn(f"{fallback_msg} timed out after {timeout}s")

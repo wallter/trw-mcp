@@ -122,11 +122,10 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
     assert deptry["known_first_party"] == ["trw_mcp"]
     assert deptry["optional_dependencies_dev_groups"] == ["dev"]
     assert deptry["extend_exclude"] == ["scripts/install-trw.template.py"]
-
     per_rule = deptry["per_rule_ignores"]
     assert isinstance(per_rule, dict)
     assert per_rule["DEP001"] == ["tiktoken"]
-    assert per_rule["DEP002"] == ["opentelemetry-distro", "opentelemetry-exporter-otlp"]
+    assert per_rule["DEP002"] == ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
     assert per_rule["DEP003"] == ["opentelemetry", "tiktoken"]
     assert per_rule["DEP004"] == ["rank_bm25"]
 
@@ -146,7 +145,7 @@ def test_requirements_lock_security_pin_floors_are_patched() -> None:
     floors = {
         "Authlib": (1, 6, 12),
         "urllib3": (2, 7, 0),
-        "cryptography": (46, 0, 7),
+        "cryptography": (48, 0, 1),
         "ecdsa": (0, 19, 2),
         "idna": (3, 15),
         "lxml": (6, 1, 0),
@@ -154,11 +153,12 @@ def test_requirements_lock_security_pin_floors_are_patched() -> None:
         "pyasn1": (0, 6, 3),
         "Pygments": (2, 20, 0),
         "PyJWT": (2, 13, 0),
+        "pydantic-settings": (2, 14, 2),
         "pytest": (9, 0, 3),
         "python-dotenv": (1, 2, 2),
         "python-multipart": (0, 0, 27),
         "requests": (2, 33, 0),
-        "starlette": (1, 0, 1),
+        "starlette": (1, 3, 1),
     }
     for package, floor in floors.items():
         assert _version_tuple(_requirements_lock_package_version(package)) >= floor

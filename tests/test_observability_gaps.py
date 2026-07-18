@@ -268,7 +268,7 @@ class TestDistinctEventNames:
         mock_reader.exists.return_value = False
         mock_reader.read_jsonl.return_value = []
 
-        with patch("trw_mcp.tools._delivery_helpers.logger") as mock_logger:
+        with patch("trw_mcp.tools._delivery_review_gate.logger") as mock_logger:
             check_delivery_gates(run_dir, mock_reader)
 
         warning_calls = mock_logger.warning.call_args_list
@@ -277,7 +277,15 @@ class TestDistinctEventNames:
         review_events = [c for c in warning_calls if "review" in str(c[0][0]).lower()]
         assert len(review_events) >= 1
         assert review_events[0][0][0] != "maintenance_step_failed"
-        assert review_events[0][0][0] == "maintenance_review_gate_failed"
+        # Distinct per-site names — which sites fire depends on the configured
+        # evidence mode (typed/enforce skips the legacy observe-mode branch),
+        # so assert the names are drawn from the known distinct set rather
+        # than pinning one flow.
+        assert {call[0][0] for call in review_events} <= {
+            "maintenance_review_gate_failed",
+            "review_substance_check_failed",
+            "typed_review_evidence_resolution_failed",
+        }
 
     def test_all_event_names_unique_across_helpers(self) -> None:
         """Verify no two except blocks share the same event name.
@@ -417,7 +425,6 @@ class TestStaleCountError:
         # The stale count scan is near line 325 of orchestration.py
         # We'll test by patching count_stale_runs to raise
         with (
-            patch("trw_mcp.tools.orchestration._reader") as mock_reader,
             patch("trw_mcp.tools.orchestration.resolve_run_path") as mock_resolve,
             patch("trw_mcp.tools.orchestration.count_stale_runs", side_effect=Exception("scan failed")),
             patch("trw_mcp.tools.orchestration.logger") as mock_logger,
@@ -425,17 +432,6 @@ class TestStaleCountError:
             mock_path = MagicMock()
             mock_resolve.return_value = mock_path
 
-            # Mock run.yaml data
-            mock_reader.read_yaml.return_value = {
-                "run_id": "test-run",
-                "task": "test",
-                "phase": "implement",
-                "status": "active",
-                "confidence": "medium",
-                "framework": "v24.2",
-            }
-            mock_reader.read_jsonl.return_value = []
-            mock_reader.exists.return_value = False
             mock_path.__truediv__ = MagicMock(return_value=mock_path)
             mock_path.exists.return_value = False
 
@@ -451,16 +447,18 @@ class TestStaleCountError:
         # Direct behavioral test: patch and check the error indicator
         # is present in the except block of the orchestration module
 
-    def test_stale_count_error_flag_in_source(self) -> None:
-        """Verify the except block in trw_status sets stale_count_error=True."""
-        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "orchestration.py"
-        source = source_path.read_text(encoding="utf-8")
+    # The stale-count logic moved to _orchestration_status_assembly.py during
+    # the status-assembly extraction (module-size gate); scan the new home.
+    _ASSEMBLY = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "_orchestration_status_assembly.py"
 
-        assert "stale_count_error" in source, "orchestration.py should contain stale_count_error indicator"
+    def test_stale_count_error_flag_in_source(self) -> None:
+        """Verify the except block in the status assembly sets stale_count_error=True."""
+        source = self._ASSEMBLY.read_text(encoding="utf-8")
+
+        assert "stale_count_error" in source, "status assembly should contain stale_count_error indicator"
 
     def test_stale_count_scan_failure_logged_as_warning(self) -> None:
         """Verify stale count scan failure is logged at warning level."""
-        source_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "tools" / "orchestration.py"
-        source = source_path.read_text(encoding="utf-8")
+        source = self._ASSEMBLY.read_text(encoding="utf-8")
 
-        assert "stale_count_scan_failed" in source, "orchestration.py should log stale_count_scan_failed"
+        assert "stale_count_scan_failed" in source, "status assembly should log stale_count_scan_failed"

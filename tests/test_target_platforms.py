@@ -120,8 +120,6 @@ class TestInitTargetPlatforms:
                 "cursor-cli",
                 "opencode",
                 "codex",
-                "gemini",
-                "aider",
                 "antigravity-cli",
             ]
         )
@@ -268,8 +266,6 @@ class TestUpdateTargetPlatforms:
                 "cursor-cli",
                 "opencode",
                 "codex",
-                "gemini",
-                "aider",
                 "antigravity-cli",
             ]
         )

@@ -15,7 +15,7 @@ import pytest
 
 from trw_mcp.state.ceremony_progress import CeremonyState, write_ceremony_state
 
-from ._orchestration_waves_support import orch_tools  # noqa: F401
+from ._tools_orchestration_support import orch_tools, set_project_root  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Pure-unit tests of the gate-scan predicates (no filesystem I/O).

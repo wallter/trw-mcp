@@ -8,6 +8,7 @@ import pytest
 
 import trw_mcp.state.analytics.report as analytics_mod
 from tests._test_tools_analytics_support import _write_run, writer  # noqa: F401
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.report import _parse_run_id_timestamp, scan_all_runs
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -78,7 +79,7 @@ class TestAnalyticsIntegration:
         (trw_dir / "context").mkdir(parents=True)
 
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: trw_dir)
 
         _write_run(
@@ -107,7 +108,7 @@ class TestAnalyticsIntegration:
     ) -> None:
         """Malformed since filter surfaces in parse_errors rather than crashing."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         _write_run(

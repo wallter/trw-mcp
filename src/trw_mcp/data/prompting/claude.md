@@ -47,7 +47,7 @@ outputs when results must be merged or resumed.
 3. **Implement**: keep diffs small; checkpoint at milestones.
 4. **Verify**: run targeted project-native checks; broaden when risk warrants.
 5. **Learn**: call `trw_learn(summary, detail)` for reusable discoveries.
-6. **Finish**: call `trw_deliver()` only after validation is recorded with `trw_build_check()` or you explicitly label an acceptable failure; persist work for future sessions.
+6. **Finish**: call `trw_deliver()` only after project-native validation is run and its observed result is recorded with `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)`, or `allow_unverified=true` carries a structured acceptable-failure record (`failed_command`, `residual_risk`, `owner`, `expiry_iso`); persist work for future sessions.
 
 ## Portability Gotchas
 

@@ -30,15 +30,9 @@ from typing import Any
 import structlog
 from ruamel.yaml import YAML
 
+from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.channels._gitignore import add_gitignore_entry
-from trw_mcp.channels._manifest_loader import (
-    ManifestValidationError,
-    auto_recreate_empty,
-    load,
-    write,
-)
-from trw_mcp.channels._manifest_models import ChannelEntry
-from trw_mcp.channels._provenance import now_utc_iso8601
+from trw_mcp.channels._manifest_loader import ManifestValidationError
 from trw_mcp.channels.opencode._agents_md_segment import (
     SidecarData,
     install_opencode_agents_md_distill_segment,
@@ -65,6 +59,7 @@ _MANAGED_ARTIFACTS_PATH = ".trw/managed-artifacts.yaml"
 # Client profile env file (FR19)
 _CLIENT_PROFILE_ENV_PATH = ".trw/client-profile.env"
 _CLIENT_PROFILE_ENV_CONTENT = "TRW_CLIENT_PROFILE=opencode\n"
+_MANIFEST_DATA = Path(__file__).parent.parent / "data" / "opencode" / "channels" / "manifest-opencode.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -116,45 +111,12 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
     Raises:
         ManifestValidationError: If any entry fails ChannelEntry.model_validate().
     """
-    manifest_data_path = Path(__file__).parent.parent / "data" / "opencode" / "channels" / "manifest-opencode.yaml"
-    yaml = YAML(typ="safe")
-    raw = yaml.load(manifest_data_path.read_text(encoding="utf-8")) or {}
-    raw_channels: list[dict[str, Any]] = raw.get("channels", [])
-
-    # Validate all entries first (FR29 — all-or-nothing)
-    validated: list[ChannelEntry] = []
-    for entry_dict in raw_channels:
-        try:
-            validated.append(ChannelEntry.model_validate(entry_dict))
-        except Exception as exc:
-            raise ManifestValidationError(f"opencode manifest entry validation failed: {exc}") from exc
-
-    # Load existing manifest
-    manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        manifest = load(manifest_path)
-    except Exception:
-        auto_recreate_empty(manifest_path)
-        manifest = load(manifest_path)
-
-    # Merge: add new entries, preserve existing
-    existing_ids = {e.id for e in manifest.channels}
-    added = 0
-    for entry in validated:
-        if entry.id not in existing_ids:
-            manifest.channels.append(entry)
-            existing_ids.add(entry.id)
-            added += 1
-
-    manifest.generated_at = now_utc_iso8601()
-    write(manifest, manifest_path)
+    added, total = merge_distill_channel_manifest(repo_root, _MANIFEST_DATA, "opencode")
 
     log.debug(
         "opencode_manifest_bootstrapped",
         added=added,
-        total=len(manifest.channels),
+        total=total,
         outcome="ok",
     )
     return {"status": "ok", "count": added}

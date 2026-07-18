@@ -1,42 +1,55 @@
 # trw-mcp
 
-**MCP server for AI coding agents** — persistent engineering memory, knowledge compounding, and spec-driven development workflows. Part of [TRW Framework](https://trwframework.com).
+**Persistent engineering memory for AI coding agents** — an MCP server for cross-session recall, evidence-backed delivery, and spec-driven development. Part of [TRW Framework](https://trwframework.com).
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-orange.svg)](https://trwframework.com/license)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
 [![Docs](https://img.shields.io/badge/docs-trwframework.com-blue)](https://trwframework.com/docs)
 
-> Every AI coding tool resets to zero. TRW **preserves state across sessions via the `.trw/` directory** — session-start recall replays prior learnings at every new session.
+> **Release status:** Alpha and source-available under BSL 1.1. The current
+> package is suitable for evaluation and dogfooding, but it does not claim a
+> production-stable API or support SLA.
 
-## Part of TRW Framework
+> Coding-agent sessions are usually stateless. TRW keeps project knowledge in `.trw/` and recalls relevant learnings when the next session starts.
+
+**[Quick start](#quick-start)** · **[Core tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Security and network behavior](#telemetry--network-behavior)** · **[Development](#development)**
+
+## How it fits
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->43<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->46<!-- /inv --> tools, <!-- inv:skills -->28<!-- /inv --> skills, <!-- inv:agents -->12<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
-## What It Does
+## What it does
 
 trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in `.trw/` and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; early SWE-bench single-shot measurements (n=40/47) showed null. See the [verification docs](https://trwframework.com/docs/verification) for the current methodology and evidence posture.*
 
-The server also manages structured run tracking (phases, checkpoints, events), build verification (pytest + mypy), [spec-driven development](https://trwframework.com/docs) with AARE-F PRDs, CLAUDE.md auto-generation from high-impact learnings, and instruction-tool manifest validation that ensures agents only see tools they can actually call.
+Beyond memory, the server provides:
+
+- **Run lifecycle** — phases, checkpoints, events, resumable state, and delivery records.
+- **Verification gates** — project-native build evidence and structured review/delivery checks.
+- **Requirements workflows** — [AARE-F PRDs](https://trwframework.com/docs), validation, and requirement-to-code traceability.
+- **Client integration** — generated instruction files, hooks, skills, and capability-aware tool exposure for supported coding clients.
+- **Code intelligence** — lexical/symbol search, before-edit context, dependency relationships, and risk signals.
 
 **Dogfooding scale**: thousands of tests across hundreds of PRDs, dogfooded across the TRW monorepo (coverage gate enforced at 80%, 90% target for new code). This codebase was built by AI agents using TRW. *Scale proves the framework is usable at volume; whether it improves outcomes vs baseline is measured via the eval bench, not inferred from these counts.*
 
 ## Quick Start
 
-See the [full quickstart guide](https://trwframework.com/docs/quickstart) for Claude Code, Cursor, opencode, and Codex setup.
+Requires Python 3.10+ and a Git repository. The installer supports Claude Code, Codex, Cursor, OpenCode, Copilot, and Antigravity; use `--ide all` when a repository is shared across clients. See the [full quickstart guide](https://trwframework.com/docs/quickstart) for client-specific setup.
 
 ```bash
-# Recommended: one-line installer (sets up trw-mcp + bootstraps your project)
+# Recommended: install TRW
 curl -fsSL https://trwframework.com/install.sh | bash
 
-# Deploy TRW to a project (must be a git repo)
-trw-mcp init-project /path/to/your/repo
+# Bootstrap the current repository (client is auto-detected)
+cd /path/to/your/repo
+trw-mcp init-project .
 
-# Or add the MCP server to Claude Code manually
-claude mcp add trw -- trw-mcp --debug
+# Confirm the installation and resolved client surfaces
+trw-mcp doctor .
 ```
 
 ### Manual / advanced install
@@ -63,13 +76,7 @@ trw-mcp init-project . --ide codex  # force Codex bootstrap
 trw-mcp init-project . --force      # overwrite existing files
 ```
 
-This creates:
-- `.trw/` — learning memory, run state, configuration
-- `.mcp.json` — MCP server connection for Claude Code
-- `CLAUDE.md` — project instructions with TRW ceremony protocol
-- `.claude/hooks/` — ceremony enforcement hooks
-- `.claude/skills/` — workflow automation skills
-- `.claude/agents/` — specialized sub-agents
+Every installation creates `.trw/` plus the Claude-compatible baseline used by the core bootstrap (`.mcp.json`, `CLAUDE.md`, and `.claude/` hooks, skills, and agent definitions). The selected client integration then adds its own instruction, MCP, hook, skill, and agent surfaces where supported. Bundled skills and agent definitions are runtime inputs to `init-project` and `update-project`, not examples that can be discarded. Managed updates preserve user-authored content where the target format supports safe merging; review `--force` before using it in a customized repository.
 
 ### Configuration
 
@@ -142,9 +149,11 @@ export TRW_CONFIG_STRICT=1      # malformed config fails closed, never silently 
 
 Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound connection is attempted at `session_start`.
 
-## MCP Tools (<!-- inv:tools -->43<!-- /inv -->)
+<a id="mcp-tools"></a>
 
-The table below covers the most-used tools out of the full <!-- inv:tools -->43<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
+## MCP Tools (<!-- inv:tools -->46<!-- /inv -->)
+
+The table below covers the most-used tools out of the full <!-- inv:tools -->46<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
@@ -155,21 +164,21 @@ The table below covers the most-used tools out of the full <!-- inv:tools -->43<
 | **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `codebase_risk_report`, `entity_risk_map` | Repo-aware search, symbol lookup, and risk signals |
 | **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
-## Skills (<!-- inv:skills -->26<!-- /inv -->)
+## Skills (<!-- inv:skills -->28<!-- /inv -->)
 
 Slash-command workflows — zero tokens until triggered. Full skill reference at [trwframework.com/docs](https://trwframework.com/docs).
 
-**Sprint & Delivery**: `/trw-sprint-init` · `/trw-deliver` · `/trw-commit`
+**Sprint & Delivery**: `/trw-sprint-init` · `/trw-sprint-finish` · `/trw-sprint-team` · `/trw-deliver` · `/trw-commit` · `/trw-reflect`
 
 **Requirements**: `/trw-prd-new` · `/trw-prd-ready` · `/trw-prd-groom` · `/trw-prd-review` · `/trw-exec-plan`
 
-**Quality**: `/trw-audit` · `/trw-self-review` · `/trw-simplify` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
+**Quality**: `/trw-audit` · `/trw-self-review` · `/trw-delegate` · `/trw-simplify` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
 
 **Framework**: `/trw-framework-check` · `/trw-project-health` · `/trw-memory-audit` · `/trw-memory-optimize`
 
 ## Agents (<!-- inv:agents -->12<!-- /inv -->)
 
-Specialized sub-agents for Agent Teams — parallel execution with coordinated handoffs:
+Optional specialized agent definitions for clients and harnesses that support delegation. TRW does not require multi-agent execution; the same lifecycle works sequentially.
 
 | Role | Agent | Purpose |
 |------|-------|---------|
@@ -186,9 +195,11 @@ TRW implements a structured execution lifecycle: **RESEARCH → PLAN → IMPLEME
 ```bash
 trw-mcp init-project .                # Deploy TRW to a project
 trw-mcp update-project .              # Update existing installation
+trw-mcp doctor .                      # Diagnose environment and client setup
 trw-mcp check-instructions .          # Validate instruction-tool parity (exit 1 on mismatch)
 trw-mcp audit .                       # Audit TRW configuration
 trw-mcp config-reference              # Print all TRW_ environment variables
+trw-mcp version-status                # Compare package, framework, and live-server versions
 trw-mcp export --format json          # Export learnings
 trw-mcp uninstall .                   # Remove TRW from a project
 ```

@@ -143,13 +143,9 @@ class _NamedTool(Protocol):
 def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry:
     """Return the TRW MCP server entry for Codex config.
 
-    TRW writes a stdio launcher even in the development repo where
-    ``.trw/config.yaml`` points at the shared streamable-HTTP server. The
-    ``trw-mcp`` CLI is the compatibility boundary: in normal projects it runs
-    standalone stdio, while in shared-HTTP projects it auto-starts/bridges to
-    the shared server. Writing a direct Codex ``url`` would bypass that proxy,
-    lose autostart/fallback behavior, and make local dev installs drift from
-    user-project installs.
+    TRW always writes a stdio launcher: every client spawns its own
+    ``trw-mcp`` instance. The ``trw-mcp`` CLI is the portability boundary —
+    writing a direct Codex ``url`` is unsupported.
     """
     project_executable = target_dir / ".venv" / "bin" / "trw-mcp" if target_dir is not None else None
     if project_executable is not None and project_executable.exists():
@@ -186,24 +182,23 @@ def _registered_trw_tool_names() -> list[str]:
     """Return the FULL set of TRW MCP tool names for Codex's enabled_tools.
 
     Codex manages its own per-tool exposure, so this list must reflect the
-    complete tool registry — NOT the live server's post-filter state. The
-    module-level ``mcp`` server has already had ``_apply_tool_exposure_filter``
-    applied at import time (PRD-CORE-125-FR02), so a restrictive
-    ``tool_exposure_mode`` (standard/minimal/core) would otherwise truncate the
-    Codex config and silently hide privileged tools from Codex users.
+    complete tool registry — NOT the live server's session-masked surface. The
+    live ``mcp.list_tools()`` view is now narrowed per-session by
+    ``SurfaceAuthorityMiddleware`` (PRD-CORE-218), so a bounded resolution would
+    otherwise truncate the Codex config and silently hide tools from Codex users.
 
-    We therefore UNION the live server's tools with the canonical full preset
-    (``TOOL_PRESETS["all"]``, the single source of truth for the complete tool
-    set). The union ensures Codex always sees the full curated set regardless
-    of server exposure mode, while still surfacing any tool registered beyond
-    the presets that survives the filter.
+    We therefore UNION the live server's tools with the authoritative full
+    eligible public surface (``eligible_tool_names()``, the CORE-218 manifest
+    SSOT). The union ensures Codex always sees the full curated set regardless of
+    the resolved surface, while still surfacing any registered tool beyond the
+    manifest that appears in the live view.
     """
-    from trw_mcp.models.config._defaults import TOOL_PRESETS
     from trw_mcp.server._app import mcp
+    from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
     tools = cast("list[_NamedTool]", _run_async(mcp.list_tools()))
     names = {tool.name for tool in tools if tool.name.startswith(_TRW_TOOL_PREFIX)}
-    names.update(name for name in TOOL_PRESETS["all"] if name.startswith(_TRW_TOOL_PREFIX))
+    names.update(name for name in eligible_tool_names() if name.startswith(_TRW_TOOL_PREFIX))
     tool_names = sorted(names)
     if not tool_names:
         logger.warning("codex_trw_tool_discovery_empty")
@@ -358,7 +353,6 @@ def generate_codex_config(
 _CODEX_AGENT_TEMPLATES: dict[str, str] = {
     "trw-explorer.toml": '''name = "trw_explorer"
 description = "Read-only codebase explorer for gathering evidence before edits."
-model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
@@ -369,7 +363,6 @@ Prefer fast search and targeted reads over broad scans.
 ''',
     "trw-implementer.toml": '''name = "trw_implementer"
 description = "Implementation-focused agent for bounded code changes in the current repository."
-model = "gpt-5.4"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """
@@ -379,7 +372,6 @@ Make the smallest defensible change, keep unrelated files untouched, and validat
 ''',
     "trw-reviewer.toml": '''name = "trw_reviewer"
 description = "Read-only reviewer focused on correctness, regressions, security, and missing tests."
-model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
@@ -389,7 +381,6 @@ Lead with concrete findings, prioritize correctness and missing tests, and avoid
 ''',
     "trw-docs-researcher.toml": '''name = "trw_docs_researcher"
 description = "Documentation specialist that uses docs MCP servers to verify APIs and runtime behavior."
-model = "gpt-5.4-mini"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
@@ -401,25 +392,53 @@ Do not make code changes.
 }
 
 
+def _codex_user_edited(dest: Path, rel: str, incoming: bytes, manifest_hashes: dict[str, str] | None) -> bool:
+    """Return True when *dest* is a user edit that must be preserved (FIX B).
+
+    Content-aware refresh: an on-disk artifact that still matches the PREVIOUS
+    bundled content (recorded ``manifest_hashes[rel]``) — or the incoming bundle
+    content itself — is framework-managed and safe to overwrite with upstream
+    fixes; one that diverges from both is a genuine user edit. Falls back to
+    "preserve" when there is no manifest record but the content already diverges
+    from the incoming bundle (can't prove it's stale-vs-edited).
+    """
+    import hashlib
+
+    from ._version_manifest import _is_user_modified
+
+    framework_hashes = {hashlib.sha256(incoming).hexdigest()}
+    return _is_user_modified(dest, rel, manifest_hashes, framework_hashes=framework_hashes)
+
+
 def generate_codex_agents(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
-    """Generate `.codex/agents/*.toml`."""
+    """Generate `.codex/agents/*.toml`.
+
+    FIX B: an UNMODIFIED agent is refreshed when the bundled template changes;
+    a user-edited one is preserved (content-aware, mirroring the opencode path).
+    """
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
     agents_dir = target_dir / _CODEX_AGENTS_DIR
     agents_dir.mkdir(parents=True, exist_ok=True)
 
     for filename, content in _CODEX_AGENT_TEMPLATES.items():
         path = agents_dir / filename
+        rel = f"{_CODEX_AGENTS_DIR}/{filename}"
         try:
             existed = path.exists()
             if existed and not force:
-                result["preserved"].append(f"{_CODEX_AGENTS_DIR}/{filename}")
-                continue
+                if _codex_user_edited(path, rel, content.encode("utf-8"), manifest_hashes):
+                    result["preserved"].append(rel)
+                    continue
+                if path.read_text(encoding="utf-8") == content:
+                    result["preserved"].append(rel)
+                    continue
             path.write_text(content, encoding="utf-8")
-            _record_write(cast("dict[str, list[str]]", result), f"{_CODEX_AGENTS_DIR}/{filename}", existed=existed)
+            _record_write(cast("dict[str, list[str]]", result), rel, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {path}: {exc}")
 
@@ -430,8 +449,13 @@ def install_codex_skills(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
-    """Install TRW bundled skills into `.agents/skills/` for Codex."""
+    """Install TRW bundled skills into `.agents/skills/` for Codex.
+
+    FIX B: an UNMODIFIED skill file is refreshed when its bundled source
+    changes; a user-edited one is preserved (content-aware).
+    """
     from ._init_project import _validate_skill
 
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
@@ -455,10 +479,15 @@ def install_codex_skills(
             dest = dest_skill / skill_file.name
             rel_path = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
             try:
-                if dest.exists() and not force:
-                    result["preserved"].append(rel_path)
-                    continue
                 existed = dest.exists()
+                if existed and not force:
+                    incoming = skill_file.read_bytes()
+                    if _codex_user_edited(dest, rel_path, incoming, manifest_hashes):
+                        result["preserved"].append(rel_path)
+                        continue
+                    if dest.read_bytes() == incoming:
+                        result["preserved"].append(rel_path)
+                        continue
                 shutil.copy2(skill_file, dest)
                 _record_write(cast("dict[str, list[str]]", result), rel_path, existed=existed)
             except OSError as exc:

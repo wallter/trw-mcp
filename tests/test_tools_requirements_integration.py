@@ -75,7 +75,7 @@ class TestIntegration:
             title="Version Test",
         )
         assert "template_version" in result["content"]
-        assert "2.3" in result["content"]
+        assert "3.2" in result["content"]
 
     def test_backward_compat_return_schema(self, tmp_path: Path) -> None:
         tools = _get_tools()

@@ -61,6 +61,7 @@ def test_pip_install_disables_bytecode_writes(installer_path: Path, monkeypatch)
     assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in calls)
     assert all(call["env"]["PIP_CACHE_DIR"] == "/tmp/trw-pip/.cache/pip" for call in calls)
     assert all(call["env"]["XDG_CACHE_HOME"] == "/tmp/trw-pip/.cache" for call in calls)
+    assert all(call["env"]["XDG_DATA_HOME"] == "/tmp/trw-pip/.local/share" for call in calls)
     assert all(call["env"]["TMPDIR"] == "/tmp/trw-pip/.tmp" for call in calls)
 
 
@@ -77,7 +78,7 @@ def test_pip_install_adds_no_deps_for_target_wheels_when_runtime_deps_are_alread
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: (
+        lambda cmd, env=None, stdout=None, stderr=None, text=None, timeout=None: (
             calls.append(cmd) or SimpleNamespace(returncode=0)
         ),
     )
@@ -115,7 +116,7 @@ def test_pip_install_keeps_dependency_resolution_for_target_packages_when_runtim
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda cmd, env=None, stdout=None, stderr=None, timeout=None: (
+        lambda cmd, env=None, stdout=None, stderr=None, text=None, timeout=None: (
             calls.append(cmd) or SimpleNamespace(returncode=0)
         ),
     )

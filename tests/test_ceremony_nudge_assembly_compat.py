@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from tests._ceremony_nudge_support import _trw_dir
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
     NudgeContext,
     ToolName,
     _assemble_nudge,
     compute_nudge,
-    write_ceremony_state,
 )
 
 
@@ -193,16 +189,6 @@ class TestBackwardsCompatibility:
             assert result == ""
         finally:
             ceremony_nudge._build_minimal_status_line = original
-
-    def test_append_ceremony_nudge_without_context(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge still works without context (backwards compat)."""
-        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
-
-        trw = _trw_dir(tmp_path)
-        write_ceremony_state(trw, CeremonyState())
-        response: dict[str, object] = {"status": "ok"}
-        result = append_ceremony_nudge(response.copy(), trw_dir=trw)
-        assert "ceremony_status" in result
 
     def test_existing_static_messages_unchanged(self) -> None:
         """compute_nudge returns non-empty content when session not started."""

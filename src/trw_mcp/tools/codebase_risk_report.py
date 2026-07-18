@@ -14,7 +14,6 @@ Uses the c747 DRY substrate (``_sidecar_substrate``). NO
 from __future__ import annotations
 
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import Context, FastMCP
@@ -26,13 +25,7 @@ from trw_mcp.tools._learnings_collector import (
     build_file_queries,
     collect_learnings,
 )
-from trw_mcp.tools._sidecar_substrate import (
-    DEFAULT_CACHE_DIR_REL,
-    check_tier_for_feature,
-    load_sidecar_with_sha_check,
-    resolve_git_sha,
-    resolve_repo_root,
-)
+from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus, resolve_current_sidecar
 
 _ARTIFACT_NAME_RISK_REPORT: str = "risk-report"
 _TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
@@ -67,7 +60,7 @@ class FileRiskScorePayload(BaseModel):
     test_edge_count: int = Field(ge=0)
     doc_edge_count: int = Field(ge=0)
     line_count: int = Field(ge=0)
-    test_signal_confidence: Literal["high", "low"] = "low"
+    test_signal_confidence: Literal["high", "medium", "low"] = "low"
 
 
 class CodebaseRiskReportResult(BaseModel):
@@ -77,16 +70,7 @@ class CodebaseRiskReportResult(BaseModel):
 
     tier: str
     risk_report: list[FileRiskScorePayload] = Field(default_factory=list)
-    distill_status: Literal[
-        "hint_available",
-        "tier_required",
-        "sidecar_missing",
-        "sidecar_malformed",
-        "schema_mismatch",
-        "stale_sha",
-        "no_repo_root",
-        "no_git_sha",
-    ] = "sidecar_missing"
+    distill_status: CurrentSidecarStatus = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
@@ -107,64 +91,34 @@ def compute_codebase_risk_report(
     ``top_n=0`` returns all scores; ``top_n>0`` truncates to top-N by
     DESC composite_score (sidecar producer already sorts; we just slice).
     """
-    resolved_repo_root = resolve_repo_root(repo_root)
-
-    if resolved_repo_root is None:
-        return CodebaseRiskReportResult(
-            tier="free",
-            distill_status="no_repo_root",
-            distill_action="Pass --repo or run from inside a git checkout",
-        )
-
-    gate = check_tier_for_feature(resolved_repo_root, _TIER_FEATURE)
-    if not gate.allowed:
-        return CodebaseRiskReportResult(
-            tier=gate.tier,
-            distill_status="tier_required",
-            distill_action=(
-                "Acquire team/pro/enterprise tier to enable trw-distill "
-                "sidecar consumption (see https://trwframework.com/tier)"
-            ),
-        )
-
-    git_sha = resolve_git_sha(resolved_repo_root)
-    if git_sha is None:
-        return CodebaseRiskReportResult(
-            tier=gate.tier,
-            distill_status="no_git_sha",
-            distill_action="Could not run `git rev-parse HEAD` — verify .git/ present",
-        )
-
-    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
-    sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME_RISK_REPORT}-{git_sha}.json"
-
-    load = load_sidecar_with_sha_check(
-        sidecar_path,
-        expected_sha=git_sha,
-        file_path_hint="<risk-report>",
+    sidecar = resolve_current_sidecar(
+        repo_root=repo_root,
+        cache_dir=cache_dir,
+        feature=_TIER_FEATURE,
+        artifact_name=_ARTIFACT_NAME_RISK_REPORT,
         cli_remediation=("trw-distill self-improve risk-report --repo . --persist-sidecar"),
     )
-    if load.status != "ok" or load.payload is None:
+    if sidecar.status != "hint_available" or sidecar.payload is None:
         return CodebaseRiskReportResult(
-            tier=gate.tier,
-            distill_status=load.status,  # type: ignore[arg-type]
-            distill_action=load.action,
-            distill_sidecar_path=load.sidecar_path,
-            distill_sidecar_sha=load.sidecar_sha,
+            tier=sidecar.tier,
+            distill_status=sidecar.status,
+            distill_action=sidecar.action,
+            distill_sidecar_path=sidecar.sidecar_path,
+            distill_sidecar_sha=sidecar.sidecar_sha,
         )
 
     # Payload is FileRiskScore[] (array) — c742 writes the list directly
-    if not isinstance(load.payload, list):
+    if not isinstance(sidecar.payload, list):
         return CodebaseRiskReportResult(
-            tier=gate.tier,
+            tier=sidecar.tier,
             distill_status="sidecar_malformed",
             distill_action=("risk-report sidecar payload is not an array; re-run with --persist-sidecar"),
-            distill_sidecar_path=load.sidecar_path,
-            distill_sidecar_sha=load.sidecar_sha,
+            distill_sidecar_path=sidecar.sidecar_path,
+            distill_sidecar_sha=sidecar.sidecar_sha,
         )
 
     scores: list[FileRiskScorePayload] = []
-    for entry in load.payload:
+    for entry in sidecar.payload:
         if not isinstance(entry, dict):
             continue
         try:
@@ -175,14 +129,14 @@ def compute_codebase_risk_report(
 
     if not scores:
         return CodebaseRiskReportResult(
-            tier=gate.tier,
+            tier=sidecar.tier,
             distill_status="sidecar_malformed",
             distill_action=(
                 "No FileRiskScore entries parsed from sidecar; check schema "
                 "compatibility between trw-distill and trw-mcp"
             ),
-            distill_sidecar_path=load.sidecar_path,
-            distill_sidecar_sha=load.sidecar_sha,
+            distill_sidecar_path=sidecar.sidecar_path,
+            distill_sidecar_sha=sidecar.sidecar_sha,
         )
 
     if top_n > 0:
@@ -194,12 +148,12 @@ def compute_codebase_risk_report(
     learnings = collect_learnings(queries)
 
     return CodebaseRiskReportResult(
-        tier=gate.tier,
+        tier=sidecar.tier,
         risk_report=scores,
         distill_status="hint_available",
         distill_action=None,
-        distill_sidecar_path=load.sidecar_path,
-        distill_sidecar_sha=load.sidecar_sha,
+        distill_sidecar_path=sidecar.sidecar_path,
+        distill_sidecar_sha=sidecar.sidecar_sha,
         n_scores=len(scores),
         learnings=learnings,
         learnings_count=len(learnings),

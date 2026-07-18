@@ -7,25 +7,40 @@ for the literal substring ``Use when:``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Scan both installed (.claude/skills) and bundled (trw-mcp/src/trw_mcp/data/skills).
+# Body-trigger lint covers the canonical and Claude surfaces it was designed for.
 _SKILL_DIRS: tuple[Path, ...] = (
     _REPO_ROOT / ".claude" / "skills",
     _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "skills",
+)
+
+# Invocation/name parity covers canonical, packaged-client, generated-plugin,
+# and tracked client mirrors.
+_USAGE_SKILL_DIRS: tuple[Path, ...] = (
+    _REPO_ROOT / ".agents" / "skills",
+    _REPO_ROOT / ".claude" / "skills",
+    _REPO_ROOT / ".cursor" / "skills",
+    _REPO_ROOT / ".github" / "skills",
+    _REPO_ROOT / "build" / "trw-plugin" / "skills",
+    _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "skills",
+    _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "codex" / "skills",
+    _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "copilot" / "skills",
 )
 
 # Skills excluded from the "Use when:" in body rule with justification.
 # trw-skills-guide is invoked as a slash command and has no SKILL.md body
 # below its H1 describing a trigger (it IS the directory of triggers).
 BODY_USE_WHEN_ALLOWLIST: dict[str, str] = {
-    # name: justification
+    "trw-delegate": "Body opens with the equivalent 'Use for a bias-breaking review' trigger.",
 }
 
 LOOK_AHEAD = 10
@@ -76,7 +91,7 @@ def _public_skill_names_from_inventory() -> set[str] | None:
     return names or None
 
 
-def _iter_public_skills() -> list[tuple[str, Path]]:
+def _iter_public_skills(skill_dirs: tuple[Path, ...] = _SKILL_DIRS) -> list[tuple[str, Path]]:
     """Return (skill_name, SKILL.md path) for every public skill in inventory.
 
     When build/inventory.json exists, only its ``user_invocable: true`` set
@@ -86,12 +101,12 @@ def _iter_public_skills() -> list[tuple[str, Path]]:
     inventory = _public_skill_names_from_inventory()
     out: list[tuple[str, Path]] = []
     seen: set[str] = set()
-    for base in _SKILL_DIRS:
+    for base in skill_dirs:
         if not base.is_dir():
             continue
         for skill_md in base.glob("*/SKILL.md"):
             name = skill_md.parent.name
-            key = f"{name}@{base.name}"
+            key = str(skill_md.resolve())
             if key in seen:
                 continue
             seen.add(key)
@@ -138,3 +153,42 @@ def test_missing_use_when_fails(tmp_path: Path) -> None:
     )
     _fm, body = _parse_frontmatter_and_body(fake)
     assert not _has_use_when_near_top(body)
+
+
+_USE_INVOCATION_RE = re.compile(r"\bUse:\s*/([a-z0-9][a-z0-9-]*)")
+
+
+def _load_yaml_frontmatter(path: Path) -> dict[str, object]:
+    raw = path.read_text(encoding="utf-8").splitlines()
+    if not raw or raw[0].strip() != "---":
+        return {}
+    try:
+        end = raw.index("---", 1)
+    except ValueError:
+        return {}
+    parsed = yaml.safe_load("\n".join(raw[1:end])) or {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _frontmatter_usage_matches_name(path: Path) -> bool:
+    fm = _load_yaml_frontmatter(path)
+    match = _USE_INVOCATION_RE.search(str(fm.get("description", "")))
+    return match is None or match.group(1) == str(fm.get("name", ""))
+
+
+def test_public_skill_usage_matches_frontmatter_name() -> None:
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for _name, path in _iter_public_skills(_USAGE_SKILL_DIRS)
+        if not _frontmatter_usage_matches_name(path)
+    ]
+    assert not offenders, "Public skill descriptions advertise a different command name:\n  " + "\n  ".join(offenders)
+
+
+def test_mismatched_usage_name_fails(tmp_path: Path) -> None:
+    fake = tmp_path / "SKILL.md"
+    fake.write_text(
+        "---\nname: trw-foo\ndescription: 'Use: /foo'\nuser-invocable: true\n---\n# Fake\n",
+        encoding="utf-8",
+    )
+    assert not _frontmatter_usage_matches_name(fake)

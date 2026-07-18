@@ -6,10 +6,6 @@ portable instruction body instead of model-family-specific prompt text.
 
 from __future__ import annotations
 
-# Shared Gemini marker constants (mirror ``_renderer.py``).
-_GEMINI_TRW_START_MARKER = "<!-- trw:gemini:start -->"
-_GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
-
 # Shared Antigravity marker constants.
 _ANTIGRAVITY_TRW_START_MARKER = "<!-- trw:antigravity:start -->"
 _ANTIGRAVITY_TRW_END_MARKER = "<!-- trw:antigravity:end -->"
@@ -33,7 +29,7 @@ memory — patterns, gotchas, and project knowledge accumulate across sessions.
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or an explicit acceptable-failure note |
+| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or a structured acceptable-failure record |
 
 ### MCP Tools
 
@@ -80,64 +76,6 @@ def _deliver_gate_block() -> str:
     return render_deliver_gate_statement()
 
 
-def render_gemini_instructions() -> str:
-    """Render GEMINI.md TRW ceremony section.
-
-    PRD-QUAL-104 FR03: injects the non-negotiable session-start + deliver-gate
-    block, sourced from the bundled tool-lifecycle surface.
-    """
-    return f"""{_GEMINI_TRW_START_MARKER}
-<!-- TRW AUTO-GENERATED — do not edit between markers -->
-
-## TRW Framework Integration
-
-This project uses the [TRW Framework](https://trwframework.com) for structured
-AI-assisted development. TRW gives your Gemini CLI sessions persistent engineering
-memory — patterns, gotchas, and project knowledge accumulate across sessions.
-
-### Session Protocol
-
-| Tool | When | Why |
-|------|------|-----|
-| `trw_session_start()` | First action | Loads prior learnings |
-| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
-| `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or an explicit acceptable-failure note |
-
-### MCP Tools
-
-All TRW tools are available via MCP as `mcp_trw_<tool_name>`.
-Call `mcp_trw_trw_session_start` first in every session.
-
-Key tools: `trw_session_start`, `trw_learn`, `trw_checkpoint`, `trw_deliver`,
-`trw_init`, `trw_status`, `trw_recall`, `trw_build_check`, `trw_review`,
-`trw_prd_create`, `trw_prd_validate`.
-
-### Subagents
-
-TRW provides specialized agents in `.gemini/agents/`:
-- `@trw-explorer` — Fast codebase search and analysis (read-only)
-- `@trw-implementer` — TDD implementation with full tool access
-- `@trw-reviewer` — Code review specialist (read-only)
-- `@trw-lead` — Orchestration and delegation
-
-### Memory Routing
-
-- Code patterns, gotchas, build tricks → `mcp_trw_trw_learn()`
-- User preferences → Gemini's built-in `/memory add`
-
-### Conventions
-
-- Run the project-native validation command after each meaningful change — fix failures before moving on
-- Use `trw_learn()` to record discoveries, patterns, and gotchas
-- Use `trw_checkpoint()` after working milestones
-- Commit messages: `feat(scope): msg` (Conventional Commits)
-
-{_deliver_gate_block()}
-{_GEMINI_TRW_END_MARKER}
-"""
-
-
 def _render_opencode_portable() -> str:
     """Render OpenCode instructions without model/provider assumptions.
 
@@ -167,7 +105,7 @@ def _render_opencode_portable_body() -> str:
         "3. **Implement**: keep changes bounded; use focused helpers only when available\n"
         "4. **Verify**: run targeted project-native checks and fix failures immediately\n"
         "5. **Learn**: call `trw_learn()` for durable technical discoveries (no status reports)\n"
-        "6. **Finish**: call `trw_deliver()` only after `trw_build_check()` records validation or you explicitly label an acceptable failure\n"
+        "6. **Finish**: call `trw_deliver()` only after `trw_build_check()` records validation or `allow_unverified=true` carries a structured acceptable-failure record\n"
         "\n"
         "## Ceremony Protocol\n"
         "\n"

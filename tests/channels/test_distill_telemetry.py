@@ -95,28 +95,32 @@ class TestEmitToolCallFailOpen:
         with patch(
             "trw_mcp.channels._distill_telemetry.append_channel_event",
             side_effect=OSError("disk full"),
-        ):
+        ) as append:
             # Must not raise
             emit_tool_call(tool_name="trw_before_edit_hint")
+        assert append.call_count == 1
 
     def test_does_not_raise_on_permission_error(self, monkeypatch):
         with patch(
             "trw_mcp.channels._distill_telemetry.append_channel_event",
             side_effect=PermissionError("read-only filesystem"),
-        ):
+        ) as append:
             emit_tool_call(tool_name="trw_codebase_risk_report")
+        assert append.call_count == 1
 
     def test_does_not_raise_on_runtime_error(self, monkeypatch):
         with patch(
             "trw_mcp.channels._distill_telemetry.append_channel_event",
             side_effect=RuntimeError("unexpected"),
-        ):
+        ) as append:
             emit_tool_call(tool_name="trw_entity_risk_map")
+        assert append.call_count == 1
 
     def test_returns_none(self, monkeypatch):
-        with patch("trw_mcp.channels._distill_telemetry.append_channel_event"):
+        with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as append:
             result = emit_tool_call(tool_name="trw_before_edit_hint")
         assert result is None
+        assert append.call_count == 1
 
 
 # ---------------------------------------------------------------------------

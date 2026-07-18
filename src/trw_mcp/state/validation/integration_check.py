@@ -118,12 +118,19 @@ def check_integration(source_dir: Path) -> dict[str, object]:
     # (the current trw-mcp topology wires tools in ``server/_tools.py``).
     server_content = _gather_registration_text(source_dir)
 
-    # Find server imports that target tool modules and register_* functions
+    # Find server imports that target tool modules and register_* functions.
+    # Handles both single-line and parenthesized multi-line import forms.
     for match in re.finditer(
         r"from\s+trw_mcp\.tools\.(\w+)\s+import\s+(register_\w+_tools)",
         server_content,
     ):
         registered_funcs.add(match.group(2))
+    for match in re.finditer(
+        r"from\s+trw_mcp\.tools\.\w+\s+import\s*\(([^)]*)\)",
+        server_content,
+    ):
+        for func in re.findall(r"register_\w+_tools", match.group(1)):
+            registered_funcs.add(func)
 
     # Also find call sites: register_X_tools(
     for match in re.finditer(

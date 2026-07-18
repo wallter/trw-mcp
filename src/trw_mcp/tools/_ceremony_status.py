@@ -42,6 +42,7 @@ from trw_mcp.tools._ceremony_status_pool import (
 )
 
 logger = structlog.get_logger(__name__)
+_WORKSPACE_CONFIG_CACHE: dict[tuple[str, int, tuple[str | None, ...]], TRWConfig] = {}
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -59,6 +60,23 @@ def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
     if not config_path.exists():
         return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
 
+    env_fingerprint = tuple(
+        os.environ.get(key)
+        for key in (
+            "TRW_NUDGE_ENABLED",
+            "TRW_NUDGE_MESSENGER",
+            "TRW_NUDGE_DENSITY",
+            "TRW_TARGET_PLATFORMS",
+        )
+    )
+    try:
+        cache_key = (str(config_path.resolve()), config_path.stat().st_mtime_ns, env_fingerprint)
+        cached = _WORKSPACE_CONFIG_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    except OSError:
+        cache_key = None
+
     try:
         overrides = FileStateReader().read_yaml(config_path)
         if not isinstance(overrides, dict):
@@ -69,7 +87,12 @@ def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
             if value is not None and f"TRW_{str(key).upper()}" not in os.environ
         }
         filtered["trw_dir"] = str(trw_dir)
-        return TRWConfig(**filtered)  # type: ignore[arg-type]
+        loaded = TRWConfig(**filtered)  # type: ignore[arg-type]
+        if cache_key is not None:
+            if len(_WORKSPACE_CONFIG_CACHE) >= 16:
+                _WORKSPACE_CONFIG_CACHE.clear()
+            _WORKSPACE_CONFIG_CACHE[cache_key] = loaded
+        return loaded
     except Exception:  # justified: fail-open, config read failure falls back to defaults
         logger.debug("workspace_config_load_failed", config_path=str(config_path), exc_info=True)
         return TRWConfig.model_validate({"trw_dir": str(trw_dir)})
@@ -113,6 +136,12 @@ def append_ceremony_status(
         state = read_ceremony_state(effective_dir)
         response["ceremony_status"] = build_ceremony_status_line(state)
 
+        # Disabled nudges are a status-only path. Avoid process census,
+        # counter writes, and pool imports when no nudge can be emitted; this
+        # keeps the advertised hot-path latency bound under loaded worktrees.
+        if not cfg.effective_nudge_enabled:
+            return response
+
         if cfg.session_start_defer_under_writer_pressure:
             try:
                 from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
@@ -123,12 +152,13 @@ def append_ceremony_status(
                     pin_ttl_hours=cfg.pin_ttl_hours,
                 )
                 if defer_nudge:
-                    response["nudge_deferred"] = {
-                        "reason": defer_reason,
-                        "writer_pids": writer_pids,
-                        "writer_count": len(writer_pids),
-                        "threshold": cfg.session_start_writer_pressure_threshold,
-                    }
+                    from trw_mcp.state.memory_pressure import writer_pressure_details
+
+                    response["nudge_deferred"] = writer_pressure_details(
+                        defer_reason,
+                        writer_pids,
+                        threshold=cfg.session_start_writer_pressure_threshold,
+                    )
                     logger.warning(
                         "ceremony_nudge_deferred",
                         reason=defer_reason,
@@ -160,9 +190,6 @@ def append_ceremony_status(
             state.tool_call_counter += 1
         except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
             logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
-
-        if not cfg.effective_nudge_enabled:
-            return response
 
         messenger = cfg.effective_nudge_messenger
         client_id = str(getattr(cfg.client_profile, "client_id", ""))

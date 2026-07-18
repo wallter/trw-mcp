@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from trw_mcp.models.config._capability import CapabilityTier, ModelTier, normalize_capability_tier
 
 TaskArchetype = Literal["bugfix", "feature", "docs", "refactor", "audit", "research", "unknown"]
 ComplexityClassName = Literal["MINIMAL", "STANDARD", "COMPREHENSIVE"]
 NudgePolicy = Literal["off", "sparse", "standard", "dense"]
 TraceDepth = Literal["minimal", "standard", "causal"]
 CeremonyDepth = Literal["light", "standard", "comprehensive"]
-ToolExposurePreset = Literal["all", "core", "minimal", "standard", "custom"]
+# PRD-CORE-218 FR04: tool exposure is a two-valued resolution mode
+# (standard default / explicit all), not the retired CORE-125 preset vocabulary.
+ToolExposurePreset = Literal["standard", "all"]
+# Provider-neutral execution advice. ``inherit`` preserves the harness default;
+# adapters map or clamp the remaining labels without claiming application.
+ExecutionEffort = Literal["inherit", "minimal", "low", "medium", "high", "xhigh", "max"]
+EffortSource = Literal["harness_default", "task_complexity", "explicit_override"]
+EffortAdapterStatus = Literal["inherited", "advisory", "mapped", "clamped", "unsupported"]
 
 # PRD-CORE-184-FR01: canonical task-type taxonomy.
 # Distinct from ``TaskArchetype`` (which names the git-commit intent) and
@@ -90,6 +99,16 @@ class TaskProfileOverrides(BaseModel):
     trace_depth: TraceDepth | None = None
     instruction_budget_lines: int | None = Field(default=None, ge=1)
     context_window_tokens: int | None = Field(default=None, ge=1)
+    recommended_effort: ExecutionEffort | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_provisional_effort_name(cls, value: object) -> object:
+        if not isinstance(value, dict) or "recommended_effort" in value or "reasoning_effort" not in value:
+            return value
+        migrated = dict(value)
+        migrated["recommended_effort"] = migrated["reasoning_effort"]
+        return migrated
 
 
 class TaskProfile(BaseModel):
@@ -98,7 +117,10 @@ class TaskProfile(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     profile_id: str
-    model_tier: str
+    capability_tier: CapabilityTier
+    recommended_effort: ExecutionEffort = "inherit"
+    effort_source: EffortSource = "harness_default"
+    effort_adapter_status: EffortAdapterStatus = "inherited"
     complexity_class: ComplexityClassName
     task_archetype: TaskArchetype = "unknown"
     # PRD-CORE-184: runtime behavioral regime + its derived policy surfaces.
@@ -116,7 +138,40 @@ class TaskProfile(BaseModel):
     rationale: tuple[str, ...] = Field(default_factory=tuple)
     profile_hash: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_profile_keys(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        if "capability_tier" not in migrated and "model_tier" in migrated:
+            migrated["capability_tier"] = migrated["model_tier"]
+        if "recommended_effort" not in migrated and "reasoning_effort" in migrated:
+            migrated["recommended_effort"] = migrated["reasoning_effort"]
+        return migrated
+
+    @field_validator("capability_tier", mode="before")
+    @classmethod
+    def _normalize_capability_tier(cls, value: object) -> object:
+        if value in {
+            "frontier",
+            "balanced",
+            "local-large",
+            "local-small",
+            "cloud-opus",
+            "cloud-sonnet",
+            "local-30b",
+            "local-8b",
+        }:
+            return normalize_capability_tier(cast("ModelTier", value))
+        return value
+
     @property
     def client_id(self) -> str:
         """Backward-compatible alias for the source client profile ID."""
         return self.profile_id
+
+    @property
+    def model_tier(self) -> CapabilityTier:
+        """Compatibility alias for the canonical capability tier."""
+        return self.capability_tier

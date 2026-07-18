@@ -101,22 +101,29 @@ def register_config_resources(server: FastMCP) -> None:
 
     @server.resource("trw://framework/versions")
     def get_framework_versions() -> str:
-        """Deployed framework versions from .trw/frameworks/VERSION.yaml.
+        """Multi-layer framework version status (PRD-INFRA-164 FR09).
 
-        Returns version information for deployed FRAMEWORK.md and
-        AARE-F-FRAMEWORK.md, including trw-mcp package version
-        and deployment timestamp.
+        Projects the SAME structured taxonomy that ``trw-mcp version-status`` and
+        the doctor adapter expose: authoring/deployed/installed layers, the frozen
+        connected-live-process fingerprint + currentness, and a historical
+        installer-snapshot section (never a current authority). A ``raw``
+        subsection retains the literal VERSION.yaml dump for one-release
+        backward compatibility (NFR06).
         """
+        from trw_mcp.server._subcommands_release import collect_version_status
+
         config = get_config()
         reader = FileStateReader()
         project_root = resolve_project_root()
         version_path = project_root / config.trw_dir / config.frameworks_dir / "VERSION.yaml"
 
-        if not reader.exists(version_path):
-            return "# No frameworks deployed yet\n# Run trw_init to deploy.\n"
-
-        data = reader.read_yaml(version_path)
-        return _dump_yaml(dict(data))
+        status = collect_version_status(project_root)
+        payload: dict[str, object] = dict(status)
+        if reader.exists(version_path):
+            payload["raw_version_yaml"] = dict(reader.read_yaml(version_path))
+        else:
+            payload["raw_version_yaml"] = {"note": "No frameworks deployed yet; run trw_init to deploy."}
+        return _dump_yaml(payload)
 
     @server.resource("trw://learnings/summary")
     def get_learnings_summary() -> str:

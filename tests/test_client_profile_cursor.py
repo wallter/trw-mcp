@@ -34,7 +34,6 @@ def test_cursor_ide_profile_ceremony_mode_full() -> None:
     """cursor-ide profile has ceremony_mode='full'."""
     profile = resolve_client_profile("cursor-ide")
     assert profile.ceremony_mode == "full"
-    assert profile.tool_exposure_mode == "all"
     assert profile.nudge_enabled is True
     assert profile.learning_recall_enabled is True
     assert profile.mcp_instructions_enabled is True
@@ -119,7 +118,6 @@ def test_cursor_ide_profile_resolves() -> None:
     profile = resolve_client_profile("cursor-ide")
     assert profile.client_id == "cursor-ide"
     assert profile.ceremony_mode == "full"
-    assert profile.tool_exposure_mode == "all"
     assert profile.write_targets.cursor_rules is True
     assert profile.write_targets.agents_md is True
     assert profile.write_targets.agents_md_primary is False
@@ -133,7 +131,6 @@ def test_cursor_cli_profile_resolves() -> None:
     profile = resolve_client_profile("cursor-cli")
     assert profile.client_id == "cursor-cli"
     assert profile.ceremony_mode == "light"
-    assert profile.tool_exposure_mode == "standard"
     assert profile.write_targets.agents_md_primary is True
     assert profile.write_targets.cli_config is True
     assert profile.write_targets.instruction_path == "AGENTS.md"

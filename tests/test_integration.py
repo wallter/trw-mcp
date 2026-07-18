@@ -171,11 +171,24 @@ class TestSessionLifecycle:
         # Step 4: Build check — deliver is hard-gated on a passing build check
         # (CONSTITUTION §1 truthfulness rule). Record a passing check so the
         # VALIDATE->DELIVER lifecycle completes.
+        # v26.1 enforce evidence mode: pass typed command_results so a valid
+        # BuildReceipt is written — bare booleans no longer satisfy the gate.
         build_result = tools["trw_build_check"].fn(
             run_path=run_path,
             tests_passed=True,
             static_checks_clean=True,
             scope="full",
+            command_results=[
+                {
+                    "command_id": "tests",
+                    "label": "pytest",
+                    "command_class": "test",
+                    "exit_code": 0,
+                    "test_count": 1,
+                    "failure_count": 0,
+                },
+                {"command_id": "static_checks", "label": "mypy+ruff", "command_class": "static", "exit_code": 0},
+            ],
         )
         assert build_result["tests_passed"] is True
 

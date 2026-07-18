@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from trw_mcp.models.config import TRWConfig
 
 
 @pytest.mark.integration
@@ -187,8 +188,8 @@ class TestSessionStartWithQuery:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_fake_recall),
+            patch("trw_mcp.tools.ceremony.get_config", return_value=TRWConfig(auto_recall_enabled=True)),
         ):
-            monkeypatch.setattr("trw_mcp.tools.ceremony._config.auto_recall_enabled", True)
             _result = tools["trw_session_start"].fn(query="JWT validation")
 
         assert len(all_queries) >= 1

@@ -10,6 +10,29 @@ import pytest
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
 
+def test_connection_fingerprint_exposes_frozen_loaded_module_identity() -> None:
+    from trw_mcp.canons.fingerprint import ProcessFingerprint
+    from trw_mcp.tools import _connection_fingerprint as connection
+
+    frozen = ProcessFingerprint(
+        schema_version=2,
+        trw_mcp_version="1",
+        framework_version="1",
+        aaref_version="1",
+        template_version="1",
+        registry_digest="registry",
+        source_digests={},
+        loaded_module_digest="loaded-bytes",
+        surface_digest="surface",
+        digest="process",
+    )
+    with patch("trw_mcp.canons.fingerprint.get_frozen_fingerprint", return_value=frozen):
+        block = connection.build_connection_fingerprint()
+    assert block["protocol_version"] == "2"
+    assert block["process_fingerprint_digest"] == "process"
+    assert block["loaded_module_digest"] == "loaded-bytes"
+
+
 @pytest.mark.integration
 class TestSessionStartPartialFailure:
     """trw_session_start resilience when sub-operations fail."""
@@ -212,6 +235,120 @@ class TestSessionStartPartialFailure:
             "unverifiable": 1,
             "total": 2,
         }
+
+
+_FR01_REQUIRED_FIELDS = (
+    "protocol_version",
+    "build_identity",
+    "project_identity",
+    "connection_nonce",
+    "result_schema",
+    "transport",
+    "owner_status_capability",
+    "request_identity_capability",
+    "process_fingerprint_digest",
+    "loaded_module_digest",
+)
+# Server-identity fields are stable within a process (only the nonce is
+# per-process). The nonce + schema are also stable across same-process calls.
+_FR01_SERVER_IDENTITY_FIELDS = (
+    "protocol_version",
+    "build_identity",
+    "project_identity",
+    "result_schema",
+    "transport",
+    "process_fingerprint_digest",
+    "loaded_module_digest",
+)
+
+
+@pytest.mark.integration
+class TestPrdCore215Fr01:
+    """PRD-CORE-215 FR01 — session-start connection fingerprint and capabilities."""
+
+    def test_prd_core_215_fr01(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import importlib
+
+        from trw_mcp.tools import _connection_fingerprint as fp
+
+        # --- Completeness: a fingerprint carries every FR01 field, populated. ---
+        first = fp.build_connection_fingerprint()
+        for field in _FR01_REQUIRED_FIELDS:
+            assert field in first, f"missing fingerprint field {field}"
+        assert first["protocol_version"]
+        assert first["build_identity"]
+        assert first["project_identity"]
+        assert first["connection_nonce"]
+        assert first["result_schema"]
+        # Owner-status + request-identity capabilities are advertised.
+        assert first["owner_status_capability"] is True
+        assert first["request_identity_capability"] is True
+
+        # --- Same-process calls preserve server identity, nonce, and schema. ---
+        second = fp.build_connection_fingerprint()
+        assert second["connection_nonce"] == first["connection_nonce"]
+        assert second["result_schema"] == first["result_schema"]
+        for field in _FR01_SERVER_IDENTITY_FIELDS:
+            assert second[field] == first[field]
+
+        # --- Negative: no field may claim proxy / shared-server identity. ---
+        assert first["transport"] == "stdio"
+        for value in first.values():
+            if isinstance(value, str):
+                lowered = value.lower()
+                assert "proxy" not in lowered
+                assert "shared" not in lowered
+                assert "http" not in lowered
+
+        # --- New process simulation: reload yields a *new* nonce, same schema. ---
+        old_nonce = fp._CONNECTION_NONCE
+        try:
+            reloaded = importlib.reload(fp)
+            fresh = reloaded.build_connection_fingerprint()
+            assert fresh["connection_nonce"] != old_nonce, "nonce not regenerated per process"
+            # Server identity (schema/transport/protocol) is unchanged across processes.
+            assert fresh["result_schema"] == first["result_schema"]
+            assert fresh["transport"] == "stdio"
+        finally:
+            importlib.reload(fp)
+
+        # --- Missing package metadata falls back typed, never raises. ---
+        import importlib.metadata as _md
+
+        def _boom(_name: str) -> str:
+            raise _md.PackageNotFoundError("trw-mcp")
+
+        monkeypatch.setattr(_md, "version", _boom)
+        degraded = fp.build_connection_fingerprint()
+        assert isinstance(degraded["build_identity"], str)
+        assert degraded["build_identity"]  # typed fallback, not an exception
+        monkeypatch.undo()
+
+        # --- Production path: the finalizer emits the block on the tool result. ---
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        ):
+            result = tools["trw_session_start"].fn()
+            result_again = tools["trw_session_start"].fn()
+
+        block = result["connection_fingerprint"]
+        assert isinstance(block, dict)
+        for field in _FR01_REQUIRED_FIELDS:
+            assert field in block
+        assert block["transport"] == "stdio"
+        # Two same-process production calls preserve nonce + server identity.
+        assert result_again["connection_fingerprint"]["connection_nonce"] == block["connection_nonce"]
+        assert result_again["connection_fingerprint"]["result_schema"] == block["result_schema"]
 
 
 @pytest.mark.integration

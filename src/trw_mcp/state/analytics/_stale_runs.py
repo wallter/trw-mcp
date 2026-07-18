@@ -40,7 +40,17 @@ logger = structlog.get_logger(__name__)
 # is plenty.
 _AUTO_CLOSE_MIN_INTERVAL_SECONDS = 3600.0
 _auto_close_state_lock = threading.Lock()
-_auto_close_last_ts: float = 0.0
+
+# "No prior call" sentinel. MUST NOT be 0.0: the persisted anchor below is
+# ``time.monotonic() - wall_age``, and time.monotonic() counts from system boot,
+# so a legitimate anchor is NEGATIVE whenever the machine's uptime is less than
+# the persisted throttle's age. A ``> 0.0`` liveness test would discard those
+# anchors and silently disable the throttle for the first hour after every boot
+# — exactly the scan tax PRD-FIX-082 exists to remove. -inf makes
+# ``now - _auto_close_last_ts`` evaluate to +inf (never throttled) for the
+# no-prior-call case, so no magnitude guard is needed at all.
+_NO_PRIOR_CALL = float("-inf")
+_auto_close_last_ts: float = _NO_PRIOR_CALL
 _auto_close_persisted_loaded: bool = False
 
 # PRD-FIX-082: persist throttle to disk so per-process restarts (esp.
@@ -58,15 +68,16 @@ def _auto_close_state_path(trw_dir: Path) -> Path:
 def _load_persisted_throttle(trw_dir: Path) -> float:
     """Load the persisted throttle timestamp as monotonic-equivalent seconds.
 
-    Returns 0.0 when the file is missing, malformed, or older than the
-    throttle window (the latter is a fail-safe so a stale file doesn't
-    permanently block sweeps).
+    Returns ``_NO_PRIOR_CALL`` when the file is missing, malformed, or older
+    than the throttle window (the latter is a fail-safe so a stale file doesn't
+    permanently block sweeps). Any other return is a valid monotonic anchor and
+    MAY be negative — see the ``_NO_PRIOR_CALL`` note above.
     """
 
     path = _auto_close_state_path(trw_dir)
     try:
         if not path.exists():
-            return 0.0
+            return _NO_PRIOR_CALL
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
         version = data.get("version")
@@ -77,7 +88,7 @@ def _load_persisted_throttle(trw_dir: Path) -> float:
                 reason="version_or_field_mismatch",
                 path=str(path),
             )
-            return 0.0
+            return _NO_PRIOR_CALL
         last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
         if last_dt.tzinfo is None:
             last_dt = last_dt.replace(tzinfo=timezone.utc)
@@ -85,9 +96,11 @@ def _load_persisted_throttle(trw_dir: Path) -> float:
         if wall_age >= _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
             # Persisted timestamp is older than the throttle window. Treat as
             # "no prior call" so the next call runs the sweep.
-            return 0.0
+            return _NO_PRIOR_CALL
         # Translate wall-clock age into a synthetic monotonic anchor: pretend
-        # the prior call happened (now_monotonic - wall_age) seconds ago.
+        # the prior call happened (now_monotonic - wall_age) seconds ago. On a
+        # freshly booted box this is negative; that is correct, not a failure —
+        # ``now_mono - anchor`` still recovers wall_age exactly.
         return time.monotonic() - wall_age
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         logger.debug(
@@ -95,7 +108,7 @@ def _load_persisted_throttle(trw_dir: Path) -> float:
             path=str(path),
             exc_info=True,
         )
-        return 0.0
+        return _NO_PRIOR_CALL
 
 
 def _save_persisted_throttle(trw_dir: Path) -> None:
@@ -141,7 +154,7 @@ def _reset_auto_close_throttle(trw_dir: Path | None = None) -> None:
 
     global _auto_close_last_ts, _auto_close_persisted_loaded
     with _auto_close_state_lock:
-        _auto_close_last_ts = 0.0
+        _auto_close_last_ts = _NO_PRIOR_CALL
         _auto_close_persisted_loaded = False
     if trw_dir is not None:
         try:
@@ -316,14 +329,15 @@ def auto_close_stale_runs(
             # throttle from the persisted file so user-project stdio installs
             # don't pay the scan tax on every fresh process.
             if not _auto_close_persisted_loaded:
-                persisted = _load_persisted_throttle(trw_dir)
-                if persisted > 0.0:
-                    _auto_close_last_ts = persisted
+                _auto_close_last_ts = _load_persisted_throttle(trw_dir)
                 _auto_close_persisted_loaded = True
 
             now_mono = time.monotonic()
+            # _NO_PRIOR_CALL makes this +inf, so the window test alone is
+            # sufficient — do not reintroduce a magnitude guard on
+            # _auto_close_last_ts (a valid anchor may be negative).
             elapsed = now_mono - _auto_close_last_ts
-            if _auto_close_last_ts > 0.0 and elapsed < _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
+            if elapsed < _AUTO_CLOSE_MIN_INTERVAL_SECONDS:
                 logger.debug(
                     "auto_close_stale_runs_throttled",
                     elapsed_seconds=elapsed,
@@ -460,3 +474,28 @@ def count_stale_runs(ttl_hours: int | None = None) -> int:
                 continue
 
     return count
+
+
+def stale_advisory_first_time(run_dir: Path) -> bool:
+    """Return ``True`` only the first time the stale-runs advisory fires for a run.
+
+    The advisory prose (``"N stale run(s) detected. Use trw_session_start ..."``)
+    is one-time-useful: once the agent has read it, the bare ``stale_count``
+    integer already returned by ``trw_status`` is sufficient. Repeated status
+    checks otherwise re-emit the identical sentence for the life of the
+    staleness condition. A per-run sentinel file records that the prose has been
+    shown so later calls omit it.
+
+    Fail-open: any filesystem error returns ``True`` (show the hint) so the
+    advisory is never silently lost — the token cost of an occasional repeat is
+    preferable to hiding an actionable hint.
+    """
+    try:
+        sentinel = run_dir / "meta" / ".stale_advisory_shown"
+        if sentinel.exists():
+            return False
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("", encoding="utf-8")
+        return True
+    except OSError:
+        return True

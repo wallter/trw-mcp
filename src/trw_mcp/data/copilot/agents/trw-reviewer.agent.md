@@ -50,5 +50,5 @@ Severities: `[P0]` blocker, `[P1]` should fix, `[P2]` nice to have
 
 - Never modify files — produce findings only
 - Focus on signal, not noise — skip style nits unless they indicate bugs
-- Always run `trw_build_check()` to verify current test status
+- Run project-native checks, then record their observed status with `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)`; the reporter does not run tests
 - Use `trw_learn()` to persist patterns found during review

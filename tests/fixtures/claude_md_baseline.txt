@@ -39,7 +39,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | Any | `trw_checkpoint` | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost | `trw_checkpoint(message='...')` |
 | PLAN | `trw_prd_create` | When defining requirements for a new feature or fix | Structured requirements prevent the ambiguity that causes 50% of implementation rework | `trw_prd_create(input_text='...')` |
 | PLAN | `trw_prd_validate` | Before implementation begins | Catches requirement gaps before they become code bugs — cheaper to fix in spec than in code | `trw_prd_validate(prd_path='...')` |
-| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(scope='full')` |
+| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>')` |
 | REVIEW | `review diff` | After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings | Independent review catches what self-review misses — implementers optimize for completion, reviewers for correctness | `Read diff, fix gaps, trw_learn(summary='...')` |
 | DELIVER | `trw_instructions_sync` | At delivery | Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights | `trw_instructions_sync()` |
 | DELIVER | `trw_deliver` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch | `trw_deliver()` |
@@ -56,7 +56,7 @@ trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
 ```
 trw_session_start -> trw_init(task_name, prd_scope)
   -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
-  -> trw_build_check(scope='full')           [VALIDATE]
+  -> trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>') [VALIDATE]
   -> review diff, fix gaps, trw_learn         [REVIEW]
   -> trw_deliver()
 ```
@@ -113,7 +113,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | Any | `trw_checkpoint` | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost | `trw_checkpoint(message='...')` |
 | PLAN | `trw_prd_create` | When defining requirements for a new feature or fix | Structured requirements prevent the ambiguity that causes 50% of implementation rework | `trw_prd_create(input_text='...')` |
 | PLAN | `trw_prd_validate` | Before implementation begins | Catches requirement gaps before they become code bugs — cheaper to fix in spec than in code | `trw_prd_validate(prd_path='...')` |
-| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(scope='full')` |
+| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — bugs found late cascade into 2x rework cost | `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>')` |
 | REVIEW | `review diff` | After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings | Independent review catches what self-review misses — implementers optimize for completion, reviewers for correctness | `Read diff, fix gaps, trw_learn(summary='...')` |
 | DELIVER | `trw_instructions_sync` | At delivery | Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights | `trw_instructions_sync()` |
 | DELIVER | `trw_deliver` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch | `trw_deliver()` |
@@ -131,7 +131,7 @@ trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
 ```
 trw_session_start -> trw_init(task_name, prd_scope)
   -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
-  -> trw_build_check(scope='full')           [VALIDATE]
+  -> trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>') [VALIDATE]
   -> review diff, fix gaps, trw_learn         [REVIEW]
   -> trw_deliver()
 ```

@@ -34,7 +34,9 @@ __all__ = [
 # Schema
 # ---------------------------------------------------------------------------
 
-from typing import TypedDict, cast  # noqa: E402
+from typing import cast  # noqa: E402
+
+from typing_extensions import TypedDict  # noqa: E402
 
 
 class SurfaceEvent(TypedDict, total=False):

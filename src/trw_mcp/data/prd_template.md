@@ -1,6 +1,8 @@
 ---
 # PRD Metadata (LLM-Parseable)
-# Research basis: AARE-F Framework
+# Authoring source: trw-mcp/src/trw_mcp/data/prd_template.md. Root/eval copies
+# are deployment mirrors and are byte-identical under the template parity test.
+# Research basis: AARE-F Framework v3.2.0
 # AARE-F Components: C1 (Traceability), C2 (Governance), C7 (Req-as-Code)
 # Findings: F2 (LLM-parseable), F3 (confidence), F7 (metrics), F19 (traceability), F24 (implementation completeness)
 
@@ -11,6 +13,10 @@ prd:
   status: draft  # draft | review | approved | implemented | deprecated
   priority: P1   # P0 (critical) | P1 (high) | P2 (medium) | P3 (low)
 
+# Machine-readable schema opt-in. Keep top-level so parse_frontmatter() retains
+# it after flattening the nested `prd:` identity block.
+template_version: "3.2"
+
 # Functionality truthfulness (FPI #7 / AARE-F §6.2): status=implemented REQUIRES
 # functionality_level=live AND stubs: []. Use stub/partial (with stubs listed)
 # until every path is real — never claim implemented over a stub.
@@ -18,7 +24,6 @@ functionality_level: planned  # planned | stub | partial | live
 stubs: []                     # every not-yet-real path, while functionality_level != live
 
 # AARE-F Component mapping (deprecated — kept for back-compat; not consumed by any tool)
-aaref_components: []
 
 # Evidence and confidence (AARE-F Finding F3: confidence expectations for AI systems)
 evidence:
@@ -29,14 +34,16 @@ confidence:
   implementation_feasibility: 0.8  # 0.0-1.0
   requirement_clarity: 0.8         # 0.0-1.0
   estimate_confidence: 0.7         # 0.0-1.0
-  test_coverage_target: 0.85       # 0.0-1.0 (NEW: expected test coverage)
+  test_coverage_target: null       # Optional 0.0-1.0; derive from project config or an accepted requirement
 
 # Traceability (AARE-F C1, Finding F19: GPS of compliance-by-design)
+# Every PRD ID referenced below or in the body must resolve to a real PRD.
+# Use [planned]/[future] only for a real artifact expected later and
+# [example]/[illustrative] only for an identifier that will never be real.
 traceability:
   implements: []       # Knowledge entries implemented (e.g., KE-FRAME-002)
   depends_on: []       # Other PRDs this depends on
   enables: []          # Downstream PRDs enabled by this
-  conflicts_with: []   # Document in CONFLICTS.md with resolution
 
 # Success metrics (AARE-F C9, Finding F7: automated quality metrics)
 metrics:
@@ -59,6 +66,28 @@ quality_gates:
   ambiguity_rate_max: 0.05      # <= 5%
   completeness_min: 0.85        # >= 85%
   traceability_coverage_min: 0.90  # >= 90%
+
+# AARE-F 3.2 §2.5: every requirement (FR and NFR) maps acceptance criteria to a declared
+# verification method, durable evidence artifact, and objective pass condition.
+# Critical/high-risk template_version 3.2+ PRDs are blocked when mappings are
+# missing or malformed; legacy and lower-risk artifacts receive migration warnings.
+verification:
+  mappings: []
+  # - requirement_id: PRD-CORE-001-FR01
+  #   acceptance_criteria: ["Given ..., When ..., Then ..."]
+  #   method: test  # test | analysis | inspection | demonstration
+  #   evidence_artifact: tests/test_feature.py::test_behavior
+  #   pass_condition: "The asserted observable value equals the requirement target"
+  #   automated: true
+  #   automation_infeasible_reason: null
+
+# Optional executable commands retained for project-native verification runners.
+verification_commands: []
+
+type_safety:
+  max_type_ignore: 0
+  max_any_params: 0
+  require_wiring_assertions: true
 ---
 
 # PRD-{CATEGORY}-{SEQUENCE}: {Title}
@@ -126,6 +155,9 @@ quality_gates:
 **Dependencies**: {Other requirements this depends on}
 **Confidence**: 0.9 <!-- How certain is this requirement well-defined? -->
 
+**Verification Mapping**: Populate `verification.mappings` for this FR with its
+acceptance criteria, method, evidence artifact, and objective pass condition.
+
 **Assertions** (optional):
 <!-- Machine-verifiable assertions for this FR. Only add for convention/structure FRs. -->
 <!-- Existence checks (prove a symbol/file is present): -->
@@ -144,6 +176,9 @@ quality_gates:
 ---
 
 ## 5. Non-Functional Requirements
+
+Each NFR requires its own exact-ID entry in `verification.mappings`; an FR mapping
+does not count as verification coverage for an NFR.
 
 ### PRD-{CAT}-{SEQ}-NFR01: Performance
 - {Response time targets}
@@ -275,7 +310,7 @@ For each requirement, show the concrete behavior change and the executable proof
 
 ---
 
-## 8. Rollout Plan
+## 9. Rollout Plan
 
 ### Phase 1: Development
 - {Tasks}
@@ -296,7 +331,7 @@ For each requirement, show the concrete behavior change and the executable proof
 
 ---
 
-## 9. Success Metrics
+## 10. Success Metrics
 
 | Metric | Target | Measurement Method | Confidence |
 |--------|--------|-------------------|------------|
@@ -304,7 +339,7 @@ For each requirement, show the concrete behavior change and the executable proof
 
 ---
 
-## 10. Dependencies & Risks
+## 11. Dependencies & Risks
 
 ### Dependencies
 | ID | Description | Status | Blocking |
@@ -318,14 +353,14 @@ For each requirement, show the concrete behavior change and the executable proof
 
 ---
 
-## 11. Open Questions
+## 12. Open Questions
 
 - [ ] {Question 1} `[blocking: yes/no]`
 - [ ] {Question 2} `[blocking: yes/no]`
 
 ---
 
-## 12. Traceability Matrix
+## 13. Traceability Matrix
 
 Use backtick-wrapped repo-relative file paths so validation can count them:
 
@@ -333,15 +368,6 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 |-------------|--------|----------------|------|--------|
 | FR01 | user request or prior PRD | `src/module/file.py` | `tests/test_module.py` | Pending |
 | FR02 | `PRD-CORE-001` | `src/module/other.py:42` | `tests/test_other.py` | Pending |
-
----
-
-<!-- Finding F19: Bidirectional traceability is foundational -->
-
-| Requirement | Source | Implementation | Test | Status |
-|-------------|--------|----------------|------|--------|
-| FR01 | {KE-XXX or wave} | `module.py:line` | `test_module.py` | Pending |
-| FR02 | {source} | {impl location} | {test location} | Pending |
 
 ### Knowledge Entry Links
 - **Implements**: {List knowledge entries this PRD implements}
@@ -351,7 +377,7 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 <!-- FIX category variant sections (retained when category=FIX) -->
 
-## 13. Root Cause Analysis
+## 14. Root Cause Analysis
 
 ### Root Cause
 {Identify the root cause of the defect or incident being fixed}
@@ -367,7 +393,7 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 ---
 
-## 14. Rollback Plan
+## 15. Rollback Plan
 
 {Standalone rollback procedure — steps to revert this fix if it introduces new issues}
 
@@ -379,7 +405,7 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 <!-- RESEARCH category variant sections (retained when category=RESEARCH) -->
 
-## 15. Background & Prior Art
+## 16. Background & Prior Art
 
 {Summary of existing research, prior attempts, and relevant literature}
 
@@ -388,14 +414,14 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 ---
 
-## 16. Research Questions
+## 17. Research Questions
 
 - [ ] RQ1: {Primary research question} `[blocking: yes]`
 - [ ] RQ2: {Secondary research question} `[blocking: no]`
 
 ---
 
-## 17. Methodology
+## 18. Methodology
 
 ### Approach
 {Describe the research methodology — experiments, surveys, benchmarks, etc.}
@@ -409,7 +435,7 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 ---
 
-## 18. Findings
+## 19. Findings
 
 {Document research findings here — updated as research progresses}
 
@@ -419,7 +445,7 @@ Use backtick-wrapped repo-relative file paths so validation can count them:
 
 ---
 
-## 19. Recommendations
+## 20. Recommendations
 
 {Actionable recommendations derived from findings}
 
@@ -449,7 +475,7 @@ Before submitting this PRD for review, verify:
 
 ### Structure (AARE-F C7: Req-as-Code)
 - [ ] YAML frontmatter complete with all required fields
-- [ ] All category-required sections present (Feature: 12, FIX: 14, INFRA: 12, Research: 17)
+- [ ] All runtime category-required sections present
 - [ ] Unique PRD ID assigned
 - [ ] Version documented
 
@@ -480,12 +506,12 @@ Before submitting this PRD for review, verify:
 
 ### Quality Gates
 - [ ] Ambiguity rate <= 5% (no vague terms)
-- [ ] V2 total_score >= 65 (REVIEW tier minimum)
+- [ ] Validation result meets the configured tier required for the next lifecycle phase
 - [ ] Traceability >= 90% (linked requirements)
 - [ ] Completion Evidence proves generated, referenced, updated, migrated, and tested surfaces
 
 ---
 
-*Template version: 2.3 (AARE-F Enhanced — implementation-readiness hardening)*
-*Research basis: AARE-F Framework*
+*Template version: 3.2 (AARE-F 3.2 verification-contract and implementation-readiness hardening)*
+*Research basis: AARE-F Framework v3.2.0*
 *Prompts: docs/requirements-aare-f/prompts/prd-creation.md*

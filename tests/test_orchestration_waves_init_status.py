@@ -8,7 +8,7 @@ import pytest
 
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-from ._orchestration_waves_support import orch_tools  # noqa: F401
+from ._tools_orchestration_support import orch_tools, set_project_root  # noqa: F401
 
 
 class TestTrwInitTaskNameLengthCap:
@@ -311,6 +311,134 @@ class TestTrwStatusVersionWarning:
         init_result = orch_tools["trw_init"].fn(task_name="current-version-task")
         status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
         assert "version_warning" not in status
+
+
+class TestRunCurrentness:
+    """PRD-INFRA-164 FR08: run/session currentness uses deployed-canon + live-process
+    fingerprints and preserves current/stale/unknown — absence never means current."""
+
+    def test_run_currentness_uses_fingerprints_and_preserves_unknown(self) -> None:
+        from trw_mcp.tools._orchestration_phase import evaluate_run_currentness
+
+        # Exact three-way match => current.
+        currentness, reasons = evaluate_run_currentness(
+            "dep-1",
+            "proc-1",
+            current_deployed_fingerprint="dep-1",
+            current_process_fingerprint="proc-1",
+        )
+        assert currentness == "current"
+        assert reasons == []
+
+        # Deployment moved => stale, and the reason names the deployment layer.
+        currentness, reasons = evaluate_run_currentness(
+            "dep-1",
+            "proc-1",
+            current_deployed_fingerprint="dep-2",
+            current_process_fingerprint="proc-1",
+        )
+        assert currentness == "stale"
+        assert any("deployed canon generation moved" in r for r in reasons)
+
+        # Process changed/restarted => stale, reason names the process layer.
+        currentness, reasons = evaluate_run_currentness(
+            "dep-1",
+            "proc-1",
+            current_deployed_fingerprint="dep-1",
+            current_process_fingerprint="proc-2",
+        )
+        assert currentness == "stale"
+        assert any("process changed/restarted" in r for r in reasons)
+
+        # Legacy run (no stamp) => unknown, NEVER current.
+        currentness, reasons = evaluate_run_currentness(
+            None,
+            None,
+            current_deployed_fingerprint="dep-1",
+            current_process_fingerprint="proc-1",
+        )
+        assert currentness == "unknown"
+        assert reasons
+
+        # Missing process fingerprint (unattestable) => unknown, never current.
+        currentness, reasons = evaluate_run_currentness(
+            "dep-1",
+            "proc-1",
+            current_deployed_fingerprint="dep-1",
+            current_process_fingerprint=None,
+        )
+        assert currentness == "unknown"
+
+        # Malformed/unavailable current deployed generation => unknown.
+        currentness, reasons = evaluate_run_currentness(
+            "dep-1",
+            "proc-1",
+            current_deployed_fingerprint=None,
+            current_process_fingerprint="proc-1",
+        )
+        assert currentness == "unknown"
+
+    def test_trw_init_stamps_run_canon_fingerprints_and_summarizes_current(
+        self,
+        orch_tools: dict[str, Any],
+    ) -> None:
+        """Integration: trw_init writes the fingerprint stamp; a same-process run
+        summarizes as current (deployed + process both match live state)."""
+        # Freeze a real live-process fingerprint for this test process so the
+        # currentness comparison has both layers available.
+        from fastmcp import FastMCP
+
+        from trw_mcp.canons.fingerprint import (
+            freeze_fingerprint,
+            reset_frozen_fingerprint,
+            set_frozen_fingerprint,
+        )
+        from trw_mcp.canons.registry import load_registry, managed_source_digests
+        from trw_mcp.server._live_fingerprint import build_realized_surface
+        from trw_mcp.tools._orchestration_phase import summarize_run_currentness
+
+        reset_frozen_fingerprint()
+        registry = load_registry()
+        server = FastMCP("test")
+        from trw_mcp.tools.learning import register_learning_tools
+
+        register_learning_tools(server)
+        fp = freeze_fingerprint(
+            trw_mcp_version="0.0.0",
+            framework_version="v26.1_TRW",
+            aaref_version="v3.2.0",
+            template_version="3.2",
+            registry_digest=registry.digest,
+            source_digests=managed_source_digests(registry),
+            surface=build_realized_surface(server),
+        )
+        set_frozen_fingerprint(fp)
+        try:
+            init_result = orch_tools["trw_init"].fn(task_name="currentness-task")
+            run_root = Path(init_result["run_path"])
+
+            stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
+            assert stamp_path.exists(), "trw_init must stamp canon fingerprints"
+
+            summary = summarize_run_currentness(run_root, run_framework="v26.1_TRW")
+            assert summary["currentness"] == "current"
+            assert summary["run_deployed_canon_fingerprint"] == registry.digest
+            assert summary["run_live_process_fingerprint"] == fp.digest
+        finally:
+            reset_frozen_fingerprint()
+
+    def test_run_without_stamp_is_unknown_not_current(
+        self,
+        orch_tools: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        """A run directory with no fingerprint stamp is unknown, never current."""
+        from trw_mcp.tools._orchestration_phase import summarize_run_currentness
+
+        run_root = tmp_path / "legacy-run"
+        (run_root / "meta").mkdir(parents=True)
+        summary = summarize_run_currentness(run_root, run_framework="v26.1_TRW")
+        assert summary["currentness"] == "unknown"
 
 
 class TestTrwStatusReversionMetrics:

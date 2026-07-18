@@ -64,6 +64,11 @@ LOAD_BEARING_KEYS = (
     "timestamp",
 )
 
+# A ``*_deferred`` block is folded in compact mode only when its keys are a
+# subset of this known advisory shape — anything richer stays untouched so a
+# block carrying real payload can never be silently summarized away.
+_DEFERRED_SHAPE_KEYS = frozenset({"reason", "writer_pids", "writer_count", "threshold", "defer_reason", "detail"})
+
 # ``# trw:intentional <reason>`` (Python/shell/YAML ``#``) or
 # ``// trw:intentional <reason>`` (TS/JS/C-family). The reason is everything
 # after the marker token, trimmed. Case-insensitive on the marker token.
@@ -127,6 +132,35 @@ def _summarize_health(results: SessionStartResultDict) -> str:
     return "; ".join(parts) + " (verbose=True for full diagnostics)"
 
 
+def _fold_deferred_blocks(results: SessionStartResultDict) -> None:
+    """Collapse repetitive ``*_deferred`` blocks into one ``deferred`` summary.
+
+    A session under writer pressure historically shipped five near-identical
+    deferral dicts, each repeating the same reason/threshold (and, before
+    2026-07-12, the full writer pid list). Compact mode folds every top-level
+    ``*_deferred`` dict whose keys match the known advisory shape into
+    ``deferred: {reason: [step, ...]}`` plus a single ``deferred_writer_count``.
+    Blocks with unrecognized keys are left in place (fail-safe). Mutates
+    *results* in place; never raises.
+    """
+    folded: dict[str, list[str]] = {}
+    writer_counts: list[int] = []
+    for key in [k for k in results if k.endswith("_deferred")]:
+        block = results.get(key)
+        if not isinstance(block, dict) or not set(block) <= _DEFERRED_SHAPE_KEYS:
+            continue
+        reason = str(block.get("reason", "unknown"))
+        folded.setdefault(reason, []).append(key.removesuffix("_deferred"))
+        count = block.get("writer_count")
+        if isinstance(count, int):
+            writer_counts.append(count)
+        results.pop(key, None)  # type: ignore[misc]
+    if folded:
+        results["deferred"] = {reason: sorted(steps) for reason, steps in folded.items()}
+        if writer_counts:
+            results["deferred_writer_count"] = max(writer_counts)
+
+
 def trim_session_start_payload(
     results: SessionStartResultDict,
     *,
@@ -177,6 +211,14 @@ def trim_session_start_payload(
         for key in _DIAGNOSTIC_KEYS:
             results.pop(key, None)  # type: ignore[misc]
         results["health_summary"] = summary
+
+        # The per-field attribution table duplicates resolved_profile and both
+        # snapshot ids (already top-level) and lists every unset field with
+        # null origins. The dedicated trw_profile_explain tool serves the full
+        # audit shape; compact session_start drops the table.
+        results.pop("profile_explanation", None)
+
+        _fold_deferred_blocks(results)
 
         results["compact"] = True
         results["payload_token_estimate"] = estimate_payload_tokens(results)

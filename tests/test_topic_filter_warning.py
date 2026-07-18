@@ -161,7 +161,7 @@ def test_topic_filter_no_warning_when_applied(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 4: no topic requested — topic_filter_warning is empty string
+# Scenario 4: no topic requested — topic_filter_* fields are omitted entirely
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ def test_no_topic_no_warning_field(
     tmp_path: Path,
     captured_structlog: list[dict],  # type: ignore[type-arg]
 ) -> None:
-    """When topic is not requested -> topic_filter_warning is empty (not absent)."""
+    """When topic is not requested -> topic_filter_* fields are omitted."""
     from trw_mcp.models.config import get_config
     from trw_mcp.tools._recall_impl import execute_recall
 
@@ -188,8 +188,8 @@ def test_no_topic_no_warning_field(
             _rank_by_utility=lambda matches, *_a, **_kw: matches,
         )
 
-    assert result.get("topic_filter_ignored") is False
-    assert result.get("topic_filter_warning", "") == ""
+    assert "topic_filter_ignored" not in result
+    assert "topic_filter_warning" not in result
 
     warning_events = [e for e in captured_structlog if e.get("event") == "topic_filter_ignored"]
     assert not warning_events

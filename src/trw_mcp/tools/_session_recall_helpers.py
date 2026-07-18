@@ -326,12 +326,13 @@ def perform_session_recalls(
     if optional_work_deferred:
         compact_for_pressure = True
         pressure_writer_pids = optional_writer_pids
-        extra["side_effects_deferred"] = {
-            "reason": optional_reason,
-            "writer_pids": optional_writer_pids,
-            "writer_count": len(optional_writer_pids),
-            "threshold": config.session_start_writer_pressure_threshold,
-        }
+        from trw_mcp.state.memory_pressure import writer_pressure_details
+
+        extra["side_effects_deferred"] = writer_pressure_details(
+            optional_reason,
+            optional_writer_pids,
+            threshold=config.session_start_writer_pressure_threshold,
+        )
         logger.warning(
             "session_start_side_effects_deferred",
             reason=optional_reason,

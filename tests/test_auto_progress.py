@@ -151,7 +151,15 @@ class TestAutoProgressPrds:
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "approved")
-        result = auto_progress_prds(run_dir, "implement", prds_dir, config)
+        result = auto_progress_prds(
+            run_dir,
+            "implement",
+            prds_dir,
+            config,
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
         assert len(result) == 1
         assert result[0]["to_status"] == "implemented"
         assert result[0]["applied"] is True
@@ -164,7 +172,15 @@ class TestAutoProgressPrds:
     ) -> None:
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "implemented")
-        result = auto_progress_prds(run_dir, "validate", prds_dir, config)
+        result = auto_progress_prds(
+            run_dir,
+            "validate",
+            prds_dir,
+            config,
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
         assert len(result) == 1
         assert result[0]["to_status"] == "done"
         assert result[0]["applied"] is True
@@ -194,7 +210,15 @@ class TestAutoProgressPrds:
         _write_prd(prds_dir, "PRD-CORE-001", "done")
         _write_prd(prds_dir, "PRD-CORE-002", "merged")
         _write_prd(prds_dir, "PRD-CORE-003", "deprecated")
-        result = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+        result = auto_progress_prds(
+            run_dir,
+            "deliver",
+            prds_dir,
+            config,
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
         assert result == []
 
     def test_terminal_statuses_set(self) -> None:
@@ -213,7 +237,15 @@ class TestAutoProgressPrds:
         # that no "invalid_transition" error is produced — BFS finds a path.
         _write_run_yaml(run_dir, ["PRD-CORE-001"])
         _write_prd(prds_dir, "PRD-CORE-001", "draft")
-        result = auto_progress_prds(run_dir, "implement", prds_dir, config)
+        result = auto_progress_prds(
+            run_dir,
+            "implement",
+            prds_dir,
+            config,
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
         assert len(result) == 1
         # BFS now finds a path — either applied or stopped at guard (not invalid_transition)
         assert result[0].get("reason", "") != "invalid_transition"

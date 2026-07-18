@@ -5,11 +5,12 @@ PRDs follow the category-variant template from AARE-F-FRAMEWORK.md
 (feature=12 sections, infrastructure=9, fix=8, research=7).
 """
 
+# ruff: noqa: E402, I001
+
 from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,8 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # ---------------------------------------------------------------------------
 
 
-class QualityTier(str, Enum):
-    """PRD quality tier classification (PRD-CORE-008)."""
+class PRDQualityTier(str, Enum):
+    """PRD document-quality classification, distinct from lifecycle status."""
 
     SKELETON = "skeleton"
     DRAFT = "draft"
@@ -27,7 +28,7 @@ class QualityTier(str, Enum):
     APPROVED = "approved"
 
 
-class PRDStatus(str, Enum):
+class PRDLifecycleStatus(str, Enum):
     """PRD lifecycle status.
 
     Lifecycle: draft -> review -> approved -> implemented -> done
@@ -46,15 +47,29 @@ class PRDStatus(str, Enum):
 # PRD status state machine (PRD-CORE-009-FR01, PRD-FIX-008)
 # Identity transitions (same → same) are always valid and handled in is_valid_transition.
 # Terminal states: done, merged, deprecated — no outgoing transitions.
-VALID_TRANSITIONS: dict[PRDStatus, set[PRDStatus]] = {
-    PRDStatus.DRAFT: {PRDStatus.REVIEW, PRDStatus.MERGED},
-    PRDStatus.REVIEW: {PRDStatus.APPROVED, PRDStatus.DRAFT, PRDStatus.MERGED},
-    PRDStatus.APPROVED: {PRDStatus.IMPLEMENTED, PRDStatus.DEPRECATED, PRDStatus.MERGED},
-    PRDStatus.IMPLEMENTED: {PRDStatus.DONE, PRDStatus.DEPRECATED},
-    PRDStatus.DONE: set(),
-    PRDStatus.MERGED: set(),
-    PRDStatus.DEPRECATED: set(),
+VALID_TRANSITIONS: dict[PRDLifecycleStatus, set[PRDLifecycleStatus]] = {
+    PRDLifecycleStatus.DRAFT: {PRDLifecycleStatus.REVIEW, PRDLifecycleStatus.MERGED},
+    PRDLifecycleStatus.REVIEW: {
+        PRDLifecycleStatus.APPROVED,
+        PRDLifecycleStatus.DRAFT,
+        PRDLifecycleStatus.MERGED,
+    },
+    PRDLifecycleStatus.APPROVED: {
+        PRDLifecycleStatus.IMPLEMENTED,
+        PRDLifecycleStatus.DEPRECATED,
+        PRDLifecycleStatus.MERGED,
+    },
+    PRDLifecycleStatus.IMPLEMENTED: {PRDLifecycleStatus.DONE, PRDLifecycleStatus.DEPRECATED},
+    PRDLifecycleStatus.DONE: set(),
+    PRDLifecycleStatus.MERGED: set(),
+    PRDLifecycleStatus.DEPRECATED: set(),
 }
+
+# Backward-compatible import names. New code should use the explicit names so
+# lifecycle state cannot be confused with a document-quality tier that happens
+# to use some of the same wire values.
+QualityTier = PRDQualityTier
+PRDStatus = PRDLifecycleStatus
 
 
 class Priority(str, Enum):
@@ -92,6 +107,28 @@ class EvidenceLevel(str, Enum):
     THEORETICAL = "theoretical"
 
 
+class VerificationMethod(str, Enum):
+    """AARE-F 3.2 requirement-verification methods."""
+
+    TEST = "test"
+    ANALYSIS = "analysis"
+    INSPECTION = "inspection"
+    DEMONSTRATION = "demonstration"
+
+
+class ExecutionState(str, Enum):
+    """Executable-registry queue state, orthogonal to lifecycle status (PRD-QUAL-121-FR04).
+
+    Only ACTIVE and BLOCKED_EXTERNAL consume work-in-progress slots.
+    """
+
+    CANDIDATE = "candidate"
+    QUEUED = "queued"
+    ACTIVE = "active"
+    BLOCKED_EXTERNAL = "blocked_external"
+    CLOSING = "closing"
+
+
 # ---------------------------------------------------------------------------
 # PRD component models
 # ---------------------------------------------------------------------------
@@ -105,7 +142,7 @@ class PRDConfidence(BaseModel):
     implementation_feasibility: float = Field(ge=0.0, le=1.0, default=0.8)
     requirement_clarity: float = Field(ge=0.0, le=1.0, default=0.8)
     estimate_confidence: float = Field(ge=0.0, le=1.0, default=0.7)
-    test_coverage_target: float = Field(ge=0.0, le=1.0, default=0.85)
+    test_coverage_target: float | None = Field(ge=0.0, le=1.0, default=None)
 
 
 class PRDEvidence(BaseModel):
@@ -148,6 +185,64 @@ class PRDQualityGates(BaseModel):
     consistency_validation_min: float = Field(ge=0.0, le=1.0, default=0.95)
 
 
+class VerificationMapping(BaseModel):
+    """Typed requirement-to-verification contract from AARE-F 3.2 §2.5."""
+
+    model_config = ConfigDict(strict=True, use_enum_values=True)
+
+    requirement_id: str = Field(min_length=1)
+    acceptance_criteria: list[str] = Field(default_factory=list, min_length=1)
+    method: VerificationMethod
+    evidence_artifact: str = Field(min_length=1)
+    pass_condition: str = Field(min_length=1)
+    automated: bool | None = None
+    automation_infeasible_reason: str | None = None
+
+    @field_validator("requirement_id", "evidence_artifact", "pass_condition", mode="before")
+    @classmethod
+    def normalize_required_text(cls, value: object) -> object:
+        """Strip required mapping scalars and reject whitespace-only evidence."""
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("verification mapping text must not be blank")
+            return normalized
+        return value
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def normalize_acceptance_criteria(cls, value: object) -> object:
+        """Normalize every criterion; hollow list items are never coverage."""
+        if not isinstance(value, list):
+            return value
+        normalized: list[object] = []
+        for item in value:
+            if isinstance(item, str):
+                item = item.strip()
+                if not item:
+                    raise ValueError("acceptance criteria must not contain blank items")
+            normalized.append(item)
+        return normalized
+
+    @field_validator("automation_infeasible_reason", mode="before")
+    @classmethod
+    def normalize_optional_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("automation infeasible reason must not be blank when supplied")
+            return normalized
+        return value
+
+
+class PRDVerification(BaseModel):
+    """Collection of typed verification mappings for a PRD."""
+
+    model_config = ConfigDict(strict=True)
+
+    mappings: list[VerificationMapping] = Field(default_factory=list)
+
+
 class PRDDates(BaseModel):
     """Date tracking for a PRD."""
 
@@ -178,7 +273,7 @@ class PRDFrontmatter(BaseModel):
     version: str = "1.0"
 
     # Classification
-    status: PRDStatus = PRDStatus.DRAFT
+    status: PRDLifecycleStatus = PRDLifecycleStatus.DRAFT
     priority: Priority = Priority.P1
     category: str = ""
     risk_level: RiskLevel | None = None
@@ -193,11 +288,16 @@ class PRDFrontmatter(BaseModel):
     traceability: PRDTraceability = Field(default_factory=PRDTraceability)
     metrics: PRDMetrics = Field(default_factory=PRDMetrics)
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
+    verification: PRDVerification = Field(default_factory=PRDVerification)
     dates: PRDDates = Field(default_factory=PRDDates)
 
     # Lifecycle governance (PRD-FIX-056)
     approved_by: str | None = None
     partially_implemented_frs: list[str] = Field(default_factory=list)
+
+    # Typed activation gates (PRD-QUAL-119-FR02): open gates map deterministically
+    # to non-completion outcomes; see ActivationGate.completion_effect.
+    activation_gates: list[ActivationGate] = Field(default_factory=list)
 
     # Optional provenance
     template_version: str | None = None
@@ -205,187 +305,26 @@ class PRDFrontmatter(BaseModel):
     slos: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Wiring gate — seam registry (PRD-CORE-190 FR01)
-# ---------------------------------------------------------------------------
-
-
-class SeamEntry(BaseModel):
-    """A declared, not-yet-wired public surface with an owner and expiry.
-
-    Belongs to the requirements.py model module; parsed from PRD frontmatter
-    ``seams:`` list by the wiring-gate parser (``_prd_scoring_wiring.py``).
-    Backs FR01/FR03/FR04 of PRD-CORE-190.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
-
-    kind: Literal["unimplemented", "unfederated", "deferred", "placeholder"]
-    target_prd: str = Field(..., min_length=1)
-    owner: str = Field(..., min_length=1)
-    expiry_date: str  # ISO-8601 date string (YYYY-MM-DD); validated below
-    description: str | None = None
-
-    @field_validator("expiry_date")
-    @classmethod
-    def _validate_iso_date(cls, v: str) -> str:
-        # date.fromisoformat raises ValueError on a malformed date, which
-        # Pydantic surfaces as a validation error. The string is retained
-        # (not coerced to date) so it round-trips back to YAML byte-identically;
-        # FR04's expiry comparison re-parses the string at check time.
-        date.fromisoformat(v)
-        return v
-
-
-# ---------------------------------------------------------------------------
-# Requirement model
-# ---------------------------------------------------------------------------
-
-
-class Requirement(BaseModel):
-    """Individual requirement with confidence and traceability."""
-
-    model_config = ConfigDict(strict=True)
-
-    id: str
-    description: str
-    priority: Priority = Priority.P1
-    confidence: float = Field(ge=0.0, le=1.0, default=0.8)
-    acceptance_criteria: list[str] = Field(default_factory=list)
-    traces_to: list[str] = Field(default_factory=list)
-    traced_from: list[str] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Validation models
-# ---------------------------------------------------------------------------
-
-
-class ValidationFailure(BaseModel):
-    """Individual validation failure from PRD quality check."""
-
-    model_config = ConfigDict(strict=True)
-
-    field: str
-    rule: str
-    message: str
-    severity: str = "error"
-
-
-class ValidationResult(BaseModel):
-    """Result of PRD validation against AARE-F quality gates."""
-
-    model_config = ConfigDict(strict=True)
-
-    valid: bool
-    failures: list[ValidationFailure] = Field(default_factory=list)
-    ambiguity_rate: float = 0.0
-    completeness_score: float = 0.0
-    traceability_coverage: float = 0.0
-    consistency_score: float = 0.0
-
-
-class SectionScore(BaseModel):
-    """Content density score for a single PRD section (PRD-CORE-008)."""
-
-    model_config = ConfigDict(strict=True)
-
-    section_name: str
-    density: float = Field(ge=0.0, le=1.0, default=0.0)
-    substantive_lines: int = Field(ge=0, default=0)
-    total_lines: int = Field(ge=0, default=0)
-    placeholder_lines: int = Field(ge=0, default=0)
-
-
-class DimensionScore(BaseModel):
-    """Score for a single validation dimension (PRD-CORE-008)."""
-
-    model_config = ConfigDict(strict=True)
-
-    name: str
-    score: float = Field(ge=0.0, default=0.0)
-    max_score: float = Field(ge=0.0, default=1.0)
-    details: dict[str, object] = Field(default_factory=dict)
-
-
-class SmellFinding(BaseModel):
-    """Requirement smell detected during validation (PRD-CORE-008)."""
-
-    model_config = ConfigDict(strict=True)
-
-    category: str
-    line_number: int = Field(ge=0, default=0)
-    matched_text: str = ""
-    severity: str = "warning"
-    suggestion: str = ""
-
-
-class ImprovementSuggestion(BaseModel):
-    """Actionable suggestion to improve a PRD quality score (PRD-CORE-008)."""
-
-    model_config = ConfigDict(strict=True)
-
-    dimension: str
-    priority: str = "medium"
-    message: str = ""
-    current_score: float = Field(ge=0.0, default=0.0)
-    potential_gain: float = Field(ge=0.0, default=0.0)
-
-
-class ValidationResultV2(BaseModel):
-    """Extended validation result with multi-dimension scoring (PRD-CORE-008).
-
-    Includes all fields from ValidationResult for backward compatibility,
-    plus multi-dimensional quality scoring, tier classification,
-    improvement suggestions, and risk scaling metadata (PRD-QUAL-013).
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    # V1 fields (backward compatible)
-    valid: bool = True
-    failures: list[ValidationFailure] = Field(default_factory=list)
-    ambiguity_rate: float = 0.0
-    completeness_score: float = 0.0  # deprecated: use total_score (V2) as the authoritative quality metric
-    traceability_coverage: float = 0.0
-    measured_traceability_coverage: float = (
-        0.0  # PRD-QUAL-096: informational ratio (FRs with impl+test refs / total FRs); NOT a gate
-    )
-    consistency_score: float = 0.0  # reserved — not enforced (consistency scorer not implemented)
-
-    # V2 scoring
-    total_score: float = Field(ge=0.0, le=100.0, default=0.0)
-    quality_tier: QualityTier = QualityTier.SKELETON
-    grade: str = "F"
-    dimensions: list[DimensionScore] = Field(default_factory=list)
-    section_scores: list[SectionScore] = Field(default_factory=list)
-    smell_findings: list[SmellFinding] = Field(default_factory=list)
-    ears_classifications: list[dict[str, object]] = Field(default_factory=list)
-    readability: dict[str, float] = Field(default_factory=dict)
-    improvement_suggestions: list[ImprovementSuggestion] = Field(default_factory=list)
-
-    # Risk scaling (PRD-QUAL-013)
-    effective_risk_level: str = ""
-    risk_scaled: bool = False
-
-    # Status integrity warnings (PRD-FIX-056)
-    status_drift_warnings: list[str] = Field(default_factory=list)
-    integrity_warnings: list[str] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Traceability
-# ---------------------------------------------------------------------------
-
-
-class TraceabilityResult(BaseModel):
-    """Result of traceability analysis."""
-
-    model_config = ConfigDict(strict=True)
-
-    total_requirements: int = 0
-    traced_requirements: int = 0
-    untraced_requirements: list[str] = Field(default_factory=list)
-    coverage: float = 0.0
-    orphan_implementations: list[str] = Field(default_factory=list)
-    missing_tests: list[str] = Field(default_factory=list)
+from trw_mcp.models._requirements_execution import (
+    ACCEPTANCE_MANIFEST_SCHEMA_VERSION as ACCEPTANCE_MANIFEST_SCHEMA_VERSION,
+    ActivationGateOwnership as ActivationGateOwnership,
+    ActivationGate as ActivationGate,
+    PrdActiveLimits as PrdActiveLimits,
+    SchedulingAction as SchedulingAction,
+    EvaluationEpoch as EvaluationEpoch,
+    RequirementRegistryEntry as RequirementRegistryEntry,
+    AcceptedRequirementState as AcceptedRequirementState,
+    AcceptedRequirement as AcceptedRequirement,
+    AcceptanceManifest as AcceptanceManifest,
+    ReflectionActionState as ReflectionActionState,
+    SeamEntry as SeamEntry,
+    Requirement as Requirement,
+    ValidationFailure as ValidationFailure,
+    ValidationResult as ValidationResult,
+    SectionScore as SectionScore,
+    DimensionScore as DimensionScore,
+    SmellFinding as SmellFinding,
+    ImprovementSuggestion as ImprovementSuggestion,
+    ValidationResultV2 as ValidationResultV2,
+    TraceabilityResult as TraceabilityResult,
+)

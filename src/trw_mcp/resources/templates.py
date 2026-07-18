@@ -27,11 +27,16 @@ def register_template_resources(server: FastMCP) -> None:
         """
         data_dir = Path(__file__).parent.parent / "data"
         template_path = data_dir / "prd_template.md"
-        if template_path.exists():
-            return template_path.read_text(encoding="utf-8")
-
-        # Fallback inline template
-        return _INLINE_PRD_TEMPLATE
+        if not template_path.is_file():
+            raise FileNotFoundError(f"canonical AARE-F PRD template is unavailable: {template_path}")
+        body = template_path.read_text(encoding="utf-8")
+        if (
+            not body.startswith("---\n")
+            or 'template_version: "3.2"' not in body
+            or "*Template version: 3.2 " not in body
+        ):
+            raise ValueError(f"canonical AARE-F PRD template is malformed or not version 3.2: {template_path}")
+        return body
 
     @server.resource("trw://templates/shard-card")
     def get_shard_card_template() -> str:
@@ -42,69 +47,6 @@ def register_template_resources(server: FastMCP) -> None:
         """
         return _SHARD_CARD_TEMPLATE
 
-
-_INLINE_PRD_TEMPLATE = """---
-prd:
-  id: PRD-{CATEGORY}-{SEQUENCE}
-  title: "{Title}"
-  version: "1.0"
-  status: draft
-  priority: P1
-
-# Functionality truthfulness (FPI #7 / AARE-F §6.2): status=implemented REQUIRES
-# functionality_level=live AND stubs: []. Use stub/partial (with stubs listed)
-# until every path is real — never claim implemented over a stub.
-functionality_level: planned  # planned | stub | partial | live
-stubs: []                     # every not-yet-real path, while functionality_level != live
-
-aaref_components: []
-
-evidence:
-  level: moderate
-  sources: []
-
-confidence:
-  implementation_feasibility: 0.8
-  requirement_clarity: 0.8
-  estimate_confidence: 0.7
-  test_coverage_target: 0.85
-
-traceability:
-  implements: []
-  depends_on: []
-  enables: []
-  conflicts_with: []
-
-metrics:
-  success_criteria: []
-  measurement_method: []
-
-dates:
-  created: YYYY-MM-DD
-  updated: YYYY-MM-DD
-  target_completion: null
-
-quality_gates:
-  ambiguity_rate_max: 0.05
-  completeness_min: 0.85
-  traceability_coverage_min: 0.90
----
-
-# PRD-{CATEGORY}-{SEQUENCE}: {Title}
-
-## 1. Problem Statement
-## 2. Goals & Non-Goals
-## 3. User Stories
-## 4. Functional Requirements
-## 5. Non-Functional Requirements
-## 6. Technical Approach
-## 7. Test Strategy
-## 8. Rollout Plan
-## 9. Success Metrics
-## 10. Dependencies & Risks
-## 11. Open Questions
-## 12. Traceability Matrix
-"""
 
 _SHARD_CARD_TEMPLATE = """# Shard Card Template (FRAMEWORK.md v18.0_TRW)
 

@@ -76,34 +76,29 @@ def test_knowledge_module_has_no_tool_function() -> None:
     assert not hasattr(knowledge, "trw_knowledge_sync"), "trw_knowledge_sync wrapper still present"
 
 
-def test_knowledge_sync_absent_from_admin_group() -> None:
-    """FR02: trw_knowledge_sync is removed from TOOL_GROUP_ADMIN."""
-    from trw_mcp.models.config._defaults import TOOL_GROUP_ADMIN, TOOL_PRESETS
+def test_knowledge_sync_absent_from_capability_packs() -> None:
+    """FR02: trw_knowledge_sync is not a member of any CORE-218 capability pack.
 
-    assert "trw_knowledge_sync" not in TOOL_GROUP_ADMIN
-    # No preset (incl. the "all" composite) may reference it.
-    for preset_name, preset in TOOL_PRESETS.items():
-        assert "trw_knowledge_sync" not in preset, f"present in preset {preset_name!r}"
+    (The CORE-125 TOOL_GROUP_ADMIN/TOOL_PRESETS vocabulary was removed when the
+    kernel/pack resolver became the sole exposure authority.)"""
+    from trw_mcp.models.surface_packs import PACK_TOOLS
+
+    for pack_name, tools in PACK_TOOLS.items():
+        assert "trw_knowledge_sync" not in tools, f"present in pack {pack_name!r}"
 
 
 def test_removed_tools_absent_from_manifest() -> None:
-    """FR02: manifest excludes all 4 removed tools and the parity check passes."""
-    from trw_mcp.state.claude_md._tool_manifest import TOOL_DESCRIPTIONS
+    """FR02: manifest excludes all 4 removed tools and stale descriptions cannot linger."""
+    from trw_mcp.state.claude_md._tool_manifest import _ELIGIBLE_TOOLS, TOOL_DESCRIPTIONS
 
     for name in _REMOVED_TOOLS:
         assert name not in TOOL_DESCRIPTIONS, f"{name} still described in manifest"
-    # FIX-076's invariant is the ABSENCE of the removed tools above. The exact
-    # manifest size is owned by the preset-bridge parity test
-    # (test_tool_presets.py::test_tool_preset_bridge_parity) — a hardcoded
-    # count here broke twice as the bridged surface legitimately grew
-    # (24 after CORE-144 probe tools; 41 after the round-2 transport-e2e
-    # bridge reconciliation). Assert structural sanity only: every manifest
-    # entry names a preset-bridged tool, so stale descriptions cannot linger.
-    from trw_mcp.models.config._defaults import TOOL_PRESETS
-
-    bridged = set(TOOL_PRESETS["all"])
-    stale = set(TOOL_DESCRIPTIONS) - bridged
-    assert not stale, f"manifest describes unbridged tools: {sorted(stale)}"
+    # FIX-076's invariant is the ABSENCE of the removed tools above. Exact
+    # surface size is owned by the CORE-218 manifest parity test
+    # (test_tool_presets.py). Assert structural sanity only: every described
+    # tool is in the eligible public surface, so stale descriptions cannot linger.
+    stale = set(TOOL_DESCRIPTIONS) - set(_ELIGIBLE_TOOLS)
+    assert not stale, f"manifest describes non-eligible tools: {sorted(stale)}"
 
 
 def test_internal_state_logic_importable_by_consumers() -> None:

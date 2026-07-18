@@ -66,6 +66,36 @@ class TestValidEntitlement:
         assert e.tier == "enterprise"
 
 
+class TestBetaTesterTier:
+    """beta = tester-program bridge (sub_Y-f6QQ3Y_Os9b0vM)."""
+
+    def test_beta_tier_grants_distill(self, tmp_path: Path) -> None:
+        _write_entitlement(tmp_path, tier="beta")
+        e = load_entitlement(tmp_path)
+        assert e.tier == "beta"
+        assert e.reason == "ok"
+        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+
+    def test_alpha_backend_plan_aliases_to_beta(self, tmp_path: Path) -> None:
+        # The backend tester program (TESTER_PLAN="alpha") issues the raw
+        # value "alpha"; the signature is over "alpha" but the resolved tier
+        # is the canonical "beta" so features unlock.
+        _write_entitlement(tmp_path, tier="alpha")
+        e = load_entitlement(tmp_path)
+        assert e.tier == "beta"
+        assert e.reason == "ok"
+        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+
+    def test_alpha_alias_requires_valid_signature(self, tmp_path: Path) -> None:
+        # A raw "alpha" value signed as "free" must NOT unlock beta.
+        future = (datetime.now(tz=timezone.utc) + timedelta(days=30)).isoformat()
+        free_sig = sign_entitlement_for_dev(tier="free", issued_to="x@x", expires_at=future)
+        _write_entitlement(tmp_path, tier="alpha", expires_at=future, signature=free_sig)
+        e = load_entitlement(tmp_path)
+        assert e.tier == "free"
+        assert e.reason == "bad_signature"
+
+
 class TestBadSignature:
     def test_tampered_tier_caught(self, tmp_path: Path) -> None:
         # Sign as "free" but write tier as "enterprise"

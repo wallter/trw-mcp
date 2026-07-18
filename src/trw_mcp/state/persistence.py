@@ -20,8 +20,10 @@ import contextlib
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 import structlog
 
@@ -31,6 +33,27 @@ from trw_mcp.exceptions import StateError
 # PRD-CORE-001: Base MCP tool suite — atomic file state persistence
 
 logger = structlog.get_logger(__name__)
+
+
+def _atomic_write_text_file(path: Path, suffix: str, write: Callable[[TextIO], object]) -> None:
+    """Write through the ``mkstemp`` descriptor, then replace the target."""
+    fd, tmp_path_str = tempfile.mkstemp(dir=str(path.parent), suffix=suffix)
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = -1  # ownership transferred to ``fh``
+            write(fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
 
 # Suppress-internal-events ContextVar + INTERNAL_EVENT_TYPES extracted to
 # _persistence_helpers (PRD-DIST-243 batch 15). Re-exported here for callers.
@@ -84,7 +107,13 @@ class FileStateReader:
         self._base_dir = base_dir.resolve() if base_dir is not None else None
 
     def _check_contained(self, path: Path) -> Path:
-        resolved = path.resolve()
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise StateError(
+                f"state read path resolution failed: {type(exc).__name__}",
+                path=str(path),
+            ) from None
         if self._base_dir is not None and not resolved.is_relative_to(self._base_dir):
             raise StateError(f"state read path escapes base directory: {resolved}", path=str(resolved))
         return resolved
@@ -126,23 +155,43 @@ class FileStateReader:
         result: dict[str, object] = dict(data)
         return result
 
-    def read_jsonl(self, path: Path) -> list[dict[str, object]]:
+    def read_jsonl(self, path: Path, *, strict: bool = False) -> list[dict[str, object]]:
         """Read and parse a JSONL file (one JSON object per line).
+
+        By default this reader is *lenient* about a single malformed line: a
+        torn/truncated row (e.g. the process was killed mid-append, leaving a
+        partial final line) is skipped and counted rather than aborting the
+        whole read. This matters because ``events.jsonl`` and its siblings are
+        append-only logs read best-effort by delivery/ceremony helpers that
+        collapse any raised ``StateError`` to an empty list — so under the old
+        strict behavior one truncated tail line poisoned *every* event read for
+        a run. Skipping the bad line preserves all the valid records.
+
+        Non-JSON I/O failures (unreadable file, unexpected errors) still raise
+        ``StateError`` in both modes — leniency is scoped to per-line JSON decode
+        failures only, never to a genuinely broken read.
 
         Args:
             path: Path to the JSONL file.
+            strict: When True, a malformed line raises ``StateError`` (the
+                pre-2026-07 contract) instead of being skipped. Integrity-
+                sensitive callers that must treat any corruption as fatal opt in
+                here; the append-only-log callers (the default) stay lenient.
 
         Returns:
-            List of parsed JSON objects.
+            List of parsed JSON objects. Malformed lines are skipped (lenient
+            mode) with a single aggregated warning naming the skipped count.
 
         Raises:
-            StateError: If file cannot be read or parsed.
+            StateError: If the file cannot be read, or (``strict=True`` only) a
+                line fails to parse as JSON.
         """
         checked_path = self._check_contained(path)
         if not checked_path.exists():
             return []
+        records: list[dict[str, object]] = []
+        skipped = 0
         try:
-            records: list[dict[str, object]] = []
             with checked_path.open("r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
@@ -150,7 +199,13 @@ class FileStateReader:
                         stripped = line.strip()
                         if not stripped:
                             continue
-                        record = json.loads(stripped)
+                        try:
+                            record = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            if strict:
+                                raise
+                            skipped += 1
+                            continue
                         if isinstance(record, dict):
                             records.append(record)
                         else:
@@ -161,7 +216,6 @@ class FileStateReader:
                             )
                 finally:
                     _lock_un(fh.fileno())
-            return records
         except json.JSONDecodeError as exc:
             raise StateError(
                 f"Failed to parse JSONL: {exc}",
@@ -174,6 +228,14 @@ class FileStateReader:
                 f"Failed to read JSONL: {exc}",
                 path=str(checked_path),
             ) from exc
+        if skipped:
+            logger.warning(
+                "jsonl_malformed_lines_skipped",
+                path=str(checked_path),
+                skipped=skipped,
+                reason="json_decode",
+            )
+        return records
 
     def exists(self, path: Path) -> bool:
         """Check if a path exists.
@@ -205,26 +267,7 @@ class FileStateWriter:
         """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Write to temp file in same directory (atomic rename requires same filesystem)
-            fd, tmp_path_str = tempfile.mkstemp(
-                dir=str(path.parent),
-                suffix=".yaml.tmp",
-            )
-            tmp_path = Path(tmp_path_str)
-            try:
-                with tmp_path.open("w", encoding="utf-8") as fh:
-                    _lock_ex(fh.fileno())
-                    try:
-                        _roundtrip_yaml().dump(data, fh)
-                    finally:
-                        _lock_un(fh.fileno())
-                tmp_path.rename(path)
-            except Exception:  # justified: cleanup, temp file removal must not mask original error
-                tmp_path.unlink(missing_ok=True)
-                raise
-            finally:
-                with contextlib.suppress(OSError):
-                    os.close(fd)
+            _atomic_write_text_file(path, ".yaml.tmp", lambda fh: _roundtrip_yaml().dump(data, fh))
             logger.debug("yaml_written", path=str(path))
         except StateError:
             raise
@@ -278,22 +321,7 @@ class FileStateWriter:
         """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_path_str = tempfile.mkstemp(
-                dir=str(path.parent),
-                suffix=".tmp",
-            )
-            tmp_path = Path(tmp_path_str)
-            try:
-                with tmp_path.open("w", encoding="utf-8") as fh:
-                    fh.write(content)
-                    fh.flush()
-                tmp_path.rename(path)
-            except Exception:  # justified: cleanup, temp file removal must not mask original error
-                tmp_path.unlink(missing_ok=True)
-                raise
-            finally:
-                with contextlib.suppress(OSError):
-                    os.close(fd)
+            _atomic_write_text_file(path, ".tmp", lambda fh: fh.write(content))
         except StateError:
             raise
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError

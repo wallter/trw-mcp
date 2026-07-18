@@ -14,9 +14,10 @@ __all__ = ["PropensityEntry", "log_ranked_selections", "log_selection", "read_pr
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
+from typing_extensions import TypedDict
 
 logger = structlog.get_logger(__name__)
 

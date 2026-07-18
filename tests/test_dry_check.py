@@ -5,11 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.state.dry_check import (
-    BlockLocation,
-    DuplicatedBlock,
     _is_ignorable_line,
     find_duplicated_blocks,
-    format_dry_report,
 )
 
 
@@ -176,70 +173,3 @@ class TestFindDuplicatedBlocks:
             ignore_patterns=[r"^LOG\.debug"],
         )
         assert len(results) == 0
-
-
-class TestFormatDryReport:
-    """Report formatting."""
-
-    def test_no_blocks_message(self) -> None:
-        report = format_dry_report([])
-        assert "No duplicated blocks found" in report
-
-    def test_formats_blocks_with_locations(self) -> None:
-        block = DuplicatedBlock(
-            content="x = 1\ny = 2\nz = 3\nw = 4\nv = 5",
-            block_hash="abc123",
-            locations=[
-                BlockLocation(
-                    file_path="file1.py",
-                    start_line=10,
-                    end_line=14,
-                ),
-                BlockLocation(
-                    file_path="file2.py",
-                    start_line=20,
-                    end_line=24,
-                ),
-            ],
-        )
-        report = format_dry_report([block])
-        assert "2 occurrences" in report
-        assert "file1.py" in report
-        assert "file2.py" in report
-        assert "abc123" in report
-
-    def test_respects_max_blocks(self) -> None:
-        blocks = [
-            DuplicatedBlock(
-                content=f"block {i}",
-                block_hash=f"hash{i}",
-                locations=[
-                    BlockLocation(
-                        file_path="f.py",
-                        start_line=i,
-                        end_line=i + 4,
-                    ),
-                    BlockLocation(
-                        file_path="g.py",
-                        start_line=i,
-                        end_line=i + 4,
-                    ),
-                ],
-            )
-            for i in range(20)
-        ]
-        report = format_dry_report(blocks, max_blocks=3)
-        assert "17 more blocks" in report
-
-    def test_includes_code_block_in_report(self) -> None:
-        block = DuplicatedBlock(
-            content="x = 1\ny = 2",
-            block_hash="deadbeef",
-            locations=[
-                BlockLocation(file_path="a.py", start_line=1, end_line=2),
-                BlockLocation(file_path="b.py", start_line=1, end_line=2),
-            ],
-        )
-        report = format_dry_report([block])
-        assert "```" in report
-        assert "x = 1" in report

@@ -57,6 +57,7 @@ class TestSessionMetricsPersistence:
 
         # Should not raise
         _persist_session_metrics({"status": "success"}, None)
+        assert list(tmp_path.iterdir()) == []
 
     def test_session_metrics_not_persisted_when_no_run_yaml(self, tmp_path: Path) -> None:
         """When run.yaml doesn't exist, persistence is skipped gracefully."""
@@ -68,6 +69,7 @@ class TestSessionMetricsPersistence:
 
         # Should not raise
         _persist_session_metrics({"status": "success"}, run_dir)
+        assert list(run_dir.iterdir()) == []
 
     def test_session_metrics_not_persisted_on_failure(self, tmp_path: Path) -> None:
         """When metrics step fails (status != success), skip persistence."""

@@ -1,14 +1,15 @@
 """Local vector store backed by sqlite-vec for semantic search.
 
 Provides persistent vector storage using sqlite-vec (pip-installable SQLite
-extension). Graceful degradation: when sqlite-vec is not available, all
-operations return empty results and available() returns False.
+extension). Graceful degradation: unavailable instances leave ``connected``
+false and all operations return empty results.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import struct
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -33,8 +34,8 @@ logger = structlog.get_logger(__name__)
 class MemoryStore:
     """SQLite-vec backed vector store for learning entry embeddings.
 
-    When sqlite-vec is not installed, all operations are no-ops and
-    available() returns False — the retrieval engine falls back to BM25-only.
+    When sqlite-vec cannot load, all operations are no-ops and callers use
+    ``connected`` to select their keyword fallback.
     """
 
     _DEFAULT_DIM: ClassVar[int] = 384
@@ -50,6 +51,7 @@ class MemoryStore:
         self._db_path = db_path
         self._dim = dim
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
 
         if not _SQLITE_VEC_AVAILABLE:
             logger.debug("memory_store_unavailable", reason="sqlite_vec_not_installed")
@@ -101,8 +103,14 @@ class MemoryStore:
 
     @classmethod
     def available(cls) -> bool:
-        """Return True if sqlite-vec is importable and functional."""
+        """Return whether the sqlite-vec package is importable."""
         return _SQLITE_VEC_AVAILABLE
+
+    @property
+    def connected(self) -> bool:
+        """Return whether this store loaded sqlite-vec successfully."""
+        with self._lock:
+            return self._conn is not None
 
     def upsert(
         self,
@@ -118,23 +126,22 @@ class MemoryStore:
             metadata: Arbitrary string metadata (currently unused in DB,
                 but kept for API compatibility and future indexing).
         """
-        if self._conn is None:
-            return
+        with self._lock:
+            if self._conn is None:
+                return
+            emb_bytes = struct.pack(f"{self._dim}f", *embedding)
+            # Upsert into entries table to get/create rowid
+            self._conn.execute("INSERT OR IGNORE INTO entries(entry_id) VALUES(?)", (entry_id,))
+            row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
+            rowid: int = row[0]
 
-        emb_bytes = struct.pack(f"{self._dim}f", *embedding)
-
-        # Upsert into entries table to get/create rowid
-        self._conn.execute("INSERT OR IGNORE INTO entries(entry_id) VALUES(?)", (entry_id,))
-        row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
-        rowid: int = row[0]
-
-        # Delete old vector if exists, then insert fresh
-        self._conn.execute("DELETE FROM vec_entries WHERE rowid=?", (rowid,))
-        self._conn.execute(
-            "INSERT INTO vec_entries(rowid, embedding) VALUES(?, ?)",
-            (rowid, emb_bytes),
-        )
-        self._conn.commit()
+            # Delete old vector if exists, then insert fresh
+            self._conn.execute("DELETE FROM vec_entries WHERE rowid=?", (rowid,))
+            self._conn.execute(
+                "INSERT INTO vec_entries(rowid, embedding) VALUES(?, ?)",
+                (rowid, emb_bytes),
+            )
+            self._conn.commit()
         logger.debug("memory_store_upsert_ok", entry_id=entry_id, dim=len(embedding))
 
     def search(
@@ -152,25 +159,25 @@ class MemoryStore:
             List of (entry_id, distance) pairs sorted by distance ascending.
             Empty list when unavailable or no entries exist.
         """
-        if self._conn is None:
-            return []
-
-        query_bytes = struct.pack(f"{self._dim}f", *query_embedding)
-        try:
-            rows = self._conn.execute(
-                """
-                SELECT e.entry_id, v.distance
-                FROM vec_entries v
-                JOIN entries e ON v.rowid = e.rowid
-                WHERE v.embedding MATCH ? AND k = ?
-                ORDER BY v.distance
-                """,
-                (query_bytes, top_k),
-            ).fetchall()
-            return [(str(row[0]), float(row[1])) for row in rows]
-        except sqlite3.Error:
-            logger.debug("memory_store_search_error", exc_info=True)
-            return []
+        with self._lock:
+            if self._conn is None:
+                return []
+            query_bytes = struct.pack(f"{self._dim}f", *query_embedding)
+            try:
+                rows = self._conn.execute(
+                    """
+                    SELECT e.entry_id, v.distance
+                    FROM vec_entries v
+                    JOIN entries e ON v.rowid = e.rowid
+                    WHERE v.embedding MATCH ? AND k = ?
+                    ORDER BY v.distance
+                    """,
+                    (query_bytes, top_k),
+                ).fetchall()
+                return [(str(row[0]), float(row[1])) for row in rows]
+            except sqlite3.Error:
+                logger.debug("memory_store_search_error", exc_info=True)
+                return []
 
     def delete(self, entry_id: str) -> None:
         """Remove an entry by ID.
@@ -178,16 +185,16 @@ class MemoryStore:
         Args:
             entry_id: The entry to remove. No-op if not found.
         """
-        if self._conn is None:
-            return
-
-        row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
-        if row is None:
-            return
-        rowid: int = row[0]
-        self._conn.execute("DELETE FROM vec_entries WHERE rowid=?", (rowid,))
-        self._conn.execute("DELETE FROM entries WHERE rowid=?", (rowid,))
-        self._conn.commit()
+        with self._lock:
+            if self._conn is None:
+                return
+            row = self._conn.execute("SELECT rowid FROM entries WHERE entry_id=?", (entry_id,)).fetchone()
+            if row is None:
+                return
+            rowid: int = row[0]
+            self._conn.execute("DELETE FROM vec_entries WHERE rowid=?", (rowid,))
+            self._conn.execute("DELETE FROM entries WHERE rowid=?", (rowid,))
+            self._conn.commit()
 
     def count(self) -> int:
         """Return the number of stored vectors.
@@ -195,10 +202,11 @@ class MemoryStore:
         Returns:
             Zero when unavailable or database is empty.
         """
-        if self._conn is None:
-            return 0
-        row = self._conn.execute("SELECT COUNT(*) FROM entries").fetchone()
-        return int(row[0]) if row else 0
+        with self._lock:
+            if self._conn is None:
+                return 0
+            row = self._conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+            return int(row[0]) if row else 0
 
     def migrate(
         self,
@@ -262,38 +270,40 @@ class MemoryStore:
 
     def close(self) -> None:
         """Close the database connection."""
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
 
 # ---------------------------------------------------------------------------
-# Module-level singleton for connection reuse (PRD-FIX-046)
+# Module-level per-path registry for connection reuse (PRD-FIX-046)
 # ---------------------------------------------------------------------------
 
-_store: MemoryStore | None = None
-_store_path: Path | None = None
+_stores: dict[Path, MemoryStore] = {}
+_stores_lock = threading.RLock()
 
 
 def get_memory_store(db_path: Path) -> MemoryStore:
-    """Return a shared MemoryStore instance, creating it lazily.
-
-    Re-creates the store if ``db_path`` differs from the cached instance.
-    """
-    global _store, _store_path
-    if _store is not None and _store_path == db_path:
-        return _store
-    if _store is not None:
-        _store.close()
-    _store = MemoryStore(db_path)
-    _store_path = db_path
-    return _store
+    """Return the shared store for one canonical database path."""
+    canonical = db_path.resolve()
+    with _stores_lock:
+        store = _stores.get(canonical)
+        if store is None:
+            store = MemoryStore(canonical)
+            _stores[canonical] = store
+        return store
 
 
-def reset_memory_store() -> None:
-    """Close and discard the shared MemoryStore singleton."""
-    global _store, _store_path
-    if _store is not None:
-        _store.close()
-    _store = None
-    _store_path = None
+def reset_memory_store(db_path: Path | None = None) -> None:
+    """Close one registered store, or every store when no path is provided."""
+    with _stores_lock:
+        if db_path is not None:
+            store = _stores.pop(db_path.resolve(), None)
+            if store is not None:
+                store.close()
+            return
+        stores = list(_stores.values())
+        _stores.clear()
+        for store in stores:
+            store.close()

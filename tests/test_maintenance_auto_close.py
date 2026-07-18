@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-import trw_mcp.state.analytics.report as analytics_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.report import auto_close_stale_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -54,7 +54,7 @@ class TestAutoCloseStaleRuns:
         run_dir = _create_run(runs_root, "my-task", run_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -77,7 +77,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "my-task", run_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -96,7 +96,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "my-task", run_id, status="complete")
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -111,7 +111,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "my-task", run_id, status="abandoned")
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -122,7 +122,7 @@ class TestAutoCloseStaleRuns:
     def test_missing_task_root_returns_empty_result(self, tmp_path: Path) -> None:
         """If the task_root directory doesn't exist, return empty result."""
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -137,7 +137,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "my-task", run_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -153,7 +153,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "my-task", run_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -169,7 +169,7 @@ class TestAutoCloseStaleRuns:
             _create_run(runs_root, f"task-{i}", rid)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -196,7 +196,7 @@ class TestAutoCloseStaleRuns:
         )
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -211,7 +211,7 @@ class TestAutoCloseStaleRuns:
         run_dir.mkdir(parents=True)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -228,7 +228,7 @@ class TestAutoCloseStaleRuns:
         _create_run(runs_root, "task-recent", recent_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -246,7 +246,7 @@ class TestAutoCloseStaleRuns:
         run_dir = _create_run(runs_root, "my-task", run_id)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -265,7 +265,7 @@ class TestAutoCloseStaleRuns:
         (run_dir / "run.yaml").write_text("{invalid yaml[", encoding="utf-8")
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -277,7 +277,7 @@ class TestAutoCloseStaleRuns:
     def test_returns_correct_keys(self, tmp_path: Path) -> None:
         """Result always contains runs_closed, count, and errors keys."""
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):
@@ -292,7 +292,7 @@ class TestAutoCloseStaleRuns:
         (tmp_path / ".trw" / "runs" / "task-no-runs").mkdir(parents=True)
 
         with (
-            patch.object(analytics_mod, "_config", TRWConfig()),
+            nullcontext(),
             patch("trw_mcp.state.analytics.report.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.report.get_config", return_value=TRWConfig()),
         ):

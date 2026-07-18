@@ -8,6 +8,8 @@ the Option A+ first-recall warm-up wiring.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 import structlog
@@ -21,17 +23,31 @@ logger = structlog.get_logger(__name__)
 # With embeddings ON by default, a fresh store has 0% vector coverage until the
 # background backfill completes. The coverage advisory would otherwise surface on
 # EVERY session_start until backfill finishes, crying wolf. We surface the
-# human-facing advisory exactly ONCE per process (the background self-heal is
+# human-facing advisory exactly once per project (the background self-heal is
 # still scheduled idempotently each session). Non-coverage advisories (e.g.
 # "embeddings unavailable: deps missing") have no ``coverage_ratio`` and are NOT
 # gated by this — they always surface.
-_LOW_COVERAGE_ADVISORY_SHOWN = False
+_MAX_LOW_COVERAGE_PROJECTS = 256
+_low_coverage_projects: OrderedDict[str, None] = OrderedDict()
+_low_coverage_projects_lock = threading.Lock()
+
+
+def _claim_low_coverage_advisory(trw_dir: Path) -> bool:
+    key = str(trw_dir.resolve())
+    with _low_coverage_projects_lock:
+        if key in _low_coverage_projects:
+            _low_coverage_projects.move_to_end(key)
+            return False
+        _low_coverage_projects[key] = None
+        while len(_low_coverage_projects) > _MAX_LOW_COVERAGE_PROJECTS:
+            _low_coverage_projects.popitem(last=False)
+        return True
 
 
 def reset_low_coverage_advisory_guard() -> None:
     """Reset the one-time low-coverage advisory guard (for tests)."""
-    global _LOW_COVERAGE_ADVISORY_SHOWN
-    _LOW_COVERAGE_ADVISORY_SHOWN = False
+    with _low_coverage_projects_lock:
+        _low_coverage_projects.clear()
 
 
 def run_embeddings_maintenance(
@@ -50,12 +66,13 @@ def run_embeddings_maintenance(
     """
     try:
         if defer_memory_heavy:
-            maintenance["embeddings_backfill_deferred"] = {
-                "reason": defer_reason,
-                "writer_pids": writer_pids,
-                "writer_count": len(writer_pids),
-                "threshold": config.session_start_writer_pressure_threshold,
-            }
+            from trw_mcp.state.memory_pressure import writer_pressure_details
+
+            maintenance["embeddings_backfill_deferred"] = writer_pressure_details(
+                defer_reason,
+                writer_pids,
+                threshold=config.session_start_writer_pressure_threshold,
+            )
             logger.warning(
                 "embeddings_backfill_deferred",
                 reason=defer_reason,
@@ -69,8 +86,6 @@ def run_embeddings_maintenance(
 
         # PRD-FIX-COMPOUNDING-3-FR02: Pass coverage_probe=True so session_start
         # surfaces the coverage_ratio advisory when vectors are missing post-recovery.
-        global _LOW_COVERAGE_ADVISORY_SHOWN
-
         emb_status = check_embeddings_status(allow_initialize=False, coverage_probe=True)
         raw_ratio = emb_status.get("coverage_ratio")
         if raw_ratio is not None and isinstance(raw_ratio, float):
@@ -78,14 +93,11 @@ def run_embeddings_maintenance(
 
         if emb_status.get("advisory"):
             # The low-coverage nudge (has a coverage_ratio) is surfaced once per
-            # process so the background self-heal isn't drowned in repeated
+            # project so the background self-heal isn't drowned in repeated
             # warnings. Other advisories (deps missing, etc.) always surface.
             is_low_coverage_nudge = raw_ratio is not None
-            if not is_low_coverage_nudge:
+            if not is_low_coverage_nudge or _claim_low_coverage_advisory(trw_dir):
                 maintenance["embeddings_advisory"] = str(emb_status["advisory"])
-            elif not _LOW_COVERAGE_ADVISORY_SHOWN:
-                maintenance["embeddings_advisory"] = str(emb_status["advisory"])
-                _LOW_COVERAGE_ADVISORY_SHOWN = True
 
         # Option A+ (council-ratified 2026-06-10): first-recall download guard.
         # With embeddings ON by default, the hot path deferred cold init
@@ -137,13 +149,14 @@ def run_embeddings_maintenance(
             )
 
         if not emb_status.get("advisory") and emb_status.get("enabled") and emb_status.get("available"):
-            # trw_session_start is an MCP hot path. A shared server may already
-            # have the local embedder initialized from a prior trw_learn call;
-            # in that state the previous behavior kicked off a full synchronous
-            # vector backfill here. On a large learning corpus that can run for
-            # minutes, starving the shared HTTP server and making otherwise
-            # healthy clients time out during session_start. Leave bulk embedding
-            # maintenance to explicit install/update flows, not session startup.
+            # trw_session_start is an MCP hot path. Within this stdio process
+            # the local embedder may already be initialized from a prior
+            # trw_learn call; in that state the previous behavior kicked off a
+            # full synchronous vector backfill here. On a large learning corpus
+            # that can run for minutes, blocking this client's stdio trw-mcp
+            # process and making its session_start time out. Leave bulk
+            # embedding maintenance to explicit install/update flows, not
+            # session startup.
             maintenance["embeddings_backfill_deferred"] = {
                 "reason": "session_start_hot_path",
                 "detail": (

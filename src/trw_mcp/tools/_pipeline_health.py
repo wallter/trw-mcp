@@ -352,10 +352,17 @@ def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
     def _run_probe(name: str, fn: Any) -> SignalResult:
         try:
             result: SignalResult = fn(trw_dir)
-            return result
         except Exception as exc:  # justified: fail-open, individual probe failure must not block others
             logger.debug("pipeline_probe_failed", probe=name, error=str(exc))
             return {"degraded": False, "advisory": f"probe_error: {exc}"}
+        # Compact the healthy case: a probe's ``advisory`` is empty unless the
+        # probe is degraded, so drop the empty string from the aggregate response
+        # (5x ``"advisory": ""`` is pure null-noise). A caller drilling into a
+        # specific probe treats a missing key the same as empty. Non-empty
+        # advisories (degraded / sentinel strings) are preserved.
+        if result.get("advisory") == "":
+            result = {k: v for k, v in result.items() if k != "advisory"}
+        return result
 
     sync_push = _run_probe("sync_push", probe_sync_push)
     graph_edges = _run_probe("graph_edges", probe_graph_edges)

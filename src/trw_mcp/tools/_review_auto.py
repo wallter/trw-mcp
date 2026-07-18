@@ -15,10 +15,11 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
+from trw_mcp.models.run import IntegrationReviewArtifact
 from trw_mcp.models.typed_dicts import (
     AutoReviewResult,
     CrossModelReviewResult,
@@ -26,9 +27,11 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._review_validation import normalize_review_finding
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools._review_provenance import RunIdentity
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +46,13 @@ REASON_CROSS_MODEL_DISABLED = "cross_model_disabled"
 REASON_PROVIDER_UNREACHABLE = "provider_unreachable"
 REASON_PROVIDER_RETURNED_EMPTY = "provider_returned_empty"
 REASON_NO_DIFF = "no_diff"
+EMPTY_REVIEWER_FINDINGS_LIMITED_REASON = (
+    "pre-collected reviewer_findings contained no schema-valid findings and "
+    "no typed independent-review receipt was supplied"
+)
+EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON = (
+    "same-family fallback contained no schema-valid findings and no typed independent-review receipt"
+)
 
 
 def _build_single_family_caveat(reason_token: str, provider: str) -> str:
@@ -71,12 +81,14 @@ def _honeypots_in_findings(findings: list[dict[str, object]]) -> bool:
 def _same_family_fallback(
     diff: str,
     config: TRWConfig,
-) -> tuple[list[dict[str, str]], bool]:
+) -> tuple[list[dict[str, str]], bool, bool, str]:
     """Run the QUAL-027 same-family multi-reviewer path as the fallback substrate.
 
-    Returns ``(verdict_findings, honeypots_present)``. ``verdict_findings`` is the
-    severity-only list consumed by ``_compute_verdict``. This NEVER raises: the
-    multi-reviewer path is the already-tested QUAL-027 entry point.
+    Returns ``(verdict_findings, honeypots_present, analysis_limited,
+    limited_reason)``. ``verdict_findings`` is the severity-only list consumed by
+    ``_compute_verdict``. The honesty labels travel with the findings so a
+    degraded marker scan cannot satisfy the substantive REVIEW gate. This NEVER
+    raises: the multi-reviewer path is the already-tested QUAL-027 entry point.
     """
     # The lazy ``__getattr__`` re-export in _review_helpers.py (see its
     # _REEXPORT_MAP / module docstring) types this re-exported callable as
@@ -85,10 +97,18 @@ def _same_family_fallback(
     raw_findings = analysis.get("findings", [])
     if not isinstance(raw_findings, list):
         raw_findings = []
-    verdict_findings: list[dict[str, str]] = [
-        {"severity": str(f.get("severity", "info"))} for f in raw_findings if isinstance(f, dict)
+    validated_findings = [
+        finding
+        for raw_finding in raw_findings
+        if (finding := normalize_review_finding(raw_finding, default_confidence=0.0)) is not None
     ]
-    return verdict_findings, _honeypots_in_findings(raw_findings)
+    verdict_findings: list[dict[str, str]] = [{"severity": str(finding["severity"])} for finding in validated_findings]
+    analysis_limited = bool(analysis.get("auto_analysis_limited", False))
+    limited_reason = str(analysis.get("limited_reason", "")) if analysis_limited else ""
+    if not analysis_limited and not validated_findings:
+        analysis_limited = True
+        limited_reason = EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON
+    return verdict_findings, _honeypots_in_findings(raw_findings), analysis_limited, limited_reason
 
 
 def handle_auto_mode(
@@ -98,19 +118,32 @@ def handle_auto_mode(
     ts: str,
     reviewer_findings: list[dict[str, object]] | None,
     prd_ids: list[str] | None = None,
+    *,
+    verified_reviewer_identity: RunIdentity | None = None,
 ) -> AutoReviewResult:
-    """Handle the auto review mode -- multi-reviewer analysis, filter, persist."""
+    """Handle the auto review mode -- multi-reviewer analysis, filter, persist.
+
+    ``verified_reviewer_identity`` (OQ-001) must come from
+    ``resolve_verified_reviewer_identity``; it stamps the framework-verified
+    reviewer identity onto the persisted provenance block.
+    """
     diff = _helpers._get_git_diff()
 
     if reviewer_findings is not None:
+        validated_reviewer_findings = [
+            finding
+            for raw_finding in reviewer_findings
+            if (finding := normalize_review_finding(raw_finding, default_confidence=0.0)) is not None
+        ]
         # Real pre-collected findings from client-side multi-agent review:
-        # this is a substantive review, NOT the limited pattern-scan path.
+        # only schema-valid evidence is substantive. An empty/placeholder list
+        # has no typed independent-review receipt, so it fails closed.
         analysis: MultiReviewerAnalysisResult = {
-            "reviewer_roles_run": list(_helpers.REVIEWER_ROLES),
+            "reviewer_roles_run": list(_helpers.REVIEWER_ROLES) if validated_reviewer_findings else [],
             "reviewer_errors": [],
-            "findings": reviewer_findings,
-            "auto_analysis_limited": False,
-            "limited_reason": "",
+            "findings": validated_reviewer_findings,
+            "auto_analysis_limited": not validated_reviewer_findings,
+            "limited_reason": "" if validated_reviewer_findings else EMPTY_REVIEWER_FINDINGS_LIMITED_REASON,
         }
     else:
         # Pattern-scan-only fallback: _run_multi_reviewer_analysis flags this
@@ -123,6 +156,7 @@ def handle_auto_mode(
 
     auto_analysis_limited = bool(analysis.get("auto_analysis_limited", False))
     limited_reason = str(analysis.get("limited_reason", "")) if auto_analysis_limited else ""
+    substantive = not auto_analysis_limited
 
     all_auto_findings = analysis.get("findings", [])
     if not isinstance(all_auto_findings, list):
@@ -165,11 +199,11 @@ def handle_auto_mode(
         "confidence_threshold": confidence_threshold,
         "critical_count": critical_count,
         "run_path": str(resolved_run) if resolved_run else None,
-        # Honest labeling: True iff only the pattern-scan ran (no substantive
-        # multi-reviewer / cross-model findings). Downstream gates must not
-        # accept a limited auto-review as a code-quality signal.
+        # Downstream gates must not accept a limited pattern scan or an
+        # empty/invalid pre-collected payload as a code-quality signal.
         "auto_analysis_limited": auto_analysis_limited,
         "limited_reason": limited_reason,
+        "substantive": substantive,
         # PRD-QUAL-108-FR01: auto mode is same-family today (OQ1), so coverage is
         # always single_family; a caveat names the same-family-only limitation.
         "review_family_coverage": COVERAGE_SINGLE_FAMILY,
@@ -177,7 +211,7 @@ def handle_auto_mode(
     }
     if auto_analysis_limited:
         logger.info(
-            "auto_review_pattern_scan_limited",
+            "auto_review_analysis_limited",
             review_id=review_id,
             verdict=verdict,
             reason=limited_reason,
@@ -193,6 +227,40 @@ def handle_auto_mode(
         retention_expires = retention_dt.isoformat()
     except (ValueError, AttributeError):
         retention_expires = ""
+
+    # Prevalidate the optional integration artifact before persisting review
+    # completion state. A schema failure must not leave review.yaml, a typed
+    # receipt, or review_complete telemetry claiming partial success.
+    integration_data: dict[str, object] | None = None
+    if resolved_run is not None:
+        integration_findings = [
+            f for f in all_auto_findings if isinstance(f, dict) and f.get("reviewer_role") == "integration"
+        ]
+        if integration_findings:
+            int_verdict = "block" if any(f.get("severity") == "critical" for f in integration_findings) else "warn"
+            artifact = IntegrationReviewArtifact.model_validate(
+                {
+                    "run_id": resolved_run.name,
+                    "reviewer_id": f"trw-auto-{review_id}",
+                    "reviewer_role": "integration",
+                    "timestamp": ts,
+                    "git_diff_hash": diff_hash,
+                    "shards_reviewed": [],
+                    "checks_performed": [
+                        "duplicate_functions",
+                        "inconsistent_types",
+                        "unresolved_imports",
+                        "api_contract_mismatch",
+                    ],
+                    "findings": integration_findings,
+                    "verdict": int_verdict,
+                    "human_escalation_path": "Escalate to team lead via GitHub PR comment",
+                }
+            )
+            integration_data = artifact.model_dump(mode="json")
+            # Operational envelope fields are intentionally outside the SOC 2
+            # artifact schema but remain part of the persisted file contract.
+            integration_data.update({"review_id": review_id, "mode": "auto"})
 
     result["review_yaml"] = _helpers._persist_review_artifact(
         resolved_run,
@@ -211,10 +279,17 @@ def handle_auto_mode(
             # review.yaml can tell a limited pattern-scan from a real review.
             "auto_analysis_limited": auto_analysis_limited,
             "limited_reason": limited_reason,
+            "substantive": substantive,
             # PRD-QUAL-108: coverage stamp surfaced in the persisted artifact (US3).
             "review_family_coverage": COVERAGE_SINGLE_FAMILY,
             "single_family_caveat": _build_single_family_caveat(REASON_CROSS_MODEL_DISABLED, "auto-mode (same-family)"),
-            "review_kind": "pattern-scan (limited)" if auto_analysis_limited else "multi-reviewer",
+            "review_kind": (
+                "empty/invalid reviewer findings (limited)"
+                if reviewer_findings is not None and auto_analysis_limited
+                else "pattern-scan (limited)"
+                if auto_analysis_limited
+                else "multi-reviewer"
+            ),
             # SOC 2 fields (INFRA-027-FR04)
             "reviewer_id": f"trw-auto-{review_id}",
             "reviewer_role": reviewer_role_str,
@@ -229,8 +304,11 @@ def handle_auto_mode(
             "surfaced_findings": len(surfaced),
             "total_findings": len(all_auto_findings),
             "auto_analysis_limited": auto_analysis_limited,
+            "substantive": substantive,
             "prd_ids": list(prd_ids) if prd_ids else [],
         },
+        cast("dict[str, object]", result),
+        verified_reviewer_identity=verified_reviewer_identity,
     )
 
     # Write supplementary auto-mode artifacts when a run is active
@@ -249,36 +327,8 @@ def handle_auto_mode(
         writer.write_yaml(review_all_path, review_all_data)
 
         # integration-review.yaml -- integration findings only (INFRA-027-FR03)
-        integration_findings = [
-            f for f in all_auto_findings if isinstance(f, dict) and f.get("reviewer_role") == "integration"
-        ]
-        if integration_findings:
-            # Compute verdict from integration findings
-            int_critical = sum(
-                1 for f in integration_findings if isinstance(f, dict) and f.get("severity") == "critical"
-            )
-            int_verdict = "block" if int_critical > 0 else ("warn" if integration_findings else "pass")
-
+        if integration_data is not None:
             integration_path = resolved_run / "meta" / "integration-review.yaml"
-            integration_data: dict[str, object] = {
-                "review_id": review_id,
-                "timestamp": ts,
-                "mode": "auto",
-                "run_id": resolved_run.name if resolved_run else "",
-                "reviewer_id": f"trw-auto-{review_id}",
-                "reviewer_role": "integration",
-                "git_diff_hash": diff_hash,
-                "shards_reviewed": [],
-                "checks_performed": [
-                    "duplicate_functions",
-                    "inconsistent_types",
-                    "unresolved_imports",
-                    "api_contract_mismatch",
-                ],
-                "findings": integration_findings,
-                "verdict": int_verdict,
-                "human_escalation_path": "Escalate to team lead via GitHub PR comment",
-            }
             writer.write_yaml(integration_path, integration_data)
 
     return result
@@ -290,6 +340,8 @@ def handle_cross_model_mode(
     review_id: str,
     ts: str,
     prd_ids: list[str] | None = None,
+    *,
+    verified_reviewer_identity: RunIdentity | None = None,
 ) -> CrossModelReviewResult:
     """Handle the cross-model review mode -- get diff, invoke provider, persist.
 
@@ -327,19 +379,24 @@ def handle_cross_model_mode(
             reason_token = REASON_PROVIDER_UNREACHABLE
             cross_model_skipped = True
         else:
-            if not raw_findings:
+            validated_cross_model_findings = [
+                finding
+                for raw_finding in raw_findings
+                if (finding := normalize_review_finding(raw_finding)) is not None
+            ]
+            if not validated_cross_model_findings:
                 reason_token = REASON_PROVIDER_RETURNED_EMPTY
                 cross_model_skipped = True
             else:
                 cross_model_findings.extend(
                     {
-                        "category": rf.get("category", "general"),
-                        "severity": _helpers._normalize_severity(rf.get("severity", "info")),
-                        "description": rf.get("description", ""),
+                        "category": str(finding["category"]),
+                        "severity": str(finding["severity"]),
+                        "description": str(finding["description"]),
                         "source": "cross_model",
                         "provider": config.cross_model_provider,
                     }
-                    for rf in raw_findings
+                    for finding in validated_cross_model_findings
                 )
 
     # Coverage is cross_family ONLY when realized cross-family findings exist
@@ -350,6 +407,8 @@ def handle_cross_model_mode(
     # counts only cross-family findings (0 when degraded), so this keeps the
     # verdict-driving evidence count visible (P2-QUAL-108-03).
     same_family_findings_count = 0
+    auto_analysis_limited = False
+    limited_reason = ""
 
     if cross_family_realized:
         review_family_coverage = COVERAGE_CROSS_FAMILY
@@ -363,9 +422,13 @@ def handle_cross_model_mode(
         single_family_caveat = _build_single_family_caveat(
             reason_token or REASON_CROSS_MODEL_DISABLED, config.cross_model_provider
         )
-        fallback_findings, honeypots_present = _same_family_fallback(diff, config)
+        fallback_findings, honeypots_present, auto_analysis_limited, limited_reason = _same_family_fallback(
+            diff, config
+        )
         same_family_findings_count = len(fallback_findings)
         verdict = _helpers._compute_verdict(fallback_findings)
+
+    substantive = not auto_analysis_limited
 
     result: CrossModelReviewResult = {
         "review_id": review_id,
@@ -379,6 +442,9 @@ def handle_cross_model_mode(
         "review_family_coverage": review_family_coverage,
         "single_family_caveat": single_family_caveat,
         "honeypots_present": honeypots_present,
+        "auto_analysis_limited": auto_analysis_limited,
+        "limited_reason": limited_reason,
+        "substantive": substantive,
     }
 
     result["review_yaml"] = _helpers._persist_review_artifact(
@@ -396,6 +462,9 @@ def handle_cross_model_mode(
             "single_family_caveat": single_family_caveat,
             "honeypots_present": honeypots_present,
             "same_family_findings_count": same_family_findings_count,
+            "auto_analysis_limited": auto_analysis_limited,
+            "limited_reason": limited_reason,
+            "substantive": substantive,
         },
         {
             "review_id": review_id,
@@ -403,7 +472,11 @@ def handle_cross_model_mode(
             "mode": "cross_model",
             "cross_model_skipped": cross_model_skipped,
             "review_family_coverage": review_family_coverage,
+            "auto_analysis_limited": auto_analysis_limited,
+            "substantive": substantive,
             "prd_ids": list(prd_ids) if prd_ids else [],
         },
+        cast("dict[str, object]", result),
+        verified_reviewer_identity=verified_reviewer_identity,
     )
     return result

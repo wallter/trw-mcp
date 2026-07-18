@@ -40,33 +40,6 @@ _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers --
 
 _SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
 
-_WRITE_TARGET_RENDERERS: dict[str, tuple[str, ...]] = {
-    "claude_md": ("_run_claude_md_sync",),
-    "agents_md": (
-        "_update_opencode_artifacts",
-        "_update_codex_artifacts",
-        "_update_cursor_cli_artifacts",
-        "_update_copilot_artifacts",
-        "_update_gemini_artifacts",
-        "_update_antigravity_artifacts",
-    ),
-    "agents_md_primary": ("_update_cursor_cli_artifacts",),
-    "cli_config": ("_update_cursor_cli_artifacts",),
-    "cursor_rules": ("_update_cursor_artifacts",),
-    "copilot_instructions": ("_update_copilot_artifacts",),
-    "gemini_md": ("_update_gemini_artifacts",),
-    "antigravitycli_md": ("_update_antigravity_artifacts",),
-}
-_UNSUPPORTED_WRITE_TARGETS: dict[str, str] = {}
-
-
-def write_target_renderer_coverage() -> dict[str, tuple[str, ...] | str]:
-    """Return renderer/update coverage for every supported WriteTargets boolean."""
-    return {
-        **_WRITE_TARGET_RENDERERS,
-        **{flag: f"unsupported:{reason}" for flag, reason in _UNSUPPORTED_WRITE_TARGETS.items()},
-    }
-
 
 def _absorb_sub_result(
     parent: dict[str, list[str]],
@@ -74,7 +47,7 @@ def _absorb_sub_result(
 ) -> None:
     """Merge a sub-result payload into *parent* for all standard keys.
 
-    Accepts both ``dict[str, list[str]]`` (from copilot/gemini generators)
+    Accepts both ``dict[str, list[str]]`` (from the copilot generator)
     and ``BootstrapFileResult`` TypedDicts (from cursor-ide/opencode generators).
     The ``Mapping[str, object]`` signature satisfies mypy for both caller types
     via contravariance; the ``isinstance`` guard ensures runtime correctness.
@@ -254,7 +227,7 @@ def _update_codex_artifacts(
             result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
 
     try:
-        agents_result = generate_codex_agents(target_dir)
+        agents_result = generate_codex_agents(target_dir, manifest_hashes=manifest_hashes)
         result["created"].extend(agents_result.get("created", []))
         result["updated"].extend(agents_result.get("updated", []))
         result["preserved"].extend(agents_result.get("preserved", []))
@@ -263,7 +236,7 @@ def _update_codex_artifacts(
         result.setdefault("warnings", []).append(f".codex/agents update skipped: {exc}")
 
     try:
-        skills_result = install_codex_skills(target_dir)
+        skills_result = install_codex_skills(target_dir, manifest_hashes=manifest_hashes)
         result["created"].extend(skills_result.get("created", []))
         result["updated"].extend(skills_result.get("updated", []))
         result["preserved"].extend(skills_result.get("preserved", []))
@@ -366,54 +339,6 @@ def _update_copilot_artifacts(
     from ._ide_targets_distill import _update_copilot_distill_channels
 
     _update_copilot_distill_channels(target_dir, result)
-
-
-# ---------------------------------------------------------------------------
-# Gemini CLI update helper
-# ---------------------------------------------------------------------------
-
-
-def _update_gemini_artifacts(
-    target_dir: Path,
-    result: dict[str, list[str]],
-    ide_override: str | None = None,
-    manifest_hashes: dict[str, str] | None = None,
-) -> None:
-    """Update Gemini CLI artifacts when Gemini is detected.
-
-    Generates ``GEMINI.md``, ``.gemini/settings.json`` MCP config,
-    and ``.gemini/agents/trw-*.md`` subagent definitions.
-
-    Fail-open: errors are captured in ``result["warnings"]`` so they never
-    break the overall update flow.
-    """
-    from ._gemini import (
-        generate_gemini_agents,
-        generate_gemini_instructions,
-        generate_gemini_mcp_config,
-    )
-
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
-    if "gemini" not in ide_targets:
-        return
-
-    try:
-        instr_result = generate_gemini_instructions(target_dir)
-        _absorb_sub_result(result, instr_result)
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"GEMINI.md update skipped: {exc}")
-
-    try:
-        mcp_result = generate_gemini_mcp_config(target_dir)
-        _absorb_sub_result(result, mcp_result)
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"gemini MCP config update skipped: {exc}")
-
-    try:
-        agents_result = generate_gemini_agents(target_dir)
-        _absorb_sub_result(result, agents_result)
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"gemini agents update skipped: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +509,7 @@ def _update_cursor_artifacts(
         # combining all MCP servers. If the user has additional MCP servers
         # configured alongside TRW, they may approach or exceed this limit.
         result.setdefault("info", []).append(
-            "cursor-ide: TRW exposes 24 MCP tools (tool_exposure_mode=all). "
+            "cursor-ide: TRW exposes 24 MCP tools (tool_resolution_mode=all). "
             "Cursor has a ~40-tool ceiling across all MCP servers — adding "
             "other servers alongside TRW may exhaust the per-turn budget. "
             "See docs/CLIENT-PROFILES.md for mitigation options."

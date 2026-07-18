@@ -107,9 +107,7 @@ class TestTrwLearnDedup:
 
         mock_config = TRWConfig(dedup_enabled=False, embeddings_enabled=True)
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -152,9 +150,7 @@ class TestTrwLearnDedup:
             dedup_merge_threshold=0.85,
         )
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -232,9 +228,7 @@ class TestTrwLearnGracefulDegradation:
             dedup_enabled=True, embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85
         )
 
-        monkeypatch.setattr("trw_mcp.tools.learning._config", mock_config)
-        monkeypatch.setattr("trw_mcp.tools.learning._reader", reader)
-        monkeypatch.setattr("trw_mcp.tools.learning._writer", writer)
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: mock_config)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-graceful-test")
 

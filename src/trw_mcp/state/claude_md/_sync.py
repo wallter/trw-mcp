@@ -9,7 +9,6 @@ and ``_sync.tempfile`` at the module level.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
 import subprocess
 import tempfile
@@ -19,7 +18,11 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.typed_dicts._ceremony import ClaudeMdSyncResultDict, ReviewMdResultDict
+from trw_mcp.models.typed_dicts._ceremony import (
+    ClaudeMdSyncResultDict,
+    InstructionPointerSkipDict,
+    ReviewMdResultDict,
+)
 
 # --- AGENTS.md functions (extracted to _agents_md.py) ---
 from trw_mcp.state.claude_md._agents_md import (
@@ -66,15 +69,31 @@ from trw_mcp.state.claude_md._review_md import (
 from trw_mcp.state.claude_md._review_md import (
     recall_learnings as recall_learnings,
 )
+
+# --- sync-cache hashing (extracted to _sync_hash.py) ---
+# Re-exported so ``_profile_dispatcher`` and tests keep importing them from
+# ``_sync`` and so any ``_sync.*`` monkeypatch of a hash symbol still resolves.
+from trw_mcp.state.claude_md._sync_hash import (
+    _compute_sync_hash as _compute_sync_hash,
+)
+from trw_mcp.state.claude_md._sync_hash import (
+    _hash_file_path as _hash_file_path,
+)
+from trw_mcp.state.claude_md._sync_hash import (
+    _read_stored_hash as _read_stored_hash,
+)
+from trw_mcp.state.claude_md._sync_hash import (
+    _write_stored_hash as _write_stored_hash,
+)
+from trw_mcp.state.claude_md._sync_hash import (
+    invalidate_claude_md_hash as invalidate_claude_md_hash,
+)
 from trw_mcp.state.persistence import FileStateReader
 
 if TYPE_CHECKING:
     from trw_mcp.clients.llm import LLMClient
 
 logger = structlog.get_logger(__name__)
-
-# FR04 (PRD-FIX-053): Hash file name within .trw/context/
-_HASH_FILE_NAME = "claude_md_hash.txt"
 
 
 def _review_md_failed_result(error: str) -> ReviewMdResultDict:
@@ -100,6 +119,10 @@ def _build_sync_result(
     instruction_file_paths: list[str],
     review_md: ReviewMdResultDict,
     hash_value: str | None = None,
+    carrier_mode: str | None = None,
+    pointer_skips: list[InstructionPointerSkipDict] | None = None,
+    external_path: str | None = None,
+    capability_parity_drift: list[str] | None = None,
 ) -> ClaudeMdSyncResultDict:
     """Construct the stable sync result shape used by the tool and tests."""
     result: ClaudeMdSyncResultDict = {
@@ -120,70 +143,17 @@ def _build_sync_result(
     }
     if hash_value is not None:
         result["hash"] = hash_value
+    # PRD-CORE-203 FR07: carrier detectability fields (render path only).
+    if carrier_mode is not None:
+        result["carrier_mode"] = carrier_mode
+    if pointer_skips is not None:
+        result["pointer_skips"] = pointer_skips
+    if external_path is not None:
+        result["external_path"] = external_path
+    # PRD-CORE-218-FR06: present (possibly empty) whenever AGENTS.md is written.
+    if capability_parity_drift is not None:
+        result["capability_parity_drift"] = capability_parity_drift
     return result
-
-
-def _compute_sync_hash() -> str:
-    """Compute a stable SHA-256 hash of the sync inputs.
-
-    PRD-CORE-093 FR05: Hash excludes learning content — only template version
-    (via package version) determines whether CLAUDE.md needs re-rendering.
-    This ensures consecutive trw_deliver calls produce identical CLAUDE.md.
-
-    Returns:
-        64-character hex SHA-256 digest.
-    """
-    from importlib.metadata import PackageNotFoundError, version
-
-    h = hashlib.sha256()
-
-    # Package version — invalidates cache on any trw-mcp upgrade
-    try:
-        pkg_version = version("trw-mcp")
-    except PackageNotFoundError:
-        pkg_version = "unknown"
-        logger.warning("claude_md_hash_version_unknown")
-    h.update(pkg_version.encode("utf-8"))
-    h.update(b"\x00")
-
-    return h.hexdigest()
-
-
-def _hash_file_path(trw_dir: Path) -> Path:
-    """Return the hash file path."""
-    return trw_dir / "context" / _HASH_FILE_NAME
-
-
-def _read_stored_hash(trw_dir: Path) -> str | None:
-    """Read the stored hash from .trw/context/claude_md_hash.txt."""
-    hash_file = _hash_file_path(trw_dir)
-    try:
-        return hash_file.read_text(encoding="utf-8").strip() if hash_file.exists() else None
-    except OSError:
-        return None
-
-
-def _write_stored_hash(trw_dir: Path, digest: str) -> None:
-    """Write the hash to .trw/context/claude_md_hash.txt."""
-    hash_file = _hash_file_path(trw_dir)
-    try:
-        hash_file.parent.mkdir(parents=True, exist_ok=True)
-        hash_file.write_text(digest, encoding="utf-8")
-    except OSError:
-        logger.debug("claude_md_hash_write_failed", path=str(hash_file))
-
-
-def invalidate_claude_md_hash(trw_dir: Path) -> None:
-    """Delete the stored hash to force re-render on next sync.
-
-    FR04 (PRD-FIX-053): Called by store_learning, update_learning, and
-    auto_prune_excess_entries to ensure the cache never serves stale content.
-    """
-    hash_file = _hash_file_path(trw_dir)
-    try:
-        hash_file.unlink(missing_ok=True)
-    except OSError:
-        logger.debug("claude_md_hash_invalidate_failed", path=str(hash_file))
 
 
 # ---------------------------------------------------------------------------

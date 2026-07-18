@@ -139,6 +139,25 @@ class TestPrefixMigrationExtra:
         for old_agent in PREDECESSOR_MAP["agents"]:
             assert old_agent not in bundled_agents, f"Predecessor agent '{old_agent}' found in bundled names"
 
+    @pytest.mark.parametrize("retired_name", ["review-pr", "trw-review-pr"])
+    def test_retired_review_skill_removed_without_successor(self, tmp_path: Path, retired_name: str) -> None:
+        skills_dir = tmp_path / ".claude" / "skills"
+        retired = skills_dir / retired_name
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("retired", encoding="utf-8")
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+
+        _migrate_prefix_predecessors(tmp_path, result)
+
+        assert not retired.exists()
+        assert result["updated"] == [f"migrated:{retired}"]
+
+    def test_retirement_chains_collapse_to_direct_deletion(self) -> None:
+        skill_map = PREDECESSOR_MAP["skills"]
+        for old_name, successor in skill_map.items():
+            if successor is not None and successor in skill_map and skill_map[successor] is None:
+                pytest.fail(f"{old_name} must map directly to None because successor {successor} is retired")
+
 
 @pytest.mark.unit
 class TestMigratePredecessorSuccessorAbsent:
@@ -302,3 +321,80 @@ class TestRemoveStaleArtifactsCustomPreservation:
 
         assert stale_agent.exists()
         assert not any("my-old-agent" in u for u in result["updated"])
+
+
+@pytest.mark.unit
+class TestStaleCleanupDryRun:
+    """FIX 5: stale-artifact cleanup under --dry-run must REPORT pending removals
+    (``would remove:<path>``) without deleting.
+
+    Previously ``_cleanup_stale_artifacts`` skipped ``_remove_stale_artifacts``
+    entirely when ``dry_run`` was set, so the preview under-reported what a real
+    run would delete. dry_run is now threaded down to the removal loops.
+    """
+
+    @staticmethod
+    def _write_manifest_with_ghost(target_dir: Path) -> Path:
+        from trw_mcp.state.persistence import FileStateWriter
+
+        bundled = _get_bundled_names()
+        manifest = {
+            "version": 1,
+            "skills": bundled["skills"] + ["trw-ghost"],
+            "agents": bundled["agents"],
+            "hooks": bundled["hooks"],
+            "custom_skills": [],
+            "custom_agents": [],
+            "custom_hooks": [],
+        }
+        manifest_path = target_dir / ".trw" / "managed-artifacts.yaml"
+        FileStateWriter().write_yaml(manifest_path, manifest)
+        ghost = target_dir / ".claude" / "skills" / "trw-ghost"
+        ghost.mkdir(parents=True, exist_ok=True)
+        (ghost / "SKILL.md").write_text("stale", encoding="utf-8")
+        return ghost
+
+    def test_remove_stale_set_dry_run_reports_without_deleting(self, tmp_path: Path) -> None:
+        """The leaf removal loop reports ``would remove:`` and deletes nothing."""
+        from trw_mcp.bootstrap._version_migration import _remove_stale_set
+
+        skills = tmp_path / ".claude" / "skills"
+        ghost = skills / "trw-ghost"
+        ghost.mkdir(parents=True)
+        (ghost / "SKILL.md").write_text("stale", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _remove_stale_set(
+            {"trw-ghost"},
+            skills,
+            set(),
+            result,
+            is_dir_artifact=True,
+            log_event="stale_skill_removal_failed",
+            dry_run=True,
+        )
+
+        assert ghost.exists()
+        assert any("would remove:" in u and "trw-ghost" in u for u in result["updated"])
+        assert not any(u.startswith("removed:") for u in result["updated"])
+
+    def test_remove_stale_artifacts_dry_run_reports_and_preserves(self, initialized_repo: Path) -> None:
+        """A stale trw- skill is reported ``would remove:`` and left on disk in dry-run."""
+        ghost = self._write_manifest_with_ghost(initialized_repo)
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result, dry_run=True)
+
+        assert ghost.exists()
+        assert any("would remove:" in u and "trw-ghost" in u for u in result["updated"])
+        assert not any(u.startswith("removed:") for u in result["updated"])
+
+    def test_remove_stale_artifacts_real_run_still_deletes(self, initialized_repo: Path) -> None:
+        """Sanity: threading dry_run did not disable the real deletion path."""
+        ghost = self._write_manifest_with_ghost(initialized_repo)
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result, dry_run=False)
+
+        assert not ghost.exists()
+        assert any("removed:" in u and "trw-ghost" in u for u in result["updated"])

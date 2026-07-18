@@ -6,13 +6,13 @@ Asserts FR01-FR05 + NFR02:
   expiry_iso; ``unverified_reason`` is parsed as JSON first, YAML-subset second;
   plain prose is rejected.
 - FR02: an expired ``expiry_iso`` blocks delivery; same-day passes.
-- FR03: a successful structured override appends a YAML ledger entry under
-  ``.trw/overrides/YYYY-MM-DD-<run-id>.yaml`` with the four fields + gate type.
+- FR03: a successful structured override appends a unique YAML ledger entry
+  under ``.trw/overrides/`` with the four fields + gate type.
 - FR04: the result dict carries ``acceptable_failure_record`` (accept) /
   ``acceptable_failure_error`` (reject).
 - FR05: a non-empty plain string returns an error containing
   ``acceptable-failure schema required`` + a copy-pasteable example.
-- NFR02: a ledger write failure is fail-open (delivery still succeeds).
+- NFR02: a ledger write failure is fail-closed (the hard gate remains closed).
 
 Tests assert parsed dict contents, ledger file contents, error message text, and
 real deliver success/blocked values — not existence.
@@ -47,6 +47,53 @@ def _record_json(expiry: str) -> str:
             "expiry_iso": expiry,
         }
     )
+
+
+class TestSchemaSurfaces:
+    """Every primary tool/lifecycle surface names the executable schema."""
+
+    def test_trw_deliver_description_names_all_required_fields(self) -> None:
+        doc = _make_deliver_fn().__doc__ or ""
+
+        assert "structured acceptable-failure" in doc
+        for field in ("failed_command", "residual_risk", "owner", "expiry_iso"):
+            assert field in doc
+        assert "Free text and review-verdict labels are" in doc
+
+    def test_bundled_lifecycle_uses_schema_not_verdict_label(self) -> None:
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import load_tool_lifecycle
+
+        lifecycle = load_tool_lifecycle()
+        assert "`allow_unverified=true`" in lifecycle
+        for field in ("`failed_command`", "`residual_risk`", "`owner`", "`expiry_iso`"):
+            assert field in lifecycle
+        assert "`review_verdict` carries an explicit `acceptable-failure` label" not in lifecycle
+
+    def test_delivery_skills_expose_three_gate_paths(self) -> None:
+        data = Path(__file__).parents[1] / "src" / "trw_mcp" / "data"
+        for relative in (
+            "skills/trw-deliver/SKILL.md",
+            "codex/skills/trw-deliver/SKILL.md",
+            "copilot/skills/trw-deliver/SKILL.md",
+            "copilot/plugin/skills/trw-deliver/SKILL.md",
+            "opencode/skills/trw-deliver/SKILL.md",
+        ):
+            content = (data / relative).read_text(encoding="utf-8")
+            assert "Deliver gate — no fourth path" in content, relative
+            assert "passing `trw_build_check`" in content, relative
+            assert "allow_unverified=true" in content, relative
+            assert "authorized operator/config" in content, relative
+            assert "Free-text limitations and review-verdict labels are not" in content, relative
+            for field in ("failed_command", "residual_risk", "owner", "expiry_iso"):
+                assert field in content, (relative, field)
+
+    @pytest.mark.parametrize("profile", ["claude", "gpt", "qwen", "generic"])
+    def test_prompt_profile_uses_structured_schema(self, profile: str) -> None:
+        path = Path(__file__).parents[1] / "src" / "trw_mcp" / "data" / "prompting" / f"{profile}.md"
+        content = path.read_text(encoding="utf-8")
+
+        assert "structured acceptable-failure record" in content
+        assert "explicitly label an acceptable failure" not in content
 
 
 # ── FR01: schema parse ─────────────────────────────────────────────────────
@@ -220,7 +267,9 @@ class TestLedger:
         assert error is None and record is not None
         trw_dir = tmp_path / ".trw"
         run_id = "20260611T000000Z-run"
-        write_override_ledger(trw_dir, run_id, record, gate_type="review_block", run_path="/some/run")
+        written, error = write_override_ledger(trw_dir, run_id, record, gate_type="review_block", run_path="/some/run")
+        assert written is True
+        assert error is None
 
         overrides_dir = trw_dir / "overrides"
         files = list(overrides_dir.glob("*.yaml"))
@@ -347,7 +396,7 @@ class TestLedger:
         assert data["gate_type"] == "delivery_blocked"
         assert data["run_path"] == "/the/run"
 
-    def test_ledger_write_failure_fail_open(self, tmp_path: Path) -> None:
+    def test_ledger_write_failure_returns_explicit_error(self, tmp_path: Path) -> None:
         from trw_mcp.tools._acceptable_failure_validation import (
             parse_acceptable_failure,
             write_override_ledger,
@@ -355,13 +404,20 @@ class TestLedger:
 
         record, _ = parse_acceptable_failure(_record_json(_FUTURE))
         assert record is not None
-        # Patch the writer to raise — write_override_ledger must swallow it.
+        # The persistence boundary converts the write exception into an explicit
+        # failure result; the delivery caller uses it to keep the hard gate closed.
         with patch(
             "trw_mcp.tools._acceptable_failure_validation.FileStateWriter.write_yaml",
             side_effect=OSError("disk full"),
         ):
-            # Must not raise.
-            write_override_ledger(tmp_path / ".trw", "run-x", record, gate_type="review_block", run_path="/r")
+            written, error = write_override_ledger(
+                tmp_path / ".trw", "run-x", record, gate_type="review_block", run_path="/r"
+            )
+
+        assert written is False
+        assert error is not None
+        assert "acceptable-failure ledger persistence failed" in error
+        assert "disk full" in error
 
 
 # ── FR01/FR04/FR05: real trw_deliver path ─────────────────────────────────
@@ -374,28 +430,30 @@ def _make_deliver_fn() -> Callable[..., dict[str, Any]]:
 
 
 def _write_block_run(tmp_path: Path) -> Path:
-    """STANDARD run with verdict=block + critical findings (review_block fires)."""
-    run_dir = tmp_path / "docs" / "task" / "runs" / "20260611T000000Z-blk"
+    """CODING run with a work event but NO passing build check.
+
+    Under the default ``deliver_gate_mode=block_coding`` a coding run missing
+    build evidence trips the HARD ``delivery_blocked`` gate — the build-bearing
+    hard gate the CORE-191 structured override now guards (v26.1 posture). There
+    is deliberately no ``build_check_complete`` event (so the gate fires) and no
+    ``review.yaml`` (so ``review_block`` / scope gates stay silent and the
+    delivery_blocked build gate is the sole thing under test).
+    """
+    # Lives under the configured runs_root (.trw/runs) with run_id == dir name so
+    # the deliver-path run-identity gate accepts it and the build-bearing
+    # delivery_blocked gate (the one under test) is what fires.
+    run_id = "20260611T000000Z-cod"
+    run_dir = tmp_path / ".trw" / "runs" / "task" / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
-        "run_id: blk\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: STANDARD\n",
+        f"run_id: {run_id}\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: STANDARD\ntask_type: coding\n",
         encoding="utf-8",
     )
-    (meta / "review.yaml").write_text("verdict: block\ncritical_count: 2\n", encoding="utf-8")
     (meta / "events.jsonl").write_text(
         json.dumps({"ts": "2026-06-11T00:00:00Z", "event": "session_start"})
         + "\n"
         + json.dumps({"ts": "2026-06-11T00:00:01Z", "event": "file_modified", "data": {"path": "src/x.py"}})
-        + "\n"
-        + json.dumps(
-            {
-                "ts": "2026-06-11T00:00:02Z",
-                "event": "build_check_complete",
-                "tests_passed": True,
-                "static_checks_clean": True,
-            }
-        )
         + "\n",
         encoding="utf-8",
     )
@@ -426,14 +484,25 @@ def _deliver(tmp_path: Path, run_dir: Path, **kwargs: Any) -> dict[str, Any]:
 
 @pytest.mark.integration
 class TestDeliverOverride:
+    """CORE-191 structured override against the HARD build gate (v26.1 posture).
+
+    ``_write_block_run`` is a CODING run missing build evidence, so the
+    build-bearing ``delivery_blocked`` gate is the hard gate under test — the
+    task type where the gate now lives. Free text is rejected; only a structured,
+    unexpired record sanctions the block; every override writes a ledger entry.
+    """
+
     def test_prose_reason_blocks_with_error(self, tmp_path: Path) -> None:
+        """Prose on a coding build block is REJECTED — delivery stays blocked."""
         run_dir = _write_block_run(tmp_path)
         result = _deliver(tmp_path, run_dir, allow_unverified=True, unverified_reason="WIP")
         assert result["success"] is False
+        assert result.get("delivery_blocked")
         assert "acceptable_failure_error" in result
         assert "acceptable-failure schema required" in str(result["acceptable_failure_error"])
 
     def test_structured_record_proceeds_and_surfaces(self, tmp_path: Path) -> None:
+        """A valid structured record on a coding build block lets delivery PROCEED."""
         run_dir = _write_block_run(tmp_path)
         result = _deliver(
             tmp_path,
@@ -450,6 +519,7 @@ class TestDeliverOverride:
         assert result.get("truthfulness_gate_bypassed")
 
     def test_expired_record_blocks(self, tmp_path: Path) -> None:
+        """An expired record on a coding build block is REJECTED — stays blocked."""
         run_dir = _write_block_run(tmp_path)
         result = _deliver(
             tmp_path,
@@ -458,10 +528,12 @@ class TestDeliverOverride:
             unverified_reason=_record_json(_YESTERDAY),
         )
         assert result["success"] is False
+        assert result.get("delivery_blocked")
         assert "acceptable_failure_error" in result
         assert "expired" in str(result["acceptable_failure_error"]).lower()
 
     def test_ledger_written_on_override(self, tmp_path: Path) -> None:
+        """A sanctioned coding build-block override appends a durable ledger entry."""
         run_dir = _write_block_run(tmp_path)
         result = _deliver(
             tmp_path,
@@ -475,5 +547,27 @@ class TestDeliverOverride:
         import yaml
 
         data = yaml.safe_load(files[0].read_text())
-        assert data["gate_type"] == "review_block"
+        assert data["gate_type"] == "delivery_blocked"
         assert data["owner"] == "agent-run-abc123"
+
+    def test_ledger_write_failure_keeps_hard_gate_closed(self, tmp_path: Path) -> None:
+        """NFR02: a failed ledger write keeps the hard build gate CLOSED."""
+        run_dir = _write_block_run(tmp_path)
+        with patch(
+            "trw_mcp.tools._acceptable_failure_validation.write_override_ledger",
+            return_value=(False, "acceptable-failure ledger persistence failed: permission denied"),
+        ):
+            result = _deliver(
+                tmp_path,
+                run_dir,
+                allow_unverified=True,
+                unverified_reason=_record_json(_FUTURE),
+            )
+
+        assert result["success"] is False
+        assert result["delivery_blocked"]
+        error = str(result.get("acceptable_failure_error", ""))
+        assert "acceptable-failure ledger persistence failed" in error
+        assert "permission denied" in error
+        assert "acceptable_failure_record" not in result
+        assert "truthfulness_gate_bypassed" not in result

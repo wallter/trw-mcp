@@ -20,6 +20,7 @@ tools:
   - mcp__trw__trw_deliver
   - mcp__trw__trw_learn
   - mcp__trw__trw_recall
+  - mcp__trw__trw_prd_validate
   - mcp__trw__trw_review
   - mcp__trw__trw_build_check
 mcp-servers:
@@ -49,8 +50,10 @@ You manage the full lifecycle but NEVER write production code yourself.
 
 ## Quality Gates
 
-- Tests pass: `trw_build_check()`
-- Coverage ≥ 90% on new code
+- PRD readiness before implementation: full result, `validation_partial: false`, `valid: true`, risk-scaled
+  `quality_tier: approved`; report `total_score` but do not gate on it directly
+- Tests pass via project-native execution; record the observed outcome with `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)`
+- Coverage meets the project-configured gate; if absent, report it without inventing a percentage
 - Review verdict: no P0 findings
 - Audit: all FRs traced to implementation + tests
 

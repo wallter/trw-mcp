@@ -11,6 +11,7 @@ intermediate transition in sequence, stopping at the first guard failure.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -40,6 +41,9 @@ PHASE_STATUS_MAPPING: dict[str, PRDStatus] = {
 
 # Terminal statuses that should never be auto-progressed.
 _TERMINAL_STATUSES: frozenset[PRDStatus] = frozenset({PRDStatus.DONE, PRDStatus.MERGED, PRDStatus.DEPRECATED})
+
+# PRD-QUAL-119-FR06: statuses whose entry is a lifecycle completion claim.
+_IMPLEMENTED_FAMILY = frozenset({PRDStatus.IMPLEMENTED, PRDStatus.DONE})
 
 
 def _compute_transition_path(
@@ -223,6 +227,7 @@ def auto_progress_prds(
     config: TRWConfig,
     *,
     dry_run: bool = False,
+    completion_guard: Callable[[str], str | None] | None = None,
 ) -> list[ProgressionItem]:
     """Automatically advance PRD statuses when a phase gate passes.
 
@@ -241,6 +246,15 @@ def auto_progress_prds(
         prds_dir: Directory containing PRD markdown files.
         config: Framework configuration.
         dry_run: When True, evaluate transitions without writing files.
+
+    PRD-QUAL-119-FR06: a transition path that ENTERS the implemented family
+    (implemented/done) is a lifecycle completion claim and must consume the
+    universal effective-completion decision. ``completion_guard(prd_id)``
+    returns ``None`` to permit or a non-empty block reason. FAIL-CLOSED: when
+    the target is implemented-family and no guard was injected, the promotion
+    is refused with ``completion_decision_unavailable`` — automated delivery
+    machinery can never mint a positive lifecycle claim without evidence
+    (NFR01; incident learning L-EQwV).
 
     Returns:
         List of dicts with keys ``prd_id``, ``from_status``, ``to_status``,
@@ -273,6 +287,33 @@ def auto_progress_prds(
 
             if current_status in _TERMINAL_STATUSES or current_status == target_status:
                 continue
+
+            # PRD-QUAL-119-FR06: entering the implemented family is a completion
+            # claim — only a current COMPLETE effective-completion decision
+            # permits it, and a missing guard fails closed.
+            if target_status in _IMPLEMENTED_FAMILY:
+                block_reason = (
+                    "completion_decision_unavailable" if completion_guard is None else completion_guard(prd_id)
+                )
+                if block_reason:
+                    logger.warning(
+                        "auto_progress_completion_refused",
+                        prd_id=prd_id,
+                        reason=block_reason,
+                    )
+                    results.append(
+                        cast(
+                            "ProgressionItem",
+                            {
+                                "prd_id": prd_id,
+                                "from_status": current_str,
+                                "to_status": target_status.value,
+                                "applied": False,
+                                "reason": f"effective_completion:{block_reason}",
+                            },
+                        )
+                    )
+                    continue
 
             # Determine the transition path to apply
             if is_valid_transition(current_status, target_status):

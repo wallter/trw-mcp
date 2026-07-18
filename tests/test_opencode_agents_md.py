@@ -1,15 +1,10 @@
-"""PRD-CORE-149 FR08: opencode AGENTS.md contains zero 'Claude Code' literals.
-
-Renders the opencode protocol surface via ``ProtocolRenderer`` against the
-opencode profile and asserts the output is free of claude-code-specific
-identifiers. Uses the renderer directly rather than driving the full sync
-(keeps the test deterministic and independent of tmp-fs / IDE detection).
-"""
+"""PRD-CORE-149 FR08: generated OpenCode AGENTS.md has correct identity."""
 
 from __future__ import annotations
 
 import pytest
 
+from tests.test_claude_md_sync import _run_sync
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 
@@ -37,6 +32,34 @@ def test_opencode_surface_has_zero_claude_code_literals() -> None:
         "opencode protocol surface must not hardcode 'Claude Code' -- "
         "use profile.display_name / template substitution instead."
     )
+
+
+def test_public_sync_writes_opencode_agents_md_without_claude_literal(tmp_path) -> None:
+    """Drive the production sync entrypoint and inspect its configured file."""
+    (tmp_path / ".opencode").mkdir()
+
+    result = _run_sync(tmp_path, client="opencode")
+
+    agents_md = tmp_path / "AGENTS.md"
+    assert result["agents_md_synced"] is True
+    assert result["agents_md_path"] == str(agents_md)
+    content = agents_md.read_text(encoding="utf-8")
+    assert "Claude Code" not in content
+    hook_env = (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
+    assert "HOOKS_ENABLED=false" in hook_env
+    assert "NUDGE_ENABLED=false" in hook_env
+
+
+def test_auto_detected_opencode_sync_writes_light_hook_policy(tmp_path) -> None:
+    """FR04 default path: auto detection and hook policy resolve one client."""
+    (tmp_path / ".opencode").mkdir()
+
+    _run_sync(tmp_path, client="auto")
+
+    hook_env = (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
+    assert "HOOKS_ENABLED=false" in hook_env
+    assert "NUDGE_ENABLED=false" in hook_env
+    assert "TRW_CLIENT_DISPLAY_NAME=OpenCode" in hook_env
 
 
 def test_opencode_profile_has_correct_identity_fields() -> None:

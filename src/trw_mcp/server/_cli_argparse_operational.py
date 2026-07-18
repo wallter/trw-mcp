@@ -39,6 +39,80 @@ def add_operational_subcommands(
         help="API key for backend authentication (required with --push)",
     )
 
+    # prepare-candidate + commit-candidate (PRD-CORE-219 production callers)
+    prepare_parser = subparsers.add_parser(
+        "prepare-candidate",
+        help="Persist a verified pre-edit ownership claim for an isolated candidate commit",
+    )
+    prepare_parser.add_argument(
+        "--path",
+        action="append",
+        required=True,
+        dest="paths",
+        help="Repository-relative path to claim before editing (repeatable)",
+    )
+    prepare_parser.add_argument("--run-dir", required=True, help="Active repository-local TRW run directory")
+    prepare_parser.add_argument("--transaction-id", default="", help="Explicit transaction id (default: generated)")
+    prepare_parser.add_argument("--repo-root", default=".", help="Repository root (default: current directory)")
+
+    commit_parser = subparsers.add_parser(
+        "commit-candidate",
+        help=(
+            "Publish an isolated candidate commit (review-bound, CAS ref, "
+            "native-integration handoff) without touching shared checkout state"
+        ),
+    )
+    commit_parser.add_argument(
+        "--message-file",
+        required=True,
+        help="File containing the commit message (avoids shell-quoting hazards)",
+    )
+    commit_parser.add_argument(
+        "--transaction-id",
+        required=True,
+        help="Transaction id returned by prepare-candidate",
+    )
+    commit_parser.add_argument(
+        "--repo-root",
+        default=".",
+        help="Repository root (default: current directory)",
+    )
+    commit_parser.add_argument(
+        "--run-dir",
+        required=True,
+        help="Active repository-local TRW run directory used during preparation",
+    )
+    commit_parser.add_argument(
+        "--require-signature",
+        action="store_true",
+        help="Require a verifiable commit signature before publication",
+    )
+
+    # prd-state (PRD-QUAL-121-FR04 production caller)
+    prd_state_parser = subparsers.add_parser(
+        "prd-state",
+        help="Transition a PRD's execution state through the WIP-limited scheduling ledger",
+    )
+    prd_state_parser.add_argument("--prd-id", required=True, help="PRD identifier (PRD-XXX-NNN)")
+    prd_state_parser.add_argument(
+        "--state",
+        required=True,
+        help="Target execution state (candidate|queued|active|blocked_external|...)",
+    )
+    prd_state_parser.add_argument(
+        "--receipt",
+        required=True,
+        help="Authorization receipt for the scheduling action (required, non-empty)",
+    )
+    prd_state_parser.add_argument("--actor", required=True, help="Acting identity")
+    prd_state_parser.add_argument("--owner", default="", help="Owner consuming the WIP slot")
+    prd_state_parser.add_argument("--project-root", default=".", help="Project root (default: current directory)")
+    prd_state_parser.add_argument(
+        "--prds-dir",
+        default="docs/requirements-aare-f/prds",
+        help="PRD directory relative to the project root",
+    )
+
     # channel-doctor (PRD-DIST-2400 FR18)
     cd_parser = subparsers.add_parser(
         "channel-doctor",
@@ -211,9 +285,9 @@ def add_operational_subcommands(
     )
     issue_parser.add_argument(
         "--tier",
-        choices=("free", "team", "pro", "enterprise"),
+        choices=("free", "team", "pro", "enterprise", "beta"),
         required=True,
-        help="Tier to issue",
+        help="Tier to issue (beta = tester-program bridge)",
     )
     issue_parser.add_argument(
         "--issued-to",

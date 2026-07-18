@@ -28,11 +28,8 @@ class TestValidationReflectionQualityException:
         (run_path / "reports" / "final.md").write_text("# Final Report\n")
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        with (
-            patch(
-                "trw_mcp.state.analytics.compute_reflection_quality", side_effect=RuntimeError("quality check exploded")
-            ),
-            patch("trw_mcp.state.validation._best_effort_integration_check"),
+        with patch(
+            "trw_mcp.state.analytics.compute_reflection_quality", side_effect=RuntimeError("quality check exploded")
         ):
             result = check_phase_exit(Phase.REVIEW, run_path, config)
 
@@ -61,11 +58,13 @@ class TestValidationDeliverRunYamlReadException:
 
         with (
             patch("trw_mcp.state.persistence.FileStateReader.read_yaml", side_effect=StateError("read failed")),
-            patch("trw_mcp.state.validation._best_effort_build_check"),
-            patch("trw_mcp.state.validation._best_effort_integration_check"),
+            patch("trw_mcp.state.validation._phase_gates_exits._best_effort_build_check") as build_check,
+            patch("trw_mcp.state.validation._phase_gates_exits._best_effort_integration_check") as integration_check,
         ):
             result = check_phase_exit(Phase.DELIVER, run_path, config)
 
+        build_check.assert_called_once()
+        integration_check.assert_called_once()
         assert result is not None
         assert hasattr(result, "valid")
         assert isinstance(result.failures, list)

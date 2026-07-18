@@ -22,14 +22,15 @@ class StepResultBase(TypedDict):
 class TrustIncrementResult(TypedDict, total=False):
     """Return shape of ``_step_trust_increment()``.
 
-    Two distinct shapes are returned:
+    Two distinct shapes are returned (PRD-CORE-206):
 
-    Incremented path (build_check_passed or productive_session)::
+    Incremented path (one eligible outcome receipt consumed in enforce mode)::
 
         {"session_count": int, "previous_tier": str, "new_tier": str,
-         "transitioned": bool, "reason": str}
+         "transitioned": bool, "reason": "outcome_receipt_consumed"}
 
-    Skipped path::
+    Skipped path (observe-mode freeze, no eligible receipt, or non-increment
+    consume status such as idempotent/conflict/write_failed)::
 
         {"skipped": True, "reason": str}
     """

@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.trust import (
     approval_control_map,
-    increment_session_count,
     read_audit_log,
     read_trust_registry,
     requires_human_review,
@@ -62,6 +62,28 @@ class TestTrustRegistry:
         project = registry["project"]
         assert isinstance(project, dict)
         assert project["session_count"] == 75
+
+
+class TestTrustAuditLog:
+    """FR07: trust transitions remain an integrity-sensitive audit trail."""
+
+    def test_valid_rows_round_trip(self, trust_env: tuple[Path, TRWConfig]) -> None:
+        trw_dir, _ = trust_env
+        audit_path = trw_dir / "logs" / "trust-audit.jsonl"
+        audit_path.write_text('{"previous_tier":"crawl","new_tier":"walk"}\n', encoding="utf-8")
+
+        assert read_audit_log(trw_dir) == [{"previous_tier": "crawl", "new_tier": "walk"}]
+
+    def test_malformed_row_fails_closed(self, trust_env: tuple[Path, TRWConfig]) -> None:
+        trw_dir, _ = trust_env
+        audit_path = trw_dir / "logs" / "trust-audit.jsonl"
+        audit_path.write_text(
+            '{"previous_tier":"crawl","new_tier":"walk"}\n{"previous_tier":',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(StateError, match="Failed to parse JSONL"):
+            read_audit_log(trw_dir)
 
 
 class TestTrustLevelCalculation:
@@ -188,93 +210,6 @@ class TestAdminLock:
         result = trust_level_calculate(trw_dir, config)
         assert result["tier"] == "run"
         assert result["locked"] is False
-
-
-class TestSessionIncrement:
-    """FR05: Session Count Increment."""
-
-    def test_increment_on_deliver(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 10, "successful_sessions": 10, "last_session_at": None, "tier": "crawl"}},
-        )
-        result = increment_session_count(trw_dir, "test-agent")
-        assert result["session_count"] == 11
-        assert result["transitioned"] is False
-
-    def test_transition_logged(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 50, "successful_sessions": 50, "last_session_at": None, "tier": "crawl"}},
-        )
-        result = increment_session_count(trw_dir, "test-agent")
-        assert result["session_count"] == 51
-        assert result["transitioned"] is True
-        assert result["previous_tier"] == "crawl"
-        assert result["new_tier"] == "walk"
-
-    def test_no_increment_preserves_count(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 5, "successful_sessions": 5, "last_session_at": None, "tier": "crawl"}},
-        )
-        registry = read_trust_registry(trw_dir)
-        project = registry["project"]
-        assert isinstance(project, dict)
-        assert project["session_count"] == 5
-
-
-class TestAuditLog:
-    """FR07: Trust Transition Audit Log."""
-
-    def test_transition_creates_audit_entry(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 50, "successful_sessions": 50, "last_session_at": None, "tier": "crawl"}},
-        )
-        increment_session_count(trw_dir, "test-agent")
-        entries = read_audit_log(trw_dir)
-        assert len(entries) == 1
-        entry = entries[0]
-        assert entry["previous_tier"] == "crawl"
-        assert entry["new_tier"] == "walk"
-        assert entry["session_count"] == 51
-        assert entry["triggered_by"] == "session_count"
-        assert "timestamp" in entry
-        assert entry["agent_id"] == "test-agent"
-
-    def test_audit_append_only(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        # Create 2 transitions
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 50, "successful_sessions": 50, "last_session_at": None, "tier": "crawl"}},
-        )
-        increment_session_count(trw_dir, "agent-1")
-        # Reset to 200 for another transition
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 200, "successful_sessions": 200, "last_session_at": None, "tier": "walk"}},
-        )
-        increment_session_count(trw_dir, "agent-2")
-        entries = read_audit_log(trw_dir)
-        assert len(entries) == 2
-        assert entries[0]["new_tier"] == "walk"
-        assert entries[1]["new_tier"] == "run"
-
-    def test_no_audit_without_transition(self, trust_env: tuple[Path, TRWConfig]) -> None:
-        trw_dir, _ = trust_env
-        write_trust_registry(
-            trw_dir,
-            {"project": {"session_count": 10, "successful_sessions": 10, "last_session_at": None, "tier": "crawl"}},
-        )
-        increment_session_count(trw_dir, "test-agent")
-        entries = read_audit_log(trw_dir)
-        assert len(entries) == 0
 
 
 class TestApprovalControlMap:

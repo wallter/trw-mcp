@@ -80,6 +80,16 @@ def _make_deliver_with_stubs(
         lambda *_a, **_kw: {"status": "success", "index": {}, "roadmap": {}},
     )
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
+    # These deliver tests assert the legacy review.yaml soft-gate contract. Under
+    # the v26.1 enforce default the review gate ignores legacy review.yaml
+    # projections (only typed review receipts count), so opt into the explicit
+    # observe rollback — matching tests/test_deliver_review_block_gate.py.
+    from trw_mcp.models.config import TRWConfig
+
+    monkeypatch.setattr(
+        "trw_mcp.tools._delivery_helpers.get_config",
+        lambda: TRWConfig(evidence_receipt_mode="observe"),
+    )
     return tools
 
 
@@ -162,7 +172,7 @@ class TestReviewCreatesArtifact:
 
 
 class TestReviewVerdictPass:
-    """trw_review produces 'pass' verdict when no findings."""
+    """A finding-free verdict stays pass but empty manual calls are not ready."""
 
     def test_review_verdict_pass(
         self,
@@ -179,6 +189,58 @@ class TestReviewVerdictPass:
         assert result["critical_count"] == 0
         assert result["warning_count"] == 0
         assert result["total_findings"] == 0
+        assert result["substantive"] is False
+        assert "empty artifact" in str(result["non_substantive_reason"])
+
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+        from trw_mcp.state.persistence import FileStateReader
+
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["substantive"] is False
+        assert read_ceremony_state(tmp_path / ".trw").review_called is False
+
+    @pytest.mark.parametrize(
+        "findings",
+        [
+            [{}],
+            [{"category": "correctness", "severity": "warning"}],
+            [{"category": " ", "severity": "warning", "description": "Issue"}],
+            [{"category": "correctness", "severity": "warning", "description": "  "}],
+            [{"category": "correctness", "severity": "bogus", "description": "Issue"}],
+            [
+                {
+                    "category": "correctness",
+                    "severity": "warning",
+                    "description": "Issue",
+                    "confidence": "garbage",
+                }
+            ],
+        ],
+    )
+    def test_invalid_manual_findings_are_publicly_non_substantive(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        findings: list[dict[str, str]],
+    ) -> None:
+        """Invalid or placeholder mappings are dropped rather than promoted to info."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+
+        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+            result = tools["trw_review"].fn(findings=findings)
+
+        assert result["total_findings"] == 0
+        assert result["substantive"] is False
+        assert "no schema-valid findings" in result["non_substantive_reason"]
+
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+        from trw_mcp.state.persistence import FileStateReader
+
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["findings"] == []
+        assert artifact["substantive"] is False
+        assert read_ceremony_state(tmp_path / ".trw").review_called is False
 
     def test_review_verdict_pass_with_info_only(
         self,
@@ -198,6 +260,11 @@ class TestReviewVerdictPass:
 
         assert result["verdict"] == "pass"
         assert result["info_count"] == 1
+        assert result["substantive"] is True
+
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+
+        assert read_ceremony_state(tmp_path / ".trw").review_called is True
 
 
 class TestReviewVerdictWarn:
@@ -312,6 +379,7 @@ class TestReviewAutoDetectRun:
 
         assert result["run_path"] == str(run_dir)
         assert result["verdict"] == "pass"
+        assert result["substantive"] is False
 
     def test_review_explicit_run_path(
         self,
@@ -379,6 +447,7 @@ class TestDeliverReviewSoftGate:
                 "critical_count": 2,
                 "warning_count": 0,
                 "findings": [],
+                "substantive": True,
             },
         )
 
@@ -450,6 +519,7 @@ class TestDeliverReviewSoftGate:
                 "critical_count": 0,
                 "warning_count": 0,
                 "findings": [],
+                "substantive": True,
             },
         )
 

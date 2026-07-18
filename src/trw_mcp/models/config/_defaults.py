@@ -3,7 +3,49 @@
 Single source of truth for values that appear in both _main.py (TRWConfig)
 and _sub_models.py (domain sub-configs).  Both modules import from here
 instead of hardcoding their own copies.
+
+Also the FR05 facade: re-exports the public-configuration admission budget API
+(``ConfigAdmission``, ``FIELD_ADMISSIONS``, ``verify_field_admissions``, ...)
+from ``_field_admission`` so consumers reach it via the canonical config-
+defaults module (PRD-CORE-218-FR05 implementation reference).
 """
+
+# FR05 admission budget (PRD-CORE-218). Imported at top to satisfy ruff E402;
+# _field_admission imports nothing from this package, so there is no cycle.
+from trw_mcp.models.config._field_admission import (
+    FIELD_ADMISSIONS as FIELD_ADMISSIONS,
+)
+from trw_mcp.models.config._field_admission import (
+    LEGACY_ADMITTED_FIELDS as LEGACY_ADMITTED_FIELDS,
+)
+from trw_mcp.models.config._field_admission import (
+    PUBLIC_FIELD_BUDGET as PUBLIC_FIELD_BUDGET,
+)
+from trw_mcp.models.config._field_admission import (
+    ConfigAdmission as ConfigAdmission,
+)
+from trw_mcp.models.config._field_admission import (
+    FieldAdmissionReport as FieldAdmissionReport,
+)
+from trw_mcp.models.config._field_admission import (
+    build_field_admissions as build_field_admissions,
+)
+from trw_mcp.models.config._field_admission import (
+    verify_field_admissions as verify_field_admissions,
+)
+
+# PRD-CORE-218 FR02/FR03: pack membership single source of truth. ``surface_packs``
+# is a pure stdlib module (zero trw_mcp imports) so importing it during config
+# load introduces no cycle and no side effect.
+from trw_mcp.models.surface_packs import (
+    CAPABILITY_PACKS as _CAPABILITY_PACKS,
+)
+from trw_mcp.models.surface_packs import (
+    KERNEL_TOOLS as _KERNEL_TOOLS,
+)
+from trw_mcp.models.surface_packs import (
+    STANDARD_TASK_PACKS as _STANDARD_TASK_PACKS,
+)
 
 # -- Build / mutation --
 DEFAULT_BUILD_CHECK_TIMEOUT_SECS: int = 300
@@ -30,132 +72,57 @@ COMPACT_TAGS_CAP: int = 10  # Max tags per learning in compact mode
 DEFAULT_NUDGE_BUDGET_CHARS: int = 600
 DEFAULT_LEARNING_PREVIEW_CHARS: int = 500
 
-# -- Tool exposure groups (single source of truth) --
-TOOL_GROUP_CORE: tuple[str, ...] = (
-    "trw_session_start",
-    "trw_checkpoint",
-    "trw_learn",
-    "trw_deliver",
-)
-TOOL_GROUP_MEMORY: tuple[str, ...] = (
-    "trw_recall",
-    "trw_learn_update",
-)
-TOOL_GROUP_QUALITY: tuple[str, ...] = (
-    "trw_build_check",
-    "trw_review",
-    "trw_prd_create",
-    "trw_prd_validate",
-)
-TOOL_GROUP_OBSERVABILITY: tuple[str, ...] = (
-    "trw_status",
-    # PRD-HPO-MEAS-001 FR-7 + FR-8: unified event query + surface diff
-    "trw_query_events",
-    "trw_surface_diff",
-    "trw_surface_classify",
-    # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
-    "trw_mcp_security_status",
-    # PRD-HPO-PROF-001 FR-11: read-only profile-resolution introspection.
-    # Bridged so the phase-exposure / first-party bridge over real transport
-    # can reach the tool the PROF-001 surface advertises (round-2 e2e F1).
-    "trw_profile_explain",
-    # PRD-FIX-COMPOUNDING-6 FR02: read-only intelligence-pipeline health probe.
-    "trw_pipeline_health",
-)
-#: PRD-INTENT-002 FR06 phase-exposure override. The phase-mask denial message
-#: literally recommends ``trw_request_tool_access`` as the remediation, so it
-#: MUST be reachable through the same preset+allowlist bridge that exposes the
-#: masked tools — otherwise the first-party bridge denies the very tool the
-#: error told the caller to use (round-2 transport e2e F1/F3).
-TOOL_GROUP_PHASE_CONTROL: tuple[str, ...] = ("trw_request_tool_access",)
-#: Code-intelligence + risk surfaces (read-only / advisory). These are part of
-#: the normal agent loop (search, symbol lookup, pre-edit risk, ordering) and
-#: were registered but never bridged, so direct calls were denied with
-#: ``tool_not_in_server_capabilities`` over real transport (round-2 e2e F3).
-TOOL_GROUP_CODE_INTEL: tuple[str, ...] = (
-    # PRD-CORE-170 read-only skill meta-discovery.
-    "trw_skill_discovery",
-    # Local code search / symbol lookup + SHA-256 index refresh.
-    "trw_code_search",
-    "trw_code_symbol",
-    "trw_code_index_update",
-    # PRD-DIST-1983/1984/1989 pre-edit risk hints (single + batch).
-    "trw_before_edit_hint",
-    "trw_before_edit_hint_batch",
-    # PRD-DIST-1990 / PRD-CORE-167 codebase + entity risk reporting.
-    "trw_codebase_risk_report",
-    "trw_entity_risk_map",
-    # PRD-DIST-1994/1995 build-ordering comparison + cross-repo ordering.
-    "trw_ordering_compare",
-    "trw_cross_repo_ordering",
-)
-#: Agent-work-evidence + PRD-diff surfaces consumed during normal coordination.
-TOOL_GROUP_EVIDENCE: tuple[str, ...] = (
-    # AgentWorkEvidence v1 export + validation (delivered=wired coordination).
-    "trw_agent_work_evidence",
-    "trw_validate_agent_work_evidence",
-    # PRD-diff structural comparison (read-only).
-    "trw_prd_diff",
-    # Backend feedback submission portal (thin client; user-initiated).
-    "trw_submit_feedback",
-)
-#: PRD-CORE-144 empirical-probe tools. Kept as their own group so a named
-#: preset that opts into probing does not silently lose the tools (F-12). The
-#: tools are registered unconditionally; ``trw_probe`` is additionally gated at
-#: the tool layer by ``TRW_PROBE_ENABLED`` (default OFF, §9 Phase 1).
-TOOL_GROUP_PROBE: tuple[str, ...] = (
-    "trw_probe",
-    "trw_probe_budget_status",
-)
-TOOL_GROUP_ADMIN: tuple[str, ...] = (
-    "trw_pre_compact_checkpoint",
-    "trw_init",
-    "trw_instructions_sync",
-    # Deprecated alias for trw_instructions_sync; retained for backward compat.
-    "trw_claude_md_sync",
-    # trw_knowledge_sync removed by PRD-FIX-076 (dead surface; internal
-    # knowledge-sync logic still fires during deliver/backfill).
-    # PRD-CORE-141 FR07/FR08 — per-connection pin liveness + adoption.
-    "trw_heartbeat",
-    "trw_adopt_run",
-    "trw_meta_tune_rollback",
+# -- PRD-CORE-218-FR03 capability-pack fixture (derived, NOT a second table) --
+# The pack membership (kernel + the 11 non-kernel packs + the standard task
+# mapping) has ONE source of truth: ``trw_mcp.models.surface_packs``. The
+# authoritative registry (``server/_surface_manifest_registry.py``) reads the
+# SAME module, so ``_defaults`` and the registry can never diverge again (the
+# prior duplicate tables silently disagreed on run_maintenance / experimentation
+# / telemetry_security / memory_management membership). ``_profiles`` consumes
+# these re-exports for FR03 standard-task resolution.
+KERNEL_TOOLS = _KERNEL_TOOLS
+CAPABILITY_PACKS = _CAPABILITY_PACKS
+STANDARD_TASK_PACKS = _STANDARD_TASK_PACKS
+
+#: High-risk packs may be granted ONLY by an explicit phase rule or operator
+#: grant — never by provider identity or a vague keyword (FR03 guard). This is
+#: FR03 authorization policy (not surface membership), so it stays here.
+HIGH_RISK_PACKS: frozenset[str] = frozenset(
+    {"dispatch", "experimentation", "run_maintenance", "code_risk", "delivery_operations", "telemetry_security"}
 )
 
-#: Tools that are REGISTERED on the production server but DELIBERATELY excluded
-#: from every preset (and therefore from the first-party allowlist bridge in
-#: ``middleware/_mcp_security_helpers.first_party_tool_scope``). Each exclusion
-#: is a security/operator-surface judgment, not an oversight. The bridge-parity
-#: regression test (``test_tool_preset_bridge_parity``) asserts that every
-#: registered tool is either in ``TOOL_PRESETS["all"]`` or named here, so any
-#: NEW registered tool that is silently unbridged fails CI (round-2 e2e F3).
-INTENTIONALLY_UNBRIDGED_TOOLS: frozenset[str] = frozenset(
+#: Vague keyword -> pack hint. Vague keywords may only grant LOW-risk packs; any
+#: high-risk suggestion is refused so keyword text can never widen exposure.
+KEYWORD_PACK_HINTS: dict[str, str] = {
+    "search": "code_navigation",
+    "navigate": "code_navigation",
+    "review": "verification",
+    "dispatch": "dispatch",
+    "experiment": "experimentation",
+    "maintain": "run_maintenance",
+}
+
+
+# trw_recall response projection (tools/_recall_projection.py): internal
+# ranking/telemetry state stripped from RESPONSE entries at the MCP boundary
+# (stored rows untouched). Measured 2026-07-12: these fields were ~3x the
+# content size, inflating a default recall to ~22k tokens. Empty set disables.
+DEFAULT_RECALL_INTERNAL_FIELDS: frozenset[str] = frozenset(
     {
-        # SAFE-001 self-modification: proposes promotions of advisory edits.
-        # This mutates the framework's own surfaces and is an operator gate, not
-        # part of the agent work loop. Its inverse, trw_meta_tune_rollback, is a
-        # safety operation and IS bridged (TOOL_GROUP_ADMIN).
-        "trw_meta_tune_propose",
-        # Nudge-channel internals (PRD-DIST-2400): render + correlation/throttle
-        # health are operator/telemetry surfaces driven by the framework itself,
-        # not tools an agent calls during a coding session.
-        "trw_channel_render",
-        "trw_channel_stats",
+        "access_count",
+        "anchor_validity",
+        "avg_rework_delta",
+        "combined_score",
+        "helpful_count",
+        "last_accessed_at",
+        "outcome_correlation",
+        "outcome_history",
+        "q_observations",
+        "q_value",
+        "recall_count",
+        "recurrence",
+        "session_count",
+        "sessions_surfaced",
+        "unhelpful_count",
     }
 )
-
-TOOL_PRESETS: dict[str, tuple[str, ...]] = {
-    "core": TOOL_GROUP_CORE,
-    "minimal": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY,
-    "standard": TOOL_GROUP_CORE + TOOL_GROUP_MEMORY + TOOL_GROUP_QUALITY + ("trw_status", "trw_init"),
-    "all": (
-        TOOL_GROUP_CORE
-        + TOOL_GROUP_MEMORY
-        + TOOL_GROUP_QUALITY
-        + TOOL_GROUP_OBSERVABILITY
-        + TOOL_GROUP_ADMIN
-        + TOOL_GROUP_PROBE
-        + TOOL_GROUP_PHASE_CONTROL
-        + TOOL_GROUP_CODE_INTEL
-        + TOOL_GROUP_EVIDENCE
-    ),
-}

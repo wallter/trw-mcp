@@ -65,9 +65,7 @@ class TestLegacyClientInstallationIdHash:
         raw_id = "raw-project-dir-name"
         out = tmp_path / "tool-telemetry.jsonl"
         client = TelemetryClient(enabled=True, output_path=out, platform_telemetry_enabled=True)
-        client.record_event(
-            SessionStartEvent(installation_id=raw_id, framework_version="v26", learnings_loaded=3)
-        )
+        client.record_event(SessionStartEvent(installation_id=raw_id, framework_version="v26", learnings_loaded=3))
         written = client.flush()
         assert written == 1
 
@@ -85,9 +83,7 @@ class TestLegacyClientInstallationIdHash:
         already = anonymize_installation_id("some-install")
         out = tmp_path / "tool-telemetry.jsonl"
         client = TelemetryClient(enabled=True, output_path=out, platform_telemetry_enabled=True)
-        client.record_event(
-            SessionEndEvent(installation_id=already, framework_version="v26", tools_invoked=2)
-        )
+        client.record_event(SessionEndEvent(installation_id=already, framework_version="v26", tools_invoked=2))
         client.flush()
 
         record = json.loads(out.read_text(encoding="utf-8").splitlines()[0])

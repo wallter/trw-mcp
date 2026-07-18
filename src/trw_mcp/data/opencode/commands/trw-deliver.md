@@ -7,7 +7,7 @@ Run the TRW delivery workflow for the current project.
 
 Workflow:
 1. Check the current run state and confirm there is work to deliver.
-2. Run `trw_build_check(scope="full")`.
+2. Run project-native validation, then record its observed result with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`.
 3. If the build fails, stop and report the failures clearly.
 4. If the build passes, run `trw_deliver()`.
 5. Summarize build status, delivery status, and any remaining risks.

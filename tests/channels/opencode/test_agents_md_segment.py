@@ -159,11 +159,12 @@ def test_t0_beacon_when_sidecar_missing(tmp_path: Path) -> None:
         _t0_beacon,
     )
 
-    beacon = _t0_beacon("trw-distill self-improve risk-report --repo . --persist-sidecar")
+    beacon = _t0_beacon("trw_codebase_risk_report(top_n=20) via MCP")
     # Must be short
     assert len(beacon.encode("utf-8")) < T1_BYTE_QUOTA // 10
-    # Must contain the distill_action command
-    assert "trw-distill" in beacon
+    # Must contain the public MCP fallback, not a separately installed CLI.
+    assert "trw_codebase_risk_report" in beacon
+    assert "trw-distill self-improve" not in beacon
 
 
 def test_install_with_no_sidecar_renders_t0(tmp_path: Path) -> None:
@@ -185,7 +186,8 @@ def test_install_with_no_sidecar_renders_t0(tmp_path: Path) -> None:
     if agents_md.exists():
         content = agents_md.read_text(encoding="utf-8")
         if DISTILL_BEGIN in content:
-            assert "trw-distill" in content
+            assert "trw_codebase_risk_report" in content
+            assert "trw-distill self-improve" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +202,9 @@ def test_stale_sha_renders_with_notice() -> None:
     sidecar = _make_sidecar()
     content = _t1_content(sidecar, stale=True)
     assert "STALE" in content
-    assert "sidecar outdated" in content
+    assert "cached intelligence is outdated" in content
+    assert "trw_codebase_risk_report" in content
+    assert "trw-distill self-improve" not in content
 
 
 # ---------------------------------------------------------------------------

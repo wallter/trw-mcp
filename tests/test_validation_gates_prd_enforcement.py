@@ -210,3 +210,60 @@ prd:
         rules = [f.rule for f in result]
         assert "prd_status" not in rules
         assert "prd_exists" not in rules
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-119-FR03: rollout state is not completion
+# ---------------------------------------------------------------------------
+
+
+def test_prd_qual_119_fr03() -> None:
+    """FR03 acceptance: Given behavior defaults to observe, warn, shadow,
+    canary-only, or disabled, When completion runs, Then it returns incomplete
+    with reason rollout_not_default until normal default activation."""
+    from trw_mcp.models.gate_decision import EffectiveCompletionOutcome
+    from trw_mcp.tools._prd_transition_gate import (
+        ROLLOUT_NOT_DEFAULT,
+        CoherenceReport,
+        derive_transition_decision,
+        rollout_blocking,
+    )
+
+    for state in ("observe", "warn", "shadow", "canary", "canary-only", "disabled", "OBSERVE "):
+        blocking = rollout_blocking({"rollout_state": state})
+        assert blocking == [ROLLOUT_NOT_DEFAULT], state
+        # And through the universal decision: incomplete, with the reason visible.
+        decision = derive_transition_decision(
+            "PRD-CORE-001", CoherenceReport(blocking=blocking), {"rollout_state": state}, "content"
+        )
+        assert decision.outcome is EffectiveCompletionOutcome.INCOMPLETE
+        assert any(ROLLOUT_NOT_DEFAULT in reason for reason in decision.reasons)
+
+    # Normal default activation (absent or explicit) adds nothing.
+    assert rollout_blocking({}) == []
+    assert rollout_blocking({"rollout_state": "default"}) == []
+    clean = derive_transition_decision("PRD-CORE-001", CoherenceReport(), {}, "content")
+    assert clean.outcome is EffectiveCompletionOutcome.COMPLETE
+
+
+def test_prd_qual_119_nfr02() -> None:
+    """NFR02: same PRD, receipts, configuration, and gate state -> same canonical
+    decision; evaluated_at and decision_id are observation metadata only."""
+    from trw_mcp.models.gate_decision import (
+        CompletionComponent,
+        CompletionComponentState,
+        derive_effective_completion,
+    )
+
+    components = (CompletionComponent(component_id="build", state=CompletionComponentState.STALE),)
+    first = derive_effective_completion(
+        "PRD-X", components=components, source_digest="sha256:abc", evaluated_at="2026-07-11T01:00:00Z"
+    )
+    second = derive_effective_completion(
+        "PRD-X",
+        components=components,
+        source_digest="sha256:abc",
+        evaluated_at="2026-07-12T09:30:00Z",
+        decision_id="different",
+    )
+    assert first.canonical_digest() == second.canonical_digest()

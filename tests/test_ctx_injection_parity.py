@@ -54,25 +54,48 @@ def _iter_calls(tree: ast.AST) -> list[str]:
 
 
 def _module_call_map() -> dict[str, set[str]]:
-    """Build {function_qualname: {called_names}} for every def in trw_mcp/.
-
-    Keyed on bare function name so cross-module dispatches match without
-    having to resolve full import chains.
-    """
+    """Build an import-aware qualified call graph for ``trw_mcp`` functions."""
     import trw_mcp
 
     src_root = Path(trw_mcp.__file__).resolve().parent
     call_map: dict[str, set[str]] = {}
     for py_path in src_root.rglob("*.py"):
+        module = "trw_mcp." + py_path.relative_to(src_root).with_suffix("").as_posix().replace("/", ".")
+        if module.endswith(".__init__"):
+            module = module.removesuffix(".__init__")
         try:
             tree = ast.parse(py_path.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
+        aliases: dict[str, str] = {}
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for item in node.names:
+                    aliases[item.asname or item.name.split(".")[0]] = item.name
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                prefix = node.module
+                if node.level:
+                    parts = module.split(".")[: -node.level]
+                    prefix = ".".join([*parts, node.module])
+                for item in node.names:
+                    aliases[item.asname or item.name] = f"{prefix}.{item.name}"
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                calls = set(_iter_calls(node))
-                # Merge — multiple private helpers may share a name.
-                call_map.setdefault(node.name, set()).update(calls)
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls: set[str] = set()
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                func = call.func
+                if isinstance(func, ast.Name):
+                    calls.add(aliases.get(func.id, f"{module}.{func.id}"))
+                elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                    base = aliases.get(func.value.id)
+                    if base:
+                        calls.add(f"{base}.{func.attr}")
+                    else:
+                        calls.add(f"{module}.{func.attr}")
+            call_map.setdefault(f"{module}.{node.name}", set()).update(calls)
     return call_map
 
 
@@ -80,26 +103,19 @@ def _transitively_calls(
     start: str,
     call_map: dict[str, set[str]],
     targets: frozenset[str],
-    depth_limit: int = 8,
 ) -> bool:
-    """Return True if any function reachable from *start* (up to *depth_limit*
-    transitive hops) directly calls a name in *targets*.
-    """
+    """Return whether the qualified runtime call closure reaches pin state."""
     seen: set[str] = set()
     frontier: list[str] = [start]
-    depth = 0
-    while frontier and depth < depth_limit:
-        next_frontier: list[str] = []
-        for name in frontier:
-            if name in seen:
-                continue
-            seen.add(name)
-            called = call_map.get(name, set())
-            if called & targets:
-                return True
-            next_frontier.extend(called - seen)
-        frontier = next_frontier
-        depth += 1
+    while frontier:
+        name = frontier.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        called = call_map.get(name, set())
+        if any(target.rsplit(".", 1)[-1] in targets for target in called):
+            return True
+        frontier.extend(called - seen)
     return False
 
 
@@ -154,71 +170,17 @@ def _all_registered_tools() -> dict[str, Any]:
 
 
 def test_all_pin_state_tools_declare_ctx() -> None:
-    """FR03: every tool whose own body touches pin state declares ctx: Context.
-
-    **Scope reduction**: the PRD envisions a full transitive call-closure
-    check.  In Wave 3 we fall back to a two-tier check:
-
-    1. **Direct-body AST** — any tool whose own function body calls one of
-       the pin helpers must declare ``ctx``.
-    2. **Expected-set** — a hand-maintained set of tool names the PRD
-       text explicitly calls out as pin-touching (via helper chains that
-       the Wave 3 agent audited and migrated).  These are the tools that
-       were migrated in Wave 3 and must keep ``ctx``; if a Wave-4+ rename
-       or removal breaks this test, update the set.
-
-    Why the closure check was dropped: the simple
-    "all functions that share a name are the same node" closure surfaced
-    false positives for ``trw_learn`` / ``trw_recall`` / ``trw_prd_create``
-    via decorator or analytics chains that end up calling *some* helper
-    named similarly to a pin helper.  Implementing a properly scoped
-    closure (per-module, import-graph aware) is Wave 4+ scope.
-
-    Follow-up ticket (Wave 4): replace this with an import-graph-aware
-    closure using ``importlab`` or a hand-rolled AST import resolver.
-    """
+    """FR03: derive pin-touching tools from the live registry and call graph."""
     tools = _all_registered_tools()
-
-    # Hand-maintained set — update whenever a pin-touching tool is added.
-    # See PRD-CORE-141 Wave 3 §FR03 for the migration list.
-    EXPECTED_CTX_TOOLS: frozenset[str] = frozenset(
-        {
-            "trw_session_start",
-            "trw_deliver",
-            "trw_init",
-            "trw_status",
-            "trw_checkpoint",
-            "trw_pre_compact_checkpoint",
-            "trw_build_check",
-            "trw_review",
-            "trw_prd_validate",
-            # PRD-CORE-141 audit follow-up: learning tools also touch pin
-            # state transitively via telemetry decorator + recall context.
-            "trw_recall",
-            "trw_learn",
-            "trw_learn_update",
-        }
-    )
-
-    # Direct-body AST check
-    direct_pin_touching: list[str] = []
-    for name, tool in tools.items():
-        if _tool_directly_calls_pin_state(tool.fn):
-            direct_pin_touching.append(name)
-
-    # Expected set — catches tools whose bodies don't directly call pin
-    # helpers but whose tight helper chains do (trw_checkpoint → execute_checkpoint).
-    all_required = set(direct_pin_touching) | EXPECTED_CTX_TOOLS
-    registered_required = [n for n in all_required if n in tools]
-
-    missing = [n for n in registered_required if not _tool_declares_ctx(tools[n].fn)]
-    assert not missing, (
-        "PRD-CORE-141 FR03 violation: the following tools must declare "
-        "`ctx: Context` but do not — add the ctx param and thread it "
-        f"through to pin helpers: {sorted(missing)}"
-    )
-    # Sanity floor.
-    assert len(registered_required) >= 8, f"Expected >=8 ctx-required tools, got {sorted(registered_required)}"
+    call_map = _module_call_map()
+    pin_touching = {
+        name
+        for name, tool in tools.items()
+        if _transitively_calls(f"{tool.fn.__module__}.{tool.fn.__name__}", call_map, _PIN_STATE_HELPERS)
+    }
+    assert pin_touching, "live-registry call graph found no pin-state tools"
+    missing = sorted(name for name in pin_touching if not _tool_declares_ctx(tools[name].fn))
+    assert not missing, f"PRD-CORE-141 FR03 violation: live-registry pin-state tools missing ctx: {missing}"
 
 
 def test_ctx_param_count_grep_floor() -> None:
@@ -284,7 +246,6 @@ def test_no_pin_state_tool_call_without_ctx_or_session() -> None:
     # (telemetry decorator, auto-checkpoint counter, best-effort PRD knowledge
     # prefetch in _recall_impl).  They're tracked as follow-ups to Wave 3.
     _process_scoped_exempt = (
-        "_legacy_ceremony_nudge",
         "telemetry.py",
         "_recall_impl.py",
     )

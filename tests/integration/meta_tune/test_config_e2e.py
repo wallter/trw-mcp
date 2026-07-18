@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.meta_tune import dispatch
+from trw_mcp.meta_tune import promote
 from trw_mcp.meta_tune.errors import MetaTuneBootValidationError
 from trw_mcp.meta_tune.rollback import rollback_proposal
 from trw_mcp.meta_tune.sandbox import SandboxResult
@@ -114,9 +114,9 @@ def test_promote_candidate_uses_non_default_timeout_and_audit_log_path(
         captured_timeout.append(kwargs["timeout_s"])
         return _sandbox_success()
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", _fake_run_sandboxed)
+    monkeypatch.setattr(promote, "run_sandboxed", _fake_run_sandboxed)
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-1",
@@ -145,9 +145,9 @@ def test_promote_candidate_uses_non_default_consensus_quorum(tmp_path: Path, mon
         )
     )
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_success())
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_success())
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-1",

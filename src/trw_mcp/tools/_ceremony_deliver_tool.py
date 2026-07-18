@@ -10,7 +10,7 @@ legacy tests/operators monkeypatch helpers such as ``resolve_trw_dir``,
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -21,6 +21,7 @@ from fastmcp import Context
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DeliverResultDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.tools._ceremony_degradations import record_into
 from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,
     step_clear_score,
@@ -28,10 +29,22 @@ from trw_mcp.tools._ceremony_deliver_steps import (
     step_session_changelog,
     unpack_gate_result,
 )
-from trw_mcp.tools._deferred_delivery import _launch_deferred
+from trw_mcp.tools._deferred_delivery import DEFERRED_STEPS, _launch_deferred
+from trw_mcp.tools._delivery_journal_wiring import (
+    DeliverJournal,
+    compute_deferred_digest,
+    open_delivery_journal,
+)
+from trw_mcp.tools._delivery_models import OperationState
 from trw_mcp.tools._helpers import _run_step
 
 logger = structlog.get_logger(__name__)
+
+# The synchronous critical steps trw_deliver runs before launching the deferred
+# batch. ``critical_steps_completed`` is DERIVED from this roster (minus the
+# steps that errored) instead of a magic literal, so it can never drift from the
+# real number of critical steps.
+DELIVER_CRITICAL_STEPS: tuple[str, ...] = ("reflect", "checkpoint")
 
 
 def run_trw_deliver(
@@ -41,8 +54,20 @@ def run_trw_deliver(
     skip_index_sync: bool = False,
     allow_unverified: bool = False,
     unverified_reason: str = "",
+    delivery_id: str = "",
+    capability_token: str = "",
 ) -> DeliverResultDict:
-    """Persist learnings/progress and launch deferred delivery housekeeping."""
+    """Persist learnings/progress and launch deferred delivery housekeeping.
+
+    PRD-CORE-208: when ``delivery_operations_mode`` is not ``off`` the call is
+    bound to a durable, crash-safe delivery operation. ``delivery_id`` +
+    ``capability_token`` (optional, NFR01-additive) let a caller supply a
+    UUIDv7 + >=128-bit recovery capability so a timed-out response is
+    recoverable via ``trw_delivery_status`` / ``trw_delivery_recover``; a
+    conflicting explicit ID returns ``delivery_request_conflict`` with zero
+    effects. Omitting them keeps the legacy path (server-generated ID,
+    ``caller_recoverable=false``).
+    """
     from trw_mcp.tools import ceremony as _ceremony
 
     get_config_fn = cast("Callable[[], TRWConfig]", vars(_ceremony)["get_config"])
@@ -82,6 +107,39 @@ def run_trw_deliver(
             results["success"] = False
             return results
 
+        configured_runs_root = Path(config.runs_root)
+        runs_root = (
+            configured_runs_root.resolve()
+            if configured_runs_root.is_absolute()
+            else (project_root / configured_runs_root).resolve()
+        )
+        run_yaml = resolved_run / "meta" / "run.yaml"
+        try:
+            run_identity = reader.read_yaml(run_yaml) if run_yaml.is_file() else None
+        except Exception:
+            run_identity = None
+            logger.warning("deliver_run_identity_unreadable", run_path=str(resolved_run), exc_info=True)
+        run_id = run_identity.get("run_id") if isinstance(run_identity, dict) else None
+        valid_run_identity = (
+            runs_root.is_relative_to(project_root)
+            and resolved_run.is_relative_to(runs_root)
+            and isinstance(run_id, str)
+            and run_id == resolved_run.name
+        )
+        if not valid_run_identity:
+            logger.warning(
+                "deliver_run_path_invalid",
+                run_path=str(resolved_run),
+                runs_root=str(runs_root),
+            )
+            results["run_path"] = None
+            block_msg = f"run_path is not a valid TRW run directory: {resolved_run}"
+            errors.append(block_msg)
+            results["errors"] = errors
+            results["delivery_blocked"] = block_msg
+            results["success"] = False
+            return results
+
     results["run_path"] = str(resolved_run) if resolved_run else None
     candidate_runs = _ceremony._candidate_run_hints() if resolved_run is None else []
     if candidate_runs:
@@ -89,39 +147,60 @@ def run_trw_deliver(
 
     logger.info("deliver_started", run_id=str(resolved_run.name) if resolved_run else "", phase="DELIVER")
 
+    # PRD-CORE-208 FR01: claim a caller-stable delivery operation BEFORE the first
+    # delivery mutation. An explicit-ID conflict/rejection returns zero effects
+    # here; a legacy no-ID call is journaled but not caller-recoverable (NFR01).
+    journal, block_result = _open_journal(
+        trw_dir,
+        config,
+        resolved_run,
+        skip_reflect=skip_reflect,
+        skip_index_sync=skip_index_sync,
+        allow_unverified=allow_unverified,
+        delivery_id=delivery_id,
+        capability_token=capability_token,
+    )
+    if block_result is not None:
+        return block_result
+
     from trw_mcp.models.run import Phase
     from trw_mcp.state.phase import try_update_phase
     from trw_mcp.tools._ceremony_helpers import check_delivery_gates, copy_compliance_artifacts
 
-    try_update_phase(resolved_run, Phase.DELIVER)
-    gate_result = check_delivery_gates(resolved_run, reader, trw_dir)
+    with journal.step("S01"):  # run phase write
+        try_update_phase(resolved_run, Phase.DELIVER)
+    gate_result = check_delivery_gates(resolved_run, reader, trw_dir, session_id=call_ctx.session_id)
     unpack_gate_result(gate_result, results)
 
-    compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
+    with journal.step("S05"):  # review/integration compliance copies
+        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
     if "compliance_artifacts_copied" in compliance_result:
         results["compliance_artifacts_copied"] = compliance_result["compliance_artifacts_copied"]
     if "compliance_dir" in compliance_result:
         results["compliance_dir"] = compliance_result["compliance_dir"]
 
-    if _block_delivery_for_gate(gate_result, results, errors):
-        return results
-    if _block_or_record_review_override(
+    from trw_mcp.tools._deliver_gate_dispatch import evaluate_delivery_gates
+
+    if evaluate_delivery_gates(
         gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
-        return results
-    if _block_or_record_missing_build(
-        gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
-    ):
+        # A blocked gate is a durable operation terminal/provisional state, not an
+        # absent operation (FR02 acceptance).
+        journal.mark_state(OperationState.BLOCKED)
+        if journal.enabled:
+            results["delivery_operation"] = journal.summary()
         return results
 
     results_view: dict[str, object] = cast("dict[str, object]", results)
     if not skip_reflect:
-        _run_step("reflect", lambda: _ceremony._do_reflect(trw_dir, resolved_run), results_view, errors)
+        with journal.step("S08"):  # mechanically extracted learning writes
+            _run_step("reflect", lambda: _ceremony._do_reflect(trw_dir, resolved_run), results_view, errors)
     else:
         results["reflect"] = {"status": "skipped"}
 
     if resolved_run is not None:
-        _run_step("checkpoint", lambda: _ceremony._step_checkpoint(resolved_run), results_view, errors)
+        with journal.step("S11"):  # checkpoint record append
+            _run_step("checkpoint", lambda: _ceremony._step_checkpoint(resolved_run), results_view, errors)
     else:
         checkpoint_skip: dict[str, object] = {
             "status": "skipped",
@@ -132,33 +211,55 @@ def run_trw_deliver(
             ),
             "hint": _ceremony._no_active_run_hint(candidate_runs),
         }
-        if candidate_runs:
-            checkpoint_skip["candidate_runs"] = candidate_runs
+        # candidate_runs already sits at the top level of this response —
+        # do not re-embed the same list inside the checkpoint block.
         results["checkpoint"] = checkpoint_skip
 
-    results["claude_md_sync"] = {"status": "skipped", "reason": "PRD-CORE-093"}
     critical_elapsed = round(time.monotonic() - t0, 2)
     results["critical_elapsed_seconds"] = critical_elapsed
 
     _probe_integrity(trw_dir, resolved_run, results)
     if resolved_run is not None:
-        step_clear_score(resolved_run, results)
-    step_knowledge_sync(trw_dir, results)
+        with journal.step("S14"):  # CLEAR score JSON replace
+            step_clear_score(resolved_run, results)
+    with journal.step("S15"):  # knowledge topic synchronization
+        step_knowledge_sync(trw_dir, results)
     # PRD-LOCAL-049: durable session changelog artifact. Only runs with an
     # active run dir; fail-open inside the step so it never blocks deliver.
     if resolved_run is not None:
-        step_session_changelog(resolved_run, results)
+        with journal.step("S17"):  # session changelog write
+            step_session_changelog(resolved_run, results)
 
-    deferred_status = _launch_deferred(trw_dir, resolved_run, results_view, skip_index_sync=skip_index_sync)
+    # PRD-CORE-208: critical synchronous effects are journaled; record the
+    # milestone and the deferred-batch digest (FR06) before launching the batch.
+    journal.mark_state(OperationState.CRITICAL_COMPLETE)
+    _journal_enqueue_deferred(journal, resolved_run, skip_index_sync=skip_index_sync)
+
+    deferred_status = _launch_deferred(
+        trw_dir, resolved_run, results_view, skip_index_sync=skip_index_sync, operation_id=journal.operation_id
+    )
     results["deferred"] = deferred_status
     results["errors"] = errors
     results["success"] = len(errors) == 0
-    results["critical_steps_completed"] = 2 - len(errors)
-    results["deferred_steps"] = 11
+    results["critical_steps_completed"] = len(DELIVER_CRITICAL_STEPS) - len(errors)
+    # ``deferred`` (the launch-status string above) is the actionable signal; the
+    # deferred-step *count* is a compile-time constant (len(DEFERRED_STEPS)) that
+    # never varies at runtime, so it is not re-emitted per deliver response. The
+    # roster size is guarded directly by a unit test on DEFERRED_STEP_COUNT.
     _ceremony._aggregate_advisory_warnings(results)
-    _mark_deliver_and_reflect_learning(trw_dir, results)
+    with journal.step("S18"):  # ceremony deliver-called flag
+        _mark_deliver_and_reflect_learning(trw_dir, results)
     _write_nudge_analysis_artifact(trw_dir, results)
-    _log_deliver_event(trw_dir, resolved_run, results, errors, deferred_status, critical_elapsed)
+    with journal.step("S20"):  # delivery-complete event append
+        _log_deliver_event(
+            trw_dir,
+            resolved_run,
+            results,
+            errors,
+            deferred_status,
+            critical_elapsed,
+            call_ctx.session_id,
+        )
     log_deliver_complete(
         resolved_run=resolved_run,
         results=results,
@@ -166,225 +267,58 @@ def run_trw_deliver(
         deferred_status=deferred_status,
         critical_elapsed=critical_elapsed,
     )
+    if journal.enabled:
+        results["delivery_operation"] = journal.summary()
     return results
 
 
-def _block_delivery_for_gate(
-    gate_result: Mapping[str, object],
-    results: DeliverResultDict,
-    errors: list[str],
-) -> bool:
-    """Hard-block delivery on integration-review / review-scope gate failures.
+def _relative_run_identity(resolved_run: Path | None) -> str:
+    """Project-relative run identity for the FR01 canonical request (never abs)."""
+    if resolved_run is None:
+        return ""
+    try:
+        from trw_mcp.state._paths import resolve_project_root
 
-    F1 rationale (deliver-gate governance review lane) — WHY there is no
-    ``allow_unverified`` escape here, unlike the human ``review_block`` (handled
-    downstream by ``_block_or_record_review_override`` via the structured
-    acceptable-failure path of CONSTITUTION §1.a Deliver Gate Path 3):
-
-    ``integration_review_block`` and ``review_scope_block`` are deliberately
-    HARDER than a human review-block. They fire on objective, machine-checkable
-    facts — an integration-review.yaml verdict of ``block`` (INFRA-027), or
-    >5 files modified with NO review at all (R-01). There is no judgment call to
-    sanction away: the remedy is to run the missing review, not to assert an
-    acceptable failure. Withholding the override path is a deliberate hardening
-    ABOVE Constitution §1.a Path 3, not an oversight. Do NOT add an override
-    branch here without an explicit governance decision to soften the gate.
-    # trw:intentional no allow_unverified escape — hardened above CONSTITUTION §1.a Path 3
-
-    F4 fix (deliver-gate governance review lane) — when one of these
-    non-overridable gates fires, collect ALL active hard-block messages
-    (integration_review_block, review_scope_block, AND a simultaneously-active
-    human review_block) into ``errors`` before returning. Pre-fix this returned
-    on the FIRST match, so a co-firing ``review_block`` was silently dropped:
-    the agent would fix the surfaced gate, retry, and only then discover the
-    hidden second block — misattributing the cause across two deliver attempts.
-
-    A co-firing ``review_block`` is surfaced (errors + ``results['review_block']``)
-    but NOT routed through its override handler here: delivery is already and
-    unconditionally blocked by the non-overridable gate, so the structured
-    acceptable-failure escape would be moot. Once the agent clears the hard gate,
-    the next deliver attempt routes ``review_block`` through
-    ``_block_or_record_review_override`` as normal.
-    """
-    non_overridable_keys = ("integration_review_block", "review_scope_block")
-    if not any(gate_result.get(key) for key in non_overridable_keys):
-        return False
-    # A non-overridable hard gate fired — collect EVERY active hard-block message
-    # so a co-firing review_block is not silently dropped. The block keys are
-    # already promoted onto ``results`` by ``unpack_gate_result``; here we only
-    # surface their messages into the errors list the agent reads.
-    for key in ("integration_review_block", "review_scope_block", "review_block"):
-        message = gate_result.get(key)
-        if message:
-            errors.append(str(message))
-    results["errors"] = errors
-    results["success"] = False
-    return True
+        return str(resolved_run.relative_to(resolve_project_root().resolve()))
+    except Exception:  # justified: fall back to the bare run dir name, never abs path
+        return resolved_run.name
 
 
-def _hard_block_override(
+def _open_journal(
+    trw_dir: Path,
+    config: TRWConfig,
+    resolved_run: Path | None,
     *,
-    results: DeliverResultDict,
-    errors: list[str],
-    resolved_run: Path | None,
-    trw_dir: Path,
+    skip_reflect: bool,
+    skip_index_sync: bool,
     allow_unverified: bool,
-    unverified_reason: str,
-    block_reason: str,
-    gate_type: str,
-    result_block_key: str,
-) -> bool:
-    """PRD-CORE-191 — gate a HARD block behind a structured acceptable-failure record.
-
-    Returns True when delivery must be BLOCKED (no/invalid/expired override),
-    False when a structurally valid, unexpired record lets delivery proceed.
-    Used for both ``review_block`` (CORE-192 escalation) and ``delivery_blocked``
-    (deliver_gate_mode). The structured record is REQUIRED here — a hard block
-    can only be overridden via the auditable acceptable-failure path.
-    """
-    from trw_mcp.tools._acceptable_failure_validation import apply_structured_override
-
-    if not (allow_unverified and unverified_reason.strip()):
-        results[result_block_key] = block_reason  # type: ignore[literal-required]
-        errors.append(block_reason)
-        results["errors"] = errors
-        results["success"] = False
-        logger.warning("deliver_hard_block", gate_type=gate_type, run=str(resolved_run))
-        return True
-
-    results_view = cast("dict[str, object]", results)
-    proceed, error = apply_structured_override(
-        results=results_view,
-        resolved_run=resolved_run,
-        trw_dir=trw_dir,
-        unverified_reason=unverified_reason,
-        gate_type=gate_type,
-    )
-    if not proceed:
-        # Override attempted but the record was prose / missing fields / expired:
-        # the hard block stands.
-        results[result_block_key] = block_reason  # type: ignore[literal-required]
-        errors.append(str(error))
-        results["errors"] = errors
-        results["success"] = False
-        return True
-    _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
-    return False
-
-
-def _block_or_record_review_override(
-    gate_result: Mapping[str, object],
-    results: DeliverResultDict,
-    errors: list[str],
-    resolved_run: Path | None,
-    trw_dir: Path,
-    allow_unverified: bool,
-    unverified_reason: str,
-) -> bool:
-    review_block = gate_result.get("review_block")
-    if not review_block:
-        return False
-    return _hard_block_override(
-        results=results,
-        errors=errors,
-        resolved_run=resolved_run,
-        trw_dir=trw_dir,
+    delivery_id: str,
+    capability_token: str,
+) -> tuple[DeliverJournal, DeliverResultDict | None]:
+    """Open the PRD-CORE-208 delivery journal for this call (FR01 claim-first)."""
+    return open_delivery_journal(
+        trw_dir,
+        config,
+        run_identity=_relative_run_identity(resolved_run),
+        skip_reflect=skip_reflect,
+        skip_index_sync=skip_index_sync,
         allow_unverified=allow_unverified,
-        unverified_reason=unverified_reason,
-        block_reason=str(review_block),
-        gate_type="review_block",
-        result_block_key="review_block",
+        delivery_id=delivery_id,
+        capability_token=capability_token,
     )
 
 
-def _block_or_record_missing_build(
-    gate_result: Mapping[str, object],
-    results: DeliverResultDict,
-    errors: list[str],
-    resolved_run: Path | None,
-    trw_dir: Path,
-    allow_unverified: bool,
-    unverified_reason: str,
-) -> bool:
-    delivery_blocked = gate_result.get("delivery_blocked")
-    if delivery_blocked:
-        results["missing_gate"] = str(gate_result.get("missing_gate", "build_check"))
-        if _hard_block_override(
-            results=results,
-            errors=errors,
-            resolved_run=resolved_run,
-            trw_dir=trw_dir,
-            allow_unverified=allow_unverified,
-            unverified_reason=unverified_reason,
-            block_reason=str(delivery_blocked),
-            gate_type="delivery_blocked",
-            result_block_key="delivery_blocked",
-        ):
-            logger.warning(
-                "deliver_gate_mode_blocked",
-                task_type=str(gate_result.get("blocked_task_type", "unknown")),
-                run=str(resolved_run),
-            )
-            return True
-        return False
-
-    build_gate_warning = gate_result.get("build_gate_warning")
-    if not build_gate_warning:
-        return False
-    reason = unverified_reason.strip()
-    if not allow_unverified or not reason:
-        block = (
-            f"Delivery blocked: {build_gate_warning} If this is an acceptable failure, retry with "
-            "allow_unverified=true and a concrete unverified_reason."
-        )
-        results["build_gate_block"] = block
-        errors.append(block)
-        results["errors"] = errors
-        results["success"] = False
-        return True
-    # PRD-CORE-191-FR05: the SOFT build_gate_warning override remains
-    # backward-compatible with a free-text reason — but if the reason parses as a
-    # structured AcceptableFailureRecord we record + ledger it; otherwise we honor
-    # the free-text bypass and emit a deprecation advisory pointing at the schema.
-    # codex cross-model review (REFUTE/DOCUMENT): free-text on a SOFT build warning
-    # is the SANCTIONED FR05 deprecation path (a graceful migration window), not an
-    # un-gated bypass — FRAMEWORK.md §Deliver Gate Path 3 permits a documented
-    # acceptable-failure, and the advisory below actively steers callers to the
-    # structured schema. The HARD blocks (review_block / delivery_blocked) do NOT
-    # accept free text — they require the structured record via _hard_block_override.
-    from trw_mcp.tools._acceptable_failure_validation import apply_structured_override, parse_acceptable_failure
-
-    record, _parse_error = parse_acceptable_failure(reason)
-    if record is not None:
-        apply_structured_override(
-            results=cast("dict[str, object]", results),
-            resolved_run=resolved_run,
-            trw_dir=trw_dir,
-            unverified_reason=reason,
-            gate_type="build_gate_warning",
-        )
-        results["build_gate_override"] = reason
-    else:
-        results["build_gate_override"] = reason
-        results["truthfulness_gate_bypassed"] = reason
-        results["acceptable_failure_advisory"] = (
-            "Free-text unverified_reason is deprecated. Provide a structured "
-            "acceptable-failure record (failed_command, residual_risk, owner, expiry_iso) "
-            "as JSON so the override is auditable. See PRD-CORE-191."
-        )
-        _log_gate_override(resolved_run, {"reason": reason, "build_gate_warning": str(build_gate_warning)})
-    logger.warning(
-        "build_gate_override_used", reason=reason, build_gate_warning=str(build_gate_warning), run=str(resolved_run)
-    )
-    return False
-
-
-def _log_gate_override(resolved_run: Path | None, payload: dict[str, object]) -> None:
-    if resolved_run is None or not (resolved_run / "meta").exists():
+def _journal_enqueue_deferred(journal: DeliverJournal, resolved_run: Path | None, *, skip_index_sync: bool) -> None:
+    """Record the FR06 deferred-batch digest + mark the operation deferred-queued."""
+    if not journal.enabled:
         return
-    from trw_mcp.tools import ceremony as _ceremony
-
-    _ceremony._events.log_event(resolved_run / "meta" / "events.jsonl", "delivery_gate_overridden", payload)
+    digest = compute_deferred_digest(
+        run_identity=_relative_run_identity(resolved_run),
+        skip_index_sync=skip_index_sync,
+        deferred_steps=DEFERRED_STEPS,
+    )
+    journal.enqueue_deferred(digest)
+    journal.mark_state(OperationState.DEFERRED_QUEUED)
 
 
 def _probe_integrity(trw_dir: Path, resolved_run: Path | None, results: DeliverResultDict) -> None:
@@ -392,9 +326,19 @@ def _probe_integrity(trw_dir: Path, resolved_run: Path | None, results: DeliverR
         from trw_mcp.tools._deliver_integrity import check_memory_integrity_on_deliver
 
         integrity_result = check_memory_integrity_on_deliver(trw_dir, resolved_run)
-        results["db_integrity"] = cast("dict[str, object]", dict(integrity_result))
-    except Exception:  # justified: fail-open — integrity probe must not block deliver
-        logger.debug("deliver_integrity_check_failed", exc_info=True)
+        # The full record (incl. db_path/checked_at) still persists to
+        # events.jsonl for the audit trail inside the probe. On the happy path
+        # (ok=True) the response dict is pure diagnostic noise — a static db_path
+        # plus a checked_at that duplicates the top-level timestamp — so it is
+        # surfaced in the compact response ONLY on a real corruption event, and
+        # then only the actionable {ok, detail}.
+        if not integrity_result["ok"]:
+            results["db_integrity"] = {
+                "ok": integrity_result["ok"],
+                "detail": integrity_result["detail"],
+            }
+    except Exception as exc:  # justified: fail-open — integrity probe must not block deliver
+        record_into(cast("MutableMapping[str, object]", results), "db_integrity", exc)
 
 
 def _mark_deliver_and_reflect_learning(trw_dir: Path, results: DeliverResultDict) -> None:
@@ -402,8 +346,8 @@ def _mark_deliver_and_reflect_learning(trw_dir: Path, results: DeliverResultDict
         from trw_mcp.state.ceremony_progress import mark_deliver
 
         mark_deliver(trw_dir)
-    except Exception:  # justified: fail-open — state mutation must not block deliver
-        logger.debug("mark_deliver_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open — state mutation must not block deliver
+        record_into(cast("MutableMapping[str, object]", results), "mark_deliver", exc)
     try:
         from trw_mcp.state.ceremony_progress import read_ceremony_state
         from trw_mcp.tools import ceremony as _ceremony
@@ -411,8 +355,8 @@ def _mark_deliver_and_reflect_learning(trw_dir: Path, results: DeliverResultDict
         results["learning_reflection"] = _ceremony._learning_reflection_message(
             read_ceremony_state(trw_dir).learnings_this_session
         )
-    except Exception:  # justified: fail-open — reflection must not block deliver
-        logger.debug("learning_reflection_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open — reflection must not block deliver
+        record_into(cast("MutableMapping[str, object]", results), "learning_reflection", exc)
 
 
 def _write_nudge_analysis_artifact(trw_dir: Path, results: DeliverResultDict) -> None:
@@ -440,10 +384,14 @@ def _write_nudge_analysis_artifact(trw_dir: Path, results: DeliverResultDict) ->
         path = persist_nudge_analysis(trw_dir, analysis)
         if path is not None:
             summary = analysis_summary(analysis)
-            summary["artifact"] = str(path)
+            # The artifact path is a static absolute path; surface it only when
+            # there is real nudge activity to inspect (applicable=True). When
+            # not applicable the summary is already just {"applicable": False}.
+            if analysis.applicable:
+                summary["artifact"] = str(path)
             results["nudge_analysis"] = summary
-    except Exception:  # justified: fail-open — nudge analysis must not block deliver
-        logger.debug("nudge_analysis_artifact_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open — nudge analysis must not block deliver
+        record_into(cast("MutableMapping[str, object]", results), "nudge_analysis", exc)
 
 
 def _log_deliver_event(
@@ -453,6 +401,7 @@ def _log_deliver_event(
     errors: list[str],
     deferred_status: str,
     critical_elapsed: float,
+    session_id: str,
 ) -> None:
     if resolved_run is None or not (resolved_run / "meta").exists():
         return
@@ -460,8 +409,8 @@ def _log_deliver_event(
         from trw_mcp.state.ceremony_progress import read_ceremony_state
 
         nudge_summary = dict(read_ceremony_state(trw_dir).nudge_counts)
-    except Exception:  # justified: fail-open
-        logger.debug("deliver_nudge_summary_unavailable", exc_info=True)
+    except Exception as exc:  # justified: fail-open
+        record_into(cast("MutableMapping[str, object]", results), "deliver_nudge_summary", exc, severity="info")
         nudge_summary = {}
     from trw_mcp.tools import ceremony as _ceremony
 
@@ -474,5 +423,6 @@ def _log_deliver_event(
             "critical_elapsed_seconds": critical_elapsed,
             "errors": len(errors),
             "nudge_summary": nudge_summary,
+            "session_id": session_id,
         },
     )

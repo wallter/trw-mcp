@@ -1,130 +1,76 @@
 ---
 name: trw-project-health
-description: "Audit TRW health in the current or target project. Summarizes tool usage, ceremony compliance, hook enforcement, active runs, learnings, and issues. Use: /project-health [path]\n"
+description: "Audit TRW health in the current or target project. Summarizes tool usage, ceremony compliance, hook enforcement, active runs, learnings, and issues. Use: /trw-project-health [path]\n"
 ---
 
 > Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
 
-# Project Health Skill
+# Project Health
 
-Generate a comprehensive TRW health report for a project, covering tool usage, ceremony compliance, hook enforcement, learnings, and active issues.
+Produce a read-only, evidence-backed TRW operational snapshot for the current or requested project.
 
-## Path Resolution
+## 1. Resolve evidence sources
 
-- If `$ARGUMENTS` provides a path, use it as the project root
-- Otherwise, use the current working directory
-- Verify the project has a `.trw/` directory; if not, report "TRW not initialized"
+1. Resolve the project root and require `.trw/`; otherwise report `not initialized`.
+2. Call `trw_status()` first. When available, also use `trw_pipeline_health()` and `trw_mcp_security_status()` rather than recreating their logic.
+3. Read run state with `trw_status()`, then resolve the path from the caller, current session-start result (`run.active_run`), or runtime pins. Status itself does not return a path. The canonical layout is `.trw/runs/<task>/<run>/`; inspect only explicitly resolved paths.
+4. Treat every file source as optional and schema-check it before use:
+   - `.trw/context/analytics.yaml`, `build-status.yaml`, `session-events.jsonl`, and dated `events-*.jsonl`;
+   - resolved run `meta/*.yaml` and `reports/*.md`;
+   - `.trw/security/` counters when security health is in scope;
+   - client-specific hook logs only when the active client actually emits them.
 
-## Workflow
+Do not treat a missing optional log as zero activity. Mark it `UNKNOWN/NOT EMITTED` and name the absent source.
 
-1. **Gather data** — Read the following files (skip any that don't exist):
+## 2. Assess without folklore
 
-   | Source | Path | Data extracted |
-   |--------|------|----------------|
-   | Analytics | `.trw/context/analytics.yaml` | Session count, learning count, sync count, success rate |
-   | Hook log | `.trw/context/hook-executions.log` | Event counts by type, block rates |
-   | Learnings | `.trw/learnings/entries/*.yaml` | Total count, substantive vs auto-generated, tag distribution |
-   | Active runs | `{task_root}/*/runs/*/meta/run.yaml` | Run ID, task, phase, status, PRD scope |
-   | Event logs | `{task_root}/*/runs/*/meta/events.jsonl` | Event counts, checkpoint frequency, ceremony completion |
-   | Telemetry log | `.trw/logs/trw-mcp-*.jsonl` | File size, line count, TRW event counts vs noise |
-   | Config | `.trw/config.yaml` | Task root, telemetry settings, debug mode |
+### Run and ceremony
 
-2. **Analyze ceremony compliance** per active run:
-   - Count ceremony events: `run_init`, `checkpoint`, `shard_start/complete`, `reflection_complete`, `trw_deliver_complete`
-   - Check for premature delivery pattern: `reflection_complete` immediately after `run_init` (< 60s gap)
-   - Calculate checkpoint frequency: checkpoints per hour of work
-   - Check if delivery was called after meaningful work
+- Report active/stale/completed state, phase, tier/profile, last activity, checkpoints/reversions, build evidence, and substantive review evidence.
+- Judge compliance against the resolved tier and configured gates, not raw event counts or elapsed-time folklore.
+- Separate session-level events from run-level artifacts and avoid attributing another concurrent session's evidence to this run.
 
-3. **Analyze hook enforcement**:
-   - Count by event type: SessionStart, Stop, SubagentStart, CompletionGate, PostToolUse
-   - Calculate block rate per type: `blocked / total`
-   - Flag types with > 50% block rate as potential over-enforcement
-   - Flag Stop hooks with 0% pass rate (likely a bug)
+### Hooks and tools
 
-4. **Analyze learnings**:
-   - Count substantive learnings (those with detail > 100 chars and impact >= 0.6)
-   - Count auto-generated learnings (IDs matching `repeated-operation-*` or `success-*` patterns)
-   - Check for promoted learnings (`promoted_to_claude_md: true`)
-   - List top 5 by impact score
+- Derive hook fires/blocks/errors from the actual event/log schema found.
+- Report raw counts and rates with sample size/source. Compare against configured policy or project history only when available; do not impose universal block-rate/pass-rate thresholds.
+- Distinguish `not installed`, `not emitted`, and observed zero.
 
-5. **Check for known issues**:
-   - LLM call failures in telemetry (`"event": "llm_call_failed"`)
-   - Excessive deliver calls (> 3 per run suggests stop hook frustration)
-   - Event name mismatches in hooks
-   - Missing ceremony events in completed runs
-   - Log file size > 10MB (suggests noise suppression issue)
+### Learning memory
 
-6. **Generate report** — Output a structured markdown report:
+- Use bounded `trw_recall`/`trw_session_start` output or `/trw-memory-audit`; do not assume `.trw/learnings/entries/*.yaml` is the active store.
+- Report retrieval availability, assertion failures when exposed, stale/duplicate candidates, and domain gaps. Learnings surface through recall/session start, not promotion into client instruction files.
+
+### Runtime integrity
+
+- Compare deployed framework/version evidence with the bundled/source version when available.
+- In the framework repository, run the project-native runtime-integrity diagnostic if requested/appropriate and keep source parity separate from deployed state.
+
+## 3. Report provenance
 
 ```markdown
-## TRW Project Health Report
+## TRW Project Health
+- Project: <absolute path>
+- Active run/session: <id/path or none>
+- Evidence window: <timestamps>
 
-**Project**: {path}
-**Report date**: {date}
-**TRW version**: {framework version from latest run.yaml}
+| Area | Status | Evidence source | Observation |
+|---|---|---|---|
+| runtime/framework | | | |
+| run/ceremony | | | |
+| validation/review | | | |
+| hooks/tools | | | |
+| learning retrieval | | | |
+| security/pipeline | | | |
 
-### Summary
+### Unknown or unavailable evidence
+- <source and impact>
 
-| Metric | Value | Status |
-|--------|-------|--------|
-| Sessions tracked | {N} | -- |
-| Active runs | {N} | -- |
-| Total learnings | {N} | -- |
-| Ceremony success rate | {N}% | OK/WARN/FAIL |
-| Hook block rate (avg) | {N}% | OK/WARN/FAIL |
+### Issues
+- <severity, observed fact, risk>
 
-### Active Runs
-
-| Run | Task | Phase | Events | Checkpoints | Ceremony |
-|-----|------|-------|--------|-------------|----------|
-| {id} | {task} | {phase} | {N} | {N} | Complete/Pending/Premature |
-
-### Hook Enforcement
-
-| Hook | Fires | Blocked | Pass Rate | Assessment |
-|------|-------|---------|-----------|------------|
-| Stop | {N} | {N} | {N}% | {OK/Over-blocking/Bug} |
-| CompletionGate | {N} | {N} | {N}% | {OK/Over-blocking} |
-| ... | ... | ... | ... | ... |
-
-### Tool Usage (from telemetry)
-
-| Tool | Calls | Assessment |
-|------|-------|------------|
-| trw_checkpoint | {N} | {Good/Low/Excessive} |
-| trw_deliver | {N} | {Good/Excessive} |
-| ... | ... | ... |
-
-### Learnings
-
-- **Substantive**: {N} (impact >= 0.6, detail > 100 chars)
-- **Auto-generated**: {N} (repeated ops, success patterns)
-- **Promoted to AGENTS.md**: {N}
-- **Top learnings**: {list top 5 by impact}
-
-### Issues Found
-
-{Bulleted list of detected issues with severity}
-
-### Recommendations
-
-{Actionable items based on the analysis}
+### Recommended next actions
+1. <project-native action>
 ```
 
-## Assessment Thresholds
-
-| Metric | OK | WARN | FAIL |
-|--------|-----|------|------|
-| Ceremony success rate | >= 80% | 50-79% | < 50% |
-| Hook block rate (avg) | < 20% | 20-50% | > 50% |
-| Stop hook pass rate | > 0% | -- | = 0% |
-| Checkpoint frequency | >= 2/hr | 1-2/hr | < 1/hr |
-| Deliver calls per run | <= 3 | 4-6 | > 6 |
-| Log file size | < 10 MB | 10-50 MB | > 50 MB |
-
-## Notes
-
-- This skill is read-only — it never modifies project files
-- Works on the current project or any project with a `.trw/` directory
-- For cross-project monitoring, pass the target project path as an argument
-- Pairs well with `/trw-memory-audit` for deeper learning analysis
+Use `PASS`, `WARN`, `BLOCK`, `N/A`, or `UNKNOWN`. Never convert absence, small samples, or fixed generic percentages into a confident verdict.

@@ -17,10 +17,9 @@ from fastmcp import Context, FastMCP
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import CheckpointResultDict, PreCompactResultDict
 from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
+from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._paths import (
-    TRWCallContext,
     find_active_run,
-    resolve_pin_key,
     resolve_project_root,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -118,6 +117,14 @@ def _do_checkpoint(run_dir: Path, message: str) -> None:
         message=message[:80],
     )
     logger.debug("checkpoint_detail", run_dir=str(run_dir))
+
+
+# PRD-FIX-061-FR07: implementation relocated to state/candidate_evidence.py
+# (state/git_commit_workflow.py consumes it and state must not import tools).
+# Re-exported here for back-compat with existing importers.
+from trw_mcp.state.candidate_evidence import (  # noqa: E402
+    record_candidate_evidence as record_candidate_evidence,
+)
 
 
 def _read_pre_compact_state(run_dir: Path, project_root: Path) -> dict[str, object]:
@@ -308,18 +315,6 @@ def _write_compact_instructions(
     instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
     instructions_path.write_text(instructions)
     return instructions_path
-
-
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
 
 def register_checkpoint_tools(server: FastMCP) -> None:

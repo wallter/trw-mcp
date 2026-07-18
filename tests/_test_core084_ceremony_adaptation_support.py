@@ -47,7 +47,6 @@ def _run_agents_md_sync(
         patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
         patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         patch("trw_mcp.state.analytics.update_analytics_sync"),
-        patch("trw_mcp.state.analytics.mark_promoted"),
         patch("trw_mcp.state.claude_md._sync.recall_learnings", return_value=recall_return),
     ):
         return execute_claude_md_sync(

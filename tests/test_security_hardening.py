@@ -206,17 +206,17 @@ class TestImpactBoundsValidation:
             self._validate_impact(1.5)
 
     def test_impact_accepts_zero(self) -> None:
-        self._validate_impact(0.0)  # Should not raise
+        assert self._validate_impact(0.0) is None
 
     def test_impact_accepts_one(self) -> None:
-        self._validate_impact(1.0)  # Should not raise
+        assert self._validate_impact(1.0) is None
 
     def test_impact_accepts_midrange(self) -> None:
-        self._validate_impact(0.5)  # Should not raise
+        assert self._validate_impact(0.5) is None
 
     def test_impact_update_none_is_valid(self) -> None:
         """trw_learn_update allows None impact (no change)."""
-        self._validate_impact_optional(None)  # Should not raise
+        assert self._validate_impact_optional(None) is None
 
     def test_impact_update_rejects_negative(self) -> None:
         with pytest.raises(ValueError, match="impact must be between"):
@@ -365,7 +365,7 @@ class TestMinImpactBounds:
             self._validate_min_impact(1.5)
 
     def test_min_impact_accepts_zero(self) -> None:
-        self._validate_min_impact(0.0)  # Should not raise
+        assert self._validate_min_impact(0.0) is None
 
     def test_min_impact_accepts_one(self) -> None:
-        self._validate_min_impact(1.0)  # Should not raise
+        assert self._validate_min_impact(1.0) is None

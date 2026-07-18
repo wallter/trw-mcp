@@ -14,6 +14,10 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
+if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
+  exit 0
+fi
+
 init_hook_timer
 
 # FR07: Read stdin payload for transcript_path (must happen before any stdin-consuming command)
@@ -496,7 +500,7 @@ case "$_current_phase" in
     _block_hint="No file_modified event. Ensure implementation writes are complete."
     ;;
   validate)
-    _block_hint="Run trw_build_check() and ensure tests pass."
+    _block_hint="Run project-native checks, then record observed results with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)."
     ;;
   deliver)
     _block_hint="Run trw_review() / trw_deliver() to complete delivery."

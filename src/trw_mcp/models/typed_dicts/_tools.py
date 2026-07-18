@@ -9,6 +9,28 @@ from typing_extensions import NotRequired, TypedDict
 from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
 
 
+class Degradation(TypedDict):
+    """One typed fail-open degradation on the ceremony hot path (mcp-x-failopen).
+
+    Records a swallowed non-fatal failure so it becomes OBSERVABLE in the tool
+    payload instead of vanishing into a debug log. Recording a ``Degradation``
+    NEVER flips ``success`` — that stays governed solely by the ``errors`` list.
+    All four keys are always present. See
+    :mod:`trw_mcp.tools._ceremony_degradations`.
+
+    - ``step``: the failing step's stable key (e.g. ``"recall"``, ``"pipeline_health"``).
+    - ``error_class``: the exception class name (``type(exc).__name__``).
+    - ``message``: ``str(exc)`` — the exception message (never a secret/PII source).
+    - ``severity``: ``"warn"`` for expected fail-open swallows; ``"info"`` for the
+      previously-silent control-flow fallbacks whose only purpose is visibility.
+    """
+
+    step: str
+    error_class: str
+    message: str
+    severity: Literal["info", "warn"]
+
+
 class RecallContextDict(TypedDict, total=False):
     """Shape of the context dict returned by ``collect_context()`` and embedded in ``RecallResultDict``.
 
@@ -51,6 +73,11 @@ class RunStatusDict(TypedDict, total=False):
     phase: str
     status: str
     task_name: str
+    capability_tier: str
+    model_tier: str
+    recommended_effort: str
+    effort_source: str
+    effort_adapter_status: str
     owner_session_id: str | None
     wave_status: dict[str, object] | None
     # PRD-CORE-165 FR-01: caller-supplied recovery context surfaced from the
@@ -109,6 +136,11 @@ class SessionStartResultDict(TypedDict, total=False):
     wal_checkpoint_deferred: dict[str, object]
     auto_recall_deferred: dict[str, object]
     ceremony_status_deferred: dict[str, object]
+    # Compact-mode fold of the individual ``*_deferred`` blocks above:
+    # ``{reason: [step, ...]}`` plus a single writer_count. The per-step
+    # blocks are only present with ``verbose=True``.
+    deferred: dict[str, list[str]]
+    deferred_writer_count: int
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
@@ -168,6 +200,13 @@ class SessionStartResultDict(TypedDict, total=False):
     # would set ``success=False`` and mislead agents into needless retries of an
     # otherwise-successful session_start.
     warnings: list[str]
+    # mcp-x-failopen: typed fail-open degradations. Each entry records a
+    # swallowed non-fatal failure {step, error_class, message, severity} so the
+    # previously-invisible ceremony-hot-path swallows are observable in the
+    # payload. Recording a degradation NEVER flips ``success`` (governed solely
+    # by ``errors``); both keys are ABSENT on a fully-clean session.
+    degradations: list[Degradation]
+    degraded_steps: int
 
 
 class QLearningDeferredDict(TypedDict):
@@ -358,6 +397,8 @@ class DeliverResultDict(TypedDict, total=False):
     # PRD-CORE-184-FR03: task-type-aware deliver gate mode block.
     delivery_blocked: str
     missing_gate: str
+    # Task type that triggered a deliver_gate_mode hard block (surfaced for audit).
+    blocked_task_type: str
     checkpoint_blocker_warning: str
     complexity_drift_warning: str
     instruction_parity_warning: str
@@ -375,13 +416,11 @@ class DeliverResultDict(TypedDict, total=False):
     reflect: dict[str, object]
     checkpoint: dict[str, object]
     candidate_runs: list[dict[str, object]]
-    claude_md_sync: dict[str, object]
     critical_elapsed_seconds: float
     deferred: str
     errors: list[str]
     success: bool
     critical_steps_completed: int
-    deferred_steps: int
     # PRD-CORE-125 FR05: Self-reflection message about learnings
     learning_reflection: str
     # PRD-FIX-COMPOUNDING-2 FR03: knowledge-graph topic-sync result. Populated
@@ -390,8 +429,10 @@ class DeliverResultDict(TypedDict, total=False):
     # F5 suggestion 2: opportunistic time-boxed graph backfill result on deliver.
     # Shape: {"processed": int, "edges_built": int, "skipped": int, "failed": int}.
     graph_backfill: dict[str, int]
-    # PRD-INFRA-067 (C2): Integrity-on-delivery probe result
-    # Shape: {"ok": bool, "detail": str, "db_path": str, "checked_at": str}
+    # PRD-INFRA-067 (C2): Integrity-on-delivery probe result. Surfaced in the
+    # response ONLY on a real corruption event (ok=False), and then only the
+    # actionable {"ok": bool, "detail": str}. The full record (incl. db_path /
+    # checked_at) always persists to events.jsonl for the audit trail.
     db_integrity: dict[str, object]
     # PRD-INFRA-068 (C3): Memory health dashboard — surfaced here so clients
     # can report health when deliver is a session's last action.
@@ -413,10 +454,26 @@ class DeliverResultDict(TypedDict, total=False):
     package_changelog_advisory: list[dict[str, object]]
     # Nudge-deep-dive work target #1/#2: live nudge-effectiveness summary
     # computed on deliver from this session's ceremony-state + surface stream.
-    # Full artifact at ``.trw/context/nudge-analysis.json``; this is the compact
-    # summary — {applicable, total_nudges, responsiveness, recall_pull_rate,
-    # resistance_steps, resistance_flagged, timing_validity_rate, artifact}.
+    # Full artifact at ``.trw/context/nudge-analysis.json``. When no nudge fired
+    # this session it collapses to just {applicable: False}; otherwise it is the
+    # compact summary — {applicable, total_nudges, responsiveness,
+    # recall_pull_rate, resistance_steps, resistance_flagged,
+    # timing_validity_rate, variant_breakdown, artifact}.
     nudge_analysis: dict[str, object]
+    # mcp-x-failopen: typed fail-open degradations on the deliver hot path. Each
+    # entry records a swallowed non-fatal failure {step, error_class, message,
+    # severity}. Recording NEVER flips ``success`` (governed solely by
+    # ``errors``); both keys are ABSENT on a fully-clean deliver.
+    degradations: list[Degradation]
+    degraded_steps: int
+    # PRD-CORE-208: crash-safe idempotent delivery-operation journal projection.
+    # Compact, redaction-safe summary of the claimed operation that owned this
+    # delivery — {operation_id, caller_recoverable, mode, enabled,
+    # journaled_effect_count}. On an explicit-ID conflict/rejection the delivery
+    # is BLOCKED with zero effects and this carries {operation_id, status,
+    # reason_code, effect_calls: 0, caller_recoverable}. ABSENT when
+    # delivery_operations_mode="off".
+    delivery_operation: dict[str, object]
 
 
 class ToolEventDataDict(TypedDict, total=False):
@@ -434,6 +491,10 @@ class ToolEventDataDict(TypedDict, total=False):
     agent_id: str
     agent_role: str
     phase: str
+    capability_tier: str
+    recommended_effort: str
+    effort_source: str
+    effort_adapter_status: str
     error: str
     error_type: str
     event_id: str

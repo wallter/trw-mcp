@@ -110,7 +110,6 @@ trw-mcp/tests/test_learn.py
 trw-mcp/tests/test_learn_update.py
 trw-mcp/tests/test_learn_update_yaml_dualwrite.py
 trw-mcp/tests/test_learn_validator.py
-trw-mcp/tests/test_llm_helpers.py
 trw-mcp/tests/test_llm_usage.py
 trw-mcp/tests/test_logging_config.py
 trw-mcp/tests/test_maintenance.py
@@ -176,7 +175,6 @@ trw-mcp/tests/test_recall_tracking.py
 trw-mcp/tests/test_receipts.py
 trw-mcp/tests/test_reconciliation.py
 trw-mcp/tests/test_reflection_quality.py
-trw-mcp/tests/test_reflection_state.py
 trw-mcp/tests/test_release_builder.py
 trw-mcp/tests/test_requirements_integration.py
 trw-mcp/tests/test_research_provenance.py

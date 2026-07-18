@@ -9,7 +9,6 @@ from trw_mcp.state._ceremony_progress_state import read_ceremony_state
 from trw_mcp.tools import (
     _ceremony_helpers,
     _learn_impl,
-    _legacy_ceremony_nudge,
     _orchestration_lifecycle,
     _recall_impl,
     _session_recall_helpers,
@@ -45,12 +44,6 @@ def test_live_ceremony_progress_is_isolated_from_legacy_nudge_backend() -> None:
     progress_source = inspect.getsource(ceremony_progress)
     assert "_nudge_state" not in progress_source
     assert "_ceremony_progress_state" in progress_source
-
-
-def test_legacy_nudge_surface_is_quarantined_in_dedicated_module() -> None:
-    source = inspect.getsource(_legacy_ceremony_nudge)
-    assert "append_ceremony_status" in source
-    assert "Compatibility adapters" in source
 
 
 def test_append_ceremony_status_adds_summary_when_state_exists(tmp_path: Path) -> None:

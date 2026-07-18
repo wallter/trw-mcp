@@ -7,16 +7,22 @@ so they are available via ``fastmcp run`` and test imports.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import structlog
 
 from trw_mcp.server._app import mcp
 
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
 logger = structlog.get_logger(__name__)
 _AsyncResultT = TypeVar("_AsyncResultT")
+
+#: A tool registrar binds a group of tools onto a FastMCP server instance.
+ToolRegistrar = Callable[["FastMCP"], None]
 
 
 def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
@@ -32,105 +38,16 @@ def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
     return asyncio.run(coro)
 
 
-def _apply_tool_exposure_filter() -> None:
-    """PRD-CORE-125-FR02: Remove tools not in the active exposure preset.
+def _tool_registrars() -> tuple[ToolRegistrar, ...]:
+    """Return the ordered tuple of tool-registrar callables.
 
-    Reads ``effective_tool_exposure_mode`` from config, resolves the
-    corresponding tool preset from ``TOOL_PRESETS``, and removes any
-    registered tool not in the allowed set.  Mode ``"all"`` is a no-op.
-    Mode ``"custom"`` uses the explicit ``tool_exposure_list`` from config.
-
-    Fail-CLOSED under a restrictive mode: an operator that configured a
-    non-``all`` mode meant to HIDE privileged tools. If anything fails AFTER
-    we have determined the mode is restrictive, we must NOT leave every tool
-    registered — that would silently widen exposure (under-block). Instead we
-    fall back to the most restrictive known preset (``core``) so a config or
-    list_tools failure can never expose more than the operator asked for, and
-    we log the failure at WARNING (not DEBUG) so the loss of fidelity is
-    visible. When the mode is ``all`` / unset / unresolvable, keeping all
-    tools is the intended behavior.
+    Single source of truth for the raw tool surface (PRD-CORE-218 FR01). Both
+    ``_register_tools`` (production boot) and ``raw_registered_tool_names``
+    (manifest-parity probe) iterate THIS tuple, so the registered surface and
+    the parity fixture can never drift apart. Registration order is not
+    significant to tool availability.
     """
-    # Phase 1: resolve the mode. A failure HERE means we don't know what the
-    # operator wanted, so leaving all tools registered is acceptable (we have
-    # no evidence a restrictive mode was configured) — keep this fail-open.
-    try:
-        from trw_mcp.models.config import get_config
-
-        mode = get_config().effective_tool_exposure_mode
-    except Exception:  # justified: mode unknown -> no evidence of restrictive intent
-        logger.warning("tool_exposure_mode_resolve_failed", exc_info=True)  # justified: fail-open, visible
-        return
-
-    if mode == "all":
-        return
-
-    # Phase 2: from here on we KNOW a restrictive mode is configured. Any
-    # failure must fail to the SAFE (most restrictive) subset, never to "all".
-    try:
-        from trw_mcp.models.config import get_config
-        from trw_mcp.models.config._defaults import TOOL_PRESETS
-
-        config = get_config()
-
-        if mode == "custom":
-            allowed = set(config.tool_exposure_list)
-        else:
-            preset = TOOL_PRESETS.get(mode)
-            if preset is None:
-                # Unknown restrictive mode: do not widen — fall to safe subset.
-                logger.warning("unknown_tool_exposure_mode_failing_safe", mode=mode)
-                allowed = set(TOOL_PRESETS["core"])
-            else:
-                allowed = set(preset)
-
-        if not allowed:
-            # An empty allow-set under a restrictive mode would remove every
-            # tool; treat as a misconfiguration and fail to the safe subset
-            # rather than serving everything.
-            logger.warning("empty_tool_exposure_set_failing_safe", mode=mode)
-            allowed = set(TOOL_PRESETS["core"])
-
-        # Get all currently registered tool names via the public async API.
-        # FastMCP's internal tool-manager attributes changed across releases,
-        # so stdio startup must not depend on private state here.
-        registered_tools = [t.name for t in _run_async(mcp.list_tools())]
-        removed: list[str] = []
-        for tool_name in registered_tools:
-            if tool_name not in allowed:
-                mcp.remove_tool(tool_name)
-                removed.append(tool_name)
-
-        if removed:
-            logger.info(
-                "tool_exposure_filter_applied",
-                mode=mode,
-                allowed_count=len(allowed),
-                removed_count=len(removed),
-                removed=removed[:10],  # Log at most 10 names to avoid spam
-            )
-    except Exception:
-        # CONSERVATIVE / fail-closed: a restrictive mode was configured but the
-        # filter blew up. Make a best-effort pass to remove anything outside
-        # the safe ``core`` subset so a failure here cannot leave privileged
-        # tools exposed. Log at WARNING so the degradation is visible.
-        logger.warning("tool_exposure_filter_failed_failing_safe", mode=mode, exc_info=True)
-        try:
-            from trw_mcp.models.config._defaults import TOOL_PRESETS
-
-            safe = set(TOOL_PRESETS["core"])
-            for tool in list(_run_async(mcp.list_tools())):
-                if tool.name not in safe:
-                    mcp.remove_tool(tool.name)
-        except Exception:  # justified: last-resort; could not enumerate tools to prune
-            logger.warning("tool_exposure_safe_fallback_failed", mode=mode, exc_info=True)
-
-
-def _register_tools() -> None:
-    """Register all tools, resources, and prompts on the MCP server."""
-    from trw_mcp.prompts.aaref import register_aaref_prompts
-    from trw_mcp.resources.config import register_config_resources
-    from trw_mcp.resources.run_state import register_run_state_resources
-    from trw_mcp.resources.templates import register_template_resources
+    from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
     from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
     from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
     from trw_mcp.tools.before_edit_hint_batch import (
@@ -140,11 +57,14 @@ def _register_tools() -> None:
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.ceremony_feedback import register_ceremony_feedback_tools
     from trw_mcp.tools.channel_render import register_channel_render_tools
+    from trw_mcp.tools.channel_stats import register_channel_stats_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.code_index import register_code_index_tools
     from trw_mcp.tools.code_search import register_code_search_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
+    from trw_mcp.tools.delivery_ops import register_delivery_tools
+    from trw_mcp.tools.dispatch import register_dispatch_tools
     from trw_mcp.tools.entity_risk_map import register_entity_risk_map_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
@@ -152,79 +72,126 @@ def _register_tools() -> None:
     from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
     from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
+    from trw_mcp.tools.phase_overrides import register_phase_override_tools
     from trw_mcp.tools.query_tools import register_query_tools
+    from trw_mcp.tools.replay import register_replay_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
     from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
-
-    register_build_tools(mcp)
-    register_ceremony_tools(mcp)
-    # PRD-CORE-069-FR06/FR08 (FIX-051): human-in-the-loop ceremony de-escalation
-    # — operator status / approve / revert kill-switch tools.
-    register_ceremony_feedback_tools(mcp)
-    register_checkpoint_tools(mcp)
-    register_learning_tools(mcp)
-    register_meta_tune_tools(mcp)
-    register_knowledge_tools(mcp)
-    register_orchestration_tools(mcp)
-    register_requirements_tools(mcp)
-    register_review_tools(mcp)
-    # PRD-HPO-MEAS-001 FR-7 + FR-8: cross-session event query + surface diff
-    register_query_tools(mcp)
-    # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
-    register_mcp_security_status(mcp)
-    # PRD-DIST-1983 (c746): trw-distill before-edit hint consumer (tier-gated)
-    register_before_edit_hint_tools(mcp)
-    # PRD-DIST-1989 (c747): batch sibling of trw_before_edit_hint
-    register_before_edit_hint_batch_tools(mcp)
-    # PRD-DIST-1990 (c747): trw-distill ranked risk report consumer
-    register_codebase_risk_report_tools(mcp)
-    # PRD-DIST-1994 (c748): trw-distill ordering-compare consumer (4th wire)
-    register_ordering_compare_tools(mcp)
-    # PRD-DIST-1995 (c748): trw-distill cross-repo-ordering consumer (5th wire)
-    register_cross_repo_ordering_tools(mcp)
-    # PRD-CORE-171: local SHA-256 code-index manifest update tool
-    register_code_index_tools(mcp)
-    # PRD-CORE-172: local indexed lexical/symbol code search
-    register_code_search_tools(mcp)
-    # PRD-CORE-167: public entity-risk sidecar consumer
-    register_entity_risk_map_tools(mcp)
-    # PRD-CORE-168: privacy-safe canonical agent work evidence export
-    register_agent_work_evidence_tools(mcp)
-    # PRD-CORE-170: read-only skill manifest discovery helper
-    register_skill_discovery_tools(mcp)
-    # PRD-CORE-182 + PRD-INFRA-132 FR04: backend submission portal client
-    # (PII redaction added in-place per PRD-INFRA-132 FR04a)
-    register_submit_feedback_tools(mcp)
-    # PRD-DIST-2400 FR17: channel manifest render MCP tool
-    register_channel_render_tools(mcp)
-    # PRD-DIST-2400 §meta-tune: channel correlation + throttle stats MCP tool
-    from trw_mcp.tools.channel_stats import register_channel_stats_tools
-
-    register_channel_stats_tools(mcp)
-
-    # PRD-FIX-COMPOUNDING-6 FR02: unified compounding-pipeline health probe tool
-    from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
-
-    register_pipeline_health_tools(mcp)
-
-    # PRD-CORE-144: empirical probe harness — bounded sandboxed experiments
-    # for disputed plan assumptions (consumes the shared SAFE-001
-    # ProbeIsolationContext). Registers trw_probe + trw_probe_budget_status.
     from trw_mcp.tools.trw_probe import register_probe_tools
-
-    register_probe_tools(mcp)
-
-    # PRD-HPO-PROF-001 FR-4/FR-11: hierarchical profile explain tool
     from trw_mcp.tools.trw_profile_explain import register_trw_profile_explain_tools
 
-    register_trw_profile_explain_tools(mcp)
+    return (
+        register_build_tools,
+        register_ceremony_tools,
+        # PRD-CORE-069-FR06/FR08 (FIX-051): human-in-the-loop ceremony
+        # de-escalation — operator status / approve / revert kill-switch tools.
+        register_ceremony_feedback_tools,
+        register_checkpoint_tools,
+        register_learning_tools,
+        register_meta_tune_tools,
+        register_knowledge_tools,
+        register_orchestration_tools,
+        register_requirements_tools,
+        register_replay_tools,
+        register_review_tools,
+        # PRD-HPO-MEAS-001 FR-7 + FR-8: cross-session event query + surface diff
+        register_query_tools,
+        # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
+        register_mcp_security_status,
+        # PRD-DIST-1983 (c746): trw-distill before-edit hint consumer (tier-gated)
+        register_before_edit_hint_tools,
+        # PRD-DIST-1989 (c747): batch sibling of trw_before_edit_hint
+        register_before_edit_hint_batch_tools,
+        # PRD-DIST-1990 (c747): trw-distill ranked risk report consumer
+        register_codebase_risk_report_tools,
+        # PRD-DIST-1994 (c748): trw-distill ordering-compare consumer (4th wire)
+        register_ordering_compare_tools,
+        # PRD-DIST-1995 (c748): trw-distill cross-repo-ordering consumer (5th wire)
+        register_cross_repo_ordering_tools,
+        # PRD-CORE-171: local SHA-256 code-index manifest update tool
+        register_code_index_tools,
+        # PRD-CORE-172: local indexed lexical/symbol code search
+        register_code_search_tools,
+        # PRD-CORE-167: public entity-risk sidecar consumer
+        register_entity_risk_map_tools,
+        # PRD-CORE-168: privacy-safe canonical agent work evidence export
+        register_agent_work_evidence_tools,
+        # PRD-CORE-170: read-only skill manifest discovery helper
+        register_skill_discovery_tools,
+        # PRD-CORE-182 + PRD-INFRA-132 FR04: backend submission portal client
+        # (PII redaction added in-place per PRD-INFRA-132 FR04a)
+        register_submit_feedback_tools,
+        # PRD-DIST-2400 FR17: channel manifest render MCP tool
+        register_channel_render_tools,
+        # PRD-DIST-2400 §meta-tune: channel correlation + throttle stats MCP tool
+        register_channel_stats_tools,
+        # PRD-FIX-COMPOUNDING-6 FR02: unified compounding-pipeline health probe
+        register_pipeline_health_tools,
+        # PRD-CORE-144: empirical probe harness (trw_probe + budget status).
+        register_probe_tools,
+        # PRD-HPO-PROF-001 FR-4/FR-11: hierarchical profile explain tool
+        register_trw_profile_explain_tools,
+        # PRD-INTENT-002 FR06: phase-exposure override (trw_request_tool_access)
+        register_phase_override_tools,
+        # Cross-client dispatch Phase 3: dispatch launcher MCP tools.
+        register_dispatch_tools,
+        # PRD-CORE-208 FR04/FR05: read-only delivery status + guarded recovery.
+        register_delivery_tools,
+    )
 
-    # PRD-INTENT-002 FR06: phase-exposure override tool (trw_request_tool_access)
-    from trw_mcp.tools.phase_overrides import register_phase_override_tools
 
-    register_phase_override_tools(mcp)
+def raw_registered_tool_names() -> frozenset[str]:
+    """Return every tool name the registrars produce (the full registered surface).
+
+    This is the authoritative *raw public surface* (PRD-CORE-218 FR01). The
+    production exposure authority (``SurfaceAuthorityMiddleware``, driven by
+    ``tool_resolution_mode``) is a per-session MASK applied at dispatch — it never
+    deregisters a tool, so this raw surface is stable regardless of the resolved
+    mode. Registers on a throwaway server so it never mutates the live ``mcp`` app.
+    """
+    from fastmcp import FastMCP
+
+    probe = FastMCP("trw-surface-parity-probe")
+    for registrar in _tool_registrars():
+        registrar(probe)
+    return frozenset(t.name for t in _run_async(probe.list_tools()))
+
+
+def _assert_manifest_parity() -> None:
+    """PRD-CORE-218 FR01: log any drift between the manifest and registration.
+
+    The authoritative bidirectional parity assertion lives in the FR01
+    acceptance test. At boot we only emit a visible WARNING on drift and never
+    raise — a manifest bookkeeping lapse must not brick server startup.
+    """
+    try:
+        from trw_mcp.server._surface_manifest_registry import MANIFEST_BY_NAME
+
+        registered = raw_registered_tool_names()
+        manifest = set(MANIFEST_BY_NAME)
+        missing = registered - manifest
+        orphan = manifest - registered
+        if missing or orphan:
+            logger.warning(
+                "surface_manifest_parity_drift",
+                unmanifested_tools=sorted(missing),
+                orphan_manifest_entries=sorted(orphan),
+            )
+    except Exception:  # justified: parity check is advisory; never block boot
+        logger.debug("surface_manifest_parity_check_failed", exc_info=True)
+
+
+def _register_tools() -> None:
+    """Register all tools, resources, and prompts on the MCP server."""
+    from trw_mcp.prompts.aaref import register_aaref_prompts
+    from trw_mcp.resources.config import register_config_resources
+    from trw_mcp.resources.run_state import register_run_state_resources
+    from trw_mcp.resources.templates import register_template_resources
+
+    for registrar in _tool_registrars():
+        registrar(mcp)
 
     register_config_resources(mcp)
     register_run_state_resources(mcp)
@@ -232,8 +199,23 @@ def _register_tools() -> None:
 
     register_aaref_prompts(mcp)
 
-    # PRD-CORE-125-FR02: Apply tool exposure filter after all tools are registered.
-    _apply_tool_exposure_filter()
+    # PRD-CORE-218 FR01: verify the registered surface matches the authoritative
+    # manifest (advisory at boot; hard assertion in the acceptance test).
+    _assert_manifest_parity()
+
+    # PRD-CORE-218 FR03/FR04: the production tool-exposure authority is now the
+    # kernel/pack resolver enforced by SurfaceAuthorityMiddleware (masking at the
+    # middleware layer so pack tools stay registered + grantable). The former
+    # PRD-CORE-125 boot-time preset filter (_apply_tool_exposure_filter) is
+    # removed — no dormant second authority.
+
+    # PRD-INFRA-164-FR07: freeze the live-process fingerprint AFTER registration
+    # so it binds the realized public surface. Fail-safe:
+    # a construction failure leaves the fingerprint UNSET (currentness=unknown),
+    # never blocking boot.
+    from trw_mcp.server._live_fingerprint import freeze_live_process_fingerprint
+
+    freeze_live_process_fingerprint(mcp)
 
     # PRD-INFRA-SEC-001 FR-9 (sprint-96 carry-forward a): wire
     # consult_mcp_security into per-tool dispatch. FastMCP's tool-manager
@@ -296,6 +278,51 @@ def _apply_security_consult_wrapping() -> None:
         logger.debug("security_consult_rewrap_applied", count=rewrapped)
     except Exception:  # justified: fail-open, rewrap is a best-effort enhancement
         logger.debug("security_consult_rewrap_failed", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-218 FR06 seam: the generated-instructions renderer consumes the
+# FR01 manifest through these two exports (see bootstrap/_client_integrations
+# ``resolved_profile_from_manifest_seam``). capability_class here is the
+# STATIC admission view: kernel is always available, high-risk packs are
+# operator-gated, every other pack is discoverable via skill discovery /
+# request_tool_access. Task-scoped availability is layered on top by FR03.
+# ---------------------------------------------------------------------------
+
+
+def _static_capability_class(name: str, pack: str) -> str:
+    from trw_mcp.models.config._defaults import HIGH_RISK_PACKS
+    from trw_mcp.server._surface_manifest_registry import _KERNEL_TOOLS
+
+    if name in _KERNEL_TOOLS:
+        return "available"
+    if pack in HIGH_RISK_PACKS:
+        return "gated"
+    return "discoverable"
+
+
+def _build_surface_manifest_export() -> tuple[dict[str, str], ...]:
+    from trw_mcp.server._surface_manifest_registry import TOOL_MANIFEST
+
+    return tuple(
+        {
+            "tool_id": entry.name,
+            "pack": entry.pack,
+            "capability_class": _static_capability_class(entry.name, entry.pack),
+            "lifecycle": str(entry.lifecycle.value if hasattr(entry.lifecycle, "value") else entry.lifecycle),
+        }
+        for entry in TOOL_MANIFEST
+    )
+
+
+def _kernel_tools_export() -> tuple[str, ...]:
+    from trw_mcp.server._surface_manifest_registry import _KERNEL_TOOLS
+
+    return _KERNEL_TOOLS
+
+
+KERNEL_TOOLS: tuple[str, ...] = _kernel_tools_export()
+SURFACE_MANIFEST: tuple[dict[str, str], ...] = _build_surface_manifest_export()
 
 
 # Eager registration so tools are available via `fastmcp run` and test imports.

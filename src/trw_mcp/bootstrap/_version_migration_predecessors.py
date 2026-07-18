@@ -93,17 +93,34 @@ def _migrate_prefix_predecessors(
     # Lazy-import PREDECESSOR_MAP from parent to avoid circular dep at import time.
     from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
 
-    skills_dir = target_dir / ".claude" / "skills"
     agents_dir = target_dir / ".claude" / "agents"
 
+    skill_map = PREDECESSOR_MAP["skills"]
     _migrate_predecessor_set(
-        skills_dir,
-        PREDECESSOR_MAP["skills"],
+        target_dir / ".claude" / "skills",
+        skill_map,
         result,
         is_dir_artifact=True,
         log_event="predecessor_skill_removal_failed",
         dry_run=dry_run,
     )
+
+    retired_skills: dict[str, str | None] = {name: None for name, successor in skill_map.items() if successor is None}
+    client_skill_roots = (
+        target_dir / ".agents" / "skills",
+        target_dir / ".cursor" / "skills",
+        target_dir / ".github" / "skills",
+        target_dir / ".opencode" / "skills",
+    )
+    for skills_dir in client_skill_roots:
+        _migrate_predecessor_set(
+            skills_dir,
+            retired_skills,
+            result,
+            is_dir_artifact=True,
+            log_event="predecessor_skill_removal_failed",
+            dry_run=dry_run,
+        )
     _migrate_predecessor_set(
         agents_dir,
         PREDECESSOR_MAP["agents"],

@@ -1,22 +1,18 @@
-"""Tests: AG-03 before-edit hook is implemented (not a NotImplementedError stub).
+"""Tests: the Antigravity before-edit hook is implemented (not a NotImplementedError stub).
 
-AG-03 was previously a stub. It is now a real implementation and the installer
-registers it in .antigravitycli/hooks.json (schema verified via agy binary
-analysis). NOTE: the channel manifest status is ASPIRATIONAL, not active — a
-live agy turn (2026-05-29) confirmed the hook does NOT fire because agy
-v1.0.2-1.0.3 routes file edits through Step_CodeAction, bypassing the jsonhook
-PreToolUse path. These tests assert only that the implementation is real (not a
-stub), which holds regardless of agy's invocation gap.
+The hook was previously a stub. It is now a real implementation and the installer
+registers it in ``.antigravitycli/hooks.json``. NOTE: the channel manifest status
+is ASPIRATIONAL, not active — the current Antigravity CLI routes file edits through
+a code-action path that bypasses the PreToolUse hook, so the hook does not fire yet.
+These tests assert only that the implementation is real (not a stub), which holds
+regardless of that invocation gap.
 
-Empirical findings (2026-05-28):
-- agy v1.0.2 = real Antigravity CLI (Google "jetski" codename, Go binary)
-- .antigravitycli/settings.json confirmed as repo-scoped MCP config path (Gate G-01)
-- Hooks: SEPARATE file .antigravitycli/hooks.json (NOT settings.json) — OQ-01 resolved
-- Event key: "PreToolUse" (confirmed via binary strings)
-- Hook format: {"PreToolUse": [{"matcher": "<regex>", "command": "<shell>"}]}
-- hooks_enabled now True in _profiles.py (P0-04 corrected back to True)
-
-PRD-DIST-2404 AG-03, OQ-01 resolved.
+Hook surface contract:
+- Repo-scoped config dir ``.antigravitycli/``; ``settings.json`` is the MCP config path.
+- Hooks live in a SEPARATE file ``.antigravitycli/hooks.json`` (not settings.json).
+- Event key: ``PreToolUse``.
+- Hook entry format: ``{"PreToolUse": [{"matcher": "<regex>", "command": "<shell>"}]}``.
+- ``hooks_enabled`` is True in the profile.
 """
 
 from __future__ import annotations

@@ -24,12 +24,32 @@ The resolver is consumed by:
 
 A future refactor may also have ``clients/llm.py::_resolve_model``
 delegate here; that is out of scope for PRD-INFRA-104 (see OQ-1).
+
+Claude Code tier-resolution policy (PRD-QUAL-116 FR04; standing operator
+rule 2026-07-07, recorded in ``CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md``
+§3 constraint 1):
+
+- ``frontier`` resolves to ``opus`` for claude-code subagents. This is
+  deliberate: the strongest *subagent* tier is Opus, not the mythos-class
+  Fable tier.
+- ``fable`` is INTENTIONALLY ABSENT from :data:`_CLAUDE_CODE_MAP`. The
+  operator rule "no Fable-5 subagents" means TRW-generated subagents run
+  opus/sonnet/haiku only — Fable is a main-loop/orchestrator model, never a
+  subagent target (the sole exception, initial PRD drafts, happens at the
+  main-loop level, not through this resolver). The missing ``fable`` key is
+  therefore policy, not a gap: do NOT "fix" it by adding a ``fable`` mapping.
+- Mythos-class main-loop models INHERIT. TRW never rewrites the parent
+  (main-loop) model, so a Fable/Mythos main loop is unaffected by tier
+  resolution — this resolver only ever rewrites subagent ``model:`` lines,
+  and ``rewrite_model_line`` leaves any line it does not match untouched.
+
+See ``docs/CLIENT-PROFILES.md`` §Other Profile Notes for the matching
+portable-facing note.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 import structlog
 
@@ -96,28 +116,6 @@ _CLIENT_MAPS: dict[str, dict[str, str]] = {
 #: harness would reject it outright ("issue with the selected model
 #: (balanced)") and silently disable the agent.
 _UNKNOWN_CLIENT_FALLBACK: str = "inherit"
-
-
-@dataclass(frozen=True)
-class LaunchThrottlePolicy:
-    """Client-agnostic helper launch throttling guidance."""
-
-    stagger_seconds: float
-    max_concurrent_launches: int
-    backoff_multiplier: float
-    max_backoff_seconds: float
-    rationale: str
-
-
-def resolve_launch_throttle_policy(helper_count: int) -> LaunchThrottlePolicy:
-    """Return portable launch throttling guidance for dense helper workloads."""
-    if helper_count <= 0:
-        raise ValueError("helper_count must be positive")
-    if helper_count <= 3:
-        return LaunchThrottlePolicy(0.0, helper_count, 1.5, 10.0, "small batch")
-    if helper_count <= 8:
-        return LaunchThrottlePolicy(1.0, 3, 2.0, 30.0, "moderate dense launch")
-    return LaunchThrottlePolicy(2.0, 4, 2.0, 60.0, "large dense launch")
 
 
 # --- Public API ---------------------------------------------------------------

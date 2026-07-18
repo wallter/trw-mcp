@@ -2,7 +2,7 @@
 
 PRD-CORE-131: Centralizes all ceremony guidance generation into a single
 ``ProtocolRenderer`` class, replacing hardcoded strings scattered across
-``_static_sections.py``, ``_opencode_sections.py``, and ``_gemini.py``.
+``_static_sections.py`` and ``_opencode_sections.py``.
 
 The renderer is parameterized by ``ClientProfile``, an optional legacy
 ``model_family`` hint, and ``ceremony_mode`` (FULL/MINIMAL/COMPACT). v25 keeps
@@ -26,10 +26,6 @@ _logger = structlog.get_logger(__name__)
 
 # Type alias for the ceremony mode literal
 CeremonyMode = Literal["FULL", "MINIMAL", "COMPACT"]
-
-# Gemini marker constants (shared with _gemini.py)
-_GEMINI_TRW_START_MARKER = "<!-- trw:gemini:start -->"
-_GEMINI_TRW_END_MARKER = "<!-- trw:gemini:end -->"
 
 # Canonical session-boundary text — import from here, not _static_sections.
 SESSION_BOUNDARY_TEXT = (
@@ -177,7 +173,8 @@ class ProtocolRenderer:
             "```\n"
             "trw_session_start -> trw_init(task_name, prd_scope)\n"
             "  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)\n"
-            "  -> trw_build_check(scope='full')           [VALIDATE]\n"
+            "  -> trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, "
+            "static_checks_clean=<bool|null>, scope='<exact command>') [VALIDATE]\n"
             "  -> review diff, fix gaps, trw_learn         [REVIEW]\n"
             "  -> trw_deliver()\n"
             "```\n"
@@ -253,16 +250,23 @@ class ProtocolRenderer:
         is imported function-locally to avoid a ``sections`` <-> ``_renderer``
         module-import cycle.
         """
+        from trw_mcp.bootstrap._client_integration_appendix import (
+            render_client_integration_appendix,
+        )
         from trw_mcp.state.claude_md.sections._tool_lifecycle import (
             render_deliver_gate_statement,
         )
 
+        # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: the light-ceremony AGENTS.md is
+        # the only protocol carrier, so it must still ship the transport-loss
+        # retry protocol and the live three-class capability listing.
+        appendix = render_client_integration_appendix(self.client_profile.client_id or "agents")
         return (
             "TRW tools persist your work across sessions:\n"
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
             "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
             "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
-            "\n" + render_deliver_gate_statement() + "\n" + SESSION_BOUNDARY_TEXT
+            "\n" + render_deliver_gate_statement() + "\n" + SESSION_BOUNDARY_TEXT + "\n\n" + appendix
         )
 
     # ------------------------------------------------------------------
@@ -278,19 +282,6 @@ class ProtocolRenderer:
         Suitable for sub-instruction files and smaller context windows.
         """
         return self.render_ceremony_quick_ref() + SESSION_BOUNDARY_TEXT
-
-    # ------------------------------------------------------------------
-    # Gemini instructions
-    # ------------------------------------------------------------------
-
-    def render_gemini_instructions(self) -> str:
-        """Generate GEMINI.md TRW ceremony section.
-
-        PRD-CORE-149-FR10: body extracted to renderers/_review_and_opencode.py.
-        """
-        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_gemini_instructions
-
-        return render_gemini_instructions()
 
     # ------------------------------------------------------------------
     # Antigravity CLI instructions

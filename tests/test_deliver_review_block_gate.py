@@ -32,6 +32,7 @@ import pytest
 from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.ceremony import register_ceremony_tools
 
 
@@ -66,17 +67,18 @@ def _write_run(
     (trw_dir / "reflections").mkdir(parents=True)
     (trw_dir / "context").mkdir(parents=True)
 
-    run_dir = tmp_path / "docs" / "task" / "runs" / "20260604T000000Z-test"
+    run_id = "20260604T000000Z-test"
+    run_dir = tmp_path / ".trw" / "runs" / "task" / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
-        f"run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: {complexity_class}\n",
+        f"run_id: {run_id}\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: {complexity_class}\n",
         encoding="utf-8",
     )
 
     if review_verdict is not None:
         (meta / "review.yaml").write_text(
-            f"verdict: {review_verdict}\ncritical_count: {review_critical}\n",
+            f"substantive: true\nverdict: {review_verdict}\ncritical_count: {review_critical}\n",
             encoding="utf-8",
         )
     if integration_verdict is not None:
@@ -110,6 +112,10 @@ def _write_run(
 def _deliver(tmp_path: Path, run_dir: Path, **kwargs: Any) -> dict[str, Any]:
     deliver_fn = _make_deliver_fn()
     trw_dir = tmp_path / ".trw"
+    # These fixtures intentionally exercise the pre-receipt review.yaml contract;
+    # opt into the explicit observe rollback instead of relying on the v26.1
+    # enforce default.
+    legacy_config = TRWConfig().model_copy(update={"evidence_receipt_mode": "observe"})
     with (
         patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
         patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
@@ -126,6 +132,7 @@ def _deliver(tmp_path: Path, run_dir: Path, **kwargs: Any) -> dict[str, Any]:
             return_value={"status": "success", "index": {}, "roadmap": {}},
         ),
         patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+        patch("trw_mcp.tools._delivery_helpers.get_config", return_value=legacy_config),
     ):
         return deliver_fn(run_path=str(run_dir), skip_reflect=True, **kwargs)
 
@@ -332,11 +339,12 @@ class TestReviewBlockGate:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "reflections").mkdir(parents=True)
         (trw_dir / "context").mkdir(parents=True)
-        run_dir = tmp_path / "docs" / "task" / "runs" / "20260604T000000Z-scope"
+        run_id = "20260604T000000Z-scope"
+        run_dir = tmp_path / ".trw" / "runs" / "task" / run_id
         meta = run_dir / "meta"
         meta.mkdir(parents=True)
         (meta / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: STANDARD\n",
+            f"run_id: {run_id}\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: STANDARD\n",
             encoding="utf-8",
         )
         lines = [json.dumps({"ts": "2026-06-04T00:00:00Z", "event": "session_start"})]

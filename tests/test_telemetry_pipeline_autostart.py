@@ -223,3 +223,37 @@ class TestAtexitDrain:
             assert len(drain_regs) == 1, f"atexit drain must register once, got {len(drain_regs)}"
         finally:
             pipeline.stop(drain=False, timeout=5.0)
+
+    def test_explicit_stop_unregisters_and_later_enqueue_reregisters(
+        self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stopped instance cannot run a duplicate drain after host teardown."""
+        registrations: list[Any] = []
+        unregistrations: list[Any] = []
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.atexit.register",
+            lambda fn, *a, **k: registrations.append(fn) or fn,
+        )
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.atexit.unregister",
+            lambda fn: unregistrations.append(fn),
+        )
+
+        pipeline, _ = _build_pipeline(pipeline_cls, tmp_path, monkeypatch)
+        pipeline.enqueue(_make_event(seq=1))
+        first_handler = registrations[-1]
+
+        pipeline.stop(drain=False, timeout=5.0)
+
+        assert unregistrations == [first_handler]
+        assert pipeline._atexit_registered is False
+
+        # The object remains reusable: enqueue auto-starts it and installs a
+        # new fallback rather than silently losing shutdown protection.
+        pipeline.enqueue(_make_event(seq=2))
+        try:
+            assert len(registrations) == 2
+            assert registrations[-1] == pipeline._atexit_drain
+            assert pipeline._atexit_registered is True
+        finally:
+            pipeline.stop(drain=False, timeout=5.0)

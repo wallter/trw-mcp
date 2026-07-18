@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from tests._ceremony_nudge_support import _trw_dir
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
     NudgeContext,
     ToolName,
     _context_reactive_message,
     compute_nudge,
-    write_ceremony_state,
 )
 
 
@@ -40,17 +36,6 @@ class TestFR02NudgeContext:
         )
         assert ctx.tool_name == "build_check"
         assert ctx.is_subagent is True
-
-    def test_fr02_append_ceremony_nudge_accepts_context(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge accepts optional context parameter for compatibility."""
-        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
-
-        trw = _trw_dir(tmp_path)
-        write_ceremony_state(trw, CeremonyState(session_started=True, checkpoint_count=1))
-        ctx = NudgeContext(tool_name="checkpoint")
-        response: dict[str, object] = {"status": "ok"}
-        result = append_ceremony_nudge(response.copy(), trw_dir=trw, context=ctx)
-        assert "ceremony_status" in result
 
 
 class TestFR03ContextReactiveMessages:

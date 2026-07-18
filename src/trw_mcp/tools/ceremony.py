@@ -19,7 +19,6 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
 
 import structlog
 from fastmcp import Context, FastMCP
@@ -31,12 +30,18 @@ from trw_mcp.models.typed_dicts import (
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
 )
+from trw_mcp.state._call_context import build_call_context
 from trw_mcp.state._paths import (
     TRWCallContext,
     find_active_run,
-    resolve_pin_key,
-    resolve_trw_dir,
 )
+
+# Re-exported as the canonical monkeypatch seam: the session-start ``_ss_*``
+# adapters call ``ceremony.resolve_trw_dir()`` and the deliver tool reads
+# ``vars(ceremony)["resolve_trw_dir"]``, and ~79 tests patch it here. Kept as an
+# explicit re-export so it survives even though this module's own body no longer
+# calls it directly after the step-table refactor.
+from trw_mcp.state._paths import resolve_trw_dir as resolve_trw_dir
 
 # Re-exported so the claude_md sync path (resolved via
 # ``getattr(trw_mcp.tools.ceremony, "execute_claude_md_sync", ...)`` in
@@ -49,6 +54,15 @@ from trw_mcp.state.persistence import (
     FileStateWriter,
 )
 from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
+
+# mcp-x-failopen: the typed fail-open degradation collector. Re-exported at this
+# facade so tests/operators can construct or patch it via ``ceremony.<name>``.
+from trw_mcp.tools._ceremony_degradations import (
+    DegradationCollector as DegradationCollector,
+)
+from trw_mcp.tools._ceremony_degradations import (
+    record_into as record_into,
+)
 from trw_mcp.tools._ceremony_deliver_tool import run_trw_deliver as _run_trw_deliver
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._ceremony_profile_step import (
@@ -63,7 +77,6 @@ from trw_mcp.tools.telemetry import log_tool_call
 logger = structlog.get_logger(__name__)
 
 _events = FileEventLogger(FileStateWriter())
-_STEP_CHECKPOINT_PATCH_SEAM = _step_checkpoint
 
 # F24 (legibility): advisory delivery-gate warning keys. These are SOFT gates —
 # surfaced on the deliver result but never blocking — so historically a
@@ -108,37 +121,14 @@ def __getattr__(name: str) -> object:
     return _compat_getattr(name)
 
 
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    """Construct a :class:`TRWCallContext` from a FastMCP ``Context`` (PRD-CORE-141 FR01+FR03).
-
-    Resolves the pin-key via :func:`resolve_pin_key` (four-layer precedence),
-    captures whatever raw FastMCP session probe hits for diagnostics, and
-    returns a frozen value object suitable for threading through pin-state
-    helpers.  Safe to call with ``ctx=None`` — the resolver falls back to
-    env / process identity.
-    """
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    try:
-        raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    except Exception:
-        raw_session = None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,  # Wave 4 may populate from user-agent header
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
-
-
 def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
-    """Call ctx-aware ``find_active_run`` when supported, else fall back."""
-    try:
-        return find_active_run(context=call_ctx)
-    except TypeError:
-        try:
-            return find_active_run(session_id=call_ctx.session_id)
-        except TypeError:
-            return find_active_run()  # compat: legacy zero-argument test doubles
+    """Resolve the active run while retaining the established patch seam."""
+    return find_active_run(context=call_ctx)
+
+
+def _build_call_context(ctx: Context | None) -> TRWCallContext:
+    """Preserve the ceremony patch seam while using the shared builder."""
+    return build_call_context(ctx)
 
 
 # Runtime helpers extracted to _ceremony_runtime_helpers (PRD-DIST-243 batch 53).
@@ -179,6 +169,9 @@ from trw_mcp.tools._ceremony_session_start_steps import (
     finalize_session_start as finalize_session_start,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
+    log_session_start_complete as log_session_start_complete,
+)
+from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health as step_assertion_health,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
@@ -201,6 +194,66 @@ from trw_mcp.tools._ceremony_session_start_steps import (
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_surface_stamp as step_surface_stamp,
+)
+
+# Declarative session-start step table (driver + per-step adapters). The
+# ``_ss_*`` adapters are re-exported here so ``run_steps`` can resolve each step
+# via ``getattr(ceremony, attr)`` at CALL TIME — preserving every monkeypatch
+# seam. See _ceremony_step_table for the folded 16 timing blocks + 9 fail-open
+# swallows that used to live inline in trw_session_start.
+from trw_mcp.tools._ceremony_step_table import (
+    SESSION_START_STEPS as SESSION_START_STEPS,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    SessionStartContext as SessionStartContext,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_assertion_health as _ss_assertion_health,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_counter as _ss_counter,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_embed_health as _ss_embed_health,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_first_session_marker as _ss_first_session_marker,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_graph_health as _ss_graph_health,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_log_event as _ss_log_event,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_phase_recall as _ss_phase_recall,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_pipeline_health as _ss_pipeline_health,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_profile_resolve as _ss_profile_resolve,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_recall as _ss_recall,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_run_resolve as _ss_run_resolve,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_sanitize_maintain as _ss_sanitize_maintain,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_surface_stamp as _ss_surface_stamp,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_sync_health as _ss_sync_health,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_telemetry as _ss_telemetry,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    run_steps as run_steps,
 )
 from trw_mcp.tools._session_start_trim import (
     find_intentional_marker as find_intentional_marker,
@@ -260,15 +313,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         See Also: trw_init, trw_recall
         """
-        from trw_mcp.tools._ceremony_helpers import (
-            step_embed_health,
-            step_increment_session_counter,
-            step_log_session_event,
-            step_sanitize_and_maintain,
-            step_sync_health,
-            step_telemetry_startup,
-        )
-
         config = get_config()
         results: SessionStartResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
         errors: list[str] = []
@@ -285,19 +329,12 @@ def register_ceremony_tools(server: FastMCP) -> None:
         _hot_path_token = HOT_PATH.set(True)
 
         try:
-            # PRD-FIX-084: Per-step latency telemetry. The five regressions of the
-            # "step in step_sanitize_and_maintain accidentally O(corpus)" class
-            # required py-spy on a live server to diagnose -- which step swallowed
-            # the time was invisible from logs. step_durations_ms makes the slow
-            # step name appear directly on session_start_ok event payloads.
+            # PRD-FIX-084: Per-step latency telemetry. step_durations_ms makes
+            # the slow step name appear directly on session_start_ok payloads;
+            # run_steps records each timed step. Total/finalize are recorded
+            # below (bookkeeping outside the table).
             _step_started_at = time.monotonic()
             step_durations_ms: dict[str, float] = {}
-
-            def _record_step(step_key: str, started_at: float) -> None:
-                """Record elapsed milliseconds for a named step."""
-
-                elapsed_ms = (time.monotonic() - started_at) * 1000.0
-                step_durations_ms[step_key] = round(elapsed_ms, 2)
 
             # PRD-HPO-MEAS-001 NFR-12 / FR-13: fail at boot, before any session
             # telemetry or startup artifacts are written.
@@ -305,150 +342,32 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
             run_boot_audit()
 
-            # Step 1: Recall learnings via SQLite adapter (compact mode)
-            _recall_started = time.monotonic()
-            step_recall_learnings(query, config, results, errors)
-            _record_step("recall", _recall_started)
-
-            # Step 2: resolve + pin active run (PRD-CORE-141 FR03/FR05/FR06)
-            _run_resolve_started = time.monotonic()
-            run_dir, call_ctx = step_run_resolve(ctx, results, errors)
-            _record_step("run_resolve", _run_resolve_started)
-
-            _surface_stamp_started = time.monotonic()
-            results["surface_snapshot_id"] = step_surface_stamp(run_dir, str(call_ctx.session_id))
-            _record_step("surface_stamp", _surface_stamp_started)
-
-            # PRD-HPO-PROF-001 FR-4: resolve the hierarchical profile (defaults →
-            # org → domain → task-type → session → client) and stamp the resolved
-            # surface + persistent snapshot id onto the result. Fail-open inside
-            # step_resolve_profile: a missing/invalid layer or disabled feature
-            # flag omits the block without blocking session start. Looked up via
-            # the ``_ceremony`` facade so test monkeypatches propagate.
-            _profile_started = time.monotonic()
+            # Steps 1-7: recall, run-resolve, surface-stamp, profile-resolve,
+            # log-event, telemetry, first-session-marker, counter, maintenance,
+            # phase-recall, embed/sync/assertion/graph/pipeline health. Each is a
+            # ``_ss_*`` adapter resolved through this facade at call time (so all
+            # ``ceremony.<name>`` monkeypatches propagate); critical steps
+            # re-raise, the rest are fail-open. See _ceremony_step_table.
             from trw_mcp.tools import ceremony as _ceremony
 
-            _ceremony.step_resolve_profile(config, run_dir, results)
-            _record_step("profile_resolve", _profile_started)
+            sctx = SessionStartContext(
+                query=query,
+                config=config,
+                ctx=ctx,
+                is_focused=is_focused,
+                results=results,
+                errors=errors,
+                step_durations_ms=step_durations_ms,
+            )
+            run_steps(SESSION_START_STEPS, sctx, _ceremony)
 
-            # Step 3: Log session_start event (FR01, PRD-CORE-031)
-            _log_event_started = time.monotonic()
-            try:
-                step_log_session_event(run_dir, cast("dict[str, object]", results), query, is_focused)
-            except Exception:  # justified: fail-open, event logging must not block session start
-                logger.debug("session_event_write_failed", exc_info=True)
-            _record_step("log_event", _log_event_started)
-
-            # Step 3b: Queue SessionStartEvent for telemetry publishing
-            _telemetry_started = time.monotonic()
-            try:
-                step_telemetry_startup(cast("dict[str, object]", results), run_dir)
-            except Exception:  # justified: fail-open, telemetry publish must not block session start
-                logger.debug("session_telemetry_failed", exc_info=True)
-            _record_step("telemetry", _telemetry_started)
-
-            # Step 3b': PRD-INFRA-142 FR02 — emit a one-time first_session funnel
-            # event on the first session of a fresh installation. Idempotent via a
-            # local flag file (no backend round-trip on subsequent calls). Fail-open
-            # and looked up via the _ceremony facade so test monkeypatches propagate.
-            try:
-                from trw_mcp.tools import ceremony as _ceremony
-
-                results["first_session_emitted"] = _ceremony.step_first_session_marker()
-            except Exception:  # justified: fail-open, first-session marker must not block session start
-                logger.debug("first_session_marker_failed", exc_info=True)
-
-            # Step 3c: Increment sessions_tracked counter (FIX-050-FR06)
-            _counter_started = time.monotonic()
-            try:
-                step_increment_session_counter()
-            except Exception:  # justified: fail-open, counter increment must not block session start
-                logger.debug("session_counter_increment_failed", exc_info=True)
-            _record_step("counter", _counter_started)
-
-            # Steps 3d, 4-5, 7: Auto-maintenance (upgrade, stale runs, embeddings, sanitization)
-            _sanitize_started = time.monotonic()
-            try:
-                maintenance = step_sanitize_and_maintain(run_dir)
-                for key in (
-                    "update_advisory",
-                    "auto_upgrade",
-                    "auto_upgrade_check_deferred",
-                    "stale_runs_closed",
-                    "stale_runs_deferred",
-                    "embeddings_advisory",
-                    "embeddings_backfill",
-                    "embeddings_backfill_deferred",
-                    "wal_checkpoint_deferred",
-                ):
-                    if key in maintenance:
-                        results[key] = maintenance[key]
-            except Exception:  # justified: fail-open, auto-maintenance must not block session start
-                logger.debug("session_maintenance_failed", exc_info=True)
-            _record_step("sanitize_maintain", _sanitize_started)
-
-            # Step 6: Phase-contextual auto-recall (PRD-CORE-049)
-            _phase_recall_started = time.monotonic()
-            step_auto_recall_orchestrated(query, config, run_dir, results)
-            _record_step("phase_recall", _phase_recall_started)
-
-            # PRD-FIX-084 follow-on: cover the post-phase-recall tail so total
-            # never has a large unmeasured gap. assertion_health iterates every
-            # learning with an assertion and can dominate the call on big corpora.
-            _embed_health_started = time.monotonic()
-            # FR01 (PRD-FIX-053): Embed health advisory for agents.
-            results["embed_health"] = step_embed_health()
-            _record_step("embed_health", _embed_health_started)
-
-            # PRD-FIX-COMPOUNDING-1 FR02: surface backend sync-push health so a
-            # silently-stalled push (config disabled / backend unreachable) is
-            # visible on the first session rather than after weeks. Fail-open.
-            _sync_health_started = time.monotonic()
-            try:
-                results["sync_health"] = step_sync_health(resolve_trw_dir(), config)
-            except Exception:  # justified: fail-open, sync health must not block session start
-                logger.debug("sync_health_failed", exc_info=True)
-            _record_step("sync_health", _sync_health_started)
-
-            _assertion_health_started = time.monotonic()
-            try:
-                ah = step_assertion_health(resolve_trw_dir())
-                if ah is not None:
-                    results["assertion_health"] = ah
-            except Exception:  # justified: fail-open, assertion health must not block session start
-                logger.debug("assertion_health_failed", exc_info=True)
-            _record_step("assertion_health", _assertion_health_started)
-
-            # PRD-FIX-COMPOUNDING-2 FR04: graph-empty advisory. Surfaces the wiring
-            # gap (0 edges / many memories) so operators notice before more
-            # un-graphed learnings accumulate. Fail-open inside step_graph_health.
-            try:
-                gh = step_graph_health(resolve_trw_dir())
-                if gh is not None:
-                    results["graph_health"] = gh
-            except Exception:  # justified: fail-open, graph health must not block session start
-                logger.debug("graph_health_failed", exc_info=True)
-
-            # PRD-FIX-COMPOUNDING-6 FR03 + PRD-FIX-107 FR06: compounding-pipeline
-            # health surface. Injects pipeline_health_advisory (compact single-line
-            # string) when any of the five pipeline signals is degraded, and — when
-            # the fail-closed FR06 gate trips (push staleness / dead graph /
-            # localhost-only target) — escalates to a prominent pipeline_health_warning.
-            # Absent on healthy sessions (PRD-INFRA-068 lesson). Fail-open: never
-            # blocks session_start (the hard gate lives in check_pipeline_health for CI).
-            _pipeline_health_started = time.monotonic()
-            try:
-                step_pipeline_health_advisory(resolve_trw_dir(), cast("dict[str, object]", results), config)
-            except Exception:  # justified: fail-open, pipeline health must not block session start
-                logger.debug("pipeline_health_advisory_failed", exc_info=True)
-            _record_step("pipeline_health", _pipeline_health_started)
-
+            # PRD-FIX-084: measure finalization rather than recording a
+            # near-zero placeholder before it starts.
             _finalize_started = time.monotonic()
-            # PRD-FIX-084: total elapsed time for the entire session_start call.
-            # Captured BEFORE finalize so logs see the post-step total.
-            _record_step("finalize", _finalize_started)
-            _record_step("total", _step_started_at)
-            finalize_session_start(results, config, step_durations_ms, errors)
+            session_id = sctx.call_ctx.session_id if sctx.call_ctx is not None else None
+            finalize_session_start(results, config, step_durations_ms, errors, session_id=session_id)
+            step_durations_ms["finalize"] = round((time.monotonic() - _finalize_started) * 1000.0, 2)
+            step_durations_ms["total"] = round((time.monotonic() - _step_started_at) * 1000.0, 2)
 
             # PRD-IMPROVE-MCP-04 FR1: trim the payload to compact-by-default. Caps
             # the learnings list to top-K, folds the diagnostic sub-blocks into a
@@ -456,7 +375,14 @@ def register_ceremony_tools(server: FastMCP) -> None:
             # token-cost reduction is measurable. verbose=True is a pass-through.
             # Fail-open inside trim_session_start_payload: never drops run/error
             # fields, so resume correctness is preserved.
+            logged_learnings_count = int(str(results.get("learnings_count", 0)))
             results = trim_session_start_payload(results, verbose=verbose)
+            step_durations_ms["total"] = round((time.monotonic() - _step_started_at) * 1000.0, 2)
+            log_session_start_complete(
+                results,
+                step_durations_ms,
+                learnings_count=logged_learnings_count,
+            )
             return results
         finally:
             # PRD-FIX-085 FR02 / trw-mcp-2: reset HOT_PATH ContextVar in a
@@ -474,41 +400,42 @@ def register_ceremony_tools(server: FastMCP) -> None:
         skip_index_sync: bool = False,
         allow_unverified: bool = False,
         unverified_reason: str = "",
+        delivery_id: str = "",
+        capability_token: str = "",
     ) -> DeliverResultDict:
         """Persist learnings and progress so future sessions inherit this session's work.
 
-        Use when:
-        - Your session is about to end and you want discoveries to persist for future agents.
-        - A milestone is reached and you want to close out the current run directory.
+        Use when ending a session or closing a validated milestone.
 
-        Before calling, check: did you record at least one discovery with
-        trw_learn? If not, add even a one-line root-cause learning so the next
-        agent avoids re-discovery.
+        Before calling, check whether this session produced a non-obvious,
+        reusable discovery. Record it with trw_learn when one exists; do not
+        manufacture a learning for trivial or already-known work.
 
-        Runs reflect + checkpoint synchronously, then launches housekeeping
-        (consolidation, publish, telemetry, tier sweep) in the background.
-        Background work is concurrency-safe — overlapping batches are skipped
-        rather than queued.
+        Runs reflection and checkpoint synchronously, then launches
+        concurrency-safe housekeeping in the background.
 
         Input:
-        - run_path: path to run directory (auto-detected if None).
-        - skip_reflect: skip reflection step (e.g., already reflected).
-        - skip_index_sync: skip INDEX/ROADMAP sync step.
-        - allow_unverified: explicit override for delivery without a passing
-          trw_build_check record. Use only for documented acceptable failures.
-        - unverified_reason: required rationale when allow_unverified is true.
+        - run_path: run directory; auto-detected when omitted.
+        - skip_reflect: skip an already-completed reflection.
+        - skip_index_sync: skip INDEX/ROADMAP synchronization.
+        - allow_unverified: request a structured acceptable-failure override of
+          a hard delivery gate. Advisory task classes do not need an override.
+        - unverified_reason: when allow_unverified is true, a JSON or YAML record
+          with all four required fields: failed_command, residual_risk, owner,
+          and expiry_iso (YYYY-MM-DD). Free text and review-verdict labels are
+          rejected; accepted records are written to the override ledger.
+
+        - delivery_id / capability_token: optional caller UUIDv7 plus a
+          >=128-bit recovery secret (PRD-CORE-208) that makes a timed-out response
+          recoverable via ``trw_delivery_status`` / ``trw_delivery_recover``. Omit
+          both for the legacy, non-recoverable path.
 
         Output: DeliverResultDict with fields
         {run_path: str, reflect: dict, checkpoint: dict, deferred: str,
          critical_steps_completed: int, deferred_steps: int, errors: list,
-         success: bool, learning_reflection?: str}.
+         success: bool, learning_reflection?: str, delivery_operation?: dict}.
 
-        Example:
-            trw_deliver()
-            → {"run_path": "/path/...", "critical_steps_completed": 2,
-               "deferred": "launched", "success": true}
-
-        See Also: trw_checkpoint, trw_instructions_sync
+        See Also: trw_checkpoint, trw_instructions_sync, trw_delivery_status
         """
         return _run_trw_deliver(
             ctx,
@@ -517,6 +444,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
             skip_index_sync,
             allow_unverified,
             unverified_reason,
+            delivery_id,
+            capability_token,
         )
 
     # ── PRD-CORE-141 FR07 — trw_heartbeat ─────────────────────────────

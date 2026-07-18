@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.models.config._defaults import TOOL_PRESETS
+from trw_mcp.models.surface_packs import KERNEL_TOOLS
 from trw_mcp.state.claude_md._tool_manifest import (
+    _ELIGIBLE_TOOLS,
     TOOL_DESCRIPTIONS,
     ToolEntry,
     render_tool_list,
@@ -37,15 +38,33 @@ def _strip_deliver_gate_block(output: str) -> str:
     return output.replace(gate_block, "")
 
 
+def _strip_client_integration_appendix(output: str, client_id: str) -> str:
+    """Remove the FR06 client-integration appendix (transport-loss + three-class
+    capability listing) from a rendered section.
+
+    The capability block (PRD-CORE-218 FR06, marker ``trw:capabilities``)
+    legitimately NAMES discoverable/gated tools (e.g. ``trw_build_check``) as the
+    capabilities an agent can request — that is a separate carrier from the
+    task-independent tool LIST a section renders via ``render_tool_list``. These
+    filter tests assert the LIST omits unexposed tools, so they strip the
+    appendix first (it is emitted verbatim by ``render_client_integration_appendix``).
+    """
+    from trw_mcp.bootstrap._client_integration_appendix import (
+        render_client_integration_appendix,
+    )
+
+    return output.replace(render_client_integration_appendix(client_id), "")
+
+
 class TestToolDescriptions:
     """TOOL_DESCRIPTIONS covers all tools and is well-formed."""
 
-    def test_covers_all_preset_tools(self) -> None:
-        """Every tool in TOOL_PRESETS['all'] has a description."""
-        all_tools = set(TOOL_PRESETS["all"])
+    def test_covers_all_eligible_tools(self) -> None:
+        """Every eligible (public) manifest tool has a description, and vice versa."""
+        eligible = set(_ELIGIBLE_TOOLS)
         described = set(TOOL_DESCRIPTIONS)
-        assert all_tools == described, (
-            f"Missing descriptions: {all_tools - described}, Extra descriptions: {described - all_tools}"
+        assert eligible == described, (
+            f"Missing descriptions: {eligible - described}, Extra descriptions: {described - eligible}"
         )
 
     def test_descriptions_are_nonempty_strings(self) -> None:
@@ -64,28 +83,20 @@ class TestToolDescriptions:
 
 
 class TestResolveExposedTools:
-    """resolve_exposed_tools returns the correct set for each mode."""
+    """resolve_exposed_tools projects the task-independent instruction baseline
+    of the CORE-218 authority (PRD-CORE-218 FR04)."""
 
     def test_all_mode(self) -> None:
-        result = resolve_exposed_tools("all")
-        assert result == set(TOOL_PRESETS["all"])
+        """'all' → the full eligible public surface."""
+        assert resolve_exposed_tools("all") == set(_ELIGIBLE_TOOLS)
 
-    def test_core_mode(self) -> None:
-        result = resolve_exposed_tools("core")
-        assert result == set(TOOL_PRESETS["core"])
+    def test_standard_mode_is_kernel_baseline(self) -> None:
+        """'standard' (default) → the task-independent kernel baseline."""
+        assert resolve_exposed_tools("standard") == set(KERNEL_TOOLS)
 
-    def test_minimal_mode(self) -> None:
-        result = resolve_exposed_tools("minimal")
-        assert result == set(TOOL_PRESETS["minimal"])
-
-    def test_custom_mode(self) -> None:
-        custom = ["trw_learn", "trw_deliver"]
-        result = resolve_exposed_tools("custom", custom_list=custom)
-        assert result == {"trw_learn", "trw_deliver"}
-
-    def test_unknown_mode_falls_back_to_all(self) -> None:
-        result = resolve_exposed_tools("nonexistent")
-        assert result == set(TOOL_PRESETS["all"])
+    def test_unknown_mode_falls_back_to_kernel(self) -> None:
+        """Any non-'all' value degrades to the kernel baseline, never full."""
+        assert resolve_exposed_tools("nonexistent") == set(KERNEL_TOOLS)
 
 
 class TestRenderToolList:
@@ -144,10 +155,11 @@ class TestConditionalSectionRendering:
             output = render_agents_trw_section(exposed_tools=exposed)
             assert "trw_session_start" in output
             assert "trw_learn" in output
-            # Strip the verbatim deliver-gate statement: it legitimately names
-            # rigid tools in the Constitution gate prose (QUAL-104 FR03). The
-            # tool-LIST filter must not contain them — the gate prose may.
-            tool_list = _strip_deliver_gate_block(output)
+            # Strip the verbatim deliver-gate statement (QUAL-104 FR03 gate prose)
+            # AND the FR06 capability appendix (which names discoverable/gated
+            # tools) — both legitimately name tools outside the LIST. The
+            # tool-LIST filter itself must omit unexposed tools.
+            tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "agents")
             assert "trw_build_check" not in tool_list
             assert "trw_recall" not in tool_list
 
@@ -167,10 +179,10 @@ class TestConditionalSectionRendering:
         output = render_codex_trw_section(exposed_tools=exposed)
         assert "trw_session_start" in output
         assert "trw_checkpoint" in output
-        # The deliver-gate statement legitimately names rigid tools in its
-        # Constitution gate prose (QUAL-104 FR03); strip it so the assertion
-        # checks the tool LIST, not the gate prose.
-        assert "trw_build_check" not in _strip_deliver_gate_block(output)
+        # Strip the deliver-gate prose (QUAL-104 FR03) AND the FR06 capability
+        # appendix; both legitimately name tools outside the filtered LIST.
+        tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "codex")
+        assert "trw_build_check" not in tool_list
 
 
 class TestToolEntry:
@@ -194,13 +206,9 @@ class TestResolveExposedToolsFrozenset:
         result = resolve_exposed_tools("all")
         assert isinstance(result, frozenset)
 
-    def test_custom_returns_frozenset(self) -> None:
-        result = resolve_exposed_tools("custom", custom_list=["trw_learn"])
-        assert isinstance(result, frozenset)
-
     def test_standard_mode(self) -> None:
         result = resolve_exposed_tools("standard")
-        assert result == frozenset(TOOL_PRESETS["standard"])
+        assert result == frozenset(KERNEL_TOOLS)
 
 
 class TestAgentsSectionToolFiltering:
@@ -230,9 +238,8 @@ class TestAgentsSectionToolFiltering:
         output = render_codex_trw_section(exposed_tools=exposed)
         assert "trw_session_start" in output
         assert "trw_deliver" in output
-        # The deliver-gate statement legitimately names rigid tools in its
-        # Constitution gate prose (QUAL-104 FR03); strip it so the assertion
-        # checks the tool LIST, not the gate prose.
-        tool_list = _strip_deliver_gate_block(output)
+        # Strip the deliver-gate prose (QUAL-104 FR03) AND the FR06 capability
+        # appendix; both legitimately name tools outside the filtered LIST.
+        tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "codex")
         assert "trw_build_check" not in tool_list
         assert "trw_recall" not in tool_list

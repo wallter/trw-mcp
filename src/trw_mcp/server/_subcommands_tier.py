@@ -90,12 +90,14 @@ def _run_tier_show(args: argparse.Namespace) -> None:
 
 def _tier_status_rows(entitlement: Entitlement) -> list[tuple[str, str, str, str]]:
     """Build rows for the auditable tier status table."""
+    # Defensive .get so an unrecognized tier never KeyErrors the audit table.
     limit_label = {
         "free": "baseline",
         "team": "team",
         "pro": "pro",
         "enterprise": "enterprise",
-    }[entitlement.tier]
+        "beta": "beta (tester)",
+    }.get(entitlement.tier, entitlement.tier)
     expires = entitlement.expires_at_iso or "none"
     return [("active", entitlement.tier, limit_label, expires), ("reason", entitlement.reason, "-", "-")]
 

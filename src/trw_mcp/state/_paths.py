@@ -19,6 +19,18 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._path_context_probe import (
+    _FASTMCP_CTX_PROBES as _FASTMCP_CTX_PROBES,
+)
+from trw_mcp.state._path_context_probe import (
+    _extract_fastmcp_session_id as _extract_fastmcp_session_id,
+)
+from trw_mcp.state._path_context_probe import (
+    _ProbeOutcome as _ProbeOutcome,
+)
+from trw_mcp.state._path_context_probe import (
+    _walk_ctx_attrs as _walk_ctx_attrs,
+)
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -130,95 +142,6 @@ class TRWCallContext:
     fastmcp_session: str | None
 
 
-# Ctx attribute paths probed by _extract_fastmcp_session_id, in precedence
-# order.  Each path is a tuple of attribute names walked via getattr.
-_FASTMCP_CTX_PROBES: tuple[tuple[str, ...], ...] = (
-    ("session_id",),
-    ("request_context", "meta", "session_id"),
-    ("request_id",),
-)
-
-
-class _ProbeOutcome:
-    """Internal sentinel for attribute-walk results.
-
-    ``VALUE`` — probe yielded a value (may be None if the attr existed but was None).
-    ``MISSING`` — an AttributeError/TypeError was raised along the walk (broken probe).
-    """
-
-    __slots__ = ("broken", "value")
-
-    def __init__(self, value: object | None, broken: bool) -> None:
-        self.value = value
-        self.broken = broken
-
-
-def _walk_ctx_attrs(ctx: object, path: tuple[str, ...]) -> _ProbeOutcome:
-    """Walk *path* on *ctx* via getattr.
-
-    Returns a :class:`_ProbeOutcome` where ``broken=True`` signals that an
-    :class:`AttributeError` / :class:`TypeError` was swallowed during the
-    walk (i.e. the ctx object's shape does not match this probe path).
-    """
-    current: object = ctx
-    try:
-        for name in path:
-            current = getattr(current, name)
-    except (AttributeError, RuntimeError, TypeError):
-        return _ProbeOutcome(value=None, broken=True)
-    return _ProbeOutcome(value=current, broken=False)
-
-
-def _extract_fastmcp_session_id(ctx: object) -> str | None:
-    """Probe FastMCP Context *ctx* for a session identifier string.
-
-    Probes (in order): ``ctx.session_id``, ``ctx.request_context.meta.session_id``,
-    ``ctx.request_id``.  Each probe is logged at DEBUG with the attribute path
-    attempted.  The first non-None string value wins.
-
-    When EVERY probe is broken (every walk raised AttributeError/TypeError),
-    emit a single ``fastmcp_context_probe_error`` WARN with the broken paths
-    so analytics can detect FastMCP API drift on shared servers.
-
-    Returns the resolved session id string, or ``None`` when no probe
-    yielded a string.
-    """
-    broken_paths: list[str] = []
-    for path in _FASTMCP_CTX_PROBES:
-        path_str = ".".join(path)
-        outcome = _walk_ctx_attrs(ctx, path)
-        if outcome.broken:
-            broken_paths.append(path_str)
-            _runtime_logger().info(
-                "fastmcp_context_probe_skipped",
-                ctx_attr_path=path_str,
-            )
-            continue
-        value = outcome.value
-        if isinstance(value, str) and value:
-            _runtime_logger().info(
-                "fastmcp_context_probe_hit",
-                ctx_attr_path=path_str,
-                has_value=True,
-            )
-            return value
-        _runtime_logger().info(
-            "fastmcp_context_probe_miss",
-            ctx_attr_path=path_str,
-            has_value=False,
-        )
-
-    if broken_paths and len(broken_paths) == len(_FASTMCP_CTX_PROBES):
-        # Every probe raised — ctx object shape is incompatible.  Warn so
-        # analytics can spot FastMCP API drift on shared servers.
-        _runtime_logger().warning(
-            "fastmcp_context_probe_error",
-            broken_paths=broken_paths,
-            ctx_type=type(ctx).__name__,
-        )
-    return None
-
-
 def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     """Resolve the pin-key for the current call via four-layer fallback.
 
@@ -318,8 +241,8 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
 # mode 0o600 on the pins file (NFR03).  Cache invalidation
 # (``_pin_store_cache = None`` immediately after every ``os.replace``)
 # is non-negotiable — see _pin_store.save_pin_store for details.  Load
-# eviction passes emit ``pin_stale_run_path_evicted`` and
-# ``pin_orphan_evicted`` WARN logs; malformed JSON fails open with
+# stale-path eviction emits ``pin_stale_run_path_evicted`` WARN logs;
+# malformed JSON fails open with
 # ``pin_store_malformed_fallback``.
 #
 # The in-memory ``_pinned_runs`` dict below is RETAINED ONLY for
@@ -739,7 +662,11 @@ def resolve_installation_id() -> str:
     return "inst-" + hashlib.sha256(project_root.encode()).hexdigest()[:12]
 
 
-def detect_current_phase() -> str | None:
+def detect_current_phase(
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> str | None:
     """Detect the current phase from the active run.
 
     PRD-FIX-083 / PRD-FIX-084 follow-on: pin-only. Was using
@@ -755,7 +682,7 @@ def detect_current_phase() -> str | None:
         pinned run for this session.
     """
     try:
-        active_run = get_pinned_run()
+        active_run = get_pinned_run(context=context, session_id=session_id)
         if active_run is None:
             return None
 
@@ -772,7 +699,11 @@ def detect_current_phase() -> str | None:
         return None
 
 
-def touch_heartbeat() -> None:
+def touch_heartbeat(
+    *,
+    context: TRWCallContext | None = None,
+    session_id: str | None = None,
+) -> None:
     """Touch the heartbeat file in the active run directory.
 
     Called on every MCP tool invocation to signal session liveness.
@@ -793,7 +724,7 @@ def touch_heartbeat() -> None:
         # (~3-5s per call with ~200 runs). With no pin there is no
         # session-owned run to heartbeat anyway -- updating some other
         # session's run was the wrong semantics.
-        run_dir = get_pinned_run()
+        run_dir = get_pinned_run(context=context, session_id=session_id)
         if run_dir is None:
             return
 

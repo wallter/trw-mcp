@@ -10,6 +10,7 @@ import pytest
 
 from tests._recall_scoring_report_support import make_recall_tracking_log
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -19,10 +20,9 @@ class TestProcessOutcome:
     def _setup_trw_dir(self, tmp_path: Path, writer: FileStateWriter) -> Path:
         """Create minimal .trw structure with receipts directory."""
         del writer
-        import trw_mcp.scoring as scoring_mod
 
         trw_dir = tmp_path / ".trw"
-        receipts_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
+        receipts_dir = trw_dir / get_config().learnings_dir / get_config().receipts_dir
         receipts_dir.mkdir(parents=True, exist_ok=True)
         return trw_dir
 
@@ -39,11 +39,10 @@ class TestProcessOutcome:
 
     def test_unknown_learning_id_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Learning ID in receipt but not found in entries is skipped (line 866)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
-        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
+        entries_dir = trw_dir / get_config().learnings_dir / get_config().entries_dir
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         now_ts = datetime.now(timezone.utc).isoformat()
@@ -56,11 +55,10 @@ class TestProcessOutcome:
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
         """When outcome_history is not a list, it is reset to [] (line 890)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome
 
         trw_dir = self._setup_trw_dir(tmp_path, writer)
-        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
+        entries_dir = trw_dir / get_config().learnings_dir / get_config().entries_dir
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         writer.write_yaml(
@@ -97,16 +95,15 @@ class TestProcessOutcomeHistoryCap:
     ) -> None:
         """When outcome_history exceeds history_cap, it is trimmed (line 893)."""
         del monkeypatch
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import process_outcome
 
         trw_dir = tmp_path / ".trw"
-        receipts_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.receipts_dir
+        receipts_dir = trw_dir / get_config().learnings_dir / get_config().receipts_dir
         receipts_dir.mkdir(parents=True)
-        entries_dir = trw_dir / scoring_mod._config.learnings_dir / scoring_mod._config.entries_dir
+        entries_dir = trw_dir / get_config().learnings_dir / get_config().entries_dir
         entries_dir.mkdir(parents=True)
 
-        history_cap = scoring_mod._config.learning_outcome_history_cap
+        history_cap = get_config().learning_outcome_history_cap
         existing_history = [f"2026-01-0{i % 9 + 1}:+0.8:tests_passed" for i in range(history_cap)]
         writer.write_yaml(
             entries_dir / "2026-01-01-L-capped.yaml",

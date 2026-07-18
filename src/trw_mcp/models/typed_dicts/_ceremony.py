@@ -123,6 +123,14 @@ class ReviewMdResultDict(_ReviewMdResultRequired, total=False):
     error: str
 
 
+class InstructionPointerSkipDict(TypedDict):
+    """One single-source pointer file left un-clobbered by sync (PRD-CORE-203 FR07)."""
+
+    path: str
+    import_targets: list[str]
+    healed: bool
+
+
 class _ClaudeMdSyncResultRequired(TypedDict):
     """Return shape of ``_do_instruction_sync()`` / ``execute_claude_md_sync()``.
 
@@ -148,9 +156,26 @@ class _ClaudeMdSyncResultRequired(TypedDict):
 
 
 class ClaudeMdSyncResultDict(_ClaudeMdSyncResultRequired, total=False):
-    """Optional cache-hit metadata returned by ``execute_claude_md_sync()``."""
+    """Optional metadata returned by ``execute_claude_md_sync()``.
+
+    ``hash`` is present on the ``"unchanged"`` (cache-hit) path. The PRD-CORE-203
+    FR07 carrier-detectability fields (``carrier_mode``, ``pointer_skips``,
+    ``external_path``) are present on the render path when CLAUDE.md is written.
+    """
 
     hash: str
+    # PRD-CORE-203 FR07: how the TRW block was delivered into CLAUDE.md
+    # (``"inline"`` | ``"import"`` | ``"pointer_skip"``).
+    carrier_mode: str
+    # Single-source pointer files left un-clobbered (with their import targets).
+    pointer_skips: list[InstructionPointerSkipDict]
+    # Repo-root-relative sidecar path when the block was externalized.
+    external_path: str | None
+    # PRD-CORE-218-FR06: capability-projection parity drift detail strings.
+    # Present (possibly empty) whenever AGENTS.md is a write target. A non-empty
+    # list means the generated capability listing diverged from the resolved
+    # surface manifest and the capability block was dropped fail-loud.
+    capability_parity_drift: list[str]
 
 
 class CeremonyScoreResult(TypedDict):
@@ -319,7 +344,6 @@ class TrwAdoptRunResultDict(TypedDict):
 
     adopted_run_id: str
     previous_pin_key: str | None
-    from_pin_key: str | None
     to_pin_key: str
     adopted_ts: str
     from_owner_was_live: bool

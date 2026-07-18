@@ -51,16 +51,55 @@ class TestCeremonySessionStartFailurePaths:
         assert len(status_errors) == 1
         assert result["run"]["status"] == "error"
 
+    def test_session_start_pin_failure_does_not_reuse_resolved_run(self, tmp_path: Path) -> None:
+        """A failed pin refresh cannot leak its run into downstream steps."""
+        server = _make_server()
+        register_ceremony_tools(server)
+        tool = _extract_tool(server, "trw_session_start")
+        trw_dir = tmp_path / ".trw"
+        run_dir = trw_dir / "runs" / "task" / "run-1"
+        (run_dir / "meta").mkdir(parents=True)
+        stamped_runs: list[Path | None] = []
+
+        def capture_surface_run(resolved_run: Path | None, *_args: object) -> str:
+            stamped_runs.append(resolved_run)
+            return ""
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+            patch("trw_mcp.state._paths.pin_active_run", side_effect=OSError("pin write failed")),
+            patch("trw_mcp.tools._ceremony_step_table.step_surface_stamp", side_effect=capture_surface_run),
+        ):
+            result = tool()
+
+        assert result["run"] == {"active_run": None, "status": "error"}
+        assert any("pin write failed" in error for error in result["errors"])
+        assert stamped_runs == [None]
+
 
 class TestCeremonyDeliverSubStepFailures:
-    """Lines 256-258 (claude_md_sync), 275-277 (auto_progress), 284-286 (publish_learnings)."""
+    """Deliver sub-step failure capture (auto_progress 275-277, publish_learnings 284-286).
+
+    The formerly-unconditional ``claude_md_sync`` response field was trimmed in
+    commit 6552b8f926 — it always carried the identical constant
+    ``{"status": "skipped", "reason": "PRD-CORE-093"}`` and never ran instruction
+    sync, so it conveyed no per-delivery information.
+    """
 
     def _register_and_get_deliver(self):
         server = _make_server()
         register_ceremony_tools(server)
         return _extract_tool(server, "trw_deliver")
 
-    def test_deliver_claude_md_sync_failure_captured(self, tmp_path: Path) -> None:
+    def test_deliver_claude_md_sync_not_surfaced(self, tmp_path: Path) -> None:
+        """The trimmed ``claude_md_sync`` field is absent from the deliver response.
+
+        Instruction sync is not a synchronous deliver step (PRD-CORE-093), so a
+        raising ``_do_instruction_sync`` cannot affect the deliver result and the
+        constant response field stays gone (guards the 6552b8f926 trim).
+        """
         tool = self._register_and_get_deliver()
 
         with (
@@ -73,8 +112,8 @@ class TestCeremonyDeliverSubStepFailures:
         ):
             result = tool(skip_reflect=False, skip_index_sync=False)
 
-        assert result["claude_md_sync"]["status"] == "skipped"
-        assert result["claude_md_sync"]["reason"] == "PRD-CORE-093"
+        assert "claude_md_sync" not in result
+        assert "timestamp" in result
 
     def test_deliver_auto_progress_failure_captured(self, tmp_path: Path) -> None:
         from trw_mcp.tools._helpers import _run_step

@@ -10,6 +10,7 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.dispatch._types import SUPPORTED_CLIENTS, DispatchClient
 from trw_mcp.models.config._defaults import (
     DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
     DEFAULT_LEARNING_MAX_ENTRIES,
@@ -19,6 +20,7 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
+from trw_mcp.models.config._fields_dispatch import DEFAULT_DISPATCH_TIMEOUT_SECS
 
 
 class BuildConfig(BaseModel):
@@ -43,6 +45,26 @@ class BuildConfig(BaseModel):
     mutation_threshold_critical: float = 0.70
     mutation_threshold_experimental: float = 0.30
     mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
+
+
+class DispatchConfig(BaseModel):
+    """Cross-client dispatch (``trw-mcp dispatch``) operator-default view model.
+
+    Projected from the flat ``dispatch_*`` fields via ``TRWConfig.dispatch``.
+    Field names keep the ``dispatch_`` prefix because ``_sub_config`` copies by
+    EXACT field-name match between TRWConfig and the sub-model (see BuildConfig,
+    which likewise keeps its ``build_`` prefix) — an unprefixed name here would
+    silently project to the field default instead of the operator's value.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    dispatch_enabled_clients: list[DispatchClient] = Field(default_factory=lambda: list(SUPPORTED_CLIENTS))
+    dispatch_default_client: str | None = "codex"
+    dispatch_default_models: dict[str, str] = Field(default_factory=dict)
+    dispatch_default_timeout_s: int = DEFAULT_DISPATCH_TIMEOUT_SECS
+    dispatch_default_read_only: bool = True
+    dispatch_role_client: dict[str, str] = Field(default_factory=dict)
 
 
 class MemoryConfig(BaseModel):
@@ -133,12 +155,14 @@ class TrustConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    """Tool exposure and MCP server instruction configuration."""
+    """Tool resolution and MCP server instruction configuration."""
 
     model_config = ConfigDict(frozen=True)
 
-    tool_exposure_mode: str | None = None
-    tool_exposure_list: list[str] = Field(default_factory=list)
+    # PRD-CORE-218 FR04 exposure authority (standard default / explicit all).
+    # The legacy PRD-CORE-125 tool_exposure_mode/list projection was removed with
+    # the CORE-125 preset filter.
+    tool_resolution_mode: str = "standard"
     tool_descriptions_variant: str = "default"
     mcp_server_instructions_enabled: bool | None = None
     code_index_enabled: bool = False
@@ -248,7 +272,8 @@ class MCPSecurityAnomalyConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     mode: Literal["shadow", "enforce"] = Field(
-        default="shadow", description="shadow logs only; enforce blocks rate spikes"
+        default="shadow",
+        description="shadow logs only; enforce is reserved until validated rate baselines are loadable",
     )
     sigma_threshold: float = Field(default=5.0, description="Rate-spike sigma threshold")
     window_seconds: int = Field(default=60, description="Rolling anomaly-detection window in seconds")

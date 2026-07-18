@@ -302,6 +302,18 @@ def read_framework_version() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Maintenance health (PRD-CORE-181-FR07) — implementation in the sibling
+# module; re-exported here as the PRD-named facade surface.
+# ---------------------------------------------------------------------------
+
+from trw_mcp.state._maintenance_health import (  # noqa: E402
+    ComponentHealth as ComponentHealth,
+)
+from trw_mcp.state._maintenance_health import (  # noqa: E402
+    maintenance_health as maintenance_health,
+)
+
+# ---------------------------------------------------------------------------
 # Backward-compat module-level singleton shim (FIX-044 DRY)
 # ---------------------------------------------------------------------------
 

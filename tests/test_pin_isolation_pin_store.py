@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import stat
 import sys
@@ -11,6 +12,47 @@ from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
+
+
+def _pin_in_process(trw_dir: str, run_path: str, pin_key: str, barrier: Any) -> None:
+    from trw_mcp.state import _paths
+    from trw_mcp.state._pin_store import upsert_pin_entry
+
+    _paths.resolve_trw_dir = lambda: Path(trw_dir)  # type: ignore[assignment]
+    barrier.wait()
+    upsert_pin_entry(pin_key, Path(run_path))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="advisory flock is unavailable on Windows")
+def test_concurrent_process_upserts_preserve_distinct_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo_root = str(Path(__file__).resolve().parents[1])
+    monkeypatch.syspath_prepend(repo_root)
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, (repo_root, existing_pythonpath))))
+
+    trw_dir = tmp_path / ".trw"
+    run_a = tmp_path / "run-a"
+    run_b = tmp_path / "run-b"
+    run_a.mkdir()
+    run_b.mkdir()
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    processes = [
+        context.Process(target=_pin_in_process, args=(str(trw_dir), str(run_a), "a", barrier)),
+        context.Process(target=_pin_in_process, args=(str(trw_dir), str(run_b), "b", barrier)),
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=30)
+        assert process.exitcode == 0
+
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, load_pin_store
+
+    invalidate_pin_store_cache()
+    pins = load_pin_store()
+    assert set(pins) == {"a", "b"}
 
 
 def test_load_pin_store_empty_file_returns_empty_dict() -> None:
@@ -235,8 +277,8 @@ def test_load_pin_store_evicts_stale_run_paths(tmp_path: Path) -> None:
     assert any(e.get("pin_key") == "ghost" for e in evicted)
 
 
-def test_load_pin_store_evicts_orphan_pid(tmp_path: Path) -> None:
-    """Entries whose pid is dead are dropped with WARN."""
+def test_load_pin_store_retains_dead_creator_pid(tmp_path: Path) -> None:
+    """Creator PID is diagnostic; durable pins survive server restarts."""
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, load_pin_store, pin_store_path
 
     pins_path = pin_store_path()
@@ -257,19 +299,12 @@ def test_load_pin_store_evicts_orphan_pid(tmp_path: Path) -> None:
     )
     invalidate_pin_store_cache()
 
-    with capture_logs() as logs:
-        result = load_pin_store()
-
-    if sys.platform != "win32":
-        assert "orphan" not in result, "Orphan pid entry should have been evicted"
-        evicted = [e for e in logs if e.get("event") == "pin_orphan_evicted"]
-        assert evicted, f"Expected pin_orphan_evicted, got {logs}"
+    result = load_pin_store()
+    assert "orphan" in result
 
 
 def test_prune_pin_store_orphans_persists_eviction(tmp_path: Path) -> None:
-    """prune_pin_store_orphans removes orphan entries from disk."""
-    if sys.platform == "win32":
-        pytest.skip("orphan pid eviction is POSIX-only without psutil")
+    """prune_pin_store_orphans removes stale-path entries from disk."""
     from trw_mcp.state._pin_store import (
         invalidate_pin_store_cache,
         pin_store_path,
@@ -281,8 +316,8 @@ def test_prune_pin_store_orphans_persists_eviction(tmp_path: Path) -> None:
     pins_path.write_text(
         json.dumps(
             {
-                "orphan-key": {
-                    "run_path": str(tmp_path),
+                "stale-key": {
+                    "run_path": str(tmp_path / "missing-run"),
                     "created_ts": "t",
                     "last_heartbeat_ts": "t",
                     "client_hint": None,
@@ -305,7 +340,7 @@ def test_prune_pin_store_orphans_persists_eviction(tmp_path: Path) -> None:
 
     assert removed == 1
     on_disk = json.loads(pins_path.read_text(encoding="utf-8"))
-    assert "orphan-key" not in on_disk
+    assert "stale-key" not in on_disk
     assert "live-key" in on_disk
 
 

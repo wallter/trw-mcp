@@ -167,7 +167,7 @@ def _learning_to_memory_entry(
 
     Caller-supplied ``metadata`` (PRD-DIST-254 §FR02) is merged with
     internal keys (``shard_id``, etc.); caller keys win on collision.
-    Used by trw-distill PolicyFilter to plumb DIST-247 grader output
+    Used by a downstream policy filter to plumb grader output
     into stored records.
 
     PRD-CORE-185 FR05: the destination ``namespace`` is no longer hard-coded.

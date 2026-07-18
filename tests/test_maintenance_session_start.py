@@ -48,7 +48,6 @@ class TestSessionStartAutoClose:
                 patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
                 patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
                 patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-                patch("trw_mcp.tools.ceremony._writer"),
                 patch("trw_mcp.tools.ceremony._events"),
             ):
                 result = fn()
@@ -73,7 +72,6 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.tools.ceremony._writer"),
             patch("trw_mcp.tools.ceremony._events"),
             patch("trw_mcp.state.analytics.report.auto_close_stale_runs", mock_close),
         ):
@@ -96,7 +94,6 @@ class TestSessionStartAutoClose:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.tools.ceremony._writer"),
             patch("trw_mcp.tools.ceremony._events"),
         ):
             import trw_mcp.state.analytics.report as ar_mod
@@ -111,3 +108,23 @@ class TestSessionStartAutoClose:
 
         assert result is not None
         assert "stale_runs_closed" not in result
+
+    def test_session_start_surfaces_scheduled_embedding_backfill(self, tmp_path: Path) -> None:
+        """The public compact result preserves actionable maintenance remediation."""
+        cfg = TRWConfig()
+        scheduled = {"reason": "low_coverage", "thread_started": True}
+
+        with (
+            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
+            patch("trw_mcp.tools.ceremony._events"),
+            patch(
+                "trw_mcp.tools._ceremony_helpers.step_sanitize_and_maintain",
+                return_value={"embeddings_backfill_scheduled": scheduled},
+            ),
+        ):
+            result = self._get_session_start_fn()()
+
+        assert result["embeddings_backfill_scheduled"] == scheduled

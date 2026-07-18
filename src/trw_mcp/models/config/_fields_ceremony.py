@@ -39,8 +39,8 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v26_TRW"
-    aaref_version: str = "v3.1.0"
+    framework_version: str = "v26.1_TRW"
+    aaref_version: str = "v3.2.0"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -70,12 +70,9 @@ class _CeremonyFields:
     prd_min_content_density: float = 0.30
     prd_required_status_for_implement: str = "approved"
     prds_relative_path: str = "docs/requirements-aare-f/prds"
-    # Sibling repo roots for multi-repo workspaces (Potemkin defect B,
-    # sub_zAfRqZYYq2KtF72d): when a PRD lives in a research/PRD repo but its
-    # key-file references point into a sibling code repo, list those sibling
-    # roots here so trw_prd_validate resolves them instead of emitting false
-    # repo_path_exists errors. Empty by default — single-repo behaviour
-    # unchanged. Paths may be absolute or relative to the project root.
+    # Sibling repo roots for multi-repo workspaces: resolves PRD key-file refs
+    # into sibling code repos instead of false repo_path_exists errors. Empty
+    # by default (single-repo). Absolute or relative to the project root.
     additional_repo_roots: list[str] = Field(default_factory=list)
     index_auto_sync_on_status_change: bool = True
     strict_input_criteria: bool = False
@@ -118,16 +115,12 @@ class _CeremonyFields:
     compliance_dir: str = "compliance"
     compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
-    # PRD-LOCAL-049 FR03: package-changelog advisory. Default OFF — the session
-    # changelog (FR01) is always written, but the advisory that warns when
-    # package source changed without a CHANGELOG.md update is opt-in. v1 is
-    # advisory-only and NEVER fails delivery; a future strict mode would gate
-    # behind a separate flag.
+    # PRD-LOCAL-049 FR03: package-changelog advisory (opt-in). Default OFF —
+    # the session changelog (FR01) always writes; this only warns when source
+    # changed without a CHANGELOG.md update. Never fails delivery.
     changelog_advisory_enabled: bool = False
-    # PRD-CORE-201-NFR04: gate the up-front REVIEW-mandatory advisory that
-    # trw_init surfaces for STANDARD/COMPREHENSIVE runs. Default ON. This is an
-    # ADVISORY only — it never gates delivery (the CORE-192 deliver gate is
-    # untouched); operators can disable it without code changes if it proves noisy.
+    # PRD-CORE-201-NFR04: up-front REVIEW-mandatory advisory for STANDARD/
+    # COMPREHENSIVE runs. Default ON, advisory-only (never gates delivery).
     review_mandate_advisory_enabled: bool = True
     commit_fr_trailer_enabled: bool = True
     sprint_integration_branch_pattern: str = "sprint-{N}-integration"
@@ -163,10 +156,6 @@ class _CeremonyFields:
     migration_gate_enabled: bool = True
     dry_check_enabled: bool = True
     dry_check_min_block_size: int = 5
-    agent_learning_injection: bool = True
-    agent_learning_max: int = 5
-    agent_learning_min_impact: float = 0.5
-
     max_audit_cycles: int = Field(default=3, ge=1, le=10, description="Maximum audit cycles before escalation")
     audit_pattern_promotion_threshold: int = Field(
         default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
@@ -178,11 +167,9 @@ class _CeremonyFields:
     nudge_dedup_enabled: bool = True
     nudge_messenger: NudgeMessengerLiteral | None = None
 
-    # Live A/B arm label (nudge-deep-dive work target #6). Free-text tag stamped
-    # onto every nudge surface event so an experiment's arms can be compared on
-    # REAL traffic (not just eval campaigns). Routing of which messenger an arm
-    # uses is still done via ``nudge_messenger``; this field only labels the arm
-    # (e.g. "control", "structural-v2"). None => unlabelled (no A/B in effect).
+    # Live A/B arm label stamped onto nudge surface events for real-traffic
+    # comparison. Routing stays via ``nudge_messenger``; this only labels the
+    # arm (e.g. "control", "structural-v2"). None => unlabelled.
     nudge_variant: str | None = None
 
     nudge_density: Literal["low", "medium", "high"] | None = Field(
@@ -197,15 +184,10 @@ class _CeremonyFields:
     nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
     nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
     nudge_pool_cooldown_wall_clock_max_hours: int = Field(
-        default=24,
-        ge=1,
-        le=720,
-        description="Maximum wall-clock hours a nudge pool may remain in cooldown before forced re-engagement.",
+        default=24, ge=1, le=720, description="Max wall-clock hours a nudge pool stays cooled down before re-engaging."
     )
 
     hooks_enabled: bool | None = None
-
     framework_md_enabled: bool | None = None
-
     skills_enabled: bool | None = None
     agents_enabled: bool | None = None

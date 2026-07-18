@@ -78,6 +78,90 @@ def test_persisted_recent_timestamp_throttles_first_call(trw_dir: Path, monkeypa
     assert 1500 < next_eligible < 2000  # ~30 min ± wiggle
 
 
+def test_persisted_throttle_honored_when_uptime_is_less_than_throttle_age(
+    trw_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a freshly booted box must still honor the persisted throttle.
+
+    The anchor is ``time.monotonic() - wall_age`` and time.monotonic() counts
+    from system boot, so when uptime < wall_age the anchor is legitimately
+    NEGATIVE. A ``> 0.0`` liveness guard used to discard exactly those anchors,
+    disabling the throttle for the first hour after every boot and re-imposing
+    the per-process scan tax PRD-FIX-082 removed. Pinned with a fake monotonic
+    so the test does not depend on the host's real uptime (on a long-uptime
+    box the bug is invisible).
+    """
+    from trw_mcp.state.analytics import _stale_runs
+    from trw_mcp.state.analytics._stale_runs import (
+        _reset_auto_close_throttle,
+        auto_close_stale_runs,
+    )
+
+    # Simulate a box that booted 10 seconds ago...
+    monkeypatch.setattr(_stale_runs.time, "monotonic", lambda: 10.0)
+    # ...with a throttle written 30 minutes ago (age >> uptime → negative anchor).
+    _seed_persisted_throttle(trw_dir, age_minutes=30)
+    _reset_auto_close_throttle()
+
+    result = auto_close_stale_runs(ttl_hours=48)
+
+    assert result.get("throttled") is True, (
+        "persisted throttle was discarded on a freshly booted host — the negative-monotonic-anchor regression is back"
+    )
+    next_eligible = float(str(result.get("next_eligible_in_seconds", "0") or "0"))
+    assert 1500 < next_eligible < 2000  # ~30 min left in the 1-hour window
+
+
+def test_no_prior_call_sentinel_is_negative_infinity_not_zero(trw_dir: Path) -> None:
+    """The no-prior-call sentinel must be -inf, and 0.0 must NOT be substituted.
+
+    Pins the sentinel VALUE directly, because the behavioural tests cannot see a
+    partial revert. If someone restores ``_NO_PRIOR_CALL = 0.0`` while leaving the
+    guard removal in place, then ``elapsed = time.monotonic() - 0.0`` is just the
+    host's uptime — which is >1h on any long-running box, so every behavioural test
+    still passes there and the revert ships. It only breaks on a freshly booted
+    host, where the first sweep would be wrongly throttled. Assert the value.
+    """
+    from trw_mcp.state.analytics._stale_runs import _NO_PRIOR_CALL, _load_persisted_throttle
+
+    assert _NO_PRIOR_CALL == float("-inf"), (
+        "no-prior-call sentinel must be -inf; 0.0 collides with a legitimate "
+        "monotonic anchor and silently re-breaks the throttle"
+    )
+    # A missing state file means "no prior call" -> the sentinel, never 0.0.
+    assert _load_persisted_throttle(trw_dir) == _NO_PRIOR_CALL
+
+
+def test_fresh_boot_with_no_persisted_file_sweeps_and_does_not_throttle(
+    trw_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a just-booted host with no prior call, the FIRST call must sweep.
+
+    With a 0.0 sentinel this regresses: elapsed = monotonic(10.0) - 0.0 = 10s < 3600,
+    so the very first sweep of a fresh boot would be throttled and stale runs would
+    never be closed. -inf makes elapsed +inf, so the sweep correctly runs. Uptime is
+    faked so this holds on any host.
+    """
+    from trw_mcp.state.analytics import _stale_runs
+    from trw_mcp.state.analytics._stale_runs import (
+        _reset_auto_close_throttle,
+        auto_close_stale_runs,
+    )
+
+    monkeypatch.setattr(_stale_runs.time, "monotonic", lambda: 10.0)
+    state_path = trw_dir / "runtime" / "auto_close_last_ts.json"
+    state_path.unlink(missing_ok=True)
+    _reset_auto_close_throttle()
+
+    result = auto_close_stale_runs(ttl_hours=48)
+
+    assert not result.get("throttled"), (
+        "a fresh boot with no prior call must SWEEP, not throttle — the "
+        "no-prior-call sentinel has regressed to a finite value"
+    )
+    assert state_path.exists(), "the sweep should have persisted a new throttle timestamp"
+
+
 def test_persisted_stale_timestamp_does_not_throttle(
     trw_dir: Path,
 ) -> None:

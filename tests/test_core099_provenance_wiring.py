@@ -7,10 +7,29 @@ not just tested in isolation (anti-pattern: "facade without wiring").
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+def _detection_env() -> dict[str, str]:
+    """Env for the source-detection tests, preserving user-tier isolation.
+
+    These tests use ``patch.dict("os.environ", ..., clear=True)`` because they
+    assert on auto-detection from a KNOWN-EMPTY environment. But ``clear=True``
+    wipes the ENTIRE environment — including the ``TRW_USER_DIR`` that conftest
+    sets to isolate the user-tier store. Without it, ``resolve_user_memory_dir``
+    falls through to ``Path.home() / ".trw" / "memory"`` and these tests bind (and
+    run ``ensure_migrated`` against) the OPERATOR'S REAL user-tier database.
+    Only the CLAUDE_* vars are under test, so carry the isolation var through.
+    """
+    env = {"CLAUDE_CODE_VERSION": "1.2.3", "CLAUDE_MODEL": "claude-opus-4-6"}
+    user_dir = os.environ.get("TRW_USER_DIR")
+    if user_dir:
+        env["TRW_USER_DIR"] = user_dir
+    return env
 
 
 @pytest.fixture()
@@ -53,11 +72,7 @@ class TestAutoDetectionWiring:
         )
         monkeypatch.setattr("trw_mcp.tools.learning.update_analytics", lambda *a: None)
 
-        with patch.dict(
-            "os.environ",
-            {"CLAUDE_CODE_VERSION": "1.2.3", "CLAUDE_MODEL": "claude-opus-4-6"},
-            clear=True,
-        ):
+        with patch.dict("os.environ", _detection_env(), clear=True):
             from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
 
             client = detect_client_profile()
@@ -102,11 +117,7 @@ class TestAutoDetectionWiring:
             stored_entries.append({"learning_id": learning_id, **kwargs})
             return {"learning_id": learning_id, "status": "recorded"}
 
-        with patch.dict(
-            "os.environ",
-            {"CLAUDE_CODE_VERSION": "1.2.3", "CLAUDE_MODEL": "claude-opus-4-6"},
-            clear=True,
-        ):
+        with patch.dict("os.environ", _detection_env(), clear=True):
             result = execute_learn(
                 summary="override test",
                 detail="explicit values",
@@ -145,11 +156,7 @@ class TestAutoDetectionWiring:
             stored_entries.append({"learning_id": learning_id, **kwargs})
             return {"learning_id": learning_id, "status": "recorded"}
 
-        with patch.dict(
-            "os.environ",
-            {"CLAUDE_CODE_VERSION": "1.2.3", "CLAUDE_MODEL": "claude-opus-4-6"},
-            clear=True,
-        ):
+        with patch.dict("os.environ", _detection_env(), clear=True):
             result = execute_learn(
                 summary="empty string test",
                 detail="empty overrides",

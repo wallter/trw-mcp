@@ -64,43 +64,21 @@ def test_effective_hooks_enabled_opencode_profile() -> None:
 
 
 @pytest.mark.unit
-def test_effective_tool_exposure_mode_default() -> None:
-    """Default config (None sentinel) with claude-code profile -> 'all' from profile."""
-    cfg = TRWConfig()
-    assert cfg.tool_exposure_mode is None  # None = "not explicitly set"
-    assert cfg.effective_tool_exposure_mode == "all"  # claude-code profile default
+def test_tool_resolution_mode_default_is_standard() -> None:
+    """PRD-CORE-218 FR04: tool exposure is a single global authority
+    (tool_resolution_mode), NOT a per-profile preset. Default is 'standard'
+    across every profile — the CORE-125 tool_exposure_mode/list were removed."""
+    assert TRWConfig().tool_resolution_mode == "standard"
+    assert TRWConfig(target_platforms=["opencode"]).tool_resolution_mode == "standard"
+    # The legacy fields are gone; a legacy key is ignored (extra="ignore").
+    assert "tool_exposure_mode" not in TRWConfig.model_fields
+    assert not hasattr(TRWConfig(), "effective_tool_exposure_mode")
 
 
 @pytest.mark.unit
-def test_effective_tool_exposure_mode_explicit_core() -> None:
-    """Explicit tool_exposure_mode='core' overrides profile."""
-    cfg = TRWConfig(tool_exposure_mode="core")
-    assert cfg.effective_tool_exposure_mode == "core"
-
-
-@pytest.mark.unit
-def test_effective_tool_exposure_mode_opencode_profile() -> None:
-    """None sentinel + opencode profile -> 'standard' (profile governs when not set)."""
-    cfg = TRWConfig(target_platforms=["opencode"])
-    assert cfg.tool_exposure_mode is None  # None = "not explicitly set"
-    assert cfg.client_profile.tool_exposure_mode == "standard"
-    assert cfg.effective_tool_exposure_mode == "standard"
-
-
-@pytest.mark.unit
-def test_effective_tool_exposure_mode_explicit_all_overrides_profile() -> None:
-    """Explicit tool_exposure_mode='all' wins over opencode profile's 'standard'."""
-    cfg = TRWConfig(tool_exposure_mode="all", target_platforms=["opencode"])
-    assert cfg.tool_exposure_mode == "all"
-    assert cfg.client_profile.tool_exposure_mode == "standard"
-    assert cfg.effective_tool_exposure_mode == "all"  # explicit 'all' wins
-
-
-@pytest.mark.unit
-def test_effective_tool_exposure_mode_explicit_overrides_opencode() -> None:
-    """Explicit tool_exposure_mode='minimal' with opencode -> 'minimal'."""
-    cfg = TRWConfig(tool_exposure_mode="minimal", target_platforms=["opencode"])
-    assert cfg.effective_tool_exposure_mode == "minimal"
+def test_tool_resolution_mode_explicit_all() -> None:
+    """An explicit 'all' selects the full eligible surface (operator escape)."""
+    assert TRWConfig(tool_resolution_mode="all").tool_resolution_mode == "all"
 
 
 @pytest.mark.unit
@@ -222,12 +200,11 @@ def test_effective_framework_ref_enabled_explicit_true() -> None:
 
 @pytest.mark.unit
 def test_tools_sub_config_default() -> None:
-    """config.tools returns ToolsConfig with sentinel None when not explicitly set."""
+    """config.tools projects the CORE-218 resolution authority + variant defaults."""
     cfg = TRWConfig()
     tools = cfg.tools
     assert isinstance(tools, ToolsConfig)
-    assert tools.tool_exposure_mode is None  # None = not explicitly set; profile governs
-    assert tools.tool_exposure_list == []
+    assert tools.tool_resolution_mode == "standard"
     assert tools.tool_descriptions_variant == "default"
     assert tools.mcp_server_instructions_enabled is None
 
@@ -235,9 +212,9 @@ def test_tools_sub_config_default() -> None:
 @pytest.mark.unit
 def test_tools_sub_config_reflects_explicit_values() -> None:
     """config.tools reflects explicitly set values from TRWConfig."""
-    cfg = TRWConfig(tool_exposure_mode="core", tool_descriptions_variant="verbose")
+    cfg = TRWConfig(tool_resolution_mode="all", tool_descriptions_variant="verbose")
     tools = cfg.tools
-    assert tools.tool_exposure_mode == "core"
+    assert tools.tool_resolution_mode == "all"
     assert tools.tool_descriptions_variant == "verbose"
 
 

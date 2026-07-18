@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-import trw_mcp.tools.orchestration as orch_mod
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools.orchestration import _compute_wave_progress
 
@@ -282,14 +281,19 @@ class TestComputeWaveProgress:
             encoding="utf-8",
         )
 
-        original_read = orch_mod._reader.read_yaml
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools import _orchestration_phase as phase_mod
+
+        reader = FileStateReader()
+        original_read = reader.read_yaml
 
         def exploding_read(path: Path) -> dict[str, object]:
             if "manifest" in str(path):
                 raise TRWStateError("simulated shard manifest read failure")
             return dict(original_read(path))
 
-        monkeypatch.setattr(orch_mod._reader, "read_yaml", exploding_read)
+        monkeypatch.setattr(reader, "read_yaml", exploding_read)
+        monkeypatch.setattr(phase_mod, "FileStateReader", lambda: reader)
 
         wave_data: dict[str, object] = {
             "waves": [

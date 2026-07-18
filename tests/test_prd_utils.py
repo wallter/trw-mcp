@@ -85,9 +85,13 @@ def test_prd_diff_report_highlights_requirement_metric_and_acceptance_changes(tm
 
     report = prd_diff_report(before_path=str(before), after_path=str(after))
 
-    assert "requirement:FR01" in report["changed"]
+    assert any(
+        change["key"] == "requirement:FR01" and change["change_type"] == "changed" for change in report["changes"]
+    )
     assert any(str(change["key"]).startswith("metric:") for change in report["changes"])
-    assert "requirement:AC-01" in report["added"]
+    assert any(
+        change["key"] == "requirement:AC-01" and change["change_type"] == "added" for change in report["changes"]
+    )
 
 
 def test_prd_diff_report_keeps_functional_and_acceptance_rows_distinct(tmp_path: Path) -> None:
@@ -118,8 +122,12 @@ def test_prd_diff_report_keeps_functional_and_acceptance_rows_distinct(tmp_path:
 
     report = prd_diff_report(before_path=str(before), after_path=str(after))
 
-    assert "requirement:FR01" in report["changed"]
-    assert "acceptance:FR01" in report["changed"]
+    assert any(
+        change["key"] == "requirement:FR01" and change["change_type"] == "changed" for change in report["changes"]
+    )
+    assert any(
+        change["key"] == "acceptance:FR01" and change["change_type"] == "changed" for change in report["changes"]
+    )
     changes_by_key = {change["key"]: change for change in report["changes"]}
     assert "THE SYSTEM SHALL do A" in changes_by_key["requirement:FR01"]["before"]
     assert "Then old outcome" in changes_by_key["acceptance:FR01"]["before"]

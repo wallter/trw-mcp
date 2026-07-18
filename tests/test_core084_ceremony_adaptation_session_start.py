@@ -56,17 +56,17 @@ class TestSessionStartLightMode:
         result = self._invoke_session_start(monkeypatch, tmp_path, "light")
         reminder = str(result.get("framework_reminder", ""))
         assert "trw_deliver()" in reminder
-        assert "FRAMEWORK.md" not in reminder
+        assert "FRAMEWORK-CORE.md" not in reminder
 
     def test_full_mode_framework_reminder_mentions_framework(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Full mode framework_reminder references FRAMEWORK.md."""
+        """Full mode framework_reminder references FRAMEWORK-CORE.md."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
         reminder = str(result.get("framework_reminder", ""))
-        assert "FRAMEWORK.md" in reminder
+        assert "FRAMEWORK-CORE.md" in reminder
 
     def test_light_mode_skips_ceremony_nudge(
         self,
@@ -85,4 +85,4 @@ class TestSessionStartLightMode:
         """In full mode, ceremony_status nudge IS injected."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
         reminder = str(result.get("framework_reminder", ""))
-        assert "FRAMEWORK.md" in reminder
+        assert "FRAMEWORK-CORE.md" in reminder

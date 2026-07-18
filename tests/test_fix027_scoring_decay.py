@@ -55,7 +55,8 @@ class TestPromotableLearnungsTimeDecay:
         one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
         self._write_learning(entries_dir, writer, "old-entry", 0.8, one_year_ago)
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
         assert "L-old-entry" not in ids, (
             "Old learning with decayed score should NOT be promoted — "
@@ -75,7 +76,8 @@ class TestPromotableLearnungsTimeDecay:
         now = datetime.now(timezone.utc)
         self._write_learning(entries_dir, writer, "new-entry", 0.8, now)
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
         assert "L-new-entry" in ids, "New learning with impact=0.8 should be promoted"
 
@@ -101,7 +103,8 @@ class TestPromotableLearnungsTimeDecay:
         }
         writer.write_yaml(entries_dir / "no-date.yaml", data)
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
         assert "L-no-date" in ids
 
@@ -121,7 +124,8 @@ class TestPromotableLearnungsTimeDecay:
         self._write_learning(entries_dir, writer, "aaa-old", 0.8, one_year_ago)
         self._write_learning(entries_dir, writer, "bbb-new", 0.8, now)
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
 
         assert "L-bbb-new" in ids, "New entry should be promoted"
@@ -151,7 +155,8 @@ class TestPromotableLearnungsTimeDecay:
             "trw_mcp.state.memory_adapter.list_active_learnings",
             return_value=[bad_entry],
         ):
-            result = collect_promotable_learnings(trw_dir, config, reader)
+            with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+                result = collect_promotable_learnings(trw_dir, config, reader)
 
         ids = [str(d.get("id", "")) for d in result]
         assert "L-baddate" in ids
@@ -194,7 +199,8 @@ class TestPromotableLearnungsTimeDecay:
         }
         writer.write_yaml(entries_dir / "mature.yaml", data)
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
         assert "L-mature" in ids
 
@@ -206,7 +212,8 @@ class TestPromotableLearnungsTimeDecay:
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
-        result = collect_promotable_learnings(trw_dir, config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(trw_dir, config, reader)
         assert result == []
 
 

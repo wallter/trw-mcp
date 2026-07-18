@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from trw_mcp.tools._deferred_delivery import _do_auto_progress, _do_index_sync
 from trw_mcp.tools.ceremony import _do_instruction_sync
@@ -24,8 +27,11 @@ class TestDoClaudeMdSync:
         assert result["status"] == "success"
         assert "learnings_promoted" in result
 
-    def test_deliver_includes_ceremony_sections(self, trw_project: Path) -> None:
+    def test_deliver_includes_ceremony_sections(self, trw_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync."""
+        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
+        # so pin instruction_externalize="off" to keep exercising the inline path.
+        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         trw_dir = trw_project / ".trw"
         with (
             patch("trw_mcp.state._paths.resolve_project_root", return_value=trw_project),
@@ -41,7 +47,11 @@ class TestDoClaudeMdSync:
         assert "`trw_deliver()`" in content
         assert "`trw_checkpoint(message)`" in content
         assert "`trw_learn(summary, detail)`" in content
-        assert "orchestration" in content
+        # The compact CLAUDE.md opener carries the delegation guidance inline
+        # (the full orchestration briefing moved to the session-start hook per
+        # PRD-CORE-093); assert the delegation note rather than the removed
+        # "orchestration" wording of the pre-rewrite opener (commit 0ce5ce422).
+        assert "Delegation" in content
         assert "/trw-ceremony-guide" in content
         assert "{{imperative_opener}}" not in content
         assert "{{ceremony_quick_ref}}" not in content
@@ -89,21 +99,53 @@ class TestDoAutoProgress:
         assert result["reason"] == "prds_dir_not_found"
 
     def test_progresses_implemented_to_done_on_deliver(self, tmp_path: Path) -> None:
+        # PRD-QUAL-119-FR06: auto-progress only promotes an implemented-family PRD
+        # to done when its effective-completion decision is COMPLETE. Supply the
+        # coherence evidence the guard now requires: an FPI #7-coherent
+        # functionality_level (partial + implementation_scope + enumerated stubs,
+        # which avoids the live-only wiring/default-path-proof requirements) and a
+        # passing build_check_complete event on the run. A P1 with no review.yaml
+        # classifies as an "unknown" reviewer provenance, which is advisory-only
+        # and never hard-blocks the promotion.
         prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
         prds_dir.mkdir(parents=True)
         (prds_dir / "PRD-CORE-099.md").write_text(
             "---\nprd:\n  id: PRD-CORE-099\n  title: Test\n"
-            "  status: implemented\n  priority: P1\n  category: CORE\n---\n"
+            "  status: implemented\n  priority: P1\n  category: CORE\n"
+            "  functionality_level: partial\n"
+            "  implementation_scope: core path landed; deferred edge Y\n"
+            "  stubs:\n    - deferred edge Y\n---\n"
             "# PRD-CORE-099\nSome content for density.\n",
             encoding="utf-8",
         )
         run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
         (run_dir / "meta").mkdir(parents=True)
         (run_dir / "meta" / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: deliver\nprd_scope:\n  - PRD-CORE-099\n",
+            "run_id: 20260214T000000Z-test\nowner_session_id: SESS-DELIVER\n"
+            "status: active\nphase: deliver\nprd_scope:\n  - PRD-CORE-099\n",
             encoding="utf-8",
         )
-        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+        # P1 requires an independent reviewer receipt: a subagent review whose
+        # recorded run_id differs from the delivering run classifies as verifiable
+        # 'independent' provenance, satisfying the FR03 receipt requirement.
+        (run_dir / "meta" / "review.yaml").write_text(
+            "substantive: true\nverdict: pass\ncritical_count: 0\n"
+            "reviewer:\n  source: subagent\n  run_id: REVIEWER-1\n"
+            "  session_id: SESS-REVIEWER\n  receipt_id: rcpt-abc\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-02-14T00:00:01Z",
+                    "event": "build_check_complete",
+                    "tests_passed": True,
+                    "static_checks_clean": True,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             result = _do_auto_progress(run_dir)
         assert result["status"] == "success"

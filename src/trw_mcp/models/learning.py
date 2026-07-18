@@ -287,7 +287,7 @@ class LearningEntry(BaseModel):
     impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"
 
     # C5 FIX: Eval chain run attribution — identifies which run authored this
-    # learning. Used by trw-eval knowledge_scorer to distinguish self-authored
+    # learning. Used by the eval/scoring consumer to distinguish self-authored
     # entries from tar-pipe-injected entries in chain evaluation runs.
     # Backward-compat: None for pre-stamping entries.
     source_run_id: str | None = Field(
@@ -407,31 +407,3 @@ class ContextConventions(BaseModel):
     test_patterns: list[str] = Field(default_factory=list)
     commit_style: str = ""
     notes: list[str] = Field(default_factory=list)
-
-
-class Analytics(BaseModel):
-    """Self-analytics in .trw/context/analytics.yaml.
-
-    Auto-updated by trw_reflect to track improvement over time.
-    Zero-dependency feedback loop — no network required.
-
-    PRD-QUAL-012-FR02/FR03/FR04: Revived dead fields, added Q-learning
-    and reflection tracking.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    sessions_tracked: int = 0
-    total_learnings: int = 0
-    avg_learnings_per_session: float = 0.0
-    high_impact_learnings: int = 0
-    claude_md_syncs: int = 0
-
-    # PRD-QUAL-012-FR02: Previously dead — now populated by update_analytics_extended
-    reflections_completed: int = 0
-    total_outcomes: int = 0
-    successful_outcomes: int = 0
-    success_rate: float = 0.0
-
-    # PRD-QUAL-012-FR03: Q-learning activation tracking
-    q_learning_activations: int = 0

@@ -330,3 +330,114 @@ class TestUnreadableFileResilience:
         assert len(by_id["agents:agents/b.md"].content_hash) == 64
         # A non-empty snapshot id still resolves (identity preserved).
         assert reg.snapshot_id
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-181-NFR01: evidence precedence — legal hold, explicit pin, active
+# run, referenced receipt, and authoritative source override age/size collection.
+# ---------------------------------------------------------------------------
+
+
+def test_prd_core_181_nfr01(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every precedence fixture retains its protected artifact even though age
+    alone would collect it, both via classify_artifact and the WIRED cleanup."""
+    from trw_mcp.telemetry.retention_registry import (
+        REASON_AUTHORITATIVE,
+        REASON_NOT_EXPIRED,
+        REASON_PERMANENT,
+        REASON_REFERENCED,
+        REASON_SENSITIVE,
+        AuthorityClass,
+        RetentionClass,
+        RetentionDecision,
+        RetentionEntry,
+        SensitivityClass,
+        classify_artifact,
+        digest_file,
+        save_registry,
+    )
+
+    root = tmp_path
+    names = ["control.log", "legal.log", "pin.log", "run.log", "receipt.log", "authority.yaml"]
+    for name in names:
+        (root / name).write_text(f"{name}\n", encoding="utf-8")
+
+    def entry(name: str, **overrides: object) -> RetentionEntry:
+        base: dict[str, object] = {
+            "path": name,
+            "authority_class": AuthorityClass.OBSERVATIONAL,
+            "producer": "p",
+            "owner": "o",
+            "sensitivity": SensitivityClass.NONE,
+            "retention_class": RetentionClass.BOUNDED_DAYS,
+            "digest": digest_file(root / name),
+            "retention_days": 7,
+            "registered_epoch_days": 100,
+        }
+        base.update(overrides)
+        return RetentionEntry.model_validate(base, strict=False)
+
+    entries = [
+        entry("control.log"),  # no override -> collectible once the window expires
+        entry("legal.log", sensitivity=SensitivityClass.SENSITIVE),  # legal hold
+        entry("pin.log", retention_class=RetentionClass.PERMANENT),  # explicit pin
+        entry("run.log", retention_class=RetentionClass.RUN_SCOPED),  # active run
+        entry("receipt.log", references=("receipt/2026",)),  # referenced receipt
+        entry("authority.yaml", authority_class=AuthorityClass.AUTHORITATIVE),  # authoritative source
+    ]
+
+    now = 200  # registered_epoch_days=100 + retention_days=7 -> window long expired
+
+    def classify(name: str) -> object:
+        return classify_artifact(name, root, entries, now_epoch_days=now)
+
+    # Age-collection is genuinely live: the un-overridden control IS eligible.
+    assert classify("control.log").decision is RetentionDecision.ELIGIBLE
+    # Each precedence override retains the protected artifact despite its age.
+    assert classify("legal.log").reason == REASON_SENSITIVE
+    assert classify("pin.log").reason == REASON_PERMANENT
+    assert classify("run.log").reason == REASON_NOT_EXPIRED  # active run never auto-collects
+    assert classify("receipt.log").reason == REASON_REFERENCED
+    assert classify("authority.yaml").reason == REASON_AUTHORITATIVE
+    for name in ("legal.log", "pin.log", "run.log", "receipt.log", "authority.yaml"):
+        assert classify(name).decision is RetentionDecision.RETAINED
+
+    # Drive the WIRED cleanup: an authoritative sidecar under .trw matches the
+    # cleanup suffixes and is old, yet the registry gate retains it.
+    # Must be undone at teardown. A bare sys.path.insert(0, <monorepo root>) leaks
+    # for the life of the pytest process, and the monorepo root ships its own
+    # regular `tests` package (repo-root tests/__init__.py) which then SHADOWS
+    # trw-mcp/tests. The parent process never notices (sys.modules already holds
+    # the right `tests`), but every multiprocessing "spawn" child re-imports from
+    # the inherited sys.path and dies with
+    # `ModuleNotFoundError: No module named 'tests.<victim_module>'` — which is
+    # why the spawn-based concurrency tests failed only in a full-suite run.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from scripts.trw_runtime_hygiene import collect_report
+
+    wal_rel = ".trw/authority.db-wal"
+    (root / ".trw").mkdir()
+    (root / wal_rel).write_text("authoritative-wal\n", encoding="utf-8")
+    save_registry(
+        root,
+        [
+            RetentionEntry.model_validate(
+                {
+                    "path": wal_rel,
+                    "authority_class": AuthorityClass.AUTHORITATIVE,
+                    "producer": "p",
+                    "owner": "o",
+                    "sensitivity": SensitivityClass.NONE,
+                    "retention_class": RetentionClass.BOUNDED_DAYS,
+                    "digest": digest_file(root / wal_rel),
+                    "retention_days": 0,
+                    "registered_epoch_days": 0,
+                },
+                strict=False,
+            )
+        ],
+    )
+    report = collect_report(root, action="cleanup", dry_run=False, older_than_days=0, compress_min_bytes=1)
+    assert (root / wal_rel).exists()  # authoritative -> retained by the wired gate
+    reasons = {r.path: r.reason for r in report.retained}
+    assert reasons[wal_rel] == REASON_AUTHORITATIVE

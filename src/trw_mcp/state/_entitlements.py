@@ -21,6 +21,18 @@ v0 design (intentionally minimal):
     team   → ["trw_before_edit_hint:distill_sidecar"]
     pro    → ["trw_before_edit_hint:distill_sidecar"]
     enterprise → ["trw_before_edit_hint:distill_sidecar"]
+    beta   → ["trw_before_edit_hint:distill_sidecar"]
+
+The ``beta`` tier is the tester-program bridge (production feedback
+``sub_Y-f6QQ3Y_Os9b0vM``): the backend tester program grants beta/tester
+access (``org.plan`` + a ``proprietary:install`` license) but that state
+had NO representation here, so testers resolved ``tier="free"`` and were
+shown a paid-tier remediation. ``beta`` unlocks the same distill-sidecar
+feature as the paid tiers and is provisioned locally via
+``trw-mcp tier issue --tier beta``. The backend's tester program plan name
+is ``"alpha"`` (``backend/services/tester_program.py`` ``TESTER_PLAN``), so
+``"alpha"`` is accepted as an ALIAS for ``beta`` at load/validation time —
+one concept, one feature row (no separate ``alpha`` feature set).
 
 Honest scope per CONSTITUTION §1:
 - v0 entitlement is sentinel-only — anyone can copy a valid
@@ -39,15 +51,26 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from ruamel.yaml import YAML
 
 # v0 dev key — operators in production should override via env.
 _DEV_HMAC_KEY = b"trw-v0-dev-key-2026-05-17-replace-in-prod"
 
-Tier = Literal["free", "team", "pro", "enterprise"]
-_VALID_TIERS: tuple[Tier, ...] = ("free", "team", "pro", "enterprise")
+Tier = Literal["free", "team", "pro", "enterprise", "beta"]
+_VALID_TIERS: tuple[Tier, ...] = ("free", "team", "pro", "enterprise", "beta")
+
+# Backend tester-program plan name → canonical TRW tier. The tester program
+# (backend/services/tester_program.py TESTER_PLAN="alpha") provisions "alpha";
+# we alias it to "beta" so a backend-issued entitlement unlocks the same
+# feature set without a duplicate feature row (one concept, one source of
+# truth). Aliases are resolved AFTER signature verification (the signed
+# payload carries the raw "alpha" value).
+_TIER_ALIASES: dict[str, Tier] = {"alpha": "beta"}
+
+# Raw tier strings accepted from an entitlements file (canonical tiers + aliases).
+_ACCEPTED_RAW_TIERS: frozenset[str] = frozenset(_VALID_TIERS) | frozenset(_TIER_ALIASES)
 
 # Tier → enabled feature flags. Additive: a tier always inherits prior tiers.
 _TIER_FEATURES: dict[Tier, frozenset[str]] = {
@@ -55,6 +78,8 @@ _TIER_FEATURES: dict[Tier, frozenset[str]] = {
     "team": frozenset({"trw_before_edit_hint:distill_sidecar"}),
     "pro": frozenset({"trw_before_edit_hint:distill_sidecar"}),
     "enterprise": frozenset({"trw_before_edit_hint:distill_sidecar"}),
+    # Tester-program bridge — same feature as paid tiers (sub_Y-f6QQ3Y_Os9b0vM).
+    "beta": frozenset({"trw_before_edit_hint:distill_sidecar"}),
 }
 
 
@@ -151,7 +176,7 @@ def load_entitlement(
     signature = parsed.get("signature", "")
     if (
         not isinstance(tier, str)
-        or tier not in _VALID_TIERS
+        or tier not in _ACCEPTED_RAW_TIERS
         or not isinstance(issued_to, str)
         or not isinstance(expires_at, str)
         or not isinstance(signature, str)
@@ -174,8 +199,11 @@ def load_entitlement(
             expires_at_iso=expires_at,
         )
 
-    # All checks passed.
-    valid_tier: Tier = tier
+    # All checks passed. Resolve any alias (alpha→beta) to the canonical
+    # tier now that the RAW signed value has been verified. `tier` is
+    # guaranteed in _ACCEPTED_RAW_TIERS, so the alias-resolved result is a
+    # valid Tier.
+    valid_tier: Tier = cast("Tier", _TIER_ALIASES.get(tier, tier))
     return Entitlement(
         tier=valid_tier,
         reason="ok",

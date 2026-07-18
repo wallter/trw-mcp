@@ -126,31 +126,20 @@ def count_entries(trw_dir: Path) -> int:
     )
 
 
-def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
-    """Increment access_count, recall_count, and last_accessed_at for recalled entries.
-
-    PRD-FIX-104-FR01: calls increment_recall_access (not increment_access_counts)
-    so that both access_count AND recall_count are incremented in a single batch
-    UPDATE, enabling feedback_decay_score in trw-memory lifecycle scoring.
-    PRD-FIX-104-FR02: per-entry fallback also increments recall_count.
-    """
-    backend = get_backend(trw_dir)
-    unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
-    if not unique_ids:
+def _increment_backend_access(backend: Any, learning_ids: list[str], now: datetime) -> None:
+    """Best-effort access tracking against one owning backend."""
+    if not learning_ids:
         return
-    now = datetime.now(timezone.utc)
 
-    # FR01: use increment_recall_access (bumps access_count + recall_count atomically)
     increment_recall_access = getattr(backend, "increment_recall_access", None)
     if callable(increment_recall_access):
         try:
-            increment_recall_access(unique_ids, accessed_at=now)
+            increment_recall_access(learning_ids, accessed_at=now)
             return
         except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
-            _warn("access_tracking_batch_update_failed", exc_info=True, entry_ids=unique_ids)
+            _warn("access_tracking_batch_update_failed", exc_info=True, entry_ids=learning_ids)
 
-    # FR02: per-entry fallback — also increments recall_count so decay fires
-    for lid in unique_ids:
+    for lid in learning_ids:
         try:
             entry = backend.get(lid)
             if entry is not None:
@@ -160,9 +149,53 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str]) -> None:
                     recall_count=entry.recall_count + 1,
                     last_accessed_at=now,
                 )
-        except Exception:  # per-item: access tracking is best-effort, one failure must not break recall
+        except Exception:  # per-item: telemetry must not break recall
             _warn("access_tracking_update_failed", exc_info=True, entry_id=lid)
-            continue
+
+
+def update_access_tracking(trw_dir: Path, learning_ids: list[str], *, federated: bool = False) -> None:
+    """Increment access_count, recall_count, and last_accessed_at for recalled entries.
+
+    PRD-FIX-104-FR01: calls increment_recall_access (not increment_access_counts)
+    so that both access_count AND recall_count are incremented in a single batch
+    UPDATE, enabling feedback_decay_score in trw-memory lifecycle scoring.
+    PRD-FIX-104-FR02: per-entry fallback also increments recall_count.
+    """
+    unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
+    if not unique_ids:
+        return
+    now = datetime.now(timezone.utc)
+    project_backend = get_backend(trw_dir)
+    if not federated:
+        _increment_backend_access(project_backend, unique_ids, now)
+        return
+
+    # Federated recalls can contain project-, user-, and external-store IDs.
+    # Resolve ownership before incrementing so user hits are not silently sent
+    # to the project DB and duplicate IDs are never counted in both stores.
+    project_ids: list[str] = []
+    unresolved_ids: list[str] = []
+    for lid in unique_ids:
+        try:
+            (project_ids if project_backend.get(lid) is not None else unresolved_ids).append(lid)
+        except Exception:  # per-item: ownership telemetry must not break recall
+            _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="project")
+            unresolved_ids.append(lid)
+    _increment_backend_access(project_backend, project_ids, now)
+
+    from trw_mcp.state._user_tier import peek_user_backend
+
+    user_backend = peek_user_backend()
+    if user_backend is None:
+        return
+    user_ids: list[str] = []
+    for lid in unresolved_ids:
+        try:
+            if user_backend.get(lid) is not None:
+                user_ids.append(lid)
+        except Exception:  # per-item: ownership telemetry must not break recall
+            _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="user")
+    _increment_backend_access(user_backend, user_ids, now)
 
 
 def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
@@ -199,7 +232,8 @@ def _bare_passive_checkpoint(db_path: Path) -> CheckpointResult:
     """Run a PASSIVE WAL checkpoint on a fresh, short-lived connection.
 
     Used only when no live backend in THIS process owns *db_path* — but another
-    process (e.g. the shared HTTP server) still might. PASSIVE never resets the
+    process (e.g. a concurrent MCP client's stdio trw-mcp instance) still might.
+    PASSIVE never resets the
     WAL, so it cannot trigger the WAL-reset corruption bug regardless of how
     many other connections/processes hold the database. Returns the same
     :class:`CheckpointResult` contract the owning-backend path returns, so the

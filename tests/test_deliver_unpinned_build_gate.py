@@ -37,8 +37,8 @@ def _write_ceremony_state(trw_dir: Path, build_check_result: object) -> None:
     )
 
 
-def test_deliver_blocks_unpinned_session_without_build_check(tmp_path: Path) -> None:
-    """No active run still requires local ceremony build evidence after session_start."""
+def test_deliver_surfaces_unpinned_missing_build_as_advisory(tmp_path: Path) -> None:
+    """Unknown/unpinned work keeps the configured advisory posture end to end."""
     project = tmp_path / "project"
     trw_dir = project / ".trw"
     _write_ceremony_state(trw_dir, None)
@@ -51,14 +51,14 @@ def test_deliver_blocks_unpinned_session_without_build_check(tmp_path: Path) -> 
     ):
         result = deliver_fn()
 
-    assert result["success"] is False
+    assert result["success"] is True
     assert "build_gate_warning" in result
     assert "unpinned session" in str(result["build_gate_warning"])
-    assert "build_gate_block" in result
+    assert "build_gate_block" not in result
 
 
-def test_deliver_allows_unpinned_session_with_build_check(tmp_path: Path) -> None:
-    """No active run delivery is allowed when local ceremony state has a passing build check."""
+def test_deliver_does_not_inherit_unbound_global_build_check(tmp_path: Path) -> None:
+    """A session-aware delivery cannot inherit legacy global build evidence."""
     project = tmp_path / "project"
     trw_dir = project / ".trw"
     _write_ceremony_state(trw_dir, "passed")
@@ -71,18 +71,12 @@ def test_deliver_allows_unpinned_session_with_build_check(tmp_path: Path) -> Non
     ):
         result = deliver_fn(skip_reflect=True)
 
-    assert "build_gate_warning" not in result
+    assert "build_gate_warning" in result
     assert result["checkpoint"]["reason"] == "no_active_run"
 
 
-def test_deliver_override_surfaces_truthfulness_gate_bypass(tmp_path: Path) -> None:
-    """allow_unverified bypass of the build gate must be UNMISSABLE (A-P1-02).
-
-    Pre-fix the bypass was only quietly stored in ``build_gate_override`` — an
-    operator watching the log/event stream could not tell a legitimate
-    acceptable-failure deliver from a one-word reason. The fix adds a prominent
-    result key + a build_gate_override_used WARNING.
-    """
+def test_unpinned_advisory_does_not_accept_or_record_free_text_override(tmp_path: Path) -> None:
+    """Advisory warnings need no override and must not bless free-text prose."""
     import structlog
 
     project = tmp_path / "project"
@@ -99,13 +93,13 @@ def test_deliver_override_surfaces_truthfulness_gate_bypass(tmp_path: Path) -> N
     ):
         result = deliver_fn(allow_unverified=True, unverified_reason=reason, skip_reflect=True)
 
-    # Override allowed (no hard block) but surfaced prominently in the result...
+    # Delivery proceeds because the warning is advisory, not because prose
+    # bypassed a gate. The unused override arguments create no audit record.
     assert "build_gate_block" not in result
-    assert result.get("truthfulness_gate_bypassed") == reason
-    # ...and logged at WARNING for the operator log stream.
+    assert result.get("truthfulness_gate_bypassed") is None
+    assert result.get("acceptable_failure_record") is None
     overrides = [e for e in logs if e.get("event") == "build_gate_override_used"]
-    assert overrides, f"expected a build_gate_override_used warning; got {logs}"
-    assert overrides[0]["log_level"] == "warning"
+    assert not overrides
 
 
 # ── codex cross-model review #3: PATH-3 no-run/no-ceremony-state, layered defense ──
@@ -131,11 +125,8 @@ def test_no_active_run_no_ceremony_state_is_by_design_advisory(tmp_path: Path) -
     assert result is None, "no ceremony state -> no gate (by-design; layered defense)"
 
 
-def test_no_active_run_started_session_without_build_still_blocks(tmp_path: Path) -> None:
-    """The fail-closed posture IS active for a STARTED session with no passing build
-
-    — the gate's actual job. This is the second layer of the PATH-3 defense.
-    """
+def test_no_active_run_started_session_without_build_still_warns(tmp_path: Path) -> None:
+    """Started unpinned sessions still surface their missing-build warning."""
     from trw_mcp.state.persistence import FileStateReader
     from trw_mcp.tools._delivery_build_gates import _check_no_active_run_build_gate
 
@@ -148,6 +139,70 @@ def test_no_active_run_started_session_without_build_still_blocks(tmp_path: Path
     result = _check_no_active_run_build_gate(trw_dir, FileStateReader())
     assert result is not None
     assert "unpinned session" in result
+
+
+def test_new_session_cannot_inherit_previous_build_pass(tmp_path: Path) -> None:
+    from trw_mcp.state._ceremony_progress_state import (
+        mark_build_check,
+        mark_deliver,
+        mark_session_started,
+        read_ceremony_state,
+    )
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._delivery_build_gates import _check_no_active_run_build_gate
+
+    trw_dir = tmp_path / ".trw"
+    mark_session_started(trw_dir, session_id="session-one")
+    mark_build_check(trw_dir, passed=True, session_id="session-one")
+    mark_deliver(trw_dir)
+
+    mark_session_started(trw_dir, session_id="session-two")
+
+    state = read_ceremony_state(trw_dir)
+    assert state.session_build_results == {"session-one": "passed", "session-two": "pending"}
+    assert _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="session-two") is not None
+
+
+def test_same_session_start_preserves_compaction_progress(tmp_path: Path) -> None:
+    from trw_mcp.state._ceremony_progress_state import mark_build_check, mark_session_started, read_ceremony_state
+
+    trw_dir = tmp_path / ".trw"
+    mark_session_started(trw_dir, session_id="session-one")
+    mark_build_check(trw_dir, passed=True, session_id="session-one")
+
+    mark_session_started(trw_dir, session_id="session-one")
+
+    assert read_ceremony_state(trw_dir).session_build_results["session-one"] == "passed"
+
+
+def test_recently_active_session_survives_session_result_pruning(tmp_path: Path) -> None:
+    from trw_mcp.state._ceremony_progress_state import mark_build_check, mark_session_started, read_ceremony_state
+
+    trw_dir = tmp_path / ".trw"
+    mark_session_started(trw_dir, session_id="long-lived")
+    for index in range(2048):
+        mark_session_started(trw_dir, session_id=f"session-{index}")
+
+    mark_build_check(trw_dir, passed=True, session_id="long-lived")
+    mark_session_started(trw_dir, session_id="new-session")
+
+    state = read_ceremony_state(trw_dir)
+    assert state.session_build_results["long-lived"] == "passed"
+    assert "session-0" not in state.session_build_results
+
+
+def test_interleaved_sessions_cannot_share_build_pass(tmp_path: Path) -> None:
+    from trw_mcp.state._ceremony_progress_state import mark_build_check, mark_session_started
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._delivery_build_gates import _check_no_active_run_build_gate
+
+    trw_dir = tmp_path / ".trw"
+    mark_session_started(trw_dir, session_id="session-a")
+    mark_session_started(trw_dir, session_id="session-b")
+    mark_build_check(trw_dir, passed=True, session_id="session-a")
+
+    assert _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="session-a") is None
+    assert _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="session-b") is not None
 
 
 def test_compaction_gate_blocks_trw_deliver_before_session_start() -> None:
@@ -215,14 +270,14 @@ def test_deliver_rejects_run_path_outside_project_root(tmp_path: Path) -> None:
     assert "escapes project root" in str(result.get("delivery_blocked", ""))
 
 
-def test_deliver_accepts_run_path_inside_project_root(tmp_path: Path) -> None:
-    """A run_path under the project root passes the containment check (the
-    block above is specific to traversal, not a blanket rejection)."""
+def test_deliver_accepts_valid_run_path_inside_configured_runs_root(tmp_path: Path) -> None:
+    """A canonical run with persistent identity passes path validation."""
     project = tmp_path / "project"
     trw_dir = project / ".trw"
     _write_ceremony_state(trw_dir, "passed")
     run_dir = project / ".trw" / "runs" / "task" / "run-1" / "meta"
     run_dir.mkdir(parents=True)
+    (run_dir / "run.yaml").write_text("run_id: run-1\n", encoding="utf-8")
     deliver_fn = _make_deliver_fn()
 
     with (
@@ -235,3 +290,22 @@ def test_deliver_accepts_run_path_inside_project_root(tmp_path: Path) -> None:
     # for other reasons, but the containment check did not fire).
     assert "escapes project root" not in str(result.get("delivery_blocked", ""))
     assert result.get("run_path") == str(run_dir.parent.resolve())
+
+
+def test_deliver_rejects_inside_project_non_run_without_writing_checkpoint(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    trw_dir = project / ".trw"
+    _write_ceremony_state(trw_dir, "passed")
+    non_run = project / "src" / "package"
+    non_run.mkdir(parents=True)
+    deliver_fn = _make_deliver_fn()
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+    ):
+        result = deliver_fn(run_path=str(non_run), skip_reflect=True)
+
+    assert result["success"] is False
+    assert "not a valid TRW run directory" in str(result["delivery_blocked"])
+    assert not (non_run / "meta").exists()

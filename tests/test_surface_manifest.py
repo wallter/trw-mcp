@@ -36,7 +36,7 @@ def _sample_snapshot() -> SurfaceSnapshot:
     return SurfaceSnapshot(
         snapshot_id="deadbeef" * 8,
         trw_mcp_version="0.1.2",
-        framework_version="v26_TRW",
+        framework_version="v26.1_TRW",
         generated_at=ts,
         artifacts=(
             SurfaceArtifact(

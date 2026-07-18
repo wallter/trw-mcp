@@ -31,7 +31,6 @@ SHALLOW_DICT_KEYS: frozenset[str] = frozenset(
         "run",
         "reflect",
         "checkpoint",
-        "claude_md_sync",
         "auto_upgrade",
         "stale_runs_closed",
         "embeddings_backfill",

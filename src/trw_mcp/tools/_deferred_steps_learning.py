@@ -78,85 +78,58 @@ def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
 
 
 def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | None:
-    """Step 9: Trust session increment (CORE-068-FR05).
+    """Advance trust only from an eligible, one-time-consumed outcome receipt.
 
-    FR02 (PRD-FIX-053): Relaxed gate -- fires when EITHER:
-      (a) build_check passed (existing behavior), OR
-      (b) session has >= 3 learnings AND >= 1 checkpoint (productive_session).
+    PRD-CORE-206 supersedes PRD-FIX-053-FR02: learning/checkpoint/edit/commit
+    counts are activity, not verification, and a raw build *event* is replayable —
+    none of them reach this step. The only positive route is a validated typed
+    PRD-CORE-205 receipt consumed atomically at most once (``trust.py``).
 
-    Also reads {trw_dir}/context/session-events.jsonl for events that landed
-    before trw_init created the run directory (same pattern as ceremony scoring).
+    NFR01 interim compatibility: while the receipt substrate runs in ``observe``
+    mode (enforcement deferred), trust stays frozen — the eligibility matrix and
+    atomic consumption are live and tested but not yet driven from delivery. In
+    ``enforce`` mode this collects the run's current typed receipts, applies the
+    closed task-type/evidence matrix, and consumes one eligible aggregate outcome.
     """
-    try:
-        import os
+    from trw_mcp.models._evidence_core import EvidenceMode
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state import trust as _trust
+    from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+    from trw_mcp.state._session_id import resolve_effective_session_id
+    from trw_mcp.tools._delivery_helpers import _read_run_yaml
+    from trw_mcp.tools._evidence_gates import read_evidence_mode
 
-        from trw_mcp.state._paths import resolve_trw_dir
-        from trw_mcp.state.trust import increment_session_count
+    config = get_config()
+    mode = read_evidence_mode(config)
+    if mode is not EvidenceMode.ENFORCE:
+        # observe / unknown mode → frozen (NFR01): no raw event or activity route.
+        return {"skipped": True, "reason": "trust_frozen_receipts_observe_mode"}
 
-        reader = FileStateReader()
+    trw_dir = resolve_trw_dir()
+    project_root = resolve_project_root()
+    reader = FileStateReader()
+    run_data = _read_run_yaml(resolved_run, reader) if resolved_run is not None else {}
+    task_type = str(run_data.get("task_type", "unknown"))
+    session_id = resolve_effective_session_id(trw_dir)
 
-        # Collect all events: run-level events.jsonl + session-level session-events.jsonl
-        run_events: list[dict[str, object]] = []
-        events_path = resolved_run / "meta" / "events.jsonl" if resolved_run else None
-        if events_path and events_path.exists():
-            run_events.extend(reader.read_jsonl(events_path))
-
-        trw_dir = resolve_trw_dir()
-        all_events = _merge_session_events(run_events, trw_dir)
-
-        # Check path (a): build_check passed
-        build_passed = False
-        for ev in all_events:
-            ev_type = str(ev.get("event", ""))
-            ev_data = ev.get("data", {})
-            if not isinstance(ev_data, dict):
-                ev_data = {}
-            tool_name = str(ev_data.get("tool_name", ""))
-            if (ev_type == "build_check_complete" or tool_name == "trw_build_check") and (
-                ev_data.get("result") == "pass" or ev_data.get("build_passed") is True
-            ):
-                build_passed = True
-                break
-
-        if build_passed:
-            agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
-            result = increment_session_count(trw_dir, agent_id)
-            # Preserve existing return shape; add reason for observability
-            if isinstance(result, dict) and "reason" not in result:
-                result["reason"] = "build_check_passed"
-            return cast("TrustIncrementResult", result)
-
-        # Check path (b): productive session (>= 3 learnings AND >= 1 checkpoint)
-        learn_count = 0
-        checkpoint_count = 0
-        for ev in all_events:
-            ev_type = str(ev.get("event", ""))
-            ev_data = ev.get("data", {})
-            if not isinstance(ev_data, dict):
-                ev_data = {}
-            tool_name = str(ev_data.get("tool_name", ""))
-            is_tool_invocation = ev_type == "tool_invocation"
-
-            # Count learn events
-            if ev_type in ("learn", "trw_learn") or (is_tool_invocation and "trw_learn" in tool_name):
-                learn_count += 1
-
-            # Count checkpoint events
-            if ev_type in ("checkpoint", "trw_checkpoint") or (is_tool_invocation and "trw_checkpoint" in tool_name):
-                checkpoint_count += 1
-
-        # Thresholds: >= 3 learnings AND >= 1 checkpoint
-        if learn_count >= 3 and checkpoint_count >= 1:
-            agent_id = os.environ.get("TRW_AGENT_ID", "unknown")
-            result = increment_session_count(trw_dir, agent_id)
-            if isinstance(result, dict):
-                result["reason"] = "productive_session"
-            return cast("TrustIncrementResult", result)
-
-        return {"skipped": True, "reason": "insufficient_session_activity"}
-
-    except Exception as exc:  # justified: fail-open, session count increment is best-effort
-        return {"skipped": True, "reason": str(exc)}
+    eligibility, consume = _trust.evaluate_and_consume_trust_outcome(
+        trw_dir,
+        resolved_run,
+        project_root,
+        task_type,
+        session_id=session_id,
+        config=config,
+    )
+    if consume is None or not consume.incremented:
+        reason = consume.reason if consume is not None else eligibility.reason
+        return {"skipped": True, "reason": reason}
+    return {
+        "session_count": consume.session_count,
+        "previous_tier": consume.previous_tier,
+        "new_tier": consume.new_tier,
+        "transitioned": consume.transitioned,
+        "reason": "outcome_receipt_consumed",
+    }
 
 
 def _do_index_sync() -> IndexSyncResult:
@@ -205,7 +178,92 @@ def _do_auto_progress(run_dir: Path | None) -> AutoProgressStepResult:
     if not prds_dir.is_dir():
         return {"status": "skipped", "reason": "prds_dir_not_found"}
 
-    progressions = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+    def _completion_guard(prd_id: str) -> str | None:
+        """PRD-QUAL-119-FR06: only a current COMPLETE effective-completion
+        decision permits an implemented-family promotion. Any evaluation error
+        fails CLOSED — automated delivery must never mint a lifecycle claim
+        without evidence (incident L-EQwV: deferred auto-progress walked seven
+        planned PRDs to done)."""
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.tools._prd_transition_gate import (
+            derive_transition_decision,
+            evaluate_prd_coherence,
+        )
+
+        try:
+            content = (prds_dir / f"{prd_id}.md").read_text(encoding="utf-8")
+            frontmatter = parse_frontmatter(content)
+            # Re-audit F1: evaluate AS IF the PRD held the implemented status —
+            # the promotion IS the implemented claim being certified.
+            report = evaluate_prd_coherence(
+                prd_id, run_dir, FileStateReader(), gate_mode="block", target_status="implemented"
+            )
+            decision = derive_transition_decision(prd_id, report, frontmatter, content)
+        except Exception:  # justified: fail-closed — no evidence, no promotion (NFR01)
+            logger.warning("auto_progress_completion_guard_degraded", prd_id=prd_id, exc_info=True)
+            return "completion_evaluation_failed"
+        if decision.permits_transition:
+            return None
+        return f"{decision.outcome.value}: {'; '.join(decision.reasons[:3])}"
+
+    progressions = auto_progress_prds(run_dir, "deliver", prds_dir, config, completion_guard=_completion_guard)
+
+    # PRD-QUAL-120-FR03 (P09 activation): delivery is the production writer of
+    # the out-of-band AcceptanceManifest for every scoped PRD. Audit F6/F7
+    # (2026-07-11): the outcome is INDEPENDENTLY RE-DERIVED from the resulting
+    # file state via the universal decision — never parsed from progression
+    # reason strings and never trusted from the in-process promotion result
+    # (the stale-server incident class). Fail-open per PRD: a derivation error
+    # skips that manifest; absence is a visible coverage gap, never a pass.
+    manifests_written = 0
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.acceptance_manifest import derive_manifest, persist_manifest
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.state.prd_utils import discover_governing_prds, parse_frontmatter
+        from trw_mcp.tools._prd_transition_gate import (
+            derive_transition_decision,
+            evaluate_prd_coherence,
+        )
+
+        trw_dir = resolve_trw_dir()
+        reader = FileStateReader()
+        for prd_id in discover_governing_prds(run_dir):
+            prd_file = prds_dir / f"{prd_id}.md"
+            if not prd_file.exists():
+                continue
+            try:
+                content = prd_file.read_text(encoding="utf-8")
+                frontmatter = parse_frontmatter(content)
+                # Re-derive against the implemented claim: idempotent for a PRD
+                # that actually reached implemented; a planned/partial PRD
+                # derives its true non-complete outcome regardless of what the
+                # in-process promotion reported.
+                report = evaluate_prd_coherence(prd_id, run_dir, reader, gate_mode="block", target_status="implemented")
+                decision = derive_transition_decision(prd_id, report, frontmatter, content)
+                outcome = decision.outcome.value
+                # Audit F7 (P0, empirically reproduced): the target_status
+                # override evaluates the HYPOTHETICAL implemented claim.
+                # COMPLETE additionally requires the PRD's ACTUAL on-disk
+                # status to be in the implemented family — a transition that
+                # stalled short (partial BFS, guard stop, stale server) can
+                # never project complete (NFR01: partial evidence never passes).
+                actual_status = str(frontmatter.get("status", "")).strip().lower()
+                if outcome == "complete" and actual_status not in (
+                    "implemented",
+                    "done",
+                    "delivered",
+                    "complete",
+                ):
+                    outcome = "incomplete"
+                manifest = derive_manifest(prd_file, {}, completion_outcome=outcome)
+                persist_manifest(manifest, trw_dir)
+                manifests_written += 1
+            except Exception:  # justified: per-PRD fail-open, absence is visible downstream
+                logger.warning("acceptance_manifest_persist_failed", prd_id=prd_id, exc_info=True)
+    except Exception:  # justified: manifest step is additive; delivery result stands
+        logger.warning("acceptance_manifest_step_degraded", exc_info=True)
 
     return {
         "status": "success",
@@ -402,21 +460,30 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         exposure = result.get("learning_exposure")
         if isinstance(exposure, dict):
             pull_rate = float(exposure.get("recall_pull_rate", 0.0) or 0.0)
-            nudge_count = int(exposure.get("nudge_count", 0) or 0)
             ids_obj = exposure.get("ids")
             ids_count = len(ids_obj) if isinstance(ids_obj, list) else 0
         else:
             pull_rate = 0.0
-            nudge_count = 0
             ids_count = 0
+        populated_pct = 1.0 if sid else 0.0
+        telemetry: dict[str, object] = {
+            "session_id_populated_pct": populated_pct,
+            "recall_pull_rate": round(pull_rate, 4),
+            "learning_ids_count": ids_count,
+        }
         logger.info(
-            "delivery_exposure_telemetry",
-            session_id_populated=bool(sid),
-            recall_pull_rate=round(pull_rate, 4),
-            nudge_count=nudge_count,
-            learning_ids_count=ids_count,
+            "rollout_meta_tune_linkage",
+            **telemetry,
         )
+        if resolved_run is not None:
+            from trw_mcp.state.persistence import FileEventLogger
+
+            FileEventLogger().log_event(
+                resolved_run / "meta" / "events.jsonl",
+                "rollout_meta_tune_linkage",
+                telemetry,
+            )
     except Exception:  # justified: fail-open, telemetry must not break deliver
-        logger.debug("delivery_exposure_telemetry_failed", exc_info=True)
+        logger.debug("rollout_meta_tune_linkage_failed", exc_info=True)
 
     return result

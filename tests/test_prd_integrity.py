@@ -641,3 +641,71 @@ def test_check_repo_path_references_bare_filename_resolves_in_extra_root(tmp_pat
 
     after = _check_repo_path_references(content, prd_repo, extra_roots=[code_repo])
     assert not [f for f in after if f.rule == "repo_path_exists"]
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-119-FR04: compatibility exception contract
+# ---------------------------------------------------------------------------
+
+
+def _seam(**overrides: object) -> dict[str, object]:
+    complete: dict[str, object] = {
+        "seam_id": "legacy-reader-v1",
+        "external_caller": "acme-corp pipeline (github.com/acme/etl)",
+        "breakage_evidence": "acme build 4123 fails on removal (log attached)",
+        "owner": "platform-team",
+        "expiry_date": "2099-01-01",
+        "telemetry": "seam_hits counter in telemetry pipeline",
+        "removal_test": "tests/test_seam_removed.py::test_legacy_reader_absent",
+    }
+    complete.update(overrides)
+    return complete
+
+
+def test_prd_qual_119_fr04() -> None:
+    """FR04 acceptance: Given a legacy reader, dual write, alias, or fallback
+    lacks any field, When validation runs, Then it fails and identifies the
+    missing removal evidence."""
+    from trw_mcp.state.validation.prd_integrity import _check_compatibility_exceptions
+
+    # The complete contract passes.
+    assert _check_compatibility_exceptions({"compatibility_exceptions": [_seam()]}) == []
+    # No exceptions declared: nothing to check.
+    assert _check_compatibility_exceptions({}) == []
+
+    # EVERY missing field fails and is named in the message.
+    for field_name in (
+        "seam_id",
+        "external_caller",
+        "breakage_evidence",
+        "owner",
+        "expiry_date",
+        "telemetry",
+        "removal_test",
+    ):
+        failures = _check_compatibility_exceptions({"compatibility_exceptions": [_seam(**{field_name: ""})]})
+        assert len(failures) == 1, field_name
+        assert field_name in failures[0].message
+        assert "removal evidence" in failures[0].message
+
+
+def test_prd_qual_119_nfr04() -> None:
+    """NFR04: a past expiry_date fails automatically; internal callers get no window."""
+    from trw_mcp.state.validation.prd_integrity import _check_compatibility_exceptions
+
+    expired = _check_compatibility_exceptions({"compatibility_exceptions": [_seam(expiry_date="2020-01-01")]})
+    assert len(expired) == 1
+    assert expired[0].rule == "qual119_compatibility_expired"
+
+    internal = _check_compatibility_exceptions(
+        {"compatibility_exceptions": [_seam(external_caller="internal: trw-mcp tools")]}
+    )
+    assert len(internal) == 1
+    assert internal[0].rule == "qual119_compatibility_internal_caller"
+
+    malformed_date = _check_compatibility_exceptions({"compatibility_exceptions": [_seam(expiry_date="soon")]})
+    assert len(malformed_date) == 1
+    assert "ISO date" in malformed_date[0].message
+
+    non_mapping = _check_compatibility_exceptions({"compatibility_exceptions": ["a-string"]})
+    assert len(non_mapping) == 1

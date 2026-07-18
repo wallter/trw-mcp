@@ -94,10 +94,6 @@ class TestYamlDualWriteNewFields:
                 "trw_mcp.state.memory_adapter.get_backend",
                 return_value=_make_mock_backend(),
             ),
-            patch(
-                "trw_mcp.tools.learning.get_backend",
-                return_value=_make_mock_backend(),
-            ),
             patch("trw_mcp.tools.learning.adapter_update") as mock_update,
             patch(
                 "trw_mcp.state.analytics.find_entry_by_id",

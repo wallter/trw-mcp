@@ -234,39 +234,6 @@ def export_data(
     return result
 
 
-def _should_import_entry(
-    entry: dict[str, object],
-    min_impact: float,
-    tags: list[str] | None,
-    existing_summaries: list[str],
-) -> tuple[bool, str]:
-    """Check if entry passes filters. Return (should_import, skip_reason)."""
-    if not isinstance(entry, dict):
-        return False, ""
-
-    # Impact filter
-    impact = float(str(entry.get("impact", 0)))
-    if impact < min_impact:
-        return False, "filter"
-
-    # Tag filter
-    if tags:
-        entry_tags = entry.get("tags", [])
-        if not isinstance(entry_tags, list):
-            entry_tags = []
-        entry_tag_strs = {str(t) for t in entry_tags}
-        if not entry_tag_strs.intersection(tags):
-            return False, "filter"
-
-    # Dedup via Jaccard similarity
-    summary = str(entry.get("summary", ""))
-    for existing in existing_summaries:
-        if compute_jaccard_similarity(summary, existing) >= 0.8:
-            return False, "duplicate"
-
-    return True, ""
-
-
 def _parse_import_source(
     source_file: Path,
 ) -> tuple[list[dict[str, object]] | None, str | None]:

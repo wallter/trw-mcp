@@ -1,34 +1,24 @@
-"""AG-03: Before-edit hook installer for Antigravity CLI.
+"""Before-edit hook installer for the Antigravity CLI.
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Status: ACTIVE — hook surface confirmed 2026-05-28 via binary string analysis
-of agy v1.0.2 (Google "jetski" internal codename).
+Integrates with the Antigravity CLI's repo-scoped hook surface:
+- Repo-scoped config dir: ``.antigravitycli/`` (settings.json is the MCP config path).
+- Hooks live in a SEPARATE file: ``.antigravitycli/hooks.json`` (not settings.json),
+  alongside peer workspace files (agents, agent config, rules, skills).
+- Hook event keys: ``PreToolUse`` and ``PostToolUse``.
+- Hook entry format::
 
-Empirical verification (2026-05-28):
-- agy v1.0.2 is the real Antigravity CLI (Go binary, google3/third_party/jetski/)
-- .antigravitycli/settings.json is confirmed as the repo-scoped MCP config path
-  (Gate G-01 CONFIRMED — file exists at /home/wallter/projects/trw-framework/.antigravitycli/settings.json)
-- Hooks live in a SEPARATE file: .antigravitycli/hooks.json (NOT in settings.json)
-  Evidence: binary function ParseHooksFile (jsonhook package) + binary strings showing
-  "agents.txt, agent.json, hooks.json, rules.json, skills.txt" as peer workspace files
-- Hook event names: "PreToolUse" and "PostToolUse" confirmed (binary strings: exact literals)
-- Hook format:
     {
-      "PreToolUse": [{"matcher": "<regex>", "command": "<shell-command>"}],
+      "PreToolUse":  [{"matcher": "<regex>", "command": "<shell-command>"}],
       "PostToolUse": [{"matcher": "<regex>", "command": "<shell-command>"}]
     }
-- PreToolHookResult has: Decision, Reason, Overwrite, PermissionOverrides, AllowTool, DenyReason
-  (binary: hooks_go_proto.(*PreToolHookResult).GetDecision etc.)
-- Hook is fail-open: always exits 0 to avoid blocking Antigravity tool execution
-- Script uses __file__-relative path resolution (same pattern as Codex hook, audit P0-02)
-- Global settings: ~/.gemini/antigravity-cli/settings.json (user-level)
-- Config dir: .antigravitycli/ (repo-scoped)
 
-OQ-01 RESOLVED: hooks.json is the correct file, "PreToolUse" is the event key.
-Gate G-01 CONFIRMED: .antigravitycli/settings.json is the correct config path.
-
-PRD-DIST-2404 FR07-FR10, AG-03.
+- The pre-tool result carries: Decision, Reason, Overwrite, PermissionOverrides,
+  AllowTool, DenyReason.
+- The hook is fail-open: it always exits 0 so a hook error never blocks a tool call.
+- Path resolution is ``__file__``-relative (same pattern as the Codex hook).
+- User-level settings live under the CLI's global config dir.
 """
 
 from __future__ import annotations

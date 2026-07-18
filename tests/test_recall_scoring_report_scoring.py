@@ -5,16 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.exceptions import StateError
-from trw_mcp.state.persistence import FileStateWriter
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
 class TestComputeImpactDistributionReadException:
     """Cover YAML read exception in compute_impact_distribution."""
 
-    def test_corrupt_yaml_file_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
+    def test_corrupt_yaml_file_is_skipped(
+        self, tmp_path: Path, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When _reader.read_yaml raises, the file is skipped (lines 277-278)."""
-        import trw_mcp.scoring as scoring_mod
         from trw_mcp.scoring import compute_impact_distribution
 
         entries_dir = tmp_path / "entries"
@@ -31,20 +34,17 @@ class TestComputeImpactDistributionReadException:
         )
         (entries_dir / "bad.yaml").write_text("{not: valid: yaml: [", encoding="utf-8")
 
-        original_reader = scoring_mod._reader
-        real_read = original_reader.read_yaml
-        try:
+        reader = FileStateReader()
+        real_read = reader.read_yaml
 
-            def patched_read(path: Path) -> dict[str, object]:
-                if "bad" in str(path):
-                    raise StateError("parse error", path=str(path))
-                return real_read(path)
+        def patched_read(path: Path) -> dict[str, object]:
+            if "bad" in str(path):
+                raise StateError("parse error", path=str(path))
+            return dict(real_read(path))
 
-            scoring_mod._reader.read_yaml = patched_read
-            result = compute_impact_distribution(entries_dir)
-            assert result["total_active"] == 1
-        finally:
-            scoring_mod._reader.read_yaml = real_read
+        monkeypatch.setattr(FileStateReader, "read_yaml", lambda _self, path: patched_read(path))
+        result = compute_impact_distribution(entries_dir)
+        assert result["total_active"] == 1
 
 
 class TestUtilityBasedPruneCandidatesTier3:

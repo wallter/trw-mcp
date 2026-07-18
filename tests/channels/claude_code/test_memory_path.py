@@ -13,10 +13,10 @@ from trw_mcp.channels.claude_code._memory_path import (
 
 class TestDeriveClaudeProjectId:
     def test_derive_project_id_encoding(self) -> None:
-        """FR10: /home/wallter/projects/trw-framework → -home-wallter-projects-trw-framework."""
-        project_root = Path("/home/wallter/projects/trw-framework")
+        """FR10: /home/dev/projects/my-app → -home-dev-projects-my-app."""
+        project_root = Path("/home/dev/projects/my-app")
         result = derive_claude_project_id(project_root)
-        assert result == "-home-wallter-projects-trw-framework"
+        assert result == "-home-dev-projects-my-app"
 
     def test_derive_project_id_leading_dash(self) -> None:
         """Result must start with '-'."""
@@ -39,9 +39,9 @@ class TestDeriveClaudeProjectId:
         assert result == "-home-user-work-projects-foo-bar"
 
     def test_derive_project_id_matches_observed_directory(self) -> None:
-        """Matches the known encoding for the trw-framework project."""
-        observed = "-home-wallter-projects-trw-framework"
-        computed = derive_claude_project_id(Path("/home/wallter/projects/trw-framework"))
+        """Matches the Anthropic-documented encoding for a concrete project dir."""
+        observed = "-home-dev-projects-my-app"
+        computed = derive_claude_project_id(Path("/home/dev/projects/my-app"))
         assert computed == observed
 
 

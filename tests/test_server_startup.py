@@ -53,10 +53,9 @@ class TestModuleImports:
 
     def test_import_app(self) -> None:
         from trw_mcp._logging import configure_logging
-        from trw_mcp.server._app import configure_logging_compat, mcp
+        from trw_mcp.server._app import mcp
 
         assert configure_logging is not None
-        assert configure_logging_compat is not None
         assert mcp is not None
 
     def test_import_cli(self) -> None:
@@ -291,53 +290,13 @@ class TestArgParser:
         args = _build_arg_parser().parse_args(["--debug"])
         assert args.debug is True
 
-    def test_transport_choices(self) -> None:
-        from trw_mcp.server._cli import _build_arg_parser
-
-        for transport in ("stdio", "sse", "streamable-http"):
-            args = _build_arg_parser().parse_args(["--transport", transport])
-            assert args.transport == transport
-
-    def test_shared_http_proxy_mode_skips_boot_sequence(self) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
-
-        args = _build_arg_parser().parse_args(["--debug"])
-        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
-
-        assert _should_run_boot_sequence(args, config) is False
-
-    def test_direct_transport_runs_boot_sequence(self) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
-
-        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
-        for transport in ("stdio", "sse", "streamable-http"):
-            args = _build_arg_parser().parse_args(["--transport", transport])
-            assert _should_run_boot_sequence(args, config) is True
-
-    def test_default_standalone_stdio_runs_boot_sequence(self) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._cli import _build_arg_parser, _should_run_boot_sequence
-
-        args = _build_arg_parser().parse_args([])
-        config = TRWConfig.model_validate({"mcp_transport": "stdio"})
-
-        assert _should_run_boot_sequence(args, config) is True
-
-    def test_main_uses_loaded_config_for_shared_proxy_boot_skip(self) -> None:
-        """The .mcp.json stdio entry must honor project config and avoid boot GC.
-
-        Claude Code starts ``trw-mcp --debug`` as a foreground stdio process.
-        In shared HTTP projects, that process is only a proxy; if ``main()``
-        falls back to a raw ``TRWConfig()`` default, it misclassifies the
-        process as standalone stdio and blocks reconnect on boot maintenance.
-        """
+    def test_main_runs_boot_sequence_and_stdio_transport(self) -> None:
+        """``main()`` with no subcommand runs boot maintenance and starts stdio."""
 
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.server._cli import main
 
-        config = TRWConfig.model_validate({"mcp_transport": "streamable-http"})
+        config = TRWConfig()
 
         with (
             patch("sys.argv", ["trw-mcp", "--debug"]),
@@ -345,16 +304,15 @@ class TestArgParser:
             patch("trw_mcp.server._cli.reload_config") as mock_reload_config,
             patch("trw_mcp.server._cli.configure_logging"),
             patch("trw_mcp.server._cli._check_mcp_json_portability"),
-            patch("trw_mcp.server._cli._boot_sequence") as mock_boot_sequence,
+            patch("trw_mcp.server._cli._start_boot_sequence") as mock_boot_sequence,
             patch("trw_mcp.server._transport.resolve_and_run_transport") as mock_run_transport,
         ):
             main()
 
         mock_get_config.assert_called_once_with()
         mock_reload_config.assert_called_once_with(config)
-        mock_boot_sequence.assert_not_called()
+        mock_boot_sequence.assert_called_once()
         mock_run_transport.assert_called_once()
-        assert mock_run_transport.call_args.args[1] is config
 
     def test_subcommands(self) -> None:
         from trw_mcp.server._cli import _build_arg_parser
@@ -492,14 +450,6 @@ class TestLoggingConfig:
 
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=False)
-
-    def test_configure_logging_compat(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Legacy configure_logging_compat wrapper still works."""
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._app import configure_logging_compat
-
-        monkeypatch.chdir(tmp_path)
-        configure_logging_compat(debug=False, config=TRWConfig())
 
 
 # ── Middleware ────────────────────────────────────────────────────────

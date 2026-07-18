@@ -43,11 +43,18 @@ def test_readme_has_telemetry_network_section(readme_text: str) -> None:
 
 
 def test_readme_has_env_var_inventory(readme_text: str) -> None:
-    """FR06(b): env-var inventory covers the required variables."""
+    """FR06(b): env-var inventory covers the required variables.
+
+    ``TRW_EMBEDDINGS_AVAILABLE`` is intentionally NOT listed here — it was
+    removed from the README (2026-06-13 SWEEP-3 accuracy audit, commit
+    d2917969f) as a phantom variable with zero code consumer; embeddings
+    availability is auto-detected via an import probe. ``TRW_LOG_LEVEL`` is
+    the real, consumed env var (see ``_logging.py``) that replaced it.
+    """
     for var in (
         "TRW_OFFLINE",
         "TRW_PROBE_ENABLED",
-        "TRW_EMBEDDINGS_AVAILABLE",
+        "TRW_LOG_LEVEL",
         "ENABLE_TOOL_SEARCH",
         "TRW_PLATFORM_API_KEY",
         "MEMORY_*",
@@ -56,10 +63,16 @@ def test_readme_has_env_var_inventory(readme_text: str) -> None:
 
 
 def test_readme_has_security_defaults_table(readme_text: str) -> None:
-    """FR06(c): a security-defaults table with the documented postures."""
+    """FR06(c): a security-defaults table with the documented postures.
+
+    The table wording was corrected in the 2026-06-13 SWEEP-3 accuracy audit
+    (commit d2917969f) from an overclaiming "PII redaction ON" to the precise
+    "PII detection (memory content)" row (default posture is ``warn``, not
+    redact) -- this test asserts the corrected phrase.
+    """
     lowered = readme_text.lower()
     assert "security defaults" in lowered
-    assert "pii redaction" in lowered
+    assert "pii detection" in lowered
     assert "observe" in lowered  # poisoning observe-mode
     assert "0700" in readme_text and "0600" in readme_text
 

@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
+from tests._tools_learning_shared import (
+    _CFG,
+    _entries_dir,
+    _get_tools,
+    set_project_root,  # noqa: F401 -- autouse fixture disables dedup (f4ca661c9 flipped embeddings_enabled default True)
+)
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 

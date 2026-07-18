@@ -4,6 +4,170 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.57.0] — 2026-07-18
+
+### Added
+
+- **Cross-client dispatch — run another coding-agent CLI headlessly (`trw_dispatch` + `trw_dispatch_status`).** A shell-capable session (Claude Code first, any client next) can now hand a prompt to a *different* coding CLI (`codex`, `claude`, `agy`, `opencode`) in the background for a second-opinion audit (code-review, design/architectural/adversarial), then read the result back. `trw_dispatch` returns a `job_id` by default (`wait=True` runs inline); `trw_dispatch_status` polls. Configurable defaults live under `.trw/config.yaml` `dispatch:`. Built on the existing public client-profile substrate — no new package. Hardened per adversarial audit: process-group tree-kill on timeout, sanitized env allowlist, per-client read-only enforcement, `extra_args`/`model` validators, prompt redaction, cwd write-confinement, unpolled-job-secret expiry, and capability-phase enforcement at dispatch. (`a47e6fdf3f`, `b39ef1954a`, `e164ec7815`, `a58508d9f3`, `086fc9d427`, `90500e58a2`, `eeaa5ffcd1`, `b9ec8c62a4`)
+- **`trw-release-verify` pre-release verification skill (bundled, cross-client).** An opt-in, read-only GO/NO-GO gate that layers an adversarial review on top of `mypy --strict` + green tests: deterministic CI-parity gates → per-dimension fan-out review across nine security-invariant pattern classes → independent P0/P1 verification. User-invocable in Claude and Codex, offered as a recorded step before publish. Also adds a deterministic, offline `check-release-leak-boundary.py` scan over the public publish surface (proprietary imports/paths, machine/home paths, secret-shaped values) so the manual subtree-split release path can no longer publish an unchecked bundle. (`f2fbdc3340`, `38f9f6886a`)
+
+### Changed
+
+- **BREAKING — removed the shared HTTP MCP server, stdio proxy, and HTTP transport; `trw-mcp` is now stdio-only everywhere.** Every client spawns its own instance over stdio, and MCP code changes take effect on the next `/mcp` reconnect. Removed the `--transport`/`--host`/`--port` flags and the `mcp_transport`/`mcp_host`/`mcp_port`/`mcp_startup_wait`/`mcp_proxy_*`/`mcp_http_rate_limit_*` config fields (old configs stay harmless — unknown keys are ignored), the `_proxy.py`/`_origin_check.py`/`_rate_limit.py` modules, and the `make mcp-server` targets. The retired dev-only shared server (`127.0.0.1:8100`) had repeatedly served stale tool code (stale delivery gate, phantom hangs). (`a0673d9765`)
+- **Raised the `trw-memory` dependency floor to `>=0.11.0`.** `trw_recall` hard-imports a serialization-truthful token estimator added in trw-memory 0.11.0; the prior `>=0.9.0` floor let `pip install trw-mcp` resolve a trw-memory that lacked the symbol and `ImportError` on every `trw_recall`. (`7dfc6c73b0`)
+
+### Security
+
+- **Blocked model-flag argv smuggling in cross-client dispatch.** A `model` value beginning with `-` (e.g. `--dangerously-skip-permissions`, `--read-only`) became its own argv token after `--model`, smuggling exactly the security flags the `extra_args` validator blocks. The model validator now rejects any leading `-` and shares one forbidden-security-token check with the `extra_args` validator. (`a013324a92`)
+- **Reap the orphaned foreign-agent child when a dispatch job is killed past its TTL.** The stuck-running branch marked the job failed and deleted the child-pid sidecar without signaling the live process, orphaning the runner and its spawned agent; it now tree-kills the process group before terminal cleanup. (`a013324a92`)
+- **Cross-process locks on the requirements-registry WIP gate and telemetry log rotation.** With one OS process per MCP client, a thread lock is insufficient: two workers could pass the WIP-limit gate against the same pre-append registry and bust the limit, and unlocked rotate-and-compress raced the locked appender and lost data. Both now hold a single exclusive file lock across the full read-modify-write / size-check-rename-touch sequence (TOCTOU-safe). (`baaacc8885`)
+- **Native git-commit-transaction hooks can no longer hang the commit path indefinitely.** Repo-native git hooks ran via `subprocess.run` with no timeout and inherited stdin, so a hung or interactive hook blocked forever; they now run with a configurable `git_hook_timeout_seconds`, `stdin=DEVNULL`, and fail closed on timeout. (`228c6a1543`)
+
+### Fixed
+
+- **`antigravity-cli` and `aider` uninstall now remove their managed hooks / instruction files.** Antigravity uninstall had been narrowed and left the live `.antigravitycli/hooks.json` + `hooks/` TRW PreToolUse hook in place; the retired `aider` client's `.aider/instructions.md` managed block had dropped out of the retired-surface list and could no longer be stripped. Both are restored with install→uninstall round-trip tests. (`228c6a1543`, `aa167a98ec`)
+- **Git-commit handoff fails closed on an unresolvable parent ref (FR06).** The stale-parent check previously failed *open* when `git rev-parse` raised (coerced to `""`, guard skipped); it now refuses the handoff with a typed error and a `FAILED` journal state. (`aa167a98ec`)
+- **Copilot stale-skill cleanup after upgrades.** The version-migration cleanup sourced the generic 28-skill list instead of the 14-skill Copilot bundle, so ~14 stale Copilot skills were never removed on update. (`e2e73abbdd`)
+
+### Changed — tool-response token compaction (operator campaign 2026-07-12)
+
+Measured over real stdio before/after: `trw_recall` default response 22.2k → 7.7k
+tokens (-65%), `trw_session_start` 1,670 → 966 (-42%), `trw_prd_validate` -41.5%,
+`trw_dispatch` success path up to -25k/call. Compact-by-default with `verbose=True`
+escape hatches; fail-open; no gate or stored-state behavior changed.
+
+- **`trw_recall`**: internal ranking/telemetry state (`outcome_history`, `q_*`,
+  access counters, `combined_score`, …) is stripped from response entries at the
+  MCP boundary (`recall_internal_fields` config; empty set disables). The token
+  budget now uses a serialization-truthful estimator, so `tokens_used` bounds
+  what the caller actually receives. `topic_filter_*` fields appear only when a
+  topic was requested. (`ef805bd8b8`, `d97ab3fee6`)
+- **`trw_session_start`** (compact mode): repetitive `*_deferred` blocks fold
+  into one `deferred: {reason: [steps]}` + `deferred_writer_count`; writer pid
+  lists stay in structlog events only; `profile_explanation` dropped (the
+  dedicated `trw_profile_explain` tool remains the full audit surface);
+  `candidate_runs` entries no longer embed a derivable `adopt_command`.
+  (`3059b7fbf6`, `d70bbef242`)
+- **Response optimizer** now compacts `structured_content` too — clients that
+  prefer it over the text block (Claude Code) previously received the raw dict
+  with every null/empty field intact, bypassing the middleware entirely.
+  (`fa84368874`)
+- **`trw_prd_validate`**: smell findings grouped by category, EARS classifications
+  as counts + capped actionable lines, cache hashes behind `verbose=True`;
+  dropped the `implementation_test_link_coverage` alias and stub fields.
+  (`8ed269431d`)
+- **`trw_dispatch` / `trw_dispatch_status`**: raw stdout/stderr omitted on
+  success (`raw_streams_omitted=true`; on-disk result file referenced); full
+  capped streams retained on failure; `verbose=True` restores the legacy shape.
+  (`a2f286f`)
+- **`trw_deliver`**: dead `claude_md_sync` tombstone removed; `db_integrity`
+  only on failure; below-threshold `knowledge_sync` and not-applicable
+  `nudge_analysis` compacted; `knowledge_sync` success returns `cluster_count`
+  instead of the full ~200-slug cluster list. (`6552b8f926`, `b21b3165ad`)
+- **`trw_delivery_status`**: compact census lists only started steps plus
+  `steps_total`/`steps_started`/`steps_succeeded`; `verbose=True` returns the
+  full PRD-CORE-208 FR05 audit projection. (`173403d635`)
+- **Misc**: `trw_checkpoint` echoes a 120-char message ack instead of the full
+  message; `trw_adopt_run` drops the duplicate `from_pin_key`; diff tools return
+  `*_count` ints + the `changes` list; `trw_query_events` caps `source_files`
+  and drops constant `sort_order`; empty advisories omitted across status/
+  pipeline-health/skill-discovery/learn responses. (`5585f5fe61`, `06fc710c0d`,
+  `1a792bfc63`, `4828dbba8b`)
+
+### Added
+
+- `recall_internal_fields` config knob (`DEFAULT_RECALL_INTERNAL_FIELDS`);
+  `verbose` params on `trw_prd_validate`, `trw_dispatch`, `trw_dispatch_status`,
+  `trw_delivery_status`.
+- Tool-response token-budget tripwire test + authoring guidance (see
+  `.claude/rules/trw-mcp-python.md` §Tool Response Token Budget) so response
+  bloat is a conscious, costed decision for future changes.
+
+## [0.56.0] — 2026-07-12
+
+### Added
+
+- **Resilient ceremony transport and ownership contracts (PRD-CORE-215).** Tool
+  execution now carries connection fingerprints, typed result envelopes,
+  operation ownership, retry-safe transport-loss handling, and an executable
+  ceremony-tool inventory. (`ce6b836f1e`, `1f88f886f2`)
+- **Candidate-first commit and requirements-delivery evidence (PRD-CORE-219,
+  PRD-QUAL-119, PRD-QUAL-120).** The production commit path publishes isolated
+  candidates with checkpoint evidence; delivery writes the acceptance manifest
+  from the live path rather than from a disconnected report. (`ddc0aac8b6`,
+  `602fb75ad0`, `7b61598d52`, `42a04797c3`)
+- **Fail-closed retention and deterministic replay substrate (PRD-CORE-181).**
+  Content-addressed retention, v2 migration/backup controls, replay classes,
+  and measured maintenance health replace permissive cleanup assumptions.
+  (`e3e4becc21`, `0384c3823a`, `6343e746d3`, `c1b0b872ff`)
+
+### Changed
+
+- **Compacted high-frequency tool responses without removing result meaning.**
+  Status, delivery, recall, validation, dispatch, event, and health responses
+  omit derivable or empty payloads while retaining typed information callers
+  need. (`3059b7fbf6`, `8ed269431d`, `d70bbef242`, `ef805bd8b8`,
+  `06fc710c0d`)
+- **Decomposed oversize orchestration, state, and instruction-sync modules under
+  the 350 effective-LOC gate.** Facades and compatibility exports remain stable
+  while specialized helpers own the implementation details. (`ea0334d0f1`,
+  `c5a5d5c17c`, `5c90a1f87c`)
+
+### Fixed
+
+- **Strengthened delivery, evidence-mode, and run-identity correctness.**
+  Recent fixes align v26.1 enforce-mode tests, restore orchestration exports,
+  repair diff-tool contracts, and patch evidence-mode consumption on the E2E
+  path. (`0bb5071057`, `c5a5d5c17c`, `c0c166bf31`)
+
+### Changed
+
+- **Decomposed `state/claude_md/_instruction_carrier.py` (379→304 raw lines) and `_sync.py` (363→301) under the 350-line module gate.** Behavior-preserving structural split only: the pure instruction-file classification helpers (`InstructionFileClass`, `InstructionFileClassification`, `classify_instruction_file`) moved to a new `_carrier_classify.py` sibling, and the sync-cache hashing helpers (`_compute_sync_hash`, `_read_stored_hash`, `_write_stored_hash`, `invalidate_claude_md_hash`) moved to a new `_sync_hash.py` sibling. Both parent modules re-export the moved symbols so every existing import path and test monkeypatch seam (`_instruction_carrier.externalize_block`, `_sync.recall_learnings`, `_sync.subprocess.run`, `_profile_dispatcher`'s `_sync.*` hash imports) resolves unchanged. Rendered CLAUDE.md/AGENTS.md output is byte-identical.
+
+### Fixed
+
+- **Tolerate a truncated `events.jsonl` tail line instead of poisoning every event read (round-2 adversarial audit, Codex MEDIUM).** `FileStateReader.read_jsonl` (`state/persistence.py`) raised `StateError` on the FIRST malformed line, and the append-only-log consumers that read it best-effort (e.g. `_delivery_helpers._read_run_events`) collapse any raised error to an empty list — so a single torn final line (a process killed mid-append leaving a partial JSON row) made EVERY event read for that run return `[]`, silently disabling delivery-gate / ceremony diagnostics. The reader is now **lenient by default**: a per-line `JSONDecodeError` is skipped and counted (one aggregated `jsonl_malformed_lines_skipped` warning naming the skip count) rather than aborting the whole read, so the valid rows survive. Leniency is scoped strictly to per-line JSON decode failures — a genuinely unreadable file or an unexpected error still raises `StateError`. A new `strict: bool = False` parameter restores the pre-2026-07 fatal-on-malformed contract for integrity-sensitive callers that must treat any corruption as fatal. This mirrors the existing `read_jsonl_resilient` / `read_jsonl_tail` per-line-skip philosophy in `state/_helpers.py`. Regression coverage: a valid-rows-plus-truncated-final-line events file returns the valid events and logs exactly one skip warning; `strict=True` still raises. (Producer-side non-atomic append at `state/_run_gc_io.py` is unchanged — the fix is deliberately reader-side so all consumers benefit without touching every write path.)
+
+- **`trw_prd_validate` grounding — extract `file:line:col` references so hallucinated two-colon paths are actually penalized (round-2 adversarial audit P1-8).** The implementation-reference extractor (`_IMPL_REF_RE` in `state/validation/_prd_scoring_traceability.py`) used a trailing anchor `(?:[:#][-\w./*#]+)?` whose character class excludes `:`, so a two-colon backtick token like `` `src/foo.py:42:5` `` failed to match ENTIRELY (the greedy suffix consumed only `:42`, then the closing-backtick assertion failed with no backtracking path). The whole token was silently dropped from extraction, meaning `compute_grounding_penalty` never saw `:line:col` references as candidates — a hallucinated `` `missing.py:42:5` `` went completely unpenalized. The prior fix (43ae216b5 item 7) added a downstream `:line:col` strip that was a silent no-op because the data shape it handled never arrived. The anchor now accepts an OPTIONAL second `:col` segment (`(?::\d+)?`); the change is a strict superset — every previously-matching shape (`` `src/foo.py` ``, `:42`, `#L10`, multi-`#`) is byte-identical. `_TEST_REF_RE` already handled two-colon suffixes via its `[:\w]*` tail and was left unchanged (no regression risk). Regression coverage asserts a missing file cited with `:line` and `:line:col` now earns a nonzero penalty while an existing file cited the same way earns none, plus parametrized Windows drive-letter cases through the full pipeline. Also: the config-resolution fallback in `_prd_scoring_grounding.py::_resolve_extra_roots` (production path when `extra_roots=None` reads `additional_repo_roots`) now logs `grounding_extra_roots_config_unavailable` instead of silently swallowing the exception, and gains direct test coverage of that production branch; a parity test pins the grounding exclude-dir set against `_prd_integrity_paths._GLOB_EXCLUDE_DIRS`.
+
+- **Beta/tester-program tier unlocks the distill sidecar + fix the dead `/tier` remediation URL (production feedback).** Tester-program users (backend `org.plan` + a `proprietary:install` license) had NO representation in the trw-mcp entitlement model, so they resolved `tier="free"` and every distill-sidecar tool showed a paid-tier remediation pointing at `https://trwframework.com/tier` — a 404 (the real page is `/pricing`). The entitlement model (`state/_entitlements.py`) gains a `beta` tier (same feature set as the paid tiers) plus an `alpha`→`beta` alias for the backend's `TESTER_PLAN="alpha"` value (resolved AFTER signature verification, so one concept keeps one feature row). The remediation string is de-duplicated into a single `tier_required_action()` helper in the shared `tools/_sidecar_substrate.py` and consumed by all six sidecar tools (`before_edit_hint`, `before_edit_hint_batch`, `codebase_risk_report`, `ordering_compare`, `cross_repo_ordering`, `entity_risk_map`); the URL is fixed to `/pricing` and the message now tells beta testers they can enable it via the tester program. `trw-mcp tier issue --tier beta` provisions a local beta entitlement, and the `tier status` table renders the beta row without a `KeyError`. Tool response schemas are unchanged — only string content and the new beta gating behavior. (Out of scope, noted for PRD routing: automatic backend-driven provisioning of `.trw/entitlements.yaml` for tester accounts.)
+
+- **Installer PEP 668 resilience + honest failure guidance in both bootstraps (production feedback).** On modern distros / Homebrew the default Python is externally-managed (PEP 668), so the curl|bash bootstraps' `pip` / `pip --user` rungs both fail; the ladder then suggested the exact `pip` command that had just failed and never tried `pipx`. Both the website-hosted install bootstrap (served) and the S3-published `install.sh` now insert a `pipx install trw-mcp` rung (with `install || upgrade` for the already-installed case) BEFORE the gated `--break-system-packages` fallback, prepend the pipx bin dir to PATH so the freshly-installed `trw-mcp` console script resolves for the auth/init steps, and replace the misleading final message with pipx + virtualenv guidance. pipx is the correct rung because every downstream step invokes the `trw-mcp` binary first (with a `$PYTHON -m trw_mcp.server` same-interpreter fallback).
+- **Accept base64url hyphens in the installer's `--api-key` validator (production feedback).** `validate_api_key` used `[a-zA-Z0-9_]`, which rejected every device key: device keys are `trw_dk_` + `secrets.token_urlsafe(32)` (base64url, which includes `-`). The character class is widened to `[a-zA-Z0-9_-]` and the interactive prompt's "alphanumeric only" hint now describes the real base64url format. The self-contained `dist/install-trw.py` was rebuilt (drift gate green).
+- **PEP 668 dedicated-venv fallback in the third-stage (`install-trw.py`) bootstrap (round-2 adversarial audit).** The round-1 fix added a `pipx` rung to the two shell bootstraps but left the *chained* python installer — which handles the heavy payload (trw-mcp/trw-memory wheels, sentence-transformers, sqlite-vec) — still escalating only `normal → --user → --break-system-packages` and, on a PEP 668 Python that declined system mutation, merely *printing* a pipx suggestion before dying. A PEP 668 user who passed the shell bootstrap died here. `pip_install` now adds a real final rung: a dedicated importable venv (`_ensure_fallback_venv`, default `~/.trw/venv`, `TRW_FALLBACK_VENV` knob). This is a venv rather than pipx **by design** — every downstream step (the bundled-wheel force-pin, `_verify_package_imports`, the MCP `tools/list` preflight probe, and the emitted client MCP config's `python -m trw_mcp.server` command) must `import trw_mcp`/`trw_memory` from the SAME interpreter, which pipx's isolated console-script-only install cannot provide. `phase_install_packages` returns the effective interpreter and `main()` rebinds `python` so every later phase (extras, project setup, client config) targets the venv where the packages are importable. `--pip-target` retains its own isolation and is never rerouted.
+- **Persist the pipx bin dir for non-interactive MCP clients + stop overclaiming (round-2 audit, Codex MEDIUM).** After a successful `pipx install`, both shell bootstraps (the website-hosted `install.sh` and the S3-published `install.sh`) previously prepended the pipx bin dir to the CURRENT shell's PATH only — a non-interactive environment where an MCP client later spawns `trw-mcp` may not inherit it, so the install "succeeded" but the client could not launch the server. `_add_pipx_bindir_to_path` now runs `pipx ensurepath` (best-effort, non-fatal) to persist the dir into the user's shell profile, and when the bin dir was NOT already on the inherited PATH it prints an explicit warning naming the dir plus the re-login / absolute-path caveat. The success banner no longer implies the client will resolve `trw-mcp` unconditionally.
+- **Anchor the `--api-key` validator to the full string (round-2 audit, Codex LOW / P2-2).** `validate_api_key` used `re.match(r"…$", key)`; `$` matches just before a trailing newline, so a pasted key with a stray `\n` (`"trw_abc\n"`) validated True. Switched to `re.fullmatch` (whitespace excluded by the char class), so trailing/leading/embedded newlines, spaces, tabs, and CRLF are all rejected while the 128-char ceiling and base64url body are preserved.
+- **Functional (executing) test harness for the bootstrap pipx rung (round-2 audit, P1-3).** The pipx-rung coverage was grep-only — a flipped `||`/`&&`, a deleted PATH helper, or a broken `ensurepath` would ship undetected. New `tests/test_install_sh_flow.py` actually runs both bootstraps with stubbed `python3`/`pipx`/`trw-mcp`/`curl`, simulates PEP 668 (the `python3` stub's `pip install` exits non-zero), and asserts the ladder INVOKES `pipx install trw-mcp`, runs `pipx ensurepath`, adds the (off-PATH) bin dir to PATH (proven end-to-end via a `trw-mcp` stub that resolves only from that dir), and flows on to a clean success exit. The grep-level wiring guards are retained. The self-contained `dist/install-trw.py` was rebuilt (drift gate green).
+- **`trw_prd_validate` grounding — kill residual false positives that crushed valid PRD scores (production feedback item 7).** The path-grounding penalty (`state/validation/_prd_scoring_grounding.py`) mis-flagged four legitimate reference shapes as hallucinated, multiplicatively collapsing traceability + implementation-readiness scores: (1) a trailing `:line` / `:line:col` anchor (e.g. `` `src/foo.py:42` ``) is now stripped before the existence probe; (2) greenfield annotations placed OUTSIDE the backticks per the actual TRW convention (`` `src/new.py` `` `(new)`/`(planned)`/`(future)`, scanned in a bounded 16-char trailing window) are exempted — the old check only looked *inside* the backticks and never fired; (3) references are now considered present when they exist under `project_root` OR any sibling-repo root, reusing the SAME `additional_repo_roots` config knob the PRD integrity checker already honors (no new plumbing); and (4) the AI/agentic classifier (`_prd_scoring_ai.py`) honors an explicit `ai_operational: false` frontmatter opt-out so a plumbing PRD that incidentally mentions two AI keywords is no longer forced into AI-operational-evidence weighting. The `_prd_integrity_paths.py` glob-exclude set is aligned with the grounding scorer's (`.next`, `.ruff_cache`, `coverage`, `target`, `test-results`) so both path scans prune the same junk trees. All changes are default-additive: an empty `additional_repo_roots`, an absent `ai_operational` key, and unannotated references reproduce prior behavior byte-for-byte.
+- **`trw_learn` ergonomics — stop rejecting valid learnings on avoidable input shapes (production feedback item 8).** `trw_learn(type="project")` (agents mirroring the native-memory "project" category) is now coerced to the valid `convention` `MemoryType` via the existing logged-coercion alias map (joining `gotcha`/`gotchas`), instead of an enum rejection. `trw_learn` also accepts an optional `run_path` kwarg — agents reasonably pass it after using the run-path-aware `trw_checkpoint`/`trw_deliver` — which is accepted and logged for compatibility (NOT validated against any run directory, and learnings are run-independent, so it does not alter storage) rather than raising an unexpected-keyword error. The tool response schema is backward compatible.
+- **`update-project` resolves bundled agent model tiers like fresh install, so agent spawns no longer break after upgrades (production feedback item 6).** Fresh install materializes each bundled agent through the capability-tier resolver (`model: frontier` → `model: opus` for Claude Code), but the update path (`bootstrap/_template_updater.py::_update_agents`) raw-`copy2`'d the bundled file, re-materializing the unresolvable `model: frontier` token over the correctly-resolved file — so after every `update-project` the client rejected the agent with "There's an issue with the selected model (frontier)" and the spawn failed. `_update_agents` now routes each agent through the SAME resolve-and-write path as init (`_install_one_agent`), and the modification guard (`_is_user_modified`, moved to `bootstrap/_version_manifest.py`) recognises EITHER framework rendering (raw tier OR resolved) as unmodified so a previously mis-materialized agent self-heals while genuinely user-edited agents are still preserved and reported. Investigation note: the manifest already hashed the resolved on-disk form (`_compute_content_hashes` reads installed files), so the hypothesized "every resolved agent misclassified as user-modified" was NOT occurring — the added raw/resolved reconciliation is defense-in-depth against legacy/stale manifests and client-profile switches. Copilot agents were left untouched: the live install path (`generate_copilot_agents`) writes inline templates with no `model:` field, and the bundled `data/copilot/agents/*.agent.md` (`model: balanced`) are orphaned — not wired into any installer path.
+- **User-modified agent protection now actually fires on the live `update-project` path (production-feedback audit 2026-07-07).** PRD-FIX-068-FR05's `_is_user_modified` guard was dead on the real `update_project()` code path: `_run_core_update_phases` called `_update_framework_files` → `_update_agents` with `manifest_hashes=None` (the prior manifest was only read later, in the post-update phase), so a genuinely user-edited installed agent was silently overwritten instead of preserved. `update_project()` now reads the PRIOR manifest ONCE up front (`_read_manifest` → `_manifest_content_hashes`, extracted into `bootstrap/_version_manifest.py`) and threads the resolved `content_hashes` into BOTH the core and post-update phases, so user-edited agents are preserved and reported in `result["modified"]` while un-edited agents still resolve `model: frontier` → `model: opus`. First-run / pre-manifest projects degrade gracefully to `None` (prior behavior). The NEW manifest is still written unchanged at the end of the post-update phase.
+- **Extend user-edit preservation to hooks/skills, harden the pre-manifest fallback, and make manifest reads corruption-safe (round-2 adversarial audit: Codex HIGH + Sonnet P1-7 / P2-3 / P2-4).** Three defects in the `update-project` user-edit guard: (1) **hooks & skills were still clobbered** — the modification guard was threaded only into `_update_agents`, while `_update_hooks` / `_update_skills` (`bootstrap/_template_updater.py`) raw-copied unconditionally even though the manifest already records hook/skill content hashes (`_compute_content_hashes`) and PRD-FIX-068-FR05 requires the artifact copy path to skip user-modified installed files. Both now route through a shared `_guarded_copy_update` helper keyed on the manifest hash format (`hook.sh` / `{skill}/SKILL.md`), preserving user edits and reporting them in `result["modified"]`. (2) **Pre-manifest edits were silently overwritten** — `_is_user_modified` (`bootstrap/_version_manifest.py`) returned `False` (→ overwrite) whenever `manifest_hashes` was `None`, violating FR05's unconditional acceptance for projects installed before manifest support; it now unifies the two known-good baselines (framework renderings + recorded manifest hash) so that with no manifest a dest matching NO framework rendering is correctly treated as a genuine user edit and preserved, while raw-tier framework files still self-heal. (3) **A corrupted `managed-artifacts.yaml` crashed the update** — `_read_manifest` caught only `OSError`, but `FileStateReader.read_yaml` raises `StateError` on malformed YAML; it now catches `StateError` too, degrades to `None` with a logged warning, and lets the update proceed. The artifact-name-discovery helpers (`_get_bundled_names` / `_get_custom_names`) were extracted to a new `bootstrap/_artifact_names.py` sibling to keep `_template_updater.py` under the 350-eLOC gate.
+
+### Changed
+
+- **Raised a companion package's `trw-memory` floor to `>=0.9.3`** (from `>=0.6.0`) so the F6 `db_path_override` per-repo seeding fix works end-to-end (cross-package skew previously broke per-repo seeding). Triage: production feedback.
+
+### Performance
+
+- **Run boot GC off the MCP initialize handshake critical path + aggregate per-run skip logging (production feedback).** The boot-time stale-run + stale-pin sweep (`_boot_sequence`) ran synchronously on the main thread *before* `resolve_and_run_transport`, so on a large repo the scan of every historical run — plus one `sweep_skipped_terminal` debug line streamed to stderr per terminal run — delayed the stdio `initialize` handshake past client connect timeouts. The sweep now runs in a named daemon thread (`trw-boot-gc`) by default via the new `boot_gc_deferred` config knob (independent of `cleanup_on_boot`; set `False` to force the legacy synchronous ordering); background-thread exceptions are caught and logged (`boot_gc_thread_failed`), never propagated or dumped as a raw traceback. `sweep_stale_runs` no longer emits a per-skipped-run log line — terminal/malformed skips are counted and reported once in the existing `boot_gc_complete` summary (`runs_skipped_terminal` / `runs_skipped_malformed`); per-run logging is reserved for the rare actual actions (abandon / near-stale). Deferral is behavior-preserving apart from timing and logging volume.
+
+## [0.55.19] — 2026-07-10
+
+### Fixed
+
+- **Finish the v26.1 framework installer migration.** Upgrade-only metadata refresh now parses framework patch versions, prefers validated deployed bodies, preserves a validated prior stamp only as fallback, and leaves state unchanged when neither authority is valid instead of manufacturing a release value. The v26.1 evidence/review/recovery schemas and governed current-versus-historical version surfaces ship in the same patch.
+
+## [0.55.18] — 2026-06-24
+
+### Added
+
+- **Externalize the TRW auto-generated block via the `@`-import mechanism (PRD-CORE-203).** Instead of inlining the full `<!-- trw:start -->`…`<!-- trw:end -->` block into a client instruction file, the sync now writes the block to a sidecar (`.trw/INSTRUCTIONS.md`, configurable) and places a single managed `@.trw/INSTRUCTIONS.md` import directive in the marker region — for clients whose profile declares `@`-path import capability (Claude Code). This keeps tracked instruction files short and moves the TRW artifact back into `.trw/`; projects that gitignore all of `.trw/` keep only the one-line import tracked while the content stays local. New deep module `state/claude_md/_instruction_carrier.py` houses the pure classifier, carrier-mode resolver, externalizer, and healer. New typed config knobs `instruction_externalize` (`off`/`auto`/`on`, default `auto`) and `instruction_external_filename`; new `ClientProfile.instruction_import_syntax` (`none`/`at_path`).
+
+### Fixed
+
+- **Stop clobbering single-source-of-truth instruction files (PRD-CORE-203).** When a project used a thin pointer layout — e.g. a `CLAUDE.md` whose only substantive line is `@AGENTS.md` (AGENTS.md is canonical) — both sync appenders (`merge_trw_section` and bootstrap `_update_claude_md_trw_section`) previously *appended* the full TRW block after the import line, bloating the file, duplicating AGENTS.md's content, and silently breaking the single-source intent. A new shared `pointer_skip_guard` now classifies the target; thin pointers are left un-clobbered (and a stale previously-appended block is healed back to the clean pointer). The sync result payload and the `doctor` instruction-surface check report the carrier mode, pointer-skip list, and externalization path so the behavior is detectable. The externalization is fail-safe (sidecar written before the import line; any failure or a sidecar path that escapes the repo root degrades to inline — never a dangling import) and the sync hash-cache folds the externalize knob so toggling it is not a silent no-op. Backward-compatible: `instruction_externalize=off` and all import-incapable clients produce byte-identical output to prior behavior.
+
 ## [0.55.17] — 2026-06-17
 
 ### Changed
@@ -39,19 +203,19 @@ All notable changes to the TRW MCP server package.
 
 ### Fixed
 
-- **Version advisory no longer fires on a downgrade.** `trw_session_start`'s installed-version sentinel check previously emitted "TRW vX was installed but this MCP server is still running vY — run /mcp to reload" on *any* version mismatch, including when the on-disk version was OLDER than the running process (a stale sentinel or a longer-lived server) — where reloading would downgrade, not update. The advisory now fires only when the on-disk version is genuinely newer than the running process, reusing the canonical semver comparator (fails closed on unparseable versions). (operator report `sub_zAfRqZYYq2KtF72d` defect D)
+- **Version advisory no longer fires on a downgrade.** `trw_session_start`'s installed-version sentinel check previously emitted "TRW vX was installed but this MCP server is still running vY — run /mcp to reload" on *any* version mismatch, including when the on-disk version was OLDER than the running process (a stale sentinel or a longer-lived server) — where reloading would downgrade, not update. The advisory now fires only when the on-disk version is genuinely newer than the running process, reusing the canonical semver comparator (fails closed on unparseable versions). (operator report, defect D)
 - Skip monorepo-only invariant tests (agent/module LOC gates, import-boundary, seam-expiry, agent-sync, plus docs/framework/hook/skill parity checks) in the standalone public mirror where repo-root `scripts/` is absent — they were aborting public CI collection.
 - Public-mirror CI: add `--cov-fail-under=0` to the unit-tier `pytest` command so the unit subset's coverage is reported-but-not-gated (the 80% `fail_under` from `pyproject.toml` belongs to the monorepo full-suite gate, not the unit-only public run that cannot reach it).
 - Skip `test_framework_md.py` (repo-root `.trw/frameworks/FRAMEWORK.md` parity) in the standalone mirror via the same monorepo-only guard — it was raising `FileNotFoundError` in public CI.
 
 ### Added
 
-- **Property-reachability (consumption / sink-to-source) check for safety properties.** The audit/self-review checklists now carry a dedicated step for any redaction/sanitization/validation/egress property: trace every external sink (LLM prompt, user-facing artifact, persisted store, log, network egress) back to all its sources, confirm each path crosses the gate, and confirm the gate's output is actually consumed by production code — "gate output consumed by nothing = automatic FAIL" (a Potemkin gate). Added as NFR item 11 in the shared audit framework, an inline summary in the `trw-adversarial-auditor` agent, and Step 3b in the `trw-self-review` skill. (operator report `sub_zAfRqZYYq2KtF72d` framework gap #1/#2)
+- **Property-reachability (consumption / sink-to-source) check for safety properties.** The audit/self-review checklists now carry a dedicated step for any redaction/sanitization/validation/egress property: trace every external sink (LLM prompt, user-facing artifact, persisted store, log, network egress) back to all its sources, confirm each path crosses the gate, and confirm the gate's output is actually consumed by production code — "gate output consumed by nothing = automatic FAIL" (a Potemkin gate). Added as NFR item 11 in the shared audit framework, an inline summary in the `trw-adversarial-auditor` agent, and Step 3b in the `trw-self-review` skill. (operator report, framework gap #1/#2)
 - Up-front REVIEW-mandatory signal on COMPREHENSIVE/STANDARD runs so the review gate is surfaced before deliver rather than as a post-hoc warning. (PRD-CORE-201)
 
 ### Changed
 
-- trw-distill before-edit hint is now chained into the Cursor IDE, Copilot, and Gemini pre-tool hooks for cross-client pre-edit intelligence. (PRD-DIST-2459/2460)
+- The optional pre-edit hint integration is now chained into the Cursor IDE, Copilot, and Gemini pre-tool hooks for cross-client pre-edit intelligence. (PRD-DIST-2459/2460)
 
 ## [0.55.14] — 2026-06-14
 
@@ -221,7 +385,7 @@ All notable changes to the TRW MCP server package.
   Scan/clean still proceed when a manifest cannot be parsed, but the fail-open
   path is no longer represented as a silent `except: pass`.
 - **Claude Code channel fail-open paths are explicit.** ChannelLock close,
-  CC-03 config defaults, and CC-01 memory-writer telemetry/lock cleanup now use
+  channel config defaults, and memory-writer telemetry/lock cleanup now use
   explicit suppress scopes or debug events instead of silent `except: pass`
   blocks.
 - **State-layer context probes now log best-effort failures.** Recall context,
@@ -841,7 +1005,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
   pre-flight, `trw-exec-plan`/`trw-prd-ready` 0–100 `total_score` migration, `trw-prd-groom` style
   guidance, `trw-simplify` post-extraction audit), and a stale `phase-cycle-stop.sh` hook (PRD-score
   PLAN-gate). These were re-synced via `scripts/sync-agents.py` and direct mirror copies. The bundled
-  `trw-memory-audit`/`trw-memory-optimize` skills were corrected to invoke `trw-distill maintain <op>`
+  `trw-memory-audit`/`trw-memory-optimize` skills were corrected to invoke the consolidated maintenance command
   (the post-fold-in command) instead of the removed standalone `trw-maintain`. `bundle-hashes.json`
   was regenerated. `scripts/check-bundle-sync.sh` now applies capability-tier resolution
   (`balanced→sonnet`, …) in its agent comparison, mirroring `sync-agents.py` and
@@ -991,7 +1155,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
   `https://trwframework.com` (the Amplify-hosted marketing/frontend, which has no
   `/v1` routes and no backend rewrite), so device-code requests 404'd and device
   auth silently fell back to manual API-key paste. Added an explicit
-  `API_BASE = "https://api.trwframework.com"` constant and pointed
+  dedicated API-origin constant and pointed
   `_device_auth_login` at it (matching the `trw-mcp` CLI default in
   `server/_subcommands_lifecycle.py`). `scripts/install-trw.template.py`.
 
@@ -1199,9 +1363,9 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
   - **Channel substrate** (PRD-DIST-2400): `ChannelManifest` registry, `ChannelSurface` enum, `APPEND`/`OVERWRITE` write strategies, optional `sidecar_schema`, tool-return enrichment, `client_profile` propagation, gitignore rules, instruction renderer, cross-cutting `trw_channel_render` MCP tool (FR17), and meta-tune correlator + stats + auto-throttle consumer.
   - **Cursor MDC emitter** (PRD-DIST-2401 Phase F): `.cursor/rules/*.mdc` sidecar writer activated per-turn.
   - **Codex distill channels** (PRD-DIST-2402 Phase G1): three active channels including empirically verified `posttooluse` stdin hook; `.codex/hooks.json` registration so Codex actually invokes the hook.
-  - **opencode distill channels** (PRD-DIST-2403 Phase G2a): sidecar + instruction-renderer channels; `generate_agents_md` now acquires the shared agents-md write lock to close OC-B1/OC-M1/OC-M2 race.
-  - **Antigravity-CLI distill channels** (PRD-DIST-2404 Phase G2b): `hooks_enabled=False` default for the AG profile (P0-04 audit); AG-03 before-edit hook activated after binary analysis confirmed agy v1.0.2 stdin delivery.
-  - **Claude Code distill channels** (PRD-DIST-2405 CC-01..CC-05): five channels covering pre-compact hook, stop hook, subagent, correlation, and init integration; CC-03 bundled hook script + CC-05 subagent wired into `init-project`/`update-project` (FR41-FR43).
+  - **opencode distill channels** (PRD-DIST-2403 Phase G2a): sidecar + instruction-renderer channels; `generate_agents_md` now acquires the shared agents-md write lock to close a multi-writer agents-md race.
+  - **Antigravity-CLI distill channels** (PRD-DIST-2404 Phase G2b): `hooks_enabled=False` default for the AG profile (audit finding); a before-edit hook activated after binary analysis confirmed agy v1.0.2 stdin delivery.
+  - **Claude Code distill channels** (PRD-DIST-2405): five channels covering pre-compact hook, stop hook, subagent, correlation, and init integration; the bundled hook script + subagent wired into `init-project`/`update-project` (FR41-FR43).
   - **Copilot distill channels** (PRD-DIST-2406 Phase I): per-event sidecar writers aligned with the Copilot hook adapter.
   - **Bootstrap wiring** (FR41-FR43): per-client distill channel bootstrap modules wired into `init_project` and `update_project` so channels are activated on every fresh install or update.
   - **Channel-manifest substrate correctness + schema-mirror parity check** (PRD-INFRA-134 FR-04/FR-05): adversarial audit defects closed; ordering-compare divergence fixed.
@@ -1224,12 +1388,12 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
 
 ### Fixed
 
-- **`trw-distill-explorer` frontmatter hygiene.** Description now opens with
+- **Research-explorer frontmatter hygiene.** Description now opens with
   "Use when you need:" (was "Use for:") so it satisfies the agent-frontmatter
   `use when` trigger check (source `_explorer_subagent.py` + dev-repo copy).
 - **Stale agent-count assertions.** `test_agent_frontmatter.py` and
   `test_agents_sync.py` now exclude the two dev-only channel agents
-  (`trw-distill-explorer`, `trw-distill-sonnet-judge`) from the 12-bundled
+  (research explorer and research judge) from the 12-bundled
   count, instead of hard-coding `== 12` against a directory that legitimately
   ships 14.
 - **Agent-parity test contradiction.** `test_agents_sync.py::test_parity_after_marker_expansion`
@@ -1379,7 +1543,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
 
 ### Removed
 
-- **Eight dead test files that referenced Sprint-79-removed build/mutations symbols** (PRD-DIST-880, PRD-DIST-916, PRD-DIST-919, PRD-DIST-920). Sprint 79 (commit `f65c813ae`, 2026-03-30) consolidated build tooling and removed `trw_mcp.tools.build._audit`, `_subprocess`, `_runners`, and `mutations`. The post-split test files continued to import the removed symbols and have produced collection errors since 2026-03-30. They contributed zero passing tests and are deleted without replacement. Removed: `tests/test_analytics_branches_reporting.py`, `tests/test_mutations_api_fuzz.py`, `tests/test_mutations_changed_files_threshold.py`, `tests/test_mutations_dep_audit_integration.py`, `tests/test_mutations_dep_audit_tools.py`, `tests/test_mutations_parse_results.py`, `tests/test_mutations_run_cache_and_edge.py`, `tests/test_mutations_run_check.py`. The shared helper `tests/_mutations_support.py` is preserved — it is still imported by `tests/test_mutations_build_check_integration.py` (collects cleanly; module-skipped at runtime). No production source under `trw-mcp/src/` is affected; the 8837-test passing footprint is preserved; `pytest --collect-only` now exits 0. Cycle-274 deleted the first 2 enumerated by PRD-DIST-880; cycle-275 deleted the remaining 6 surfaced by PRD-DIST-919.
+- **Eight dead test files that referenced Sprint-79-removed build/mutations symbols** (PRD-DIST-880, PRD-DIST-916, PRD-DIST-919, PRD-DIST-920). Sprint 79 (commit `f65c813ae`, 2026-03-30) consolidated build tooling and removed `trw_mcp.tools.build._audit`, `_subprocess`, `_runners`, and `mutations`. The post-split test files continued to import the removed symbols and have produced collection errors since 2026-03-30. They contributed zero passing tests and are deleted without replacement. Removed: `tests/test_analytics_branches_reporting.py`, `tests/test_mutations_api_fuzz.py`, `tests/test_mutations_changed_files_threshold.py`, `tests/test_mutations_dep_audit_integration.py`, `tests/test_mutations_dep_audit_tools.py`, `tests/test_mutations_parse_results.py`, `tests/test_mutations_run_cache_and_edge.py`, `tests/test_mutations_run_check.py`. The shared helper `tests/_mutations_support.py` is preserved — it is still imported by `tests/test_mutations_build_check_integration.py` (collects cleanly; module-skipped at runtime). No production source under `trw-mcp/src/` is affected; the 8837-test passing footprint is preserved; `pytest --collect-only` now exits 0. The first 2 were enumerated by PRD-DIST-880; the remaining 6 were surfaced by PRD-DIST-919.
 
 ## [0.48.7] — 2026-05-14
 
@@ -1414,7 +1578,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
 ### Added
 
 - **Per-client capability-tier resolver** (`agents/tier_resolver.py`, PRD-INFRA-104 FR-01/FR-02/FR-08). Translates the framework's tier vocabulary (`frontier|balanced|local-large|local-small`) into the concrete model identifiers each client harness accepts (`_CLIENT_MAPS`). Wired into `bootstrap/_init_project_skills.py::_install_agents` on every Claude Code install (FR-03/FR-07/FR-10/FR-11, commit `d9b7065fe`), into `scripts/sync-agents.py` for the dev repo's `.claude/agents/`, and restores `model:frontier` pins on bundled agents (FR-04/FR-05/FR-06, commit `e907cd828`). Documented in `CLAUDE.md` (commit `90a198008`). New client adapters add one `_CLIENT_MAPS` entry. (Unresolvable `model:frontier` pins on 3 bundled agents were first dropped in `20fb923e7`, then restored via the resolver.)
-- **`store_learning(metadata)` cross-package extension** (PRD-DIST-254, commit `95d2e77b1`) — `trw-mcp`-side support for carrying distill metadata on stored learnings (consumed by `trw-distill`'s bulk-store path).
+- **`store_learning(metadata)` companion integration** (PRD-DIST-254, commit `95d2e77b1`) — `trw-mcp` supports carrying producer metadata on stored learnings for a companion bulk-store path.
 - **`_search_entries` accepts `allow_cold_embedding_init` kwarg** (commit `a44b1f72c`) — recall path can opt into initializing a cold embedding provider when needed instead of silently degrading.
 
 ### Fixed
@@ -1557,7 +1721,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
 ### Fixed
 
 - **Installer skipped client-selection prompt on first install** (Issue 1
-  from Mac install report). The bash bootstrap (`platform/public/install.sh`)
+  from Mac install report). The bash bootstrap (the website-hosted `install.sh`)
   pre-creates `.trw/` so `trw-mcp auth login` can persist `platform_api_key`
   to `config.yaml`. The legacy gate in `phase_project_setup` of
   `install-trw.template.py` treated *any* `.trw/` directory as evidence of a
@@ -1599,7 +1763,7 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
 
 ### Infrastructure
 
-- INFRA: new `make test-nudge-contract` gate validates trw-mcp ↔ trw-eval schema contract in one command.
+- INFRA: new `make test-nudge-contract` gate validates the companion schema contract in one command.
 
 ### Fixed
 
@@ -1628,11 +1792,11 @@ Round-2 double-audit findings: incompleteness in the wave-1 fixes plus adjacent 
     eval consumers.
   - `nudge_skipped` DEBUG events from `_nudge_rules.py` (pool_cooldown)
     and `state/ceremony_nudge.py` (phase_dedup) with enumerated reasons.
-- **2026-04-22 — PRD-CORE-146: `nudge_density` config field** with the
+- **2026-04-22 — PRD-CORE-146: nudge-frequency config field** with the
   standard effective_* resolution pattern (profile override → config).
   Consumed in `_nudge_rules.py::apply_pool_cooldown`: `low` doubles the
   pool cooldown, `high` halves it, `None` / `medium` preserves legacy
-  behavior. Surfaced to trw-eval overlays (see trw-eval 0.7.2).
+  behavior. Surfaced to optional evaluation overlays.
 - **2026-04-22 — PRD-CORE-146: shared cross-package fixtures** at
   `tests/fixtures/nudge_contract/`:
   - `ceremony-state.example.json` — authoritative `nudge_history` /
@@ -1935,7 +2099,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
   - CLI `--ide gemini` support for `init-project` and `update-project`
   - 73 tests across 10 test classes (profile, detection, instructions, smart-merge, MCP config, agents, init, update, wiring)
   - Dev repo uses shared HTTP MCP (`httpUrl: http://127.0.0.1:8100/mcp`); installer generates standard stdio for user projects
-  - Comprehensive research at `docs/research/providers/gemini/` (3 documents, 2000+ lines)
+  - Comprehensive internal provider research (3 documents, 2000+ lines)
 
 ### Changed
 
@@ -2191,7 +2355,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Added — Meta-Learning Phase B (Sprint 83-84, PRD-CORE-103/104)
 
-- **Delivery metrics pipeline** — New `_step_delivery_metrics()` deferred step in `trw_deliver()` computing rework_rate, composite_outcome, proximal_reward, learning_exposure, and normalized_reward at delivery time.
+- **Delivery metrics pipeline** — New `_step_delivery_metrics()` deferred step in `trw_deliver()` computing bounded delivery-scoring dimensions at delivery time.
 - **Learning-backed ceremony nudges** — `append_ceremony_nudge()` now queries learnings, uses `select_nudge_learning()` for dedup-aware selection, and appends a `TIP: <summary>` line to ceremony nudge text.
 - **Surface logging for all channels** — `log_surface_event()` now wired for `session_start` (in `perform_session_recalls()`), `nudge` (in `append_ceremony_nudge()`), and `recall` (in `execute_recall()`).
 - **Propensity logging** — `log_selection()` wired into the nudge selection path with candidate set, phase context, and exploration flag.
@@ -2393,7 +2557,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Added — Code Quality Sprint (PRD-QUAL-047, PRD-QUAL-048, PRD-CORE-089, PRD-QUAL-049)
 
-> **Note (2026-04-30):** PRD-QUAL-047 referenced here was later renumbered to PRD-QUAL-082 to resolve a catalogue ID collision; the canonical PRD-QUAL-047 is "Mypy Strict Mode Completion — Backend & trw-eval" (Sprint 72). The release contents below are unchanged.
+> **Note (2026-04-30):** PRD-QUAL-047 referenced here was later renumbered to PRD-QUAL-082 to resolve a catalogue ID collision; the canonical PRD-QUAL-047 is the backend strict-type-check completion item (Sprint 72). The release contents below are unchanged.
 
 - **`create_app()` factory function** — `server/_app.py` now provides `create_app(instructions=..., middleware=...)` for testing and embedding. Module-level `mcp` singleton preserved for backward compatibility.
 - **`py.typed` PEP 561 marker** — enables downstream type checking for library consumers.
@@ -2484,7 +2648,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 - **Device auth UX** — CLI now shows the complete URL with code embedded (`/device?code=XXXX-XXXX`) instead of displaying the URL and code separately. When the browser opens successfully, shows a single confirmation line. When it can't, shows one copyable URL.
 - **`tools/build` missing from wheel** — `.gitignore` had unanchored `build/` which excluded `src/trw_mcp/tools/build/` from the published package. Anchored to `/build/` so only the root build directory is ignored.
-- **`install.sh` served from platform** — added to `platform/public/` so `curl -fsSL https://trwframework.com/install.sh | bash` works via Amplify without a separate CDN setup.
+- **`install.sh` served from the website** — added to the hosted public web assets so `curl -fsSL https://trwframework.com/install.sh | bash` works via Amplify without a separate CDN setup.
 - **trw-shared removed from build chain** — `Makefile`, `build_installer.py`, and installer template no longer reference the inlined trw-shared package.
 
 ## [0.31.0] — 2026-03-25
@@ -2503,7 +2667,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 ### Added
 
 - **Observation masking middleware** (`telemetry/context_budget.py`, `telemetry/_compression.py`) — new `ContextBudgetMiddleware` implements 3-tier progressive verbosity (full/compact/minimal) that reduces tool response tokens as sessions grow longer. Tier transitions driven by per-session turn count; redundancy detection via SHA-256 hashing suppresses repeated identical responses. Registered in `_build_middleware()` between `ProgressiveDisclosureMiddleware` and `ResponseOptimizerMiddleware`. Config fields: `observation_masking` (bool), `compact_after_turns` (default 20), `minimal_after_turns` (default 40). 28 tests covering tiers, compression, redundancy, config, and fail-open behavior. Motivated by JetBrains Research (Dec 2025): 52% cost reduction with only 2.6% quality degradation.
-- **Open-source publication prep** — `pyproject.toml` license set to `BUSL-1.1`, `README.md` rewritten for public audience, competitive research documents removed from the published artifact, secrets baseline scrubbed.
+- **Source-available publication prep** — `pyproject.toml` license set to `BUSL-1.1`, `README.md` rewritten for public audience, competitive research documents removed from the published artifact, secrets baseline scrubbed.
 
 ### Fixed
 
@@ -2645,7 +2809,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 - **Platform-generic AGENTS.md content** — `render_agents_trw_section()` produces content free of Claude Code-specific language (no Agent Teams, subagents, slash commands, or FRAMEWORK.md references). AGENTS.md is now suitable for opencode, Cursor, Codex, and other MCP-capable platforms.
 - **`target_platforms` config field** — list of platforms to sync instruction files for during deliver/sync. Installer auto-detects IDEs; updater keeps the field in sync when IDEs are added/removed.
 - **Tool relevance tiers documentation** — TRW_README.md includes a "Local Model Guide" with Essential/Recommended/Optional tool classification for context-constrained environments.
-- **Platform adaptation research** — `docs/research/platform-adaptation-research.md` with compatibility matrix, eval analysis, and TRW-light protocol design.
+- **Platform adaptation research** — an internal research doc with compatibility matrix, eval analysis, and TRW-light protocol design.
 
 ### Fixed
 
@@ -2753,7 +2917,7 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Changed
 
-- **Node.js 24 available** — installed via nvm for ESLint and platform build. `platform/package-lock.json` updated.
+- **Node.js 24 available** — installed via nvm for ESLint and the frontend build. The frontend `package-lock.json` was updated.
 
 ## [0.15.0] — 2026-03-14
 
@@ -2810,9 +2974,9 @@ covering four of the eight HIGH findings attributed to trw-mcp.
 
 ### Fixed
 
-- **Telemetry events table empty on dashboard** (P0) — `getTelemetryEvents()` in `platform/src/lib/api.ts` expected a flat array but the backend returns a `PaginatedResponse` envelope. Now unwraps `.items` from the paginated response.
+- **Telemetry events table empty on dashboard** (P0) — `getTelemetryEvents()` in the platform API client expected a flat array but the API returns a `PaginatedResponse` envelope. Now unwraps `.items` from the paginated response.
 - **`tests_passed: true` despite test failures** (P0) — `_run_pytest()` in `build/_runners.py` set `tests_passed` based only on pytest's return code, ignoring parsed `failure_count`. Now cross-checks `result.returncode == 0 and failure_count == 0` on both standard and custom command paths.
-- **`build_pass_rate` always null on analytics dashboard** (P1) — `pytest_passed`, `test_count`, `coverage_pct`, `mypy_passed` fields were not in `_MAPPED_FIELDS` in `backend/routers/telemetry.py`, so they fell into the `payload` JSON overflow bucket instead of their dedicated DB columns. Added `_bool()` helper and mapped all four fields.
+- **`build_pass_rate` always null on analytics dashboard** (P1) — `pytest_passed`, `test_count`, `coverage_pct`, `mypy_passed` fields were not in `_MAPPED_FIELDS` in the telemetry ingest router, so they fell into the `payload` JSON overflow bucket instead of their dedicated DB columns. Added `_bool()` helper and mapped all four fields.
 - **`trw_quality_dashboard` trends always null** (P1) — `dashboard.py:aggregate_dashboard()` reads `ceremony_score`, `coverage_pct`, `tests_passed` from `session-events.jsonl`, but no delivery step wrote those fields. Added session summary event in `_step_telemetry` that writes ceremony score, task, phase, and build results to `session-events.jsonl`.
 - **`config.telemetry` gate always truthy** (P2) — the `if config.telemetry:` check in `tools/telemetry.py` tested a `TelemetryConfig` Pydantic object (always truthy). Changed to check `config.telemetry.platform_telemetry_enabled` for proper two-tier gating of detailed telemetry records.
 

@@ -67,7 +67,6 @@ class TestLearnUpdateNewFields:
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.memory_adapter.get_backend", return_value=_make_mock_backend()),
-            patch("trw_mcp.tools.learning.get_backend", return_value=_make_mock_backend()),
             patch("trw_mcp.tools.learning.adapter_update") as mock_update,
             patch("trw_mcp.state.analytics.find_entry_by_id", return_value=None),
             patch("trw_mcp.state.analytics.resync_learning_index", return_value=None),
@@ -224,7 +223,6 @@ class TestLearnUpdateNewFields:
         with (
             _patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             _patch("trw_mcp.state.memory_adapter.get_backend", return_value=_make_mock_backend()),
-            _patch("trw_mcp.tools.learning.get_backend", return_value=_make_mock_backend()),
             _patch("trw_mcp.tools.learning.adapter_update", side_effect=_capture),
             _patch("trw_mcp.state.analytics.find_entry_by_id", return_value=None),
             _patch("trw_mcp.state.analytics.resync_learning_index", return_value=None),

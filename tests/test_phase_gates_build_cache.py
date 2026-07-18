@@ -31,17 +31,25 @@ class TestBestEffortCheck:
 
     @pytest.mark.unit
     def test_swallows_exception(self) -> None:
+        calls: list[str] = []
+
         def fn() -> None:
+            calls.append("called")
             raise RuntimeError("boom")
 
         _best_effort_check(fn, "test_check")
+        assert calls == ["called"]
 
     @pytest.mark.unit
     def test_swallows_any_exception_type(self) -> None:
+        calls: list[str] = []
+
         def fn() -> None:
+            calls.append("called")
             raise ValueError("bad value")
 
         _best_effort_check(fn, "val_check")
+        assert calls == ["called"]
 
     @pytest.mark.unit
     def test_mutations_still_visible_on_success(self) -> None:

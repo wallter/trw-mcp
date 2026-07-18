@@ -32,7 +32,6 @@ from trw_mcp.state.analytics import (
 )
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.memory_adapter import (
-    get_backend,
     list_active_learnings,
     recall_learnings as adapter_recall,
     store_learning as adapter_store,
@@ -49,7 +48,8 @@ from trw_mcp.tools._learning_helpers import (
 )
 from trw_mcp.tools._learning_module_helpers import _annotate_injected_learnings, _build_call_ctx, _coerce_tags
 from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _is_solution_summary, _validate_learn_enums
-from trw_mcp.tools._learning_module_helpers import _create_llm_client, _read_injected_ids
+from trw_mcp.tools._learning_module_helpers import _validate_learn_update_fields
+from trw_mcp.tools._learning_module_helpers import _create_llm_client, _note_run_path_compat, _read_injected_ids
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -94,20 +94,19 @@ def register_learning_tools(server: FastMCP) -> None:
         protection_tier: str = "normal",
         # PRD-CORE-185 FR07: write-tier override.
         scope: str = "auto",
+        # Feedback sub_5qbmT6WPNoP58rlv item 8: accepted for compatibility.
+        run_path: str | None = None,
     ) -> LearnResultDict:
         """Persist a non-obvious discovery so future agents inherit the finding.
 
         Use when:
-        - You just found a root cause, gotcha, or durable pattern worth remembering.
-        - Capture it the moment you validate an approach that prevents repeated mistakes.
-        - You hit an architecture constraint that is not obvious from reading the code.
+        - You found a root cause, gotcha, or durable pattern worth remembering.
+        - You validated an approach that prevents repeated mistakes.
+        - You hit an architecture constraint not obvious from the code.
 
-        Only record learnings that:
-        - prevent repeated mistakes,
-        - change future implementation/debugging/review behavior,
-        - are specific enough to recall later.
-        Routine observations ("I read the file", "the test passed") degrade
-        recall quality.
+        Record only learnings that change future implementation/debugging/review
+        behavior and are specific enough to recall later. Routine observations
+        ("I read the file", "the test passed") degrade recall quality.
 
         Required:
         - summary: one-line headline.
@@ -115,7 +114,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Recommended:
         - tags: keywords for trw_recall filtering. Accepts a JSON list
-          (``["a","b"]``) OR a comma/whitespace-separated string (``"a,b c"``).
+          (``["a","b"]``) or a comma/whitespace-separated string (``"a,b c"``).
         - impact: 0.0-1.0; high values surface more often.
 
         Advanced (auto-detected if omitted):
@@ -123,8 +122,9 @@ def register_learning_tools(server: FastMCP) -> None:
         - scope: write-tier override (PRD-CORE-185). "auto" (default) routes
           portable learnings to the machine-local user tier when a user-scope
           store is present, else the project tier; "project"/"user" force it.
-        Most learnings need only summary and detail. Adding tags and impact
-        improves recall precision. All other fields are auto-detected.
+        - run_path: accepted for compatibility with run-path-aware tools.
+          Learnings are run-independent, so it is only accepted and logged,
+          not validated, and never fails the call.
 
         Output: LearnResultDict with
         {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
@@ -135,6 +135,10 @@ def register_learning_tools(server: FastMCP) -> None:
         # None = "not provided" → auto-detect. Empty string = explicit blank.
         from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
         from trw_mcp.tools._learn_impl import execute_learn
+
+        # Feedback sub_5qbmT6WPNoP58rlv item 8: accept-and-log run_path for
+        # compatibility with the run-path-aware checkpoint/deliver tools.
+        _note_run_path_compat(run_path)
 
         # Potemkin defect C: coerce advertised type aliases (e.g. 'gotcha',
         # presented as first-class in the docstring + trw-deliver skill) to a
@@ -261,63 +265,25 @@ def register_learning_tools(server: FastMCP) -> None:
         # the same way trw_learn does, so the two tools share a type vocabulary.
         if type is not None:
             type = _coerce_learn_type(type)
-        _valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
-        if type is not None and type not in _valid_types:
-            return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
-        _valid_confidences = {"unverified", "low", "medium", "high", "verified"}
-        if confidence is not None and confidence not in _valid_confidences:
-            return {
-                "error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}",
-                "status": "invalid",
-            }
-        _valid_tiers = {"critical", "high", "normal", "low", "protected", "permanent"}
-        if protection_tier is not None and protection_tier not in _valid_tiers:
-            return {
-                "error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}",
-                "status": "invalid",
-            }
-        _valid_phases = {"", "RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"}
-        if phase_origin is not None and phase_origin not in _valid_phases:
-            return {
-                "error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}",
-                "status": "invalid",
-            }
-        if nudge_line is not None and len(nudge_line) > 80:
-            return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
-        _valid_feedback = {"helpful", "unhelpful"}
-        if feedback is not None and feedback not in _valid_feedback:
-            return {"error": f"Invalid feedback '{feedback}'. Must be one of: {_valid_feedback}", "status": "invalid"}
-        if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) for t in tags)):
-            return {"error": "tags must be a list of strings", "status": "invalid"}
+        _reject = _validate_learn_update_fields(
+            type=type,
+            confidence=confidence,
+            protection_tier=protection_tier,
+            phase_origin=phase_origin,
+            nudge_line=nudge_line,
+            feedback=feedback,
+            tags=tags,
+        )
+        if _reject is not None:
+            return _reject
 
-        # PRD-CORE-132 FR03: Increment feedback counter in backend
-        if feedback is not None:
-            try:
-                backend = get_backend(trw_dir)
-                existing = backend.get(learning_id)
-                if existing is not None:
-                    if feedback == "helpful":
-                        backend.update(learning_id, helpful_count=existing.helpful_count + 1)
-                    else:
-                        backend.update(learning_id, unhelpful_count=existing.unhelpful_count + 1)
-            except Exception:  # justified: fail-open, feedback must not block learn_update
-                logger.debug("feedback_update_failed", learning_id=learning_id, feedback=feedback, exc_info=True)
-
-        # Validate and store assertions via backend (PRD-CORE-086 FR12)
+        # Validate assertions before the owning-backend adapter persists them.
         validated_assertions: list[dict[str, object]] | None = None
         if assertions is not None:
             from trw_memory.models.memory import Assertion
 
             validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
             validated_assertions = [a.model_dump() for a in validated]
-            try:
-                backend = get_backend(trw_dir)
-                existing = backend.get(learning_id)
-                if existing is not None:
-                    existing.assertions = validated
-                    backend.update(learning_id, assertions=validated_assertions)
-            except Exception:  # justified: fail-open, assertion persistence must not block learn_update
-                logger.debug("assertion_update_failed", learning_id=learning_id, exc_info=True)
 
         result = adapter_update(
             trw_dir,
@@ -338,6 +304,8 @@ def register_learning_tools(server: FastMCP) -> None:
             protection_tier=protection_tier,
             tags=tags,
             supersedes=supersedes,
+            assertions=validated_assertions,
+            feedback=feedback,
         )
 
         # Dual-write: also update YAML backup for rollback safety

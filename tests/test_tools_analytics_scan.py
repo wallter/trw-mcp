@@ -8,6 +8,7 @@ import pytest
 
 import trw_mcp.state.analytics.report as analytics_mod
 from tests._test_tools_analytics_support import _write_run, multi_run_project, writer  # noqa: F401
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -51,7 +52,7 @@ class TestScanAllRuns:
     ) -> None:
         """T-16: Corrupt run.yaml surfaces in parse_errors, does not raise."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         corrupt_run_dir = tmp_path / ".trw" / "runs" / "bad-task" / "20260101T000000Z-bad00000" / "meta"
@@ -71,7 +72,7 @@ class TestScanAllRuns:
     ) -> None:
         """T-16 extended: corrupt run alongside a valid run — valid run still returned."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         _write_run(
@@ -114,7 +115,7 @@ class TestScanAllRuns:
     ) -> None:
         """scan_all_runs returns empty report when runs_root directory does not exist."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
 
         result = scan_all_runs()
         assert result["runs_scanned"] == 0
@@ -174,7 +175,7 @@ class TestScanAllRuns:
     ) -> None:
         """Task directory without a 'runs' subdirectory is silently skipped."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         (tmp_path / ".trw" / "runs" / "orphan-task").mkdir(parents=True)
@@ -190,7 +191,7 @@ class TestScanAllRuns:
     ) -> None:
         """A run with missing events.jsonl is still scanned (score 0)."""
         monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-        monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+        monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
         monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
         _write_run(writer, tmp_path, "silent-task", "20260101T000000Z-silent00", events=None)

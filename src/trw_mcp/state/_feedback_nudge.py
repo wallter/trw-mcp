@@ -72,7 +72,9 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
+
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig

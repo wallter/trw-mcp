@@ -98,6 +98,7 @@ _IDE_CURATED_SKILLS: list[str] = [
     "trw-project-health",
     "trw-memory-audit",
     "trw-reflect",
+    "trw-delegate",
     # "trw-release" — skill directory does not exist yet (PRD-CORE-137)
 ]
 

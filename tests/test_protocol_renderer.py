@@ -106,19 +106,6 @@ def test_ceremony_mode_compact() -> None:
     assert len(compact_output) < len(full_output) / 2
 
 
-def test_gemini_instructions_parity() -> None:
-    """Regression: Verify generated Gemini instructions match expected content."""
-    from trw_mcp.bootstrap._gemini import _gemini_instructions_content
-
-    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
-    renderer_content = renderer.render_gemini_instructions()
-
-    # Both should produce identical content since _gemini_instructions_content
-    # now delegates to the renderer
-    original_content = _gemini_instructions_content()
-    assert renderer_content.strip() == original_content.strip()
-
-
 def test_render_phase_descriptions() -> None:
     """Verify phase descriptions include all 6 phases."""
     renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="claude-code", display_name="claude-code"))
@@ -186,22 +173,6 @@ def test_opencode_generic_fallback() -> None:
     assert "TRW Instructions" in instructions
     assert "Model and Context Policy" in instructions
     assert "project-native" in instructions
-
-
-def test_gemini_instructions_contains_markers() -> None:
-    """Verify Gemini instructions have start/end markers."""
-    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
-    output = renderer.render_gemini_instructions()
-    assert "<!-- trw:gemini:start -->" in output
-    assert "<!-- trw:gemini:end -->" in output
-
-
-def test_render_table_gemini_platform() -> None:
-    """FR02: Verify render for Gemini platform contains Gemini-specific notes."""
-    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
-    output = renderer.render_gemini_instructions()
-    assert "mcp_trw_" in output
-    assert "Gemini" in output
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 The MCP server imports ``trw_mcp.meta_tune.boot_checks`` during startup.
 Keep this package initializer side-effect free so that boot-check imports do
-not eagerly load the full dispatch/sandbox stack before configuration and
+not eagerly load the full promote/sandbox stack before configuration and
 server modules finish initializing.
 """
 
@@ -11,12 +11,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only typing aid
-    from trw_mcp.meta_tune.dispatch import DispatchResult, promote_candidate
     from trw_mcp.meta_tune.errors import (
         KillSwitchNotFoundError,
         MetaTuneBootValidationError,
         MetaTuneSafetyUnavailableError,
     )
+    from trw_mcp.meta_tune.promote import PromotionResult, promote_candidate
     from trw_mcp.meta_tune.sandbox import (
         ProbeIsolationContext,
         SandboxResult,
@@ -25,11 +25,11 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only typing aid
     )
 
 __all__ = [
-    "DispatchResult",
     "KillSwitchNotFoundError",
     "MetaTuneBootValidationError",
     "MetaTuneSafetyUnavailableError",
     "ProbeIsolationContext",
+    "PromotionResult",
     "SandboxResult",
     "SandboxRunner",
     "promote_candidate",
@@ -40,17 +40,17 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Lazily expose legacy package-level conveniences.
 
-    Historically this module imported dispatch, errors, and sandbox eagerly.
+    Historically this module imported promote, errors, and sandbox eagerly.
     That made a clean ``import trw_mcp.server`` fail with a circular import:
-    server -> meta_tune.boot_checks -> package __init__ -> dispatch ->
+    server -> meta_tune.boot_checks -> package __init__ -> promote ->
     boot_checks/errors -> telemetry -> state._paths -> models -> scoring ->
     state._paths.  Lazy exports preserve the public convenience API without
     making server startup pay for unrelated meta-tune modules.
     """
-    if name in {"DispatchResult", "promote_candidate"}:
-        from trw_mcp.meta_tune.dispatch import DispatchResult, promote_candidate
+    if name in {"PromotionResult", "promote_candidate"}:
+        from trw_mcp.meta_tune.promote import PromotionResult, promote_candidate
 
-        return {"DispatchResult": DispatchResult, "promote_candidate": promote_candidate}[name]
+        return {"PromotionResult": PromotionResult, "promote_candidate": promote_candidate}[name]
     if name in {"KillSwitchNotFoundError", "MetaTuneBootValidationError", "MetaTuneSafetyUnavailableError"}:
         from trw_mcp.meta_tune.errors import (
             KillSwitchNotFoundError,

@@ -29,7 +29,18 @@ def parser():  # type: ignore[no-untyped-def]
 
 def test_build_release_parses_representative_args(parser) -> None:  # type: ignore[no-untyped-def]
     ns = parser.parse_args(
-        ["build-release", "--version", "1.2.3", "--output-dir", "/tmp/out", "--push", "--backend-url", "https://api", "--api-key", "k"]
+        [
+            "build-release",
+            "--version",
+            "1.2.3",
+            "--output-dir",
+            "/tmp/out",
+            "--push",
+            "--backend-url",
+            "https://api",
+            "--api-key",
+            "k",
+        ]
     )
     assert ns.command == "build-release"
     assert ns.version == "1.2.3"
@@ -176,3 +187,21 @@ def test_all_operational_and_project_subcommands_registered(parser) -> None:  # 
         "import-learnings",
     }
     assert expected.issubset(choices), f"missing: {expected - choices}"
+
+
+# ── Deprecated --transport shim (2026-07-11) ─────────────────────────
+
+
+def test_transport_stdio_accepted_as_noop(parser) -> None:  # type: ignore[no-untyped-def]
+    """Installer scripts in the wild probe with `--transport stdio serve`
+    while installing the LATEST PyPI trw-mcp; the flag must stay accepted
+    (as a no-op) after the HTTP-transport removal (a0673d9765)."""
+    args = parser.parse_args(["--transport", "stdio", "serve"])
+    assert args.command == "serve"
+    assert args.transport == "stdio"
+
+
+def test_transport_non_stdio_rejected(parser) -> None:  # type: ignore[no-untyped-def]
+    """Only stdio is a valid transport; anything else must still error."""
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--transport", "http", "serve"])

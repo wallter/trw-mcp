@@ -112,7 +112,15 @@ class TestAutoProgressPrds:
         prds_dir.mkdir()
         _make_prd_file(prds_dir, "PRD-TEST-IMPL", status="approved")
 
-        result = auto_progress_prds(run_dir, "implement", prds_dir, TRWConfig())
+        result = auto_progress_prds(
+            run_dir,
+            "implement",
+            prds_dir,
+            TRWConfig(),
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
         applied = [r for r in result if r.get("applied") is True]
         assert len(applied) == 1
         assert applied[0]["from_status"] == "approved"

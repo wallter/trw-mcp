@@ -67,6 +67,9 @@ from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 from trw_mcp.state.analytics.core import (
     is_success_event as is_success_event,
 )
+from trw_mcp.state.analytics.core import (
+    normalize_audit_learning_metadata as normalize_audit_learning_metadata,
+)
 
 # ---------------------------------------------------------------------------
 # Module C — counters (counter updates, event patterns)
@@ -190,6 +193,7 @@ __all__ = [
     "is_noise_summary",
     "is_success_event",
     "mark_promoted",
+    "normalize_audit_learning_metadata",
     "resync_learning_index",
     "save_learning_entry",
     "surface_validated_learnings",

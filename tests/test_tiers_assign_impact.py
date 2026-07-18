@@ -220,18 +220,27 @@ class TestAssignImpactTiers:
         """Entry in SQLite but with no YAML file on disk is skipped gracefully."""
         from unittest.mock import patch
 
+        import structlog.testing
+
         from trw_mcp.state.tiers import TierManager
 
         trw_dir, _, writer = self._setup_entries_dir(tmp_path)
         mgr = TierManager(trw_dir=trw_dir, reader=FileStateReader(), writer=writer)
 
-        with patch(
-            "trw_mcp.state.tiers.list_active_learnings",
-            return_value=[{"id": "missing-yaml-entry", "impact": 0.8, "status": "active"}],
+        with (
+            patch(
+                "trw_mcp.state.tiers.list_active_learnings",
+                return_value=[{"id": "missing-yaml-entry", "impact": 0.8, "status": "active"}],
+            ),
+            structlog.testing.capture_logs() as logs,
         ):
             dist = mgr.assign_impact_tiers(trw_dir)
 
         assert sum(dist.values()) == 0
+        missing = [event for event in logs if event["event"] == "assign_impact_tiers_no_yaml"]
+        assert len(missing) == 1
+        assert missing[0]["missing_count"] == 1
+        assert missing[0]["entry_id_sample"] == ["missing-yaml-entry"]
 
     def test_impact_tier_field_default_is_question_mark(self) -> None:
         """LearningEntry.impact_tier defaults to '?' when not set (FR02)."""

@@ -81,6 +81,38 @@ class _BuildFields:
     #   ``allow_unverified`` + structured acceptable-failure path). Mirrors the
     #   ``deliver_gate_mode`` precedent. Default ``warn`` -> zero behavior change.
     review_gate_mode: Literal["warn", "block"] = "warn"
+    # PRD-CORE-213-NFR01: acceptance-integrity transition gate mode (warn | block).
+    #   When a session's path-limited PRD diff moves a PRD to ``status:
+    #   implemented`` under a build-bearing task type (coding/rca/eval) in
+    #   ``deliver_gate_mode=block_coding``/``block_all``:
+    #     warn  (brownfield-safe default) — detect the transition and, if it is
+    #           incoherent (missing functionality_level coherence / wiring /
+    #           build evidence / independent P0/P1 review receipt), log
+    #           ``acceptance_integrity_warn`` but let delivery proceed.
+    #     block — escalate an incoherent transition to a hard
+    #           ``acceptance_integrity_block`` (overridable ONLY via the
+    #           ``allow_unverified`` + structured acceptable-failure record path,
+    #           identical to the build gate).
+    #   Default ``block`` (PRD-QUAL-119 P09 activation, 2026-07-11): an
+    #   uncertifiable ``->implemented`` transition hard-blocks delivery by
+    #   default; the structured acceptable-failure record remains the only
+    #   escape. The ``warn`` posture stays available as an explicit opt-DOWN
+    #   during brownfield remediation, but the shipped default enforces
+    #   completion truth (rollout observation is not completion).
+    prd_transition_gate: Literal["warn", "block"] = "block"
+    # PRD-CORE-205-FR08: content-bound evidence receipt compatibility mode.
+    #   observe — new writers dual-write typed receipts AND legacy projections;
+    #             readers prefer receipts; a legacy artifact keeps its existing
+    #             gate behavior as ``legacy_unbound`` ONLY when NO typed receipt
+    #             exists. Typed-present-invalid evidence is non-positive and never
+    #             falls back to a legacy positive path.
+    #   enforce — receipt-required positive evidence for build-bearing work; a
+    #             legacy-unbound artifact is treated as missing.
+    # v26.1 closes the in-repo compatibility window: typed review/build writers
+    # are live and the safe default is enforce. Projects with a documented
+    # external migration may temporarily opt back into observe.
+    # An unknown value is treated as non-positive by readers (fail-toward-no-evidence).
+    evidence_receipt_mode: Literal["observe", "enforce"] = "enforce"
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None

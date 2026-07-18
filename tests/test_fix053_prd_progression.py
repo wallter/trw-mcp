@@ -73,7 +73,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=_guard_always_allowed,
         ):
-            results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            results = auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         assert len(results) >= 1
         prd_result = next((r for r in results if r["prd_id"] == "PRD-TEST-001"), None)
@@ -99,7 +107,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=_guard_always_allowed,
         ):
-            results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            results = auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         prd_result = next((r for r in results if r["prd_id"] == "PRD-TEST-002"), None)
         assert prd_result is not None
@@ -118,7 +134,15 @@ class TestMultiStepProgression:
 
         config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
 
-        results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+        results = auto_progress_prds(
+            run_dir,
+            "deliver",
+            prds_dir,
+            config,
+            # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+            # completion truth has its own gate tests (test_delivery_gates.py).
+            completion_guard=lambda _pid: None,
+        )
 
         # done is terminal — should not appear in results
         prd_result = next((r for r in results if r.get("prd_id") == "PRD-TEST-003"), None)
@@ -142,7 +166,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=_guard_always_allowed,
         ):
-            results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            results = auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         invalid = [r for r in results if r.get("reason") == "invalid_transition"]
         assert len(invalid) == 0, f"Expected no invalid_transition errors, got: {invalid}"
@@ -164,7 +196,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=_guard_always_allowed,
         ):
-            auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         content = prd_file.read_text(encoding="utf-8")
         fm = parse_frontmatter(content)
@@ -189,7 +229,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=_guard_always_allowed,
         ):
-            results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            results = auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         prd_result = next((r for r in results if r["prd_id"] == "PRD-TEST-008"), None)
         assert prd_result is not None
@@ -216,7 +264,15 @@ class TestMultiStepProgression:
             "trw_mcp.state.validation.prd_progression.check_transition_guards",
             side_effect=guard_always_denied,
         ):
-            results = auto_progress_prds(run_dir, "deliver", prds_dir, config)
+            results = auto_progress_prds(
+                run_dir,
+                "deliver",
+                prds_dir,
+                config,
+                # PRD-QUAL-119-FR06: these tests exercise state-machine mechanics;
+                # completion truth has its own gate tests (test_delivery_gates.py).
+                completion_guard=lambda _pid: None,
+            )
 
         prd_result = next((r for r in results if r["prd_id"] == "PRD-TEST-009"), None)
         assert prd_result is not None

@@ -20,9 +20,7 @@ import pytest
 
 from trw_mcp.bootstrap._init_project import init_project
 
-pytestmark = pytest.mark.skipif(
-    os.name != "posix", reason="POSIX file-mode bits are meaningless on this platform"
-)
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX file-mode bits are meaningless on this platform")
 
 
 @pytest.fixture()
@@ -71,8 +69,7 @@ class TestInitProjectPermissions:
             if _mode(d) != 0o700:
                 offenders.append(f"{rel}={oct(_mode(d))}")
         assert not offenders, (
-            "the following .trw dirs are not 0700 after init "
-            f"(contradicts README security claim): {offenders}"
+            f"the following .trw dirs are not 0700 after init (contradicts README security claim): {offenders}"
         )
 
     def test_trw_root_not_group_or_other_readable(self, fake_git_repo: Path) -> None:

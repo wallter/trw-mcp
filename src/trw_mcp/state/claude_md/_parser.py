@@ -162,6 +162,15 @@ def merge_trw_section(target: Path, trw_section: str, max_lines: int) -> int:
     # exact defect that corrupted AGENTS.md, whose section (unlike the CLAUDE.md
     # renderer's) does not start with a newline (PRD-QUAL-112).
     if target.exists():
+        # PRD-CORE-203 FR04: never clobber a single-source pointer file (e.g. a
+        # CLAUDE.md whose only substantive line is ``@AGENTS.md``). The shared
+        # guard classifies the target, heals any stale appended block, and
+        # signals skip — preventing both the append AND the marker-replace path
+        # (which would otherwise re-clobber a pointer that carries a stale block).
+        from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
+
+        if pointer_skip_guard(target) is not None:
+            return len(target.read_text(encoding="utf-8").split("\n"))
         existing = target.read_text(encoding="utf-8")
         if TRW_MARKER_START in existing and TRW_MARKER_END in existing:
             cut_start = existing.index(TRW_MARKER_START)

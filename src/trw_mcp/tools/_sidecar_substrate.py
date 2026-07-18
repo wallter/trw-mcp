@@ -28,6 +28,29 @@ from typing import Any, Literal
 SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
 
+# Single source of truth for the operator remediation shown when the
+# distill-sidecar feature is tier-gated. Shared by all six sidecar-consuming
+# tools so the message + URL never drift (production feedback
+# sub_Y-f6QQ3Y_Os9b0vM: the old string pointed at a dead /tier URL and was
+# duplicated across the tools). The real marketing page is /pricing.
+TIER_REMEDIATION_URL: str = "https://trwframework.com/pricing"
+
+
+def tier_required_action() -> str:
+    """Operator remediation for a tier-gated distill-sidecar feature.
+
+    Tier-aware: the default path points paid tiers at ``/pricing``; a single
+    trailing sentence tells beta testers they can enable it via the tester
+    program (which provisions a ``beta`` entitlement — see
+    ``state/_entitlements.py``).
+    """
+    return (
+        "Acquire team/pro/enterprise tier to enable trw-distill sidecar "
+        f"consumption (see {TIER_REMEDIATION_URL}). Beta testers can enable "
+        "it via the TRW tester program."
+    )
+
+
 SidecarEnvelopeStatus = Literal[
     "ok",
     "sidecar_missing",
@@ -35,6 +58,16 @@ SidecarEnvelopeStatus = Literal[
     "schema_mismatch",
     "stale_sha",
     "tier_required",
+]
+CurrentSidecarStatus = Literal[
+    "hint_available",
+    "sidecar_missing",
+    "sidecar_malformed",
+    "schema_mismatch",
+    "stale_sha",
+    "tier_required",
+    "no_repo_root",
+    "no_git_sha",
 ]
 
 
@@ -56,6 +89,19 @@ class SidecarLoadResult:
     action: str | None
     sidecar_path: str | None
     sidecar_sha: str | None
+
+
+@dataclass(frozen=True)
+class CurrentSidecarResult:
+    """Shared repo, entitlement, SHA, and sidecar-load outcome."""
+
+    tier: str
+    payload: Any | None
+    status: CurrentSidecarStatus
+    action: str | None = None
+    sidecar_path: str | None = None
+    sidecar_sha: str | None = None
+    sidecar_existed: bool = False
 
 
 def resolve_repo_root(repo_root: str | None) -> Path | None:
@@ -139,8 +185,8 @@ def load_sidecar_with_sha_check(
     sidecar_path: Path,
     *,
     expected_sha: str,
-    file_path_hint: str,
     cli_remediation: str,
+    file_path_hint: str | None = None,
 ) -> SidecarLoadResult:
     """Load sidecar envelope + validate schema_version + SHA match.
 
@@ -150,9 +196,10 @@ def load_sidecar_with_sha_check(
     Args:
         sidecar_path: Path to the sidecar JSON.
         expected_sha: Current git HEAD SHA (caller verifies it matched).
-        file_path_hint: Operator-visible file path for remediation strings.
         cli_remediation: Exact CLI to run to regenerate the sidecar.
+        file_path_hint: Deprecated compatibility keyword; no longer needed for remediation.
     """
+    _ = file_path_hint  # PRD-DIST-1988 compatibility; callers may still supply it.
     sidecar_path_str = str(sidecar_path)
     envelope = load_envelope(sidecar_path)
     if envelope is None:
@@ -202,15 +249,75 @@ def load_sidecar_with_sha_check(
     )
 
 
+def resolve_current_sidecar(
+    *,
+    repo_root: str | None,
+    cache_dir: str | None,
+    feature: str,
+    artifact_name: str,
+    cli_remediation: str,
+) -> CurrentSidecarResult:
+    """Resolve and load one tier-gated, SHA-pinned distill sidecar."""
+    resolved_repo_root = resolve_repo_root(repo_root)
+    if resolved_repo_root is None:
+        return CurrentSidecarResult(
+            tier="free",
+            payload=None,
+            status="no_repo_root",
+            action="Pass --repo or run from inside a git checkout",
+        )
+
+    gate = check_tier_for_feature(resolved_repo_root, feature)
+    if not gate.allowed:
+        return CurrentSidecarResult(
+            tier=gate.tier,
+            payload=None,
+            status="tier_required",
+            action=tier_required_action(),
+        )
+
+    git_sha = resolve_git_sha(resolved_repo_root)
+    if git_sha is None:
+        return CurrentSidecarResult(
+            tier=gate.tier,
+            payload=None,
+            status="no_git_sha",
+            action="Could not run `git rev-parse HEAD` — verify .git/ present",
+        )
+
+    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
+    sidecar_path = resolved_cache_dir / f"{artifact_name}-{git_sha}.json"
+    sidecar_existed = sidecar_path.exists()
+    load = load_sidecar_with_sha_check(
+        sidecar_path,
+        expected_sha=git_sha,
+        cli_remediation=cli_remediation,
+    )
+    return CurrentSidecarResult(
+        tier=gate.tier,
+        payload=load.payload,
+        status="hint_available" if load.status == "ok" else load.status,
+        action=load.action,
+        sidecar_path=load.sidecar_path,
+        sidecar_sha=load.sidecar_sha,
+        sidecar_existed=sidecar_existed,
+    )
+
+
 __all__ = [
     "DEFAULT_CACHE_DIR_REL",
     "SCHEMA_VERSION_ACCEPTED",
+    "TIER_REMEDIATION_URL",
+    "CurrentSidecarResult",
+    "CurrentSidecarStatus",
     "SidecarEnvelopeStatus",
     "SidecarLoadResult",
     "TierGateResult",
     "check_tier_for_feature",
     "load_envelope",
     "load_sidecar_with_sha_check",
+    "resolve_current_sidecar",
     "resolve_git_sha",
     "resolve_repo_root",
+    "tier_required_action",
 ]

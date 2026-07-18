@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastmcp.tools import Tool
@@ -224,8 +225,9 @@ def test_middleware_blocks_quarantined_server(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_on_call_tool_uses_live_namespaced_peer_and_runtime_fingerprint(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
     mw = _make_middleware(tmp_path)
 
     class _Ctx:
@@ -339,7 +341,8 @@ def test_build_middleware_mounts_mcp_security() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_list_tools_filters_real_tool_advertisements(tmp_path: Path) -> None:
+async def test_on_list_tools_filters_real_tool_advertisements(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
     mw = _make_middleware(tmp_path)
 
     async def call_next(_: object) -> list[Tool]:
@@ -358,7 +361,10 @@ async def test_on_list_tools_filters_real_tool_advertisements(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_on_call_tool_writes_mounted_event_with_pinned_run_id(tmp_path: Path) -> None:
+async def test_on_call_tool_writes_mounted_event_with_pinned_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
     mw = _make_middleware(tmp_path)
     run_dir = tmp_path / "runs" / "task-a" / "run-mounted"
     (run_dir / "meta").mkdir(parents=True)
@@ -388,7 +394,10 @@ async def test_on_call_tool_writes_mounted_event_with_pinned_run_id(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_on_list_tools_writes_mounted_event_with_pinned_run_id(tmp_path: Path) -> None:
+async def test_on_list_tools_writes_mounted_event_with_pinned_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
     mw = _make_middleware(tmp_path)
     run_dir = tmp_path / "runs" / "task-a" / "run-advertise"
     (run_dir / "meta").mkdir(parents=True)
@@ -413,3 +422,27 @@ async def test_on_list_tools_writes_mounted_event_with_pinned_run_id(tmp_path: P
     security_rows = [row for row in rows if row.get("event_type") == "mcp_security"]
     assert security_rows
     assert all(row["run_id"] == "run-advertise" for row in security_rows)
+
+
+@pytest.mark.asyncio
+async def test_mounted_hooks_enforce_resolved_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mw = _make_middleware(tmp_path)
+    context = SimpleNamespace(
+        message=SimpleNamespace(name="trw_recall", arguments={"q": "README"}),
+        fastmcp_context=SimpleNamespace(transport="stdio", session_id="phase-session"),
+    )
+    listed_tools = [Tool(name="trw_recall", parameters={})]
+    list_next = AsyncMock(return_value=listed_tools)
+    call_next = AsyncMock(return_value=SimpleNamespace(structured_content={}))
+
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "RESEARCH")
+    assert await mw.on_list_tools(context, list_next) == []
+    blocked = await mw.on_call_tool(context, call_next)
+    assert blocked.structured_content["error"] == "mcp_security_blocked"
+    call_next.assert_not_awaited()
+
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
+    assert await mw.on_list_tools(context, list_next) == listed_tools
+    allowed = await mw.on_call_tool(context, call_next)
+    assert allowed.structured_content == {}
+    call_next.assert_awaited_once()

@@ -24,6 +24,7 @@ if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
     )
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.validation._prd_scoring_parsing import _EXPECTED_SECTION_NAMES
 from trw_mcp.state.validation.prd_quality import (
     score_content_density,
     score_structural_completeness,
@@ -44,6 +45,12 @@ def test_feature_template_has_12_sections() -> None:
     """Feature variant (CORE/QUAL) must have exactly 12 sections."""
     sections = TEMPLATE_VARIANTS["feature"]
     assert len(sections) == 12
+
+
+def test_legacy_expected_sections_use_a_copy_of_canonical_feature_sections() -> None:
+    """The compatibility list follows the canonical mapping without aliasing it."""
+    assert _EXPECTED_SECTION_NAMES == get_required_sections("CORE")
+    assert _EXPECTED_SECTION_NAMES is not TEMPLATE_VARIANTS["feature"]
 
 
 def test_fix_template_has_8_sections() -> None:

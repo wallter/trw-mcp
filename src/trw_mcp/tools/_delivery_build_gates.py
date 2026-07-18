@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -35,24 +36,26 @@ def _build_passed(ev: dict[str, object]) -> bool:
     return True
 
 
-def _event_ts(ev: dict[str, object]) -> str:
-    """Return the event's ISO timestamp string, or '' when absent."""
-    return str(ev.get("ts", ""))
+def _event_ts(ev: dict[str, object]) -> datetime | None:
+    """Return an aware event timestamp, or ``None`` when absent or invalid."""
+    raw = str(ev.get("ts", ""))
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
-def _latest_ts_for(events: list[dict[str, object]], predicate: object) -> str:
-    """Max ISO ``ts`` among events matching ``predicate`` (callable); '' if none.
-
-    ISO-8601 UTC timestamps from ``FileEventLogger.log_event`` are
-    lexicographically orderable, so ``max`` over the string form is a correct
-    chronological comparison without parsing.
-    """
+def _latest_ts_for(events: list[dict[str, object]], predicate: object) -> datetime | None:
+    """Latest valid timestamp among matching events; ``None`` if absent."""
     from collections.abc import Callable
     from typing import cast
 
     pred = cast("Callable[[dict[str, object]], bool]", predicate)
-    stamps = [_event_ts(ev) for ev in events if pred(ev) and _event_ts(ev)]
-    return max(stamps) if stamps else ""
+    stamps = [stamp for ev in events if pred(ev) and (stamp := _event_ts(ev)) is not None]
+    return max(stamps) if stamps else None
 
 
 def _build_evidence_is_stale(events: list[dict[str, object]]) -> bool:
@@ -182,7 +185,57 @@ def _check_build_and_work_events(
     return build_warning, premature_warning
 
 
-def _check_no_active_run_build_gate(trw_dir: Path | None, reader: FileStateReader) -> str | None:
+def build_receipt_content_stale_warning(run_path: Path | None) -> str | None:
+    """CORE-205 FR04/FR05/FR08 — enforce the latest typed BuildReceipt.
+
+    In enforce mode, typed absence, malformed plans, incomplete command sets,
+    contradictions, failed commands, and stale content are all missing build
+    evidence. Observe mode retains only the typed-absent legacy fallback.
+    """
+    if run_path is None:
+        return None
+    try:
+        from trw_mcp.models._evidence_core import EvidenceMode, ReceiptState
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.tools import _delivery_helpers as _dh
+        from trw_mcp.tools._evidence_gates import read_evidence_mode
+        from trw_mcp.tools._evidence_writers import load_latest_build_evidence
+
+        mode = read_evidence_mode(_dh.get_config())
+        outcome, _ = load_latest_build_evidence(run_path, resolve_project_root())
+        if outcome.is_positive:
+            return None
+        if mode is EvidenceMode.OBSERVE and not outcome.typed_present:
+            return None
+        if outcome.state is ReceiptState.STALE_CONTENT:
+            return (
+                "Content-stale build evidence: a file bound by the latest trw_build_check receipt "
+                "changed after the check (reason: bound_content_changed). Re-run project-native "
+                "validation and record typed command_results with trw_build_check() before delivering."
+            )
+        return (
+            "No valid content-bound BuildReceipt exists for this run "
+            f"(reason: {outcome.reason_code}). Run project-native validation and record the server-required "
+            "tests and static_checks command_results with trw_build_check()."
+        )
+    except Exception:  # justified: resolution failure is non-positive typed evidence
+        logger.warning("build_receipt_enforcement_failed", run=str(run_path), exc_info=True)
+        return (
+            "BuildReceipt enforcement could not validate typed evidence. Re-run project-native validation "
+            "and record typed command_results with trw_build_check()."
+        )
+
+
+_UNPINNED_BUILD_WARNING = (
+    "No successful build check found before delivery in this unpinned session. "
+    "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check(), "
+    "or call trw_init()/trw_adopt_run() so run-scoped evidence can be checked."
+)
+
+
+def _check_no_active_run_build_gate(
+    trw_dir: Path | None, reader: FileStateReader, session_id: str | None = None
+) -> str | None:
     """Require build-check evidence for deliver when no run pin exists.
 
     Eval containers commonly run without ``trw_init``/``trw_adopt_run``. In
@@ -224,21 +277,25 @@ def _check_no_active_run_build_gate(trw_dir: Path | None, reader: FileStateReade
         # there IS evidence that a build was expected but did not pass.
         if not reader.exists(state_path):
             return None
+    except Exception:  # inability to prove absence is not the by-design missing-file case
+        logger.warning("no_active_run_build_gate_probe_failed", exc_info=True)
+        return _UNPINNED_BUILD_WARNING
+
+    try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         if not isinstance(state, dict) or not state.get("session_started"):
             return None
 
         build_result = state.get("build_check_result")
+        if session_id:
+            per_session = state.get("session_build_results")
+            build_result = per_session.get(session_id) if isinstance(per_session, dict) else None
         build_passed = build_result is True or (
             isinstance(build_result, str) and build_result.lower() in {"pass", "passed", "success", "true"}
         )
         if build_passed:
             return None
-        return (
-            "No successful build check found before delivery in this unpinned session. "
-            "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check(), "
-            "or call trw_init()/trw_adopt_run() so run-scoped evidence can be checked."
-        )
-    except Exception:  # justified: fail-open, build gate check must not block delivery on read errors
+        return _UNPINNED_BUILD_WARNING
+    except Exception:  # existing but unreadable state is not positive build evidence
         logger.warning("no_active_run_build_gate_failed", exc_info=True)
-        return None
+        return _UNPINNED_BUILD_WARNING

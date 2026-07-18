@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import structlog
 from structlog.testing import capture_logs
@@ -82,8 +84,8 @@ def test_legacy_run_emits_empty_ids_and_logs(tmp_path: Path) -> None:
     assert item.payload["learning_ids"] == []
     assert item.payload["rework_rate"] == 0.4
     # Structured log emitted
-    legacy_events = [e for e in cap if e.get("event") == "legacy_run_pushed"]
-    assert legacy_events, "expected a legacy_run_pushed log event"
+    legacy_events = [e for e in cap if e.get("event") == "legacy_run_sync_no_learning_ids"]
+    assert legacy_events, "expected a legacy_run_sync_no_learning_ids log event"
     assert legacy_events[0]["run_id"] == "run-legacy"
 
 
@@ -101,17 +103,47 @@ def test_synced_marker_matching_hash_is_skipped(tmp_path: Path) -> None:
         run_id=first[0].run_id,
         sync_hash=first[0].sync_hash,
         target_label="backend-prod",
+        run_yaml_hash=first[0].run_yaml_hash,
     )
 
-    # Second pass -> skipped
-    second = load_pending_outcomes(tmp_path)
+    # Second pass -> source hash proves the YAML is unchanged, so it is skipped
+    # without paying the YAML parser cost.
+    with patch("trw_mcp.sync.outcomes._read_run_yaml") as read_run_yaml:
+        second = load_pending_outcomes(tmp_path)
     assert second == []
+    read_run_yaml.assert_not_called()
+
+    marker = json.loads((run_dir / "meta" / "synced.json").read_text(encoding="utf-8"))
+    assert marker["run_yaml_sha256"] == first[0].run_yaml_hash
+
+
+def test_legacy_marker_is_upgraded_for_future_fast_skip(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    run_dir = _mk_run(runs_root, "t1", "run-alpha", yaml_body=GOOD_RUN_YAML)
+    first = load_pending_outcomes(tmp_path)
+    write_synced_marker(
+        run_dir,
+        run_id=first[0].run_id,
+        sync_hash=first[0].sync_hash,
+        target_label="legacy-backend",
+    )
+
+    assert load_pending_outcomes(tmp_path) == []
+    marker = json.loads((run_dir / "meta" / "synced.json").read_text(encoding="utf-8"))
+    assert marker["run_yaml_sha256"] == first[0].run_yaml_hash
+    assert marker["target_label"] == "legacy-backend"
+
+    with patch("trw_mcp.sync.outcomes._read_run_yaml") as read_run_yaml:
+        assert load_pending_outcomes(tmp_path) == []
+    read_run_yaml.assert_not_called()
 
 
 def test_abandoned_run_with_no_session_metrics_skipped(tmp_path: Path) -> None:
     runs_root = tmp_path / "runs"
     _mk_run(runs_root, "t1", "run-abandoned", yaml_body=NO_METRICS_YAML)
-    assert load_pending_outcomes(tmp_path) == []
+    with patch("trw_mcp.sync.outcomes._read_run_yaml") as read_run_yaml:
+        assert load_pending_outcomes(tmp_path) == []
+    read_run_yaml.assert_not_called()
 
 
 def test_recall_tracking_format_unchanged_smoke(tmp_path: Path) -> None:
@@ -158,6 +190,30 @@ def test_marker_write_idempotent(tmp_path: Path) -> None:
     parsed = json.loads(marker.read_text())
     assert parsed["run_id"] == "run-m"
     _ = first  # silence unused
+
+
+def test_marker_replacement_is_atomic_for_concurrent_reader(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    run_dir = _mk_run(runs_root, "t1", "run-m", yaml_body=GOOD_RUN_YAML)
+    marker = run_dir / "meta" / "synced.json"
+    write_synced_marker(run_dir, run_id="run-m", sync_hash="old", target_label="first")
+    real_replace = os.replace
+
+    def observing_replace(
+        src: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        dst: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> None:
+        # The old marker remains complete and parseable until the single atomic
+        # rename; the new temporary file is independently complete too.
+        assert json.loads(marker.read_text(encoding="utf-8"))["sync_hash"] == "old"
+        assert json.loads(Path(src).read_text(encoding="utf-8"))["sync_hash"] == "new"
+        real_replace(src, dst)
+
+    with patch("trw_mcp.sync.outcomes.os.replace", side_effect=observing_replace):
+        write_synced_marker(run_dir, run_id="run-m", sync_hash="new", target_label="second")
+
+    assert json.loads(marker.read_text(encoding="utf-8"))["sync_hash"] == "new"
+    assert not list(marker.parent.glob(".synced.json.*.tmp"))
 
 
 def test_hash_changes_when_session_metrics_change(tmp_path: Path) -> None:

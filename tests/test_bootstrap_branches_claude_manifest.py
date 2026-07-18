@@ -83,6 +83,53 @@ class TestUpdateClaudeMdTrwSection:
         assert "<!-- trw:start -->" in content
         assert "# My Project\n" in content
 
+    def test_inline_prose_mention_not_treated_as_section(self, tmp_path: Path) -> None:
+        """An inline mention of ``<!-- trw:start -->`` must not open the section.
+
+        Marker matching is line-anchored: a marker referenced mid-paragraph (e.g.
+        inside backticks) is not a whole-line delimiter, so a doc with no real
+        markers is treated as having no TRW section and the block is appended —
+        the user's prose (including the inline mention) is preserved verbatim.
+        The old substring match would have mis-detected a start-without-end and
+        errored (or spliced from the mention, truncating prose).
+        """
+        claude_md = tmp_path / "CLAUDE.md"
+        prose = "# Notes\n\nWe open it with `<!-- trw:start -->` inline in prose.\n"
+        claude_md.write_text(prose, encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _update_claude_md_trw_section(claude_md, result)
+
+        content = claude_md.read_text(encoding="utf-8")
+        assert not result["errors"]
+        assert "We open it with `<!-- trw:start -->` inline in prose." in content
+        assert "\n<!-- trw:start -->\n" in content
+        assert "<!-- trw:end -->" in content
+
+    def test_inline_mention_above_real_markers_replaces_only_whole_line_section(self, tmp_path: Path) -> None:
+        """Whole-line markers are replaced even when an inline mention precedes them.
+
+        The line-anchored search must bind to the genuine whole-line start marker
+        (skipping the earlier backticked mention), so only the real section is
+        swapped and the surrounding prose survives.
+        """
+        claude_md = tmp_path / "CLAUDE.md"
+        content = (
+            "# Doc\n\n"
+            "Prose mentioning `<!-- trw:start -->` inline should be ignored.\n\n"
+            "<!-- trw:start -->\nOLD BLOCK\n<!-- trw:end -->\n"
+        )
+        claude_md.write_text(content, encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _update_claude_md_trw_section(claude_md, result)
+
+        updated = claude_md.read_text(encoding="utf-8")
+        assert not result["errors"]
+        assert "Prose mentioning `<!-- trw:start -->` inline should be ignored." in updated
+        assert "OLD BLOCK" not in updated
+        assert any(str(claude_md) in u for u in result["updated"])
+
 
 @pytest.mark.unit
 class TestMinimalClaudeMdTrwBlock:

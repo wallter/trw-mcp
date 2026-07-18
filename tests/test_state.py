@@ -69,11 +69,16 @@ class TestFileStateReader:
         records = reader.read_jsonl(path)
         assert len(records) == 2
 
-    def test_read_jsonl_invalid(self, tmp_path: Path, reader: FileStateReader) -> None:
+    def test_read_jsonl_invalid_strict_raises(self, tmp_path: Path, reader: FileStateReader) -> None:
         path = tmp_path / "bad.jsonl"
         path.write_text("not json\n", encoding="utf-8")
         with pytest.raises(StateError, match="Failed to parse"):
-            reader.read_jsonl(path)
+            reader.read_jsonl(path, strict=True)
+
+    def test_read_jsonl_invalid_lenient_default_skips(self, tmp_path: Path, reader: FileStateReader) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text('{"ok": 1}\nnot json\n', encoding="utf-8")
+        assert reader.read_jsonl(path) == [{"ok": 1}]
 
     def test_exists(self, tmp_path: Path, reader: FileStateReader) -> None:
         path = tmp_path / "exists.txt"

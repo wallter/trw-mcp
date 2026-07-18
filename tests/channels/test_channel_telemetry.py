@@ -275,6 +275,7 @@ def test_append_channel_event_fail_open_on_oserror(tmp_path: Path, monkeypatch: 
         event_type="push_write",
         log_path=log_path,
     )
+    assert not log_path.exists()
 
 
 def test_append_channel_event_fail_open_on_permission_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -291,6 +292,7 @@ def test_append_channel_event_fail_open_on_permission_error(tmp_path: Path, monk
         event_type="push_write",
         log_path=log_path,
     )
+    assert not log_path.exists()
 
 
 def test_append_channel_event_fail_open_on_json_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,6 +318,8 @@ def test_append_channel_event_fail_open_on_json_error(tmp_path: Path, monkeypatc
         event_type="push_write",
         log_path=log_path,
     )
+    assert call_count["n"] == 1
+    assert not log_path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +361,7 @@ def test_validate_event_type_accepts_canonical_type() -> None:
     validate_event_type("manifest_recovered")
     validate_event_type("channel_lock_skip")
     validate_event_type("channel_error")
+    assert {"push_write", "manifest_recovered", "channel_lock_skip", "channel_error"} <= VALID_EVENT_TYPES
 
 
 def test_validate_event_type_raises_for_unknown_type() -> None:

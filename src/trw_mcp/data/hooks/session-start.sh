@@ -14,12 +14,13 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
-init_hook_timer
-
-# PRD-CORE-125-FR05: Hooks gating -- exit early when hooks are disabled.
-if [ "${TRW_HOOKS_ENABLED:-true}" = "false" ]; then
+# PRD-CORE-149 FR05: the generated profile policy gates the entire hook before
+# timers, stdin reads, or output. lib-trw.sh normalizes the legacy name.
+if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
   exit 0
 fi
+
+init_hook_timer
 
 # Read stdin payload to determine source
 _payload=$(cat) || exit 0
@@ -138,7 +139,7 @@ case "$_source" in
     _emit_tier_guidance
     echo ""
     if _framework_ref_enabled; then
-      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK-CORE.md before starting work."
       echo "WHY: It defines the 6-phase execution model (RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER),"
       echo "  exit criteria for each phase, optional coordination patterns, quality gates with rubric scoring,"
       echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
@@ -162,7 +163,7 @@ case "$_source" in
     echo ""
     echo "SESSION RESUMED — your run state and learnings are preserved."
     if _framework_ref_enabled; then
-      echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK.md this session, read it now — it defines exit criteria and phase gates that govern your work."
+      echo "FRAMEWORK: If you haven't read .trw/frameworks/FRAMEWORK-CORE.md this session, read it now — it defines exit criteria and phase gates that govern your work."
     fi
     echo "Call trw_status() to see where you left off and what to work on next."
     ;;
@@ -172,7 +173,7 @@ case "$_source" in
     echo "CONTEXT COMPACTED — your conversation was compressed but your implementation progress is safe."
     echo ""
     if _framework_ref_enabled; then
-      echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK.md now, before resuming work."
+      echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK-CORE.md now, before resuming work."
       echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
       echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
       echo "  errors from working without phase gates, exit criteria, coordination guidance, and quality rubrics."
@@ -205,7 +206,7 @@ case "$_source" in
     fi
     echo ""
     if _framework_ref_enabled; then
-      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK.md first, then call trw_session_start(query='your task domain') to reload learnings and active run state."
+      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK-CORE.md first, then call trw_session_start(query='your task domain') to reload learnings and active run state."
     else
       echo "CONTINUE: Call trw_session_start(query='your task domain') to reload learnings and active run state."
     fi
@@ -218,7 +219,7 @@ case "$_source" in
     _emit_protocol
     echo ""
     if _framework_ref_enabled; then
-      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK.md before starting work."
+      echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK-CORE.md before starting work."
       echo "WHY: It defines the 6-phase execution model, exit criteria, formations, quality gates, and phase reversion"
       echo "  rules that structure model-, harness-, client-, and language-agnostic work. Your tools implement this methodology — without reading it, you will pass"
       echo "  tool checks while missing the process that prevents rework."

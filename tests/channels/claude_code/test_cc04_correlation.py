@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,9 @@ def _enable_cc03(tmp_project: Path) -> None:
     trw_dir = tmp_project / ".trw"
     trw_dir.mkdir(parents=True, exist_ok=True)
     (trw_dir / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
+    channels = trw_dir / "channels"
+    channels.mkdir()
+    (channels / "cc03-python.txt").write_text(sys.executable, encoding="utf-8")
 
 
 def _make_pretooluse(
@@ -186,18 +190,10 @@ class TestHintFileKeyedByToolUseId:
         compute_before_edit_hint does NOT import the embedding stack at module level
         (~0.76s warm import), so write_hint_file executes within budget.
 
-        Cold-start edge: on the very first invocation (.pyc not yet compiled),
-        the subprocess may exceed 2.5s and fall back to T0 beacon. This is an
-        acceptable UX trade-off for a PreToolUse advisory hook. The test uses
-        pytest.importorskip to only assert hint-file creation when trw_mcp is
-        importable in this environment.
-
-        Note: if hint_file is absent this is a genuine cold-start edge — the test
-        checks exit code (always 0 per FR26) and does not fail, but logs a warning
-        to distinguish the cold-start case from a regression.
+        The shell writes a dependency-free provisional T0 record before starting
+        the bounded intelligence subprocess, so cold imports cannot erase CC-04
+        correlation evidence.
         """
-        import warnings
-
         _enable_cc03(tmp_path)
         tool_use_id = "toolu-aligned-timeout"
         result = _run_hook(
@@ -208,18 +204,7 @@ class TestHintFileKeyedByToolUseId:
         assert result.returncode == 0
         hints_dir = tmp_path / ".trw" / "context" / "cc03-hints"
         hint_file = hints_dir / f"{tool_use_id}.json"
-        if not hint_file.exists():
-            # Cold-start edge: .pyc compilation on first invocation may push past 2.5s.
-            # This is NOT the timeout-too-tight bug (which killed 100% of invocations
-            # with `timeout 2`). Warm invocations succeed — cold-start is acceptable.
-            warnings.warn(
-                "CC-04 hint file not written — likely cold-start (.pyc not compiled). "
-                "Re-run to verify warm invocation writes hint file. "
-                "If this fails consistently, investigate timeout regression.",
-                stacklevel=1,
-            )
-        # Both outcomes accepted: warm writes hint file, cold-start gracefully falls
-        # back to T0 beacon. Key invariant: no crash, no silent hang.
+        assert hint_file.exists(), "warm invocation must write the correlation hint within the aligned timeout"
 
 
 # ---------------------------------------------------------------------------

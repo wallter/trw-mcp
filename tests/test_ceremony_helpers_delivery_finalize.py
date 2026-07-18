@@ -10,10 +10,6 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_helpers import check_delivery_gates, finalize_run
 
-from ._ceremony_helpers_support import run_dir, trw_dir  # noqa: F401
-
-pytest_plugins = ("tests._ceremony_helpers_support",)
-
 
 class TestCheckDeliveryGates:
     """Review/build gates and premature delivery guard."""
@@ -29,9 +25,9 @@ class TestCheckDeliveryGates:
     ) -> None:
         result = check_delivery_gates(run_dir, reader)
         assert "review_advisory" in result
-        assert "No trw_review" in str(result["review_advisory"])
+        assert "No substantive trw_review" in str(result["review_advisory"])
 
-    def test_review_warning_on_critical_findings(
+    def test_untyped_critical_review_is_not_substantive_evidence(
         self,
         run_dir: Path,
         reader: FileStateReader,
@@ -43,12 +39,13 @@ class TestCheckDeliveryGates:
             {
                 "verdict": "block",
                 "critical_count": 3,
+                "substantive": True,
             },
         )
 
         result = check_delivery_gates(run_dir, reader)
-        assert "review_warning" in result
-        assert "3 critical" in str(result["review_warning"])
+        assert "review_warning" not in result
+        assert "No substantive trw_review" in str(result["review_advisory"])
 
     def test_no_review_warning_on_pass_verdict(
         self,
@@ -62,6 +59,7 @@ class TestCheckDeliveryGates:
             {
                 "verdict": "pass",
                 "critical_count": 0,
+                "substantive": True,
             },
         )
 
@@ -95,9 +93,9 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "build_gate_warning" in result
-        assert "No events found" in str(result["build_gate_warning"])
+        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
 
-    def test_no_build_gate_warning_when_build_passed(
+    def test_untyped_nested_build_event_does_not_satisfy_gate(
         self,
         run_dir: Path,
         reader: FileStateReader,
@@ -115,14 +113,14 @@ class TestCheckDeliveryGates:
         )
 
         result = check_delivery_gates(run_dir, reader)
-        assert "build_gate_warning" not in result
+        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
 
-    def test_no_build_gate_warning_when_flat_build_event_passed(
+    def test_untyped_flat_build_event_does_not_satisfy_gate(
         self,
         run_dir: Path,
         reader: FileStateReader,
     ) -> None:
-        """Flat FileEventLogger build_check_complete events satisfy delivery."""
+        """A legacy flat event is telemetry, not content-bound build evidence."""
         events_path = run_dir / "meta" / "events.jsonl"
         events_path.write_text(
             json.dumps(
@@ -137,7 +135,7 @@ class TestCheckDeliveryGates:
         )
 
         result = check_delivery_gates(run_dir, reader)
-        assert "build_gate_warning" not in result
+        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
 
     def test_build_gate_warning_when_static_checks_failed(
         self,
@@ -237,11 +235,11 @@ class TestCheckDeliveryGates:
         result = check_delivery_gates(run_dir, mock_reader)
         assert isinstance(result, dict)
 
-    def test_review_yaml_read_failopen_on_exception(
+    def test_corrupt_review_yaml_is_treated_as_missing_evidence(
         self,
         run_dir: Path,
     ) -> None:
-        """Lines 253-254: Corrupt review.yaml fails open without raising."""
+        """Corrupt review.yaml does not raise and cannot satisfy REVIEW."""
         review_path = run_dir / "meta" / "review.yaml"
         review_path.write_text("{{invalid yaml: [", encoding="utf-8")
 
@@ -252,6 +250,7 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, mock_reader)
         assert "review_warning" not in result
+        assert "review_advisory" in result
 
     def test_untracked_warning_when_git_reports_files(
         self,

@@ -12,27 +12,23 @@ from fastmcp import Context, FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
-from trw_mcp.models.run import (
-    Confidence,
-    Phase,
-    RunState,
-    RunStatus,
-)
+from trw_mcp.models.run import Confidence, Phase, RunState, RunStatus
 from trw_mcp.models.typed_dicts import TrwStatusDict
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._helpers import read_jsonl_resilient
-from trw_mcp.state._paths import (
-    pin_active_run,
-    resolve_project_root,
-    resolve_run_path,
+from trw_mcp.state._paths import pin_active_run, resolve_project_root, resolve_run_path
+
+# Re-exported patch seams: _orchestration_status_assembly resolves these via
+# this facade so tests patching trw_mcp.tools.orchestration.* keep working.
+from trw_mcp.state.analytics._stale_runs import (
+    count_stale_runs as count_stale_runs,
 )
-from trw_mcp.state.analytics._stale_runs import count_stale_runs
+from trw_mcp.state.analytics._stale_runs import (
+    stale_advisory_first_time as stale_advisory_first_time,
+)
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.tools import _orchestration_scaling as _scaling
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
-from trw_mcp.tools._orchestration_gate_scan import (
-    apply_deliver_gate_status as _apply_deliver_gate_status,
-)
 from trw_mcp.tools._orchestration_helpers import (
     _deploy_frameworks,
     _deploy_templates,
@@ -42,21 +38,33 @@ from trw_mcp.tools._orchestration_helpers import (
 )
 from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
-    _compute_last_activity_ts,
-    _compute_reflection_metrics,
+)
+
+# Re-exported patch/import seams for tests and _orchestration_status_assembly:
+# helpers relocated during the status-assembly extraction remain importable here.
+from trw_mcp.tools._orchestration_lifecycle import (
+    _compute_last_activity_ts as _compute_last_activity_ts,
+)
+from trw_mcp.tools._orchestration_lifecycle import (
+    _compute_reflection_metrics as _compute_reflection_metrics,
 )
 from trw_mcp.tools._orchestration_lifecycle import (
     _phase_duration_summary as _phase_duration_summary,
 )
 from trw_mcp.tools._orchestration_phase import (
-    _check_framework_version_staleness,
-    _compute_reversion_metrics,
-    _compute_wave_progress,
+    _check_framework_version_staleness as _check_framework_version_staleness,
 )
+from trw_mcp.tools._orchestration_phase import (
+    _compute_reversion_metrics as _compute_reversion_metrics,
+)
+from trw_mcp.tools._orchestration_phase import (
+    _compute_wave_progress as _compute_wave_progress,
+)
+from trw_mcp.tools._orchestration_status_assembly import assemble_status_result
+from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
 # PRD-QUAL-042-FR01: cap trw_init ``task_name`` (a filesystem path component)
 # below NAME_MAX (255) with headroom for the appended run_id suffix.
 _MAX_TASK_NAME_CHARS = 128
@@ -277,6 +285,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
         result["task_profile_hash"] = task_profile.profile_hash
+        apply_task_profile_observability(cast("dict[str, object]", result), task_profile.model_dump())
+
+        if wave_manifest is not None:
+            from trw_mcp.tools._orchestration_wave_manifest import create_wave_plan
+
+            wave_result = create_wave_plan(wave_manifest, run_root)
+            result["wave_plan_status"] = str(wave_result["status"])
+            result["wave_count"] = str(wave_result["wave_count"])
+            result["shard_count"] = str(wave_result["shard_count"])
 
         # PRD-CORE-184 FR01/FR02: surface an UP-FRONT REVIEW-mandatory signal
         # when the resolved run requires a REVIEW phase (STANDARD/COMPREHENSIVE).
@@ -351,88 +368,19 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # reflection, phase_durations, reversions); authoritative state is the
         # run.yaml read above. A torn concurrent append must drop that one line,
         # not StateError-abort status (invoked on every resume) — so use the
-        # resilient reader, matching the _do_reflect / collect_reflection_inputs
-        # seams over this same log, not strict FileStateReader.read_jsonl.
+        # resilient reader, matching the live _do_reflect seam over this same
+        # log, not strict FileStateReader.read_jsonl.
         events_path = meta_path / "events.jsonl"
         events = read_jsonl_resilient(events_path)
 
-        result: TrwStatusDict = {
-            "run_id": str(state_data.get("run_id", "unknown")),
-            "task": str(state_data.get("task", "unknown")),
-            "phase": str(state_data.get("phase", "unknown")),
-            "status": str(state_data.get("status", "unknown")),
-            "confidence": str(state_data.get("confidence", "unknown")),
-            "framework": str(state_data.get("framework", "unknown")),
-            # PRD-CORE-184-FR05: surface task_type in the run summary block.
-            "task_type": str(state_data.get("task_type", "unknown")),
-            "event_count": len(events),
-            "reflection": _compute_reflection_metrics(events),
-        }
-
-        # PRD-CORE-184-FR04: surface effective per-task-type nudge pool weights
-        # so operators (and eval stratification) can observe the active policy.
-        task_profile_data = state_data.get("task_profile")
-        if isinstance(task_profile_data, dict):
-            weights = task_profile_data.get("nudge_pool_weights")
-            if isinstance(weights, (list, tuple)) and len(weights) == 4:
-                result["nudge_pool_weights"] = {
-                    "workflow": int(weights[0]),
-                    "learnings": int(weights[1]),
-                    "ceremony": int(weights[2]),
-                    "context": int(weights[3]),
-                }
-            recall_policy = task_profile_data.get("recall_policy")
-            if recall_policy:
-                result["recall_policy"] = str(recall_policy)
-        result["phase_durations"] = _phase_duration_summary(events, result["phase"])
-
-        if wave_data:
-            raw_waves = wave_data.get("waves", [])
-            result["waves"] = raw_waves if isinstance(raw_waves, list) else []
-
-            wave_progress = _compute_wave_progress(
-                wave_data,
-                resolved_path,
-            )
-            if wave_progress:
-                result["wave_progress"] = wave_progress
-
-        wave_status = state_data.get("wave_status")
-        if isinstance(wave_status, dict) and wave_status:
-            result["wave_status"] = wave_status
-
-        reversion_metrics = _compute_reversion_metrics(events)
-        result["reversions"] = reversion_metrics
-
-        # PRD-QUAL-105: surface deliver-gate readiness at status-check time so an
-        # agent can answer "can I deliver now?" without a deliver-then-fail-then-
-        # retry cycle. Reuses the already-read ``events`` list (FR01 build gate)
-        # plus ceremony_state.json (FR02 review gate). Fail-open per FR04 inside
-        # the helper — the three fields are simply omitted on any scan error.
-        _apply_deliver_gate_status(cast("dict[str, object]", result), events, resolved_path)
-
-        last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
-        if last_ts:
-            result["last_activity_ts"] = last_ts
-        if hours_since is not None:
-            result["hours_since_activity"] = hours_since
-
-        version_warning = _check_framework_version_staleness(
-            str(state_data.get("framework", "")),
+        result: TrwStatusDict = assemble_status_result(
+            state_data,
+            events,
+            wave_data,
+            resolved_path,
+            reader,
+            meta_path,
         )
-        if version_warning:
-            result["version_warning"] = version_warning
-
-        try:
-            stale = count_stale_runs()
-            result["stale_count"] = stale
-            if stale > 0:
-                result["stale_runs_advisory"] = (
-                    f"{stale} stale run(s) detected. Use trw_session_start to auto-close them."
-                )
-        except Exception:  # justified: fail-open, stale run count is advisory only
-            result["stale_count_error"] = True
-            logger.warning("stale_count_scan_failed", exc_info=True)
 
         logger.info(
             "status_ok",

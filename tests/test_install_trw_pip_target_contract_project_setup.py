@@ -28,7 +28,7 @@ def test_find_trw_cmd_prefers_pip_target_wrapper(installer_path: Path, tmp_path:
 def test_parse_ide_argument_supports_comma_separated_multi_select(installer_path: Path) -> None:
     module = _load_installer_module(installer_path)
 
-    assert module._parse_ide_argument("cursor-ide,codex,gemini") == ["cursor-ide", "codex", "gemini"]
+    assert module._parse_ide_argument("cursor-ide,codex,copilot") == ["cursor-ide", "codex", "copilot"]
     assert module._parse_ide_argument("all") == module._SUPPORTED_IDES
 
 

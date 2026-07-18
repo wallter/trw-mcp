@@ -218,15 +218,17 @@ def sweep_stale_runs(
         # from accumulated audit_pattern_promotions arrays — parsing those
         # with ruamel rt-mode takes seconds per file and dominates boot
         # time. Lazy-load YAML only when we actually need to mutate.
+        # Per-skip logging is intentionally aggregated: terminal + malformed
+        # skips are the overwhelming majority on a large repo and previously
+        # emitted one stderr line each BEFORE the MCP handshake, holding stdio
+        # clients hostage (production feedback sub_psVs_nUWnLJGvOs3). We only
+        # bump the counters here; the single boot_gc_complete summary below
+        # reports runs_skipped_terminal / runs_skipped_malformed. Per-run logs
+        # are reserved for actual actions taken (abandon / near-stale), which
+        # are rare.
         prefilter_status = _prefilter_status(run_yaml_path)
         if prefilter_status in _TERMINAL_STATUSES:
             runs_skipped_terminal += 1
-            logger.debug(
-                "sweep_skipped_terminal",
-                run_id=run_id,
-                status=prefilter_status,
-                prefilter=True,
-            )
             continue
 
         # If the prefilter resolved status to anything other than "active",
@@ -240,41 +242,20 @@ def sweep_stale_runs(
         elif prefilter_status is not None:
             # Unknown/unsupported status — conservative: treat as terminal.
             runs_skipped_terminal += 1
-            logger.debug(
-                "sweep_skipped_terminal",
-                run_id=run_id,
-                status=prefilter_status or "unknown",
-                prefilter=True,
-            )
             continue
         else:
             # Prefilter ambiguous — fall back to authoritative parse.
             data = _load_run_yaml(run_yaml_path)
             if data is None:
                 runs_skipped_malformed += 1
-                logger.warning(
-                    "sweep_skipped_malformed",
-                    run_id=run_id,
-                    path=str(run_yaml_path),
-                )
                 continue
             status_raw = data.get("status")
             status = str(status_raw).strip().lower() if status_raw is not None else ""
             if status in _TERMINAL_STATUSES:
                 runs_skipped_terminal += 1
-                logger.debug(
-                    "sweep_skipped_terminal",
-                    run_id=run_id,
-                    status=status,
-                )
                 continue
             if status != "active":
                 runs_skipped_terminal += 1
-                logger.debug(
-                    "sweep_skipped_terminal",
-                    run_id=run_id,
-                    status=status or "unknown",
-                )
                 continue
 
         # Protected runs are preserved regardless of age (FR10).
@@ -324,9 +305,39 @@ def sweep_stale_runs(
             continue
 
         # Abandon path.
+        # Re-read authoritative state at the mutation boundary. A concurrent
+        # delivery or heartbeat may have changed the lifecycle decision since
+        # the scan-time prefilter. This deliberately narrows (but cannot fully
+        # eliminate) the compare-to-replace window without a repository-wide
+        # shared lock protocol for every run.yaml and heartbeat writer.
+        data = _load_run_yaml(run_yaml_path)
+        if data is None:
+            runs_skipped_malformed += 1
+            logger.warning(
+                "sweep_skipped_malformed",
+                run_id=run_id,
+                path=str(run_yaml_path),
+                reason="yaml_read_failed_at_abandon",
+            )
+            continue
+        current_status = str(data.get("status", "")).strip().lower()
+        if current_status != "active":
+            runs_skipped_terminal += 1
+            continue
+        if data.get("protected") is True:
+            runs_preserved_protected += 1
+            continue
+        last_activity = compute_last_activity(run_dir)
+        if last_activity >= grace_cutoff:
+            if last_activity < staleness_cutoff:
+                runs_in_grace_window += 1
+                near_stale_ids.append(run_id)
+            continue
+        age_seconds = max(0.0, now - last_activity)
+        age_hours = age_seconds / 3600.0
+
         abandoned_ids.append(run_id)
         runs_abandoned += 1
-
         if dry_run:
             logger.info(
                 "run_auto_abandoned",
@@ -337,24 +348,6 @@ def sweep_stale_runs(
                 age_hours=round(age_hours, 3),
                 dry_run=True,
                 run_path=str(run_dir),
-            )
-            continue
-
-        # Mutate run.yaml — preserve every field except `status`. Load
-        # YAML lazily here: read paths short-circuit via the prefilter,
-        # so the expensive ruamel rt-mode parse only happens for the
-        # rare run we are actually about to abandon.
-        if data is None:
-            data = _load_run_yaml(run_yaml_path)
-        if data is None:
-            abandoned_ids.pop()
-            runs_abandoned -= 1
-            runs_skipped_malformed += 1
-            logger.warning(
-                "sweep_skipped_malformed",
-                run_id=run_id,
-                path=str(run_yaml_path),
-                reason="yaml_read_failed_at_abandon",
             )
             continue
         data["status"] = "abandoned"

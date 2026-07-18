@@ -34,7 +34,7 @@
 | `recall_search.py` | — | Primary | Recall search strategies |
 | `recall_tracking.py` | — | Primary | Recall outcome tracking |
 | `retrieval.py` | — | Primary | Hybrid retrieval orchestration |
-| `learning_injection.py` | — | Primary | Agent learning injection (CORE-075) |
+| `learning_injection.py` | — | Internal | Path-to-domain inference for live nudges and collector recall shim |
 
 ### Tier Lifecycle
 | Module | Lines | Owner | Purpose |
@@ -59,7 +59,7 @@
 |--------|-------|-------|---------|
 | `dashboard.py` | 446 | Primary | Quality dashboard aggregation |
 | `index_sync.py` | 450 | Primary | INDEX.md / ROADMAP.md synchronization |
-| `report.py` | — | Primary | Run report generation |
+| `report.py` | — | Primary | Event/timeline parsing for AgentWorkEvidence |
 | `reflection.py` | — | Primary | Session reflection and pattern discovery |
 
 ### Infrastructure

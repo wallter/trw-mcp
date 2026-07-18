@@ -45,6 +45,7 @@ from trw_mcp.scoring._recall_prune import (
 from trw_mcp.scoring._utils import safe_float
 
 _logger = structlog.get_logger(__name__)
+_level_logger = logging.getLogger(__name__)
 
 __all__ = [
     "RecallContext",
@@ -240,7 +241,10 @@ def rank_by_utility(
         entry_copy["combined_score"] = round(combined, 4)
         scored.append((combined, entry_copy))
 
-    if boost_log_payload is not None and _logger.is_enabled_for(logging.DEBUG):
+    # ``structlog.get_logger`` may resolve to the generic BoundLogger before
+    # stdlib logging is configured; that wrapper has no ``is_enabled_for``.
+    # Use the stable stdlib level probe while retaining structured emission.
+    if boost_log_payload is not None and _level_logger.isEnabledFor(logging.DEBUG):
         _logger.debug(
             "recall_boost_applied",
             boosted_entries=boosted_entries,

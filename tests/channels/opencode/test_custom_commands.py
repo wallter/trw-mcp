@@ -41,6 +41,15 @@ def test_before_edit_command_advisory_not_blocking() -> None:
     assert "advisory" in content.lower() or "NOT block" in content or "must not block" in content.lower()
 
 
+def test_before_edit_command_uses_public_mcp_fallback() -> None:
+    """Public wheel installs never require the separately distributed distill CLI."""
+    from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
+
+    content = get_before_edit_content()
+    assert "trw_codebase_risk_report" in content
+    assert "trw-distill self-improve" not in content
+
+
 def test_conventions_command_single_recall_call() -> None:
     """FR12: Conventions command uses exactly ONE trw_recall call (P2-09)."""
     from trw_mcp.channels.opencode._custom_commands import get_conventions_content

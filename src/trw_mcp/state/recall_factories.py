@@ -162,36 +162,9 @@ def recall_for_review_tags(
     )
 
 
-def recall_for_learning_injection(
-    trw_dir: Path,
-    task_description: str,
-    *,
-    tags: list[str] | None = None,
-    min_impact: float = 0.0,
-    max_results: int = 25,
-) -> list[dict[str, object]]:
-    """Recall task-relevant active learnings for injection.
-
-    Called by ``state/learning_injection.recall_learnings`` (its ``trw_dir``-
-    resolving shim) whenever ``status="active"`` — i.e. the injection path in
-    ``select_learnings_for_task``. Matches a task description with an optional
-    tag boost; the pinned ``status="active"`` filter excludes
-    resolved/obsolete entries.
-    """
-    return _default_recall()(
-        trw_dir,
-        query=task_description,
-        tags=tags,
-        min_impact=min_impact,
-        max_results=max_results,
-        status="active",
-    )
-
-
 __all__ = [
     "recall_baseline_high_impact",
     "recall_focused",
-    "recall_for_learning_injection",
     "recall_for_nudge_pool",
     "recall_for_review_tags",
     "recall_recent_bypass",

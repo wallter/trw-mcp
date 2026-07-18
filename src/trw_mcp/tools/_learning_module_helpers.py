@@ -36,8 +36,10 @@ __all__ = [
     "_coerce_tags",
     "_create_llm_client",
     "_is_solution_summary",
+    "_note_run_path_compat",
     "_read_injected_ids",
     "_validate_learn_enums",
+    "_validate_learn_update_fields",
 ]
 
 logger = structlog.get_logger(__name__)
@@ -85,6 +87,56 @@ def _validate_learn_enums(*, type: str, confidence: str, protection_tier: str) -
     return None
 
 
+def _validate_learn_update_fields(
+    *,
+    type: str | None,
+    confidence: str | None,
+    protection_tier: str | None,
+    phase_origin: str | None,
+    nudge_line: str | None,
+    feedback: str | None,
+    tags: list[str] | None,
+) -> dict[str, str] | None:
+    """Validate ``trw_learn_update`` enum/shape args; return a rejection or None.
+
+    Extracted verbatim from ``trw_learn_update`` (PRD-CORE-110) to keep
+    ``tools/learning.py`` under the 350-effective-LOC gate. ``type`` is expected
+    to already be coerced by :func:`_coerce_learn_type` in the caller, matching
+    the prior in-line ordering exactly — this is a behavior-preserving move.
+    Uses ``set`` literals (not ``frozenset``) so the interpolated error messages
+    render identically to the original in-line checks.
+    """
+    _valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
+    if type is not None and type not in _valid_types:
+        return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
+    _valid_confidences = {"unverified", "low", "medium", "high", "verified"}
+    if confidence is not None and confidence not in _valid_confidences:
+        return {
+            "error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}",
+            "status": "invalid",
+        }
+    _valid_tiers = {"critical", "high", "normal", "low", "protected", "permanent"}
+    if protection_tier is not None and protection_tier not in _valid_tiers:
+        return {
+            "error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}",
+            "status": "invalid",
+        }
+    _valid_phases = {"", "RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"}
+    if phase_origin is not None and phase_origin not in _valid_phases:
+        return {
+            "error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}",
+            "status": "invalid",
+        }
+    if nudge_line is not None and len(nudge_line) > 80:
+        return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
+    _valid_feedback = {"helpful", "unhelpful"}
+    if feedback is not None and feedback not in _valid_feedback:
+        return {"error": f"Invalid feedback '{feedback}'. Must be one of: {_valid_feedback}", "status": "invalid"}
+    if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) for t in tags)):
+        return {"error": "tags must be a list of strings", "status": "invalid"}
+    return None
+
+
 # Potemkin defect C (sub_zAfRqZYYq2KtF72d): trw_learn(type='gotcha') was
 # rejected ("'gotcha' is not a valid MemoryType") even though the trw_learn
 # docstring and the trw-deliver / trw-ceremony-guide skills present "gotchas"
@@ -99,7 +151,25 @@ _LEARN_TYPE_ALIASES: dict[str, str] = {
     # gotcha, or durable pattern"; a gotcha is a known pitfall to work around.
     "gotcha": "workaround",
     "gotchas": "workaround",
+    # Feedback sub_5qbmT6WPNoP58rlv item 8: agents naturally pass
+    # type='project' for project/convention knowledge (mirroring the native
+    # memory "project" category). A project fact IS a convention; coerce it
+    # to the valid MemoryType rather than rejecting the write.
+    "project": "convention",
 }
+
+
+def _note_run_path_compat(run_path: str | None) -> None:
+    """Log a ``trw_learn(run_path=...)`` argument accepted for compatibility.
+
+    Feedback sub_5qbmT6WPNoP58rlv item 8: agents reasonably pass ``run_path``
+    after using the run-path-aware checkpoint/deliver tools. Learnings are
+    run-independent, so the value is only ACCEPTED and logged (observable) — it
+    is NOT validated against any run directory and does not change storage,
+    keeping an otherwise-valid learning from failing.
+    """
+    if run_path is not None:
+        logger.debug("learn_run_path_accepted_for_compat", run_path=run_path)
 
 
 def _coerce_learn_type(type: str) -> str:

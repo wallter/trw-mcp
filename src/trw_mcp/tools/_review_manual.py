@@ -25,9 +25,11 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._review_validation import normalize_review_finding
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools._review_provenance import RunIdentity
 
 logger = structlog.get_logger(__name__)
 
@@ -40,6 +42,10 @@ _FR_CAPTURE_PATTERN = r"(?:PRD-[\w-]+-)?FR(\d+)"
 # as "FRs verified covered". See VISION Principle #3 (honest evidence).
 # trw:intentional reconcile does presence-matching, not behavioral coverage
 RECONCILE_COVERAGE_METHOD = "identifier_presence_in_diff"
+MANUAL_EMPTY_REVIEW_REASON = (
+    "manual review recorded no schema-valid findings and no independent reviewer receipt; "
+    "it is an empty artifact, not substantive REVIEW evidence"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -53,11 +59,42 @@ def handle_manual_mode(
     review_id: str,
     ts: str,
     prd_ids: list[str] | None = None,
+    *,
+    reviewer_source: str | None = None,
+    reviewer_receipt_id: str | None = None,
+    review_completed: bool = False,
+    verified_reviewer_identity: RunIdentity | None = None,
 ) -> ManualReviewResult:
-    """Handle the manual review mode -- validate findings, compute verdict, persist."""
+    """Handle the manual review mode -- validate findings, compute verdict, persist.
+
+    PRD-CORE-213-FR01: stamps a ``reviewer`` provenance block. ``reviewer_source``
+    defaults to ``self`` for manual mode (derived honestly from the mode); an
+    explicit ``operator`` source requires ``reviewer_receipt_id`` or raises.
+    ``verified_reviewer_identity`` (OQ-001) must come from
+    ``resolve_verified_reviewer_identity`` — it stamps the framework-verified
+    reviewer identity instead of the delivering run's.
+    """
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._review_provenance import build_reviewer_block, derive_reviewer_source
+
     validated = validate_manual_findings(raw_findings)
     critical_count, warning_count, info_count = count_by_severity(validated)
     verdict = _helpers._compute_verdict(cast("list[dict[str, str]]", validated))
+    # CORE-205 FR02: a completed, fully covered review may honestly have zero
+    # findings.  Empty-by-default remains non-substantive; the explicit
+    # completion assertion records that the server-issued manual rubric was
+    # actually exercised.
+    substantive = bool(validated) or review_completed
+
+    source = derive_reviewer_source("manual", reviewer_source)
+    reviewer_block = build_reviewer_block(
+        resolved_run,
+        FileStateReader(),
+        source=source,
+        receipt_id=reviewer_receipt_id,
+        ts=ts,
+        verified_identity=verified_reviewer_identity,
+    )
 
     result: ManualReviewResult = {
         "review_id": review_id,
@@ -67,7 +104,11 @@ def handle_manual_mode(
         "warning_count": warning_count,
         "info_count": info_count,
         "run_path": str(resolved_run) if resolved_run else None,
+        "substantive": substantive,
+        "reviewer": reviewer_block,
     }
+    if not substantive:
+        result["non_substantive_reason"] = MANUAL_EMPTY_REVIEW_REASON
 
     result["review_yaml"] = _helpers._persist_review_artifact(
         resolved_run,
@@ -79,14 +120,20 @@ def handle_manual_mode(
             "warning_count": warning_count,
             "info_count": info_count,
             "findings": validated,
+            "substantive": substantive,
+            "non_substantive_reason": "" if substantive else MANUAL_EMPTY_REVIEW_REASON,
+            "reviewer": reviewer_block,
+            "review_completed": review_completed,
         },
         {
             "review_id": review_id,
             "verdict": verdict,
             "critical_count": critical_count,
+            "substantive": substantive,
             "warning_count": warning_count,
             "prd_ids": list(prd_ids) if prd_ids else [],
         },
+        cast("dict[str, object]", result),
     )
     return result
 
@@ -99,15 +146,12 @@ def validate_manual_findings(
     Runs each finding through ReviewFinding model validation,
     normalizing severity levels to the canonical set.
     """
-    import contextlib
-
-    from trw_mcp.models.run import ReviewFinding
-
     validated: list[ReviewFindingDict] = []
-    for f in raw_findings:
-        normalized = {**f, "severity": _helpers._normalize_severity(f.get("severity", "info"))}
-        with contextlib.suppress(Exception):
-            ReviewFinding(**normalized)  # type: ignore[arg-type]  # dict[str,str] coerced by Pydantic
+    for index, finding in enumerate(raw_findings):
+        normalized = normalize_review_finding(finding)
+        if normalized is None:
+            logger.warning("manual_review_finding_rejected", index=index, reason="invalid_or_placeholder")
+            continue
         validated.append(cast("ReviewFindingDict", normalized))
     return validated
 

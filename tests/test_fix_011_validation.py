@@ -10,6 +10,7 @@ Verifies that:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -139,6 +140,38 @@ It should be scalable and flexible and easy to use.
 """
 
 
+# Requirement lines with weak modals / vague adverbs + non-EARS phrasing so the
+# smell + EARS detectors both emit multiple findings (token-bloat W5 compaction).
+_SMELLY_PRD = """\
+---
+prd:
+  id: PRD-CORE-004
+  title: "Smelly PRD"
+  version: "1.0"
+  status: draft
+  priority: P1
+traceability:
+  implements: [KE-001]
+---
+
+# PRD-CORE-004: Smelly PRD
+
+## 1. Problem Statement
+The system must retain current repository truth for the contract.
+
+## 4. Functional Requirements
+
+### PRD-CORE-004-FR01: The system should quickly handle the request.
+**Priority**: Must Have
+
+### PRD-CORE-004-FR02: The system may adequately process the data.
+**Priority**: Must Have
+
+### PRD-CORE-004-FR03: When a request arrives, the system shall respond.
+**Priority**: Must Have
+"""
+
+
 @pytest.fixture(autouse=True)
 def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
@@ -263,28 +296,55 @@ class TestRichDiagnosticsExposed:
     """PRD-FIX-011-FR03: Previously discarded diagnostics are now exposed."""
 
     def test_smell_findings_exposed(self, tmp_path: Path) -> None:
-        """Result should include smell_findings list."""
+        """Compact mode groups smell_findings by category (token-bloat W5)."""
         result = _run_validate(_GOOD_PRD, tmp_path)
         assert "smell_findings" in result
         assert isinstance(result["smell_findings"], list)
-        for sf in result["smell_findings"]:
-            assert "category" in sf
-            assert "matched_text" in sf
-            assert "severity" in sf
-            assert "suggestion" in sf
-            assert "line_number" in sf
+        for group in result["smell_findings"]:
+            # Grouped compact shape: one entry per category, suggestion once.
+            assert "category" in group
+            assert "count" in group
+            assert "severity" in group
+            assert "suggestion" in group
+            assert "sample_lines" in group
+            assert "matched_text" not in group
 
     def test_ears_classifications_exposed(self, tmp_path: Path) -> None:
-        """Result should include ears_classifications list."""
+        """Compact mode returns ears counts + actionable line numbers (W5)."""
         result = _run_validate(_GOOD_PRD, tmp_path)
         assert "ears_classifications" in result
-        assert isinstance(result["ears_classifications"], list)
+        ears = result["ears_classifications"]
+        assert isinstance(ears, dict)
+        assert isinstance(ears["counts"], dict)
+        assert isinstance(ears["actionable_lines"], list)
 
-    def test_readability_scores_exposed(self, tmp_path: Path) -> None:
-        """Result should include readability metrics dict."""
+    def test_readability_stub_dropped(self, tmp_path: Path) -> None:
+        """The always-empty readability stub is no longer emitted (W5)."""
         result = _run_validate(_GOOD_PRD, tmp_path)
-        assert "readability" in result
-        assert isinstance(result["readability"], dict)
+        assert "readability" not in result
+
+    def test_verbose_mode_returns_full_diagnostic_shape(self, tmp_path: Path) -> None:
+        """verbose=True is the escape hatch to the un-compacted payload (W5)."""
+        prd = tmp_path / "smelly.md"
+        prd.write_text(_SMELLY_PRD, encoding="utf-8")
+        tools = _get_tools()
+        compact = tools["trw_prd_validate"].fn(prd_path=str(prd))
+        verbose = tools["trw_prd_validate"].fn(prd_path=str(prd), verbose=True)
+
+        # Verbose: per-occurrence smells (with matched_text) + per-line EARS list.
+        assert verbose["compact"] is False
+        assert isinstance(verbose["ears_classifications"], list)
+        assert any("matched_text" in sf for sf in verbose["smell_findings"])
+        assert "key" in verbose["cache"]
+
+        # Compact: grouped smells (no matched_text) + EARS counts dict + no cache key.
+        assert compact["compact"] is True
+        assert isinstance(compact["ears_classifications"], dict)
+        assert all("matched_text" not in g for g in compact["smell_findings"])
+        assert "key" not in compact["cache"]
+
+        # The compaction genuinely shrinks the serialized payload.
+        assert len(json.dumps(compact, default=str)) < len(json.dumps(verbose, default=str))
 
     def test_section_scores_exposed(self, tmp_path: Path) -> None:
         """Result should include per-section density scores."""
@@ -326,14 +386,16 @@ class TestBackwardCompatibleOutput:
             "grade",
             "dimensions",
             "improvement_suggestions",
-            # FIX-011 diagnostic keys
+            # FIX-011 diagnostic keys (readability stub dropped in W5)
             "smell_findings",
             "ears_classifications",
-            "readability",
             "section_scores",
         ]
         for key in expected_keys:
             assert key in result, f"Missing expected key: {key!r}"
+        # Token-bloat W5: dropped stub / alias fields must not resurface.
+        assert "readability" not in result
+        assert "implementation_test_link_coverage" not in result
 
     def test_failures_serialized_as_dicts(self, tmp_path: Path) -> None:
         """Failures should be serialized as plain dicts (not Pydantic models)."""

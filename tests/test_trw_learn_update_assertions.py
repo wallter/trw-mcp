@@ -6,7 +6,6 @@ Verifies that assertions can be added, replaced, or removed via trw_learn_update
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,25 +32,13 @@ class TestUpdateAddsAssertions:
 
     def test_update_adds_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When assertions are provided, they are validated and stored."""
-        from trw_memory.models.memory import MemoryEntry
+        captured: dict[str, object] = {}
 
-        mock_backend = MagicMock()
-        mock_entry = MemoryEntry(
-            id="L-test1",
-            content="test summary",
-            detail="test detail",
-            assertions=[],
-        )
-        mock_backend.get.return_value = mock_entry
+        def _update(_trw_dir: Path, **kwargs: object) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"learning_id": "L-test1", "status": "updated"}
 
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.get_backend",
-            lambda _: mock_backend,
-        )
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.adapter_update",
-            lambda trw_dir, **kw: {"learning_id": "L-test1", "status": "no_changes"},
-        )
+        monkeypatch.setattr("trw_mcp.tools.learning.adapter_update", _update)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -62,18 +49,13 @@ class TestUpdateAddsAssertions:
         server = make_test_server("learning")
         update_fn = extract_tool_fn(server, "trw_learn_update")
 
-        result = update_fn(
+        update_fn(
             learning_id="L-test1",
             assertions=SAMPLE_ASSERTIONS,
         )
 
-        # Backend.update should have been called with serialized assertions
-        mock_backend.update.assert_called_once()
-        update_call_kwargs = mock_backend.update.call_args
-        assert update_call_kwargs[0][0] == "L-test1"
-        assert "assertions" in update_call_kwargs[1]
-        # The assertions passed should have 1 item
-        assert len(update_call_kwargs[1]["assertions"]) == 1
+        saved = captured["assertions"]
+        assert isinstance(saved, list) and len(saved) == 1
 
 
 class TestUpdateReplacesAssertions:
@@ -81,28 +63,13 @@ class TestUpdateReplacesAssertions:
 
     def test_update_replaces_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Existing assertions are replaced with the new list."""
-        from trw_memory.models.memory import Assertion, MemoryEntry
+        captured: dict[str, object] = {}
 
-        existing_assertion = Assertion.model_validate(
-            {"type": "grep_present", "pattern": "old_pattern", "target": "**/*.py"}, strict=False
-        )
-        mock_backend = MagicMock()
-        mock_entry = MemoryEntry(
-            id="L-test2",
-            content="test summary",
-            detail="test detail",
-            assertions=[existing_assertion],
-        )
-        mock_backend.get.return_value = mock_entry
+        def _update(_trw_dir: Path, **kwargs: object) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"learning_id": "L-test2", "status": "updated"}
 
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.get_backend",
-            lambda _: mock_backend,
-        )
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.adapter_update",
-            lambda trw_dir, **kw: {"learning_id": "L-test2", "status": "no_changes"},
-        )
+        monkeypatch.setattr("trw_mcp.tools.learning.adapter_update", _update)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -113,19 +80,16 @@ class TestUpdateReplacesAssertions:
         server = make_test_server("learning")
         update_fn = extract_tool_fn(server, "trw_learn_update")
 
-        result = update_fn(
+        update_fn(
             learning_id="L-test2",
             assertions=REPLACEMENT_ASSERTIONS,
         )
 
-        # Backend should receive the replacement assertions
-        update_call_kwargs = mock_backend.update.call_args
-        assert len(update_call_kwargs[1]["assertions"]) == 2
+        saved = captured["assertions"]
+        assert isinstance(saved, list) and len(saved) == 2
 
     def test_update_replaces_assertions_in_yaml_backup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """YAML backup assertions are kept in sync with the validated replacement list."""
-        from trw_memory.models.memory import Assertion, MemoryEntry
-
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
         trw_dir = tmp_path / ".trw"
@@ -141,19 +105,6 @@ class TestUpdateReplacesAssertions:
             },
         )
 
-        existing_assertion = Assertion.model_validate(
-            {"type": "grep_present", "pattern": "old_pattern", "target": "**/*.py"}, strict=False
-        )
-        mock_backend = MagicMock()
-        mock_entry = MemoryEntry(
-            id="L-test2",
-            content="test summary",
-            detail="test detail",
-            assertions=[existing_assertion],
-        )
-        mock_backend.get.return_value = mock_entry
-
-        monkeypatch.setattr("trw_mcp.tools.learning.get_backend", lambda _: mock_backend)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.adapter_update",
             lambda trw_dir, **kw: {"learning_id": "L-test2", "status": "updated"},
@@ -183,28 +134,13 @@ class TestDeleteAssertionsWithEmptyList:
 
     def test_delete_assertions_with_empty_list(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Passing empty list clears all assertions."""
-        from trw_memory.models.memory import Assertion, MemoryEntry
+        captured: dict[str, object] = {}
 
-        existing_assertion = Assertion.model_validate(
-            {"type": "grep_present", "pattern": "some_pattern", "target": "**/*.py"}, strict=False
-        )
-        mock_backend = MagicMock()
-        mock_entry = MemoryEntry(
-            id="L-test3",
-            content="test summary",
-            detail="test detail",
-            assertions=[existing_assertion],
-        )
-        mock_backend.get.return_value = mock_entry
+        def _update(_trw_dir: Path, **kwargs: object) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"learning_id": "L-test3", "status": "updated"}
 
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.get_backend",
-            lambda _: mock_backend,
-        )
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.adapter_update",
-            lambda trw_dir, **kw: {"learning_id": "L-test3", "status": "no_changes"},
-        )
+        monkeypatch.setattr("trw_mcp.tools.learning.adapter_update", _update)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -215,31 +151,26 @@ class TestDeleteAssertionsWithEmptyList:
         server = make_test_server("learning")
         update_fn = extract_tool_fn(server, "trw_learn_update")
 
-        result = update_fn(
+        update_fn(
             learning_id="L-test3",
             assertions=[],
         )
 
-        # Backend.update should be called with empty assertions list
-        update_call_kwargs = mock_backend.update.call_args
-        assert update_call_kwargs[1]["assertions"] == []
+        assert captured["assertions"] == []
 
 
 class TestUpdateAssertionsNoneSkipsUpdate:
     """When assertions=None (not provided), no assertion update is done."""
 
     def test_none_assertions_skips_update(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When assertions is None, backend is not called for assertion update."""
-        mock_backend = MagicMock()
+        """When assertions is None, the adapter receives no replacement."""
+        captured: dict[str, object] = {}
 
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.get_backend",
-            lambda _: mock_backend,
-        )
-        monkeypatch.setattr(
-            "trw_mcp.tools.learning.adapter_update",
-            lambda trw_dir, **kw: {"learning_id": "L-test4", "status": "no_changes"},
-        )
+        def _update(_trw_dir: Path, **kwargs: object) -> dict[str, str]:
+            captured.update(kwargs)
+            return {"learning_id": "L-test4", "status": "no_changes"}
+
+        monkeypatch.setattr("trw_mcp.tools.learning.adapter_update", _update)
         monkeypatch.setattr(
             "trw_mcp.tools.learning.resolve_trw_dir",
             lambda: tmp_path / ".trw",
@@ -250,10 +181,6 @@ class TestUpdateAssertionsNoneSkipsUpdate:
         server = make_test_server("learning")
         update_fn = extract_tool_fn(server, "trw_learn_update")
 
-        result = update_fn(
-            learning_id="L-test4",
-        )
+        update_fn(learning_id="L-test4")
 
-        # Backend should NOT have been called for assertion update (only adapter_update)
-        mock_backend.get.assert_not_called()
-        mock_backend.update.assert_not_called()
+        assert captured["assertions"] is None

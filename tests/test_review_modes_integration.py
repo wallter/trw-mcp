@@ -152,6 +152,87 @@ class TestIntegration:
         review_path = run_dir / "meta" / "review.yaml"
         assert review_path.exists()
 
+    def test_degraded_cross_model_pattern_scan_is_publicly_non_substantive(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Provider degradation must not turn a limited fallback into REVIEW evidence."""
+        tools = make_ceremony_server(monkeypatch, tmp_path)
+        _reset_config(TRWConfig(cross_model_review_enabled=False))
+
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
+            result = tools["trw_review"].fn(
+                mode="cross_model",
+                run_path=str(run_dir),
+            )
+
+        assert result["review_family_coverage"] == "single_family"
+        assert result["auto_analysis_limited"] is True
+        assert "pattern-scan only" in result["limited_reason"]
+        assert result["substantive"] is False
+
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["auto_analysis_limited"] is True
+        assert artifact["limited_reason"] == result["limited_reason"]
+        assert artifact["substantive"] is False
+
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+
+        assert read_ceremony_state(tmp_path / ".trw").review_called is False
+
+    @pytest.mark.parametrize(
+        "reviewer_findings",
+        [
+            [],
+            [{}],
+            [{"category": "correctness", "severity": "warning"}],
+            [{"category": " ", "severity": "warning", "description": "Issue"}],
+            [{"category": "correctness", "severity": "warning", "description": "  "}],
+            [{"category": "correctness", "severity": "bogus", "description": "Issue"}],
+            [
+                {
+                    "category": "correctness",
+                    "severity": "warning",
+                    "description": "Issue",
+                    "confidence": "garbage",
+                }
+            ],
+        ],
+    )
+    def test_auto_invalid_precollected_evidence_is_publicly_non_substantive(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reviewer_findings: list[dict[str, object]],
+    ) -> None:
+        """Only schema-valid, non-placeholder findings can satisfy REVIEW."""
+        tools = make_ceremony_server(monkeypatch, tmp_path)
+        _reset_config(TRWConfig(review_confidence_threshold=0))
+
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
+            result = tools["trw_review"].fn(
+                reviewer_findings=reviewer_findings,
+                run_path=str(run_dir),
+            )
+
+        assert result["total_findings_count"] == 0
+        assert result["surfaced_findings_count"] == 0
+        assert result["auto_analysis_limited"] is True
+        assert "no schema-valid findings" in result["limited_reason"]
+        assert result["substantive"] is False
+
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["findings"] == []
+        assert artifact["auto_analysis_limited"] is True
+        assert artifact["substantive"] is False
+
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+
+        assert read_ceremony_state(tmp_path / ".trw").review_called is False
+
     def test_explicit_run_path_auto_mode(
         self,
         tmp_path: Path,
@@ -330,8 +411,10 @@ class TestTrwReviewEdgeCases:
         with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
             result = tools["trw_review"].fn(findings=[{"category": "security", "severity": "critical"}])
 
-        assert result["verdict"] == "block"
-        assert result["critical_count"] == 1
+        assert result["verdict"] == "pass"
+        assert result["critical_count"] == 0
+        assert result["total_findings"] == 0
+        assert result["substantive"] is False
 
     def test_findings_with_only_warning_severities_returns_warn(
         self,

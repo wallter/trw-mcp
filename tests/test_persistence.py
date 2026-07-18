@@ -7,11 +7,11 @@ Covers:
 - Line 156: read_jsonl non-dict line triggers logger.warning
 - Lines 169-172: read_jsonl JSONDecodeError and generic Exception paths
 - Lines 221-223: write_yaml temp file cleanup on exception
-- Lines 227-228: write_yaml os.close(fd) finally block
+- write_yaml closes its mkstemp handle before replacement
 - Lines 230-233: write_yaml StateError re-raise and outer exception
 - Lines 259-260: append_jsonl StateError on exception
 - Lines 290-292: write_text temp file cleanup on BaseException
-- Lines 296-301: write_text os.close finally and StateError re-raise
+- write_text closes its mkstemp handle before replacement
 - Lines 317-318: ensure_dir StateError on mkdir failure
 - Lines 338-346: lock_for_rmw context manager
 """
@@ -19,6 +19,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -204,12 +205,50 @@ class TestReadJsonlErrorPaths:
     """Tests for read_jsonl error handling branches."""
 
     def test_json_decode_error_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
-        """Lines 164-168: JSONDecodeError wraps to StateError."""
+        """strict=True: a JSONDecodeError wraps to StateError (opt-in fatal mode)."""
         jsonl_file = tmp_path / "corrupt.jsonl"
         jsonl_file.write_text("not valid json {\n", encoding="utf-8")
 
         with pytest.raises(StateError, match="JSONL"):
-            reader.read_jsonl(jsonl_file)
+            reader.read_jsonl(jsonl_file, strict=True)
+
+    def test_malformed_line_skipped_by_default(self, tmp_path: Path, reader: FileStateReader) -> None:
+        """Lenient default: a malformed line is skipped, not fatal (returns [])."""
+        jsonl_file = tmp_path / "corrupt.jsonl"
+        jsonl_file.write_text("not valid json {\n", encoding="utf-8")
+
+        assert reader.read_jsonl(jsonl_file) == []
+
+    def test_truncated_tail_line_returns_valid_events_with_warning(
+        self, tmp_path: Path, reader: FileStateReader
+    ) -> None:
+        """Regression: a torn final line (killed mid-append) must not poison the
+        whole read. The valid rows are returned and one aggregated warning names
+        the skipped count."""
+        events_file = tmp_path / "events.jsonl"
+        # Two complete rows plus a truncated final row (no closing brace / newline).
+        events_file.write_text(
+            '{"event": "run_init", "ts": "2026-07-08T00:00:00Z"}\n'
+            '{"event": "phase_enter", "ts": "2026-07-08T00:00:01Z"}\n'
+            '{"event": "file_modi',
+            encoding="utf-8",
+        )
+
+        with patch("trw_mcp.state.persistence.logger") as mock_logger:
+            records = reader.read_jsonl(events_file)
+
+        assert [r["event"] for r in records] == ["run_init", "phase_enter"]
+        mock_logger.warning.assert_called_once()
+        call = mock_logger.warning.call_args
+        assert "jsonl_malformed_lines_skipped" in call[0]
+        assert call.kwargs["skipped"] == 1
+
+    def test_strict_mode_still_returns_valid_records_when_clean(self, tmp_path: Path, reader: FileStateReader) -> None:
+        """strict=True over a clean file behaves identically to the default."""
+        jsonl_file = tmp_path / "clean.jsonl"
+        jsonl_file.write_text('{"a": 1}\n{"b": 2}\n', encoding="utf-8")
+
+        assert reader.read_jsonl(jsonl_file, strict=True) == [{"a": 1}, {"b": 2}]
 
     def test_generic_exception_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """Lines 170-172: Generic exception wraps to StateError."""
@@ -289,12 +328,27 @@ class TestWriteYamlCleanup:
         tmp_files = list(tmp_path.glob("*.yaml.tmp"))
         assert len(tmp_files) == 0
 
-    def test_write_yaml_oserror_on_close_fd(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """Lines 227-228: os.close() raising OSError is silenced."""
+    def test_write_yaml_closes_temp_before_replace(self, tmp_path: Path, writer: FileStateWriter) -> None:
+        """The mkstemp handle is closed before replacing an existing target."""
         yaml_file = tmp_path / "output.yaml"
+        yaml_file.write_text("old: value\n", encoding="utf-8")
+        real_fdopen = os.fdopen
+        real_replace = os.replace
+        handles: list[object] = []
 
-        with patch("trw_mcp.state.persistence.os.close", side_effect=OSError("bad fd")):
-            # Should NOT raise — OSError from os.close is caught and ignored
+        def tracked_fdopen(*args: object, **kwargs: object) -> object:
+            handle = real_fdopen(*args, **kwargs)  # type: ignore[arg-type]
+            handles.append(handle)
+            return handle
+
+        def checked_replace(src: object, dst: object) -> None:
+            assert handles and bool(getattr(handles[-1], "closed", False))
+            real_replace(src, dst)  # type: ignore[arg-type]
+
+        with (
+            patch("trw_mcp.state.persistence.os.fdopen", side_effect=tracked_fdopen),
+            patch("trw_mcp.state.persistence.os.replace", side_effect=checked_replace),
+        ):
             writer.write_yaml(yaml_file, {"key": "value"})
 
         assert yaml_file.exists()
@@ -363,14 +417,7 @@ class TestWriteTextCleanup:
         """Lines 290-292: BaseException during write cleans up tmp file."""
         text_file = tmp_path / "output.md"
 
-        original_open = Path.open
-
-        def patched_open(self: Path, mode: str = "r", **kwargs: object) -> object:
-            if "w" in mode and str(self).endswith(".tmp"):
-                raise RuntimeError("write failed")
-            return original_open(self, mode, **kwargs)
-
-        with patch.object(Path, "open", patched_open):
+        with patch("trw_mcp.state.persistence.os.fdopen", side_effect=RuntimeError("write failed")):
             with pytest.raises(StateError, match="Failed to write text"):
                 writer.write_text(text_file, "hello world")
 
@@ -380,11 +427,27 @@ class TestWriteTextCleanup:
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0
 
-    def test_write_text_oserror_on_close_fd_silenced(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """Lines 296-298: os.close() raising OSError is silenced in write_text."""
+    def test_write_text_closes_temp_before_replace(self, tmp_path: Path, writer: FileStateWriter) -> None:
+        """The mkstemp handle is closed before replacing an existing target."""
         text_file = tmp_path / "output.md"
+        text_file.write_text("old", encoding="utf-8")
+        real_fdopen = os.fdopen
+        real_replace = os.replace
+        handles: list[object] = []
 
-        with patch("trw_mcp.state.persistence.os.close", side_effect=OSError("bad fd")):
+        def tracked_fdopen(*args: object, **kwargs: object) -> object:
+            handle = real_fdopen(*args, **kwargs)  # type: ignore[arg-type]
+            handles.append(handle)
+            return handle
+
+        def checked_replace(src: object, dst: object) -> None:
+            assert handles and bool(getattr(handles[-1], "closed", False))
+            real_replace(src, dst)  # type: ignore[arg-type]
+
+        with (
+            patch("trw_mcp.state.persistence.os.fdopen", side_effect=tracked_fdopen),
+            patch("trw_mcp.state.persistence.os.replace", side_effect=checked_replace),
+        ):
             writer.write_text(text_file, "some content")
 
         assert text_file.read_text() == "some content"
@@ -394,14 +457,7 @@ class TestWriteTextCleanup:
         text_file = tmp_path / "output.md"
 
         original_err = StateError("inner text error", path=str(text_file))
-        original_open = Path.open
-
-        def patched_open(self: Path, mode: str = "r", **kwargs: object) -> object:
-            if "w" in mode and str(self).endswith(".tmp"):
-                raise original_err
-            return original_open(self, mode, **kwargs)
-
-        with patch.object(Path, "open", patched_open):
+        with patch("trw_mcp.state.persistence._atomic_write_text_file", side_effect=original_err):
             with pytest.raises(StateError, match="inner text error"):
                 writer.write_text(text_file, "hello")
 
@@ -409,14 +465,7 @@ class TestWriteTextCleanup:
         """Lines 300-304: Generic exception wraps to StateError in write_text."""
         text_file = tmp_path / "output.md"
 
-        original_open = Path.open
-
-        def patched_open(self: Path, mode: str = "r", **kwargs: object) -> object:
-            if "w" in mode and str(self).endswith(".tmp"):
-                raise ValueError("encoding error")
-            return original_open(self, mode, **kwargs)
-
-        with patch.object(Path, "open", patched_open):
+        with patch("trw_mcp.state.persistence._atomic_write_text_file", side_effect=ValueError("encoding error")):
             with pytest.raises(StateError, match="Failed to write text"):
                 writer.write_text(text_file, "hello")
 

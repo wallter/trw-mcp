@@ -44,6 +44,21 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-audit" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
+    def test_audit_nfr_example_does_not_duplicate_checklist_size(self) -> None:
+        """Projection examples must not carry a count that drifts from the checklist."""
+        import re
+
+        paths = [
+            _PKG_DATA / "skills" / "trw-audit" / "SKILL.md",
+            _PKG_DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
+            _PKG_DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
+            _MONOREPO_CLAUDE / "skills" / "trw-audit" / "SKILL.md",
+        ]
+        for path in paths:
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                assert not re.search(r"all \d+ (?:NFR )?items", content), path
+
     def test_sprint_finish_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled sprint-finish skill stays byte-for-byte aligned with root source."""
         assert (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8") == (
@@ -78,14 +93,17 @@ class TestSkillDefinitions:
         }
         required_snippets = {
             "exec_plan": ["Pre-Implementation Checklist (PRD-QUAL-056-FR03)"],
-            "self_review": ["Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)"],
+            "self_review": ["never substitutes for the required independent/substantive review"],
             "audit": [
                 "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
                 "preflight_verification:",
                 "self_review_alignment: matches|underreported|missing",
                 "prior_learning_verification:",
             ],
-            "sprint_finish": ["Delivery ceremony", "Learnings promoted"],
+            "sprint_finish": [
+                "Call `trw_deliver()` as the last TRW action",
+                "delivery result and residual risks",
+            ],
         }
 
         for variant_name, path in variant_paths.items():

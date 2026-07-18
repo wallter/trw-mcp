@@ -13,6 +13,8 @@ from pathlib import Path
 
 import structlog
 
+from ._file_ops import find_marker_line_span
+
 logger = structlog.get_logger(__name__)
 
 __all__ = [
@@ -38,25 +40,46 @@ def _update_claude_md_trw_section(
 
     Preserves all user-written content above and below the markers.
     """
-    content = claude_md_path.read_text(encoding="utf-8")
+    # PRD-CORE-203 FR04: never clobber a single-source pointer file. The shared
+    # guard (same helper used by ``_parser.merge_trw_section``) heals any stale
+    # appended block and signals skip so the bootstrap update path leaves a
+    # ``@AGENTS.md``-style pointer untouched.
+    if claude_md_path.exists():
+        from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
+
+        if pointer_skip_guard(claude_md_path) is not None:
+            result.setdefault("preserved", []).append(str(claude_md_path))
+            return
+
+    try:
+        content = claude_md_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # TOCTOU-safe: the file may vanish between the guard and the read.
+        result.setdefault("errors", []).append(f"Failed to read {claude_md_path}: {exc}")
+        return
     new_block = _minimal_claude_md_trw_block()
 
-    start_idx = content.find(_TRW_START_MARKER)
-    end_idx = content.find(_TRW_END_MARKER)
+    # Line-anchored whole-line matching only — an inline prose mention of a
+    # marker (e.g. inside backticks) must never be mistaken for the section
+    # boundary (repo rule "Marker / Sentinel Matching"; the substring form once
+    # destroyed 705 ROADMAP lines).
+    start_span = find_marker_line_span(content, _TRW_START_MARKER, anchor="start")
+    end_span = find_marker_line_span(content, _TRW_END_MARKER, anchor="end")
 
-    if start_idx != -1 and end_idx != -1:
+    if start_span is not None and end_span is not None:
         # Replace the existing auto-generated section
-        end_idx += len(_TRW_END_MARKER)
-        # Also capture the header marker line if present
-        header_idx = content.rfind(_TRW_HEADER_MARKER, 0, start_idx)
-        replace_start = header_idx if header_idx != -1 else start_idx
+        end_idx = end_span[1]
+        # Also capture the header marker line if present on its own line above
+        # the start marker (rfind semantics → last occurrence before start).
+        header_span = find_marker_line_span(content[: start_span[0]], _TRW_HEADER_MARKER, anchor="start", last=True)
+        replace_start = header_span[0] if header_span is not None else start_span[0]
         updated = content[:replace_start] + new_block + content[end_idx:]
         try:
             claude_md_path.write_text(updated, encoding="utf-8")
             result["updated"].append(str(claude_md_path))
         except OSError as exc:
             result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
-    elif _TRW_START_MARKER not in content:
+    elif start_span is None:
         # No TRW section -- append it
         if not content.endswith("\n"):
             content += "\n"

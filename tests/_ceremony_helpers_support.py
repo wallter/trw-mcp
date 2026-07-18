@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+
+
+@pytest.fixture(autouse=True)
+def _default_embedding_downloads_offline(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Keep the general suite hermetic while online-boundary tests opt in.
+
+    Session-start enables embeddings by default and may otherwise launch a
+    daemon Hugging Face warm-up whose sockets and event loop outlive the test.
+    The two dedicated modules below own and drain/mock that lifecycle.
+    """
+    online_owner_modules = {"test_embedder_warmup.py", "test_embeddings_offline.py"}
+    if request.path.name not in online_owner_modules:
+        monkeypatch.setenv("TRW_OFFLINE", "1")
+    yield
 
 
 @pytest.fixture()

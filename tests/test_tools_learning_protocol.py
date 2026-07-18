@@ -63,8 +63,11 @@ class TestProgressiveDisclosure:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
 
-    def test_auto_gen_contains_skill_reference(self, tmp_path: Path) -> None:
+    def test_auto_gen_contains_skill_reference(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
+        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
+        # so pin instruction_externalize="off" to keep exercising the inline path.
+        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Skill ref test",
@@ -217,7 +220,11 @@ class TestProgressiveDisclosure:
         _analytics_cache.set(None)
         result = render_agents_trw_section()
 
-        assert "Deliver gate" in result
+        # PRD-QUAL-104: the gate now sources the canonical bundled
+        # tool-lifecycle.md versioned "## Deliver Gate" heading (title-cased),
+        # matching the render_closing_reminder assertion above. The gate
+        # content invariant (build_check prerequisite) is asserted below.
+        assert "Deliver Gate" in result
         assert "trw_build_check" in result
         assert "acceptable-failure" in result
 
@@ -231,7 +238,8 @@ class TestProgressiveDisclosure:
 
         result = render_codex_trw_section()
 
-        assert "Deliver gate" in result
+        # PRD-QUAL-104: canonical bundled heading is title-cased "Deliver Gate".
+        assert "Deliver Gate" in result
         assert "trw_build_check" in result
         assert "acceptable-failure" in result
 
@@ -358,7 +366,8 @@ class TestBehavioralProtocol:
                 "impact": 0.9,
             },
         ]
-        result = render_adherence(entries)
+        with pytest.warns(DeprecationWarning, match="render_adherence is deprecated"):
+            result = render_adherence(entries)
         assert "Framework Adherence" in result
         assert "Execute trw_recall at every session start" in result
 
@@ -375,7 +384,8 @@ class TestBehavioralProtocol:
                 "impact": 0.9,
             },
         ]
-        result = render_adherence(entries)
+        with pytest.warns(DeprecationWarning, match="render_adherence is deprecated"):
+            result = render_adherence(entries)
         # Summary should appear (promoted directly)
         assert "Always execute trw_reflect after implementation" in result
         # Detail should NOT appear (no sentence extraction for behavioral-mandate)

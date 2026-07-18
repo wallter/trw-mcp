@@ -32,7 +32,15 @@ def search_patterns(
         List of matching pattern dictionaries.
     """
     matching: list[dict[str, object]] = []
-    if not patterns_dir.exists():
+    try:
+        if not reader.exists(patterns_dir):
+            return matching
+    except StateError as exc:
+        logger.warning(
+            "recall_patterns_directory_skipped",
+            path=str(patterns_dir),
+            error_type=type(exc).__name__,
+        )
         return matching
 
     for pattern_file in sorted(patterns_dir.glob("*.yaml")):
@@ -68,10 +76,19 @@ def collect_context(
     """
     context: dict[str, object] = {}
     context_dir = trw_dir / context_dir_name
-    arch_path = context_dir / "architecture.yaml"
-    conv_path = context_dir / "conventions.yaml"
-    if reader.exists(arch_path):
-        context["architecture"] = reader.read_yaml(arch_path)
-    if reader.exists(conv_path):
-        context["conventions"] = reader.read_yaml(conv_path)
+    for key, path in (
+        ("architecture", context_dir / "architecture.yaml"),
+        ("conventions", context_dir / "conventions.yaml"),
+    ):
+        try:
+            if not reader.exists(path):
+                continue
+            context[key] = reader.read_yaml(path)
+        except (StateError, ValueError, TypeError) as exc:
+            logger.warning(
+                "recall_optional_context_skipped",
+                context_key=key,
+                path=str(path),
+                error_type=type(exc).__name__,
+            )
     return context

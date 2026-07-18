@@ -60,9 +60,7 @@ def _event(skill: str, *, days_ago: float, invoked: bool) -> SkillSurfaceEvent:
 # ---------------------------------------------------------------------------
 
 
-def test_discovery_emits_one_skill_surface_event_per_candidate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_discovery_emits_one_skill_surface_event_per_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "skills"
     src.mkdir()
     a = _write_skill(src, "alpha", "review changed python code")
@@ -120,9 +118,7 @@ def test_malformed_events_are_skipped_returns_cold_start() -> None:
 
 def test_naive_timestamp_is_treated_as_utc() -> None:
     naive = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-    events: list[SkillSurfaceEvent] = [
-        {"skill_name": "x", "surfaced_at": naive, "invoked_after_surface": True}
-    ]
+    events: list[SkillSurfaceEvent] = [{"skill_name": "x", "surfaced_at": naive, "invoked_after_surface": True}]
     # Single recent invoked event -> rate approaches 1.0 (no raise on naive ts).
     assert compute_skill_contribution(events) == pytest.approx(1.0)
 
@@ -153,9 +149,7 @@ def test_active_cap_none_is_noop(tmp_path: Path) -> None:
     assert explicit_none.candidates == full.candidates
 
 
-def test_tracking_enabled_with_active_cap_none_surfaces_all(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_tracking_enabled_with_active_cap_none_surfaces_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Guard: tracking ON + active_cap None must return ALL candidates (no
     # truncation) AND write one surface event for each of them. A regression
     # that zero-truncates on active_cap=None (or skips events) would break this.
@@ -201,9 +195,7 @@ def test_below_floor_n_windows_retires(tmp_path: Path, monkeypatch: pytest.Monke
     assert rec["windows_below_floor"] >= cfg.skill_retirement_windows
 
 
-def test_below_floor_n_minus_1_windows_is_still_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_below_floor_n_minus_1_windows_is_still_active(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Boundary guard: exactly (skill_retirement_windows - 1) consecutive
     # below-floor windows must keep status "active" (windows_below_floor <
     # needed). Catches a >= -> > regression that the N-windows test misses.
@@ -214,9 +206,7 @@ def test_below_floor_n_minus_1_windows_is_still_active(
     assert needed == 3
 
     # All surfaces never invoked -> contribution 0.0 < floor.
-    _seed_surface_log(
-        trw_dir, [_event("edge", days_ago=1, invoked=False) for _ in range(3)]
-    )
+    _seed_surface_log(trw_dir, [_event("edge", days_ago=1, invoked=False) for _ in range(3)])
 
     last: list = []
     for _ in range(needed - 1):  # exactly N-1 consecutive below-floor windows
@@ -228,9 +218,7 @@ def test_below_floor_n_minus_1_windows_is_still_active(
     assert rec["windows_below_floor"] < needed
 
 
-def test_retirement_is_reversible_and_no_file_deleted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retirement_is_reversible_and_no_file_deleted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "skills"
     src.mkdir()
     skill = _write_skill(src, "comeback", "review python")
@@ -300,18 +288,14 @@ def test_duplicate_flag_uses_embeddings_when_available(monkeypatch: pytest.Monke
     import trw_memory.embeddings as emb
 
     monkeypatch.setattr(emb, "get_local_embedder", lambda: _Embedder())
-    flags = find_duplicate_skills(
-        {"a": "alpha topic", "b": "alpha topic too"}, threshold=0.99
-    )
+    flags = find_duplicate_skills({"a": "alpha topic", "b": "alpha topic too"}, threshold=0.99)
     assert len(flags) == 1
     assert flags[0]["similarity"] == pytest.approx(1.0)
 
 
 def test_duplicate_max_skills_cap_bounds_pairs() -> None:
     # max_skills=1 truncates to a single skill -> no pairs possible.
-    flags = find_duplicate_skills(
-        {"a": "same desc", "b": "same desc"}, threshold=0.5, max_skills=1
-    )
+    flags = find_duplicate_skills({"a": "same desc", "b": "same desc"}, threshold=0.5, max_skills=1)
     assert flags == []
 
 
@@ -336,9 +320,7 @@ def test_all_defaults_discovery_byte_identical(tmp_path: Path) -> None:
     # byte-for-byte identical to a call that passes no lifecycle args at all.
     paths = _five_skills(tmp_path / "skills")
     baseline = discover_meta_skills(paths, query="review python")
-    defaulted = discover_meta_skills(
-        paths, query="review python", active_cap=None, session_id=""
-    )
+    defaulted = discover_meta_skills(paths, query="review python", active_cap=None, session_id="")
     assert defaulted.model_dump(mode="json") == baseline.model_dump(mode="json")
     # And the default config flag is OFF.
     assert TRWConfig().skill_surface_tracking_enabled is False
@@ -363,3 +345,343 @@ def test_contribution_docstring_disclaims_causal_signal() -> None:
     lowered = text.lower()
     assert "invoked-after-surface" in lowered
     assert "not a causal" in lowered or "not be presented" in lowered
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-218-FR07 -- evidence-backed reversible skill lifecycle (state machine)
+#
+# FR07 consolidates the QUAL-111 evidence stream and adds a finite, reversible
+# lifecycle state machine (active -> deprecated -> hidden -> retired -> removed)
+# with a per-transition removal contract, plus a deterministic step-based
+# contribution signal. The authority lives in ``tools/_skill_lifecycle.py``;
+# ``skill_discovery`` consumes its advertising filter.
+# ---------------------------------------------------------------------------
+
+import dataclasses
+
+from trw_mcp.tools._skill_lifecycle import (
+    DuplicateFlag,
+    LifecycleTransitionError,
+    SkillEvidenceKind,
+    SkillEvidenceLedger,
+    SkillEvidenceRecord,
+    SkillLifecycleRecord,
+    SkillLifecycleState,
+    advance,
+    apply_active_cap,
+    contribution_signal,
+    flag_near_duplicates,
+    is_advertisable,
+    rank_by_contribution,
+    restore,
+)
+
+
+def _fr07_no_causal_field(cls: type) -> None:
+    """No field in the record schema may imply causal task success."""
+    banned = {"success", "succeeded", "caused", "causal", "outcome", "won", "passed"}
+    names = {f.name.lower() for f in dataclasses.fields(cls)}
+    assert names.isdisjoint(banned), f"{cls.__name__} leaks a causal-success field: {names & banned}"
+
+
+def _fr07_advance_full(record: SkillLifecycleRecord, to_state: SkillLifecycleState) -> SkillLifecycleRecord:
+    return advance(
+        record,
+        to_state,
+        owner="platform",
+        evidence_window="2026-07-01..2026-07-11",
+        expiry="2026-08-01",
+        replacement="trw_new_skill",
+        rollback_snapshot="snap-1",
+    )
+
+
+def test_prd_core_218_fr07(tmp_path: Path) -> None:
+    # --- schema truthfulness: no fabricated causal-success field --------------
+    _fr07_no_causal_field(SkillEvidenceRecord)
+
+    # --- surfaced / invoked evidence + deterministic contribution -------------
+    ledger = SkillEvidenceLedger(max_records=100)
+    ledger.record("alpha", SkillEvidenceKind.SURFACED, at_step=0)
+    ledger.record("alpha", SkillEvidenceKind.INVOKED, at_step=8)
+    ledger.record("beta", SkillEvidenceKind.SURFACED, at_step=1)
+
+    alpha = contribution_signal(ledger, "alpha", now_step=10)
+    beta = contribution_signal(ledger, "beta", now_step=10)
+    assert alpha > beta  # recent invoked evidence outranks a stale surface
+    assert contribution_signal(ledger, "alpha", now_step=10) == alpha  # deterministic
+    assert contribution_signal(ledger, "unknown", now_step=10) == 0.0
+
+    ranked = rank_by_contribution(ledger, ["alpha", "beta"], now_step=10)
+    assert ranked == ("alpha", "beta")
+
+    # --- bounded append-only ledger evicts oldest -----------------------------
+    small = SkillEvidenceLedger(max_records=2)
+    for step in range(5):
+        small.record("gamma", SkillEvidenceKind.SURFACED, at_step=step)
+    assert len(small.records) == 2
+    assert [r.at_step for r in small.records] == [3, 4]
+
+    # --- active cap applies AFTER ranking, None is a no-op --------------------
+    assert apply_active_cap(ranked, None) == ranked
+    assert apply_active_cap(ranked, 1) == ("alpha",)
+    assert apply_active_cap(ranked, 0) == ()
+
+    # --- near-duplicate descriptions flagged, never merged --------------------
+    flags = flag_near_duplicates(
+        {
+            "search_one": "search the code index for a symbol",
+            "search_two": "search the code index for a symbol name",
+            "unrelated": "render a marketing video caption",
+        }
+    )
+    assert flags and all(isinstance(f, DuplicateFlag) for f in flags)
+    flagged_pairs = {(f.skill_a, f.skill_b) for f in flags}
+    assert ("search_one", "search_two") in flagged_pairs
+    # Flagging never merges/removes an unrelated skill.
+    assert "unrelated" not in {name for pair in flagged_pairs for name in pair}
+
+    # --- lifecycle: forward requires all fields; skipping a state is refused ---
+    record = SkillLifecycleRecord("trw_old_skill")
+    assert record.state is SkillLifecycleState.ACTIVE
+
+    with pytest.raises(LifecycleTransitionError):
+        advance(  # missing required fields
+            record,
+            SkillLifecycleState.DEPRECATED,
+            owner="",
+            evidence_window="",
+            expiry="",
+            replacement="",
+            rollback_snapshot="",
+        )
+    with pytest.raises(LifecycleTransitionError):
+        _fr07_advance_full(record, SkillLifecycleState.RETIRED)  # non-adjacent skip
+
+    deprecated = _fr07_advance_full(record, SkillLifecycleState.DEPRECATED)
+    hidden = _fr07_advance_full(deprecated, SkillLifecycleState.HIDDEN)
+    retired = _fr07_advance_full(hidden, SkillLifecycleState.RETIRED)
+    assert retired.state is SkillLifecycleState.RETIRED
+
+    # --- retirement is reversible BEFORE removal ------------------------------
+    restored = restore(retired, owner="platform", reason="rollback")
+    assert restored.state is SkillLifecycleState.HIDDEN  # reverts to the prior state
+    with pytest.raises(LifecycleTransitionError):
+        restore(retired, owner="", reason="")  # missing fields refused
+
+    removed = _fr07_advance_full(retired, SkillLifecycleState.REMOVED)
+    assert removed.state is SkillLifecycleState.REMOVED
+    with pytest.raises(LifecycleTransitionError):
+        restore(removed, owner="platform", reason="too-late")  # removal is terminal
+
+    # --- discovery stops advertising retired skills ---------------------------
+    assert is_advertisable(SkillLifecycleState.ACTIVE) is True
+    assert is_advertisable(SkillLifecycleState.DEPRECATED) is True
+    assert is_advertisable(SkillLifecycleState.RETIRED) is False
+    assert is_advertisable(SkillLifecycleState.REMOVED) is False
+
+    src = tmp_path / "fr07_skills"
+    src.mkdir()
+    _write_skill(src, "live_skill", "index the repository code")
+    _write_skill(src, "retired_skill", "index the repository code")
+    paths = [src / "live_skill" / "SKILL.md", src / "retired_skill" / "SKILL.md"]
+    result = discover_meta_skills(
+        paths,
+        query="index code",
+        lifecycle_states={"retired_skill": SkillLifecycleState.RETIRED},
+    )
+    surfaced = {candidate.name for candidate in result.candidates}
+    assert "live_skill" in surfaced
+    assert "retired_skill" not in surfaced
+
+    # Without the lifecycle map, prior behavior is preserved (both surface).
+    baseline = discover_meta_skills(paths, query="index code")
+    assert {c.name for c in baseline.candidates} == {"live_skill", "retired_skill"}
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-218-FR07 P0-3 -- persisted lifecycle store + PRODUCTION wiring
+#
+# The state-machine authority in ``tools/_skill_lifecycle.py`` was never
+# consulted by production because no persisted state existed and the registered
+# ``trw_skill_discovery`` tool passed no ``lifecycle_states``. These tests drive
+# the NEW ``state/skill_lifecycle_store.py`` persistence layer AND assert the
+# REGISTERED tool now withholds retired skills.
+# ---------------------------------------------------------------------------
+
+import structlog
+
+from tests.conftest import extract_tool_fn, make_test_server
+from trw_mcp.state.skill_lifecycle_store import (
+    load_lifecycle_records,
+    load_lifecycle_states,
+    restore_skill,
+    skill_lifecycle_store_path,
+    transition_skill,
+)
+
+_RETIRE_FIELDS: dict[str, str] = {
+    "owner": "platform",
+    "evidence_window": "2026-07-01..2026-07-11",
+    "expiry": "2026-08-01",
+    "replacement": "trw_new_skill",
+    "rollback_snapshot": "snap-1",
+}
+
+
+def _point_trw_dir(monkeypatch: pytest.MonkeyPatch, trw_dir: Path) -> None:
+    # The store resolves its path lazily via _paths.resolve_trw_dir at call time.
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
+
+
+def _retire_in_store(skill_name: str) -> SkillLifecycleRecord:
+    """Walk a skill active -> deprecated -> hidden -> retired in the store."""
+    transition_skill(skill_name, SkillLifecycleState.DEPRECATED, **_RETIRE_FIELDS)
+    transition_skill(skill_name, SkillLifecycleState.HIDDEN, **_RETIRE_FIELDS)
+    return transition_skill(skill_name, SkillLifecycleState.RETIRED, **_RETIRE_FIELDS)
+
+
+def _discovery_tool() -> object:
+    return extract_tool_fn(make_test_server("skill_discovery"), "trw_skill_discovery")
+
+
+def test_store_roundtrip_persists_state_and_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+
+    record = _retire_in_store("deadskill")
+    assert record.state is SkillLifecycleState.RETIRED
+
+    # Persisted to .trw/skills/lifecycle.json and reloadable across a fresh read.
+    assert skill_lifecycle_store_path() == tmp_path / ".trw" / "skills" / "lifecycle.json"
+    assert skill_lifecycle_store_path().exists()
+    assert load_lifecycle_states() == {"deadskill": SkillLifecycleState.RETIRED}
+    reloaded = load_lifecycle_records()["deadskill"]
+    assert reloaded.state is SkillLifecycleState.RETIRED
+    assert reloaded.history[-1].to_state is SkillLifecycleState.RETIRED
+    assert reloaded.history[-1].owner == "platform"
+
+
+def test_store_transition_contract_refusal_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+
+    # Non-adjacent forward move is refused by the delegated advance() contract.
+    with pytest.raises(LifecycleTransitionError):
+        transition_skill("x", SkillLifecycleState.RETIRED, **_RETIRE_FIELDS)
+    assert not skill_lifecycle_store_path().exists()
+
+    # Missing required removal-contract fields are refused; still no file.
+    with pytest.raises(LifecycleTransitionError):
+        transition_skill(
+            "x",
+            SkillLifecycleState.DEPRECATED,
+            owner="",
+            evidence_window="",
+            expiry="",
+            replacement="",
+            rollback_snapshot="",
+        )
+    assert not skill_lifecycle_store_path().exists()
+
+
+def test_registered_discovery_withholds_retired_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+    src = tmp_path / "skills"
+    src.mkdir()
+    live = _write_skill(src, "live_skill", "index the repository code")
+    retired = _write_skill(src, "retired_skill", "index the repository code")
+    _retire_in_store("retired_skill")
+
+    result = _discovery_tool()([str(live), str(retired)], "index code")  # type: ignore[operator]
+
+    names = {candidate["name"] for candidate in result["candidates"]}
+    assert "live_skill" in names
+    assert "retired_skill" not in names
+
+
+def test_registered_discovery_restore_brings_skill_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # ``_skill_lifecycle.restore`` is a single-step undo of the most recent
+    # transition. Move the skill into HIDDEN (a withheld state) so ONE restore
+    # returns it to DEPRECATED (advertisable) -- proving the reversible path
+    # through the persisted store re-advertises a withheld skill.
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+    src = tmp_path / "skills"
+    src.mkdir()
+    skill = _write_skill(src, "comeback_skill", "index the repository code")
+    transition_skill("comeback_skill", SkillLifecycleState.DEPRECATED, **_RETIRE_FIELDS)
+    transition_skill("comeback_skill", SkillLifecycleState.HIDDEN, **_RETIRE_FIELDS)
+    tool = _discovery_tool()
+
+    withheld = {c["name"] for c in tool([str(skill)], "index code")["candidates"]}  # type: ignore[operator]
+    assert "comeback_skill" not in withheld
+
+    restored_record = restore_skill("comeback_skill", owner="platform", reason="rollback")
+    assert restored_record.state is SkillLifecycleState.DEPRECATED
+    assert load_lifecycle_states()["comeback_skill"] is SkillLifecycleState.DEPRECATED
+
+    restored = {c["name"] for c in tool([str(skill)], "index code")["candidates"]}  # type: ignore[operator]
+    assert "comeback_skill" in restored
+
+
+def test_registered_discovery_missing_store_advertises_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")  # .trw never created
+    src = tmp_path / "skills"
+    src.mkdir()
+    a = _write_skill(src, "one", "index the repository code")
+    b = _write_skill(src, "two", "index the repository code")
+
+    result = _discovery_tool()([str(a), str(b)], "index code")  # type: ignore[operator]
+
+    assert {c["name"] for c in result["candidates"]} == {"one", "two"}
+    assert not skill_lifecycle_store_path().exists()
+
+
+def test_registered_discovery_corrupt_store_advertises_all_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from structlog.testing import capture_logs
+
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+    src = tmp_path / "skills"
+    src.mkdir()
+    a = _write_skill(src, "one", "index the repository code")
+    b = _write_skill(src, "two", "index the repository code")
+
+    # A torn / hand-corrupted store must NOT silently withhold skills.
+    store_path = skill_lifecycle_store_path()
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text("{ this is not valid json", encoding="utf-8")
+
+    structlog.configure(
+        processors=[structlog.testing.LogCapture()],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+    )
+    tool = _discovery_tool()
+    with capture_logs() as logs:
+        result = tool([str(a), str(b)], "index code")  # type: ignore[operator]
+
+    # Fail-open: corrupt store => everything is still advertised.
+    assert {c["name"] for c in result["candidates"]} == {"one", "two"}
+    # But NOT silent: a WARN naming the malformed store was emitted.
+    warnings = [e for e in logs if e.get("event") == "skill_lifecycle_store_malformed_fallback"]
+    assert warnings, f"expected malformed-fallback warning, got {[e.get('event') for e in logs]}"
+    assert warnings[0]["log_level"] == "warning"
+
+
+def test_load_records_corrupt_returns_empty_with_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from structlog.testing import capture_logs
+
+    _point_trw_dir(monkeypatch, tmp_path / ".trw")
+    store_path = skill_lifecycle_store_path()
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    # Valid JSON but a bad per-skill entry poisons the whole store (fail-open).
+    store_path.write_text('{"version": 1, "records": {"x": {"state": "banana"}}}', encoding="utf-8")
+
+    structlog.configure(
+        processors=[structlog.testing.LogCapture()],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+    )
+    with capture_logs() as logs:
+        records = load_lifecycle_records()
+
+    assert records == {}
+    assert any(e.get("event") == "skill_lifecycle_store_malformed_fallback" for e in logs)

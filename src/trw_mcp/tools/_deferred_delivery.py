@@ -25,7 +25,6 @@ from ``trw_mcp.tools.ceremony`` which re-exports the public surface.
 from __future__ import annotations
 
 import atexit
-import json
 import threading
 import time
 from datetime import datetime, timezone
@@ -68,9 +67,41 @@ from trw_mcp.tools._deferred_steps_telemetry import (
     _step_checkpoint as _step_checkpoint,
     _step_telemetry as _step_telemetry,
 )
+from trw_mcp.tools._deferred_persistence import (
+    _persist_deferred_results as _persist_deferred_results,
+    _persist_session_metrics as _persist_session_metrics,
+    _resolve_step_budgets as _resolve_step_budgets,
+    log_deferred_result,
+)
+
+
 from trw_mcp.tools._helpers import _run_step
 
 logger = structlog.get_logger(__name__)
+
+# Single source of truth for the deferred-delivery step roster. The
+# ``_run_deferred_steps`` loop is DRIVEN by this tuple, so the steps that
+# actually run ARE exactly these names — and ``DEFERRED_STEP_COUNT`` (surfaced
+# by ``trw_deliver`` as the ``deferred_steps`` field) is DERIVED from it and can
+# never drift out of sync with the executed count again. Adding or removing a
+# step means editing this tuple (and the matching ``step_map`` entry inside
+# ``_run_deferred_steps``); the reported count follows automatically.
+DEFERRED_STEPS: tuple[str, ...] = (
+    "auto_prune",
+    "consolidation",
+    "tier_sweep",
+    "index_sync",
+    "auto_progress",
+    "publish_learnings",
+    "outcome_correlation",
+    "recall_outcome",
+    "telemetry",
+    "batch_send",
+    "trust_increment",
+    "ceremony_feedback",
+    "delivery_metrics",
+)
+DEFERRED_STEP_COUNT = len(DEFERRED_STEPS)
 
 
 def _try_acquire_deferred_lock(
@@ -91,127 +122,9 @@ def _try_acquire_deferred_lock(
         helper_vars["_lock_ex_nb"] = original_lock
 
 
-def _persist_session_metrics(
-    metrics_result: dict[str, object],
-    resolved_run: Path | None,
-) -> None:
-    """Persist session_metrics to run.yaml after delivery metrics step.
-
-    PRD-CORE-104: Writes the delivery metrics result dict into
-    run.yaml under the ``session_metrics`` key so that downstream
-    consumers (meta-tune, dashboards) can access session-level
-    reward signals without re-computing them.
-
-    Fail-open: errors are logged but never raised.
-    """
-    if resolved_run is None:
-        return
-    if not isinstance(metrics_result, dict) or metrics_result.get("status") != "success":
-        return
-    try:
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        run_yaml_path = resolved_run / "meta" / "run.yaml"
-        if run_yaml_path.exists():
-            run_data = reader.read_yaml(run_yaml_path)
-            run_data["session_metrics"] = metrics_result
-            writer.write_yaml(run_yaml_path, run_data)
-            logger.info("session_metrics_persisted", path=str(run_yaml_path))
-    except Exception:  # justified: fail-open, session metrics persistence is best-effort
-        logger.warning("session_metrics_persist_failed", exc_info=True)
-
-
-def _persist_deferred_results(
-    results: dict[str, object],
-    resolved_run: Path | None,
-) -> None:
-    """Persist deferred delivery results to run.yaml for downstream consumers."""
-    if resolved_run is None:
-        return
-    try:
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        run_yaml_path = resolved_run / "meta" / "run.yaml"
-        if not run_yaml_path.exists():
-            return
-
-        run_data = reader.read_yaml(run_yaml_path)
-        run_data["deferred_results"] = dict(results)
-
-        # F19 (2026-06-04): the audit-pattern "promotion candidates" used to be
-        # mirrored into dedicated ``audit_pattern_promotions`` /
-        # ``promotion_candidates`` run.yaml keys here, tagged
-        # ``promotion_path="metadata_only"`` / ``meta_tune_integration="tool_unavailable"``.
-        # That was a self-documented no-op: nothing in the codebase ever read
-        # those keys back (CORE-093 removed automatic CLAUDE.md learning
-        # promotion, and no trw_meta_tune() tool ships), so the signal was
-        # computed, written, and silently dropped. The arrays also ballooned
-        # legacy run.yaml files to multiple MB and dominated boot-time YAML
-        # parsing (see state/_run_gc.py). Wiring them into trw_instructions_sync
-        # would re-introduce exactly the CLAUDE.md promotion CORE-093 deleted, so
-        # the honest fix is to stop persisting the dead signal. The consolidation
-        # step's status still flows through ``deferred_results`` above for audit.
-
-        writer.write_yaml(run_yaml_path, run_data)
-        logger.info("deferred_results_persisted", path=str(run_yaml_path))
-    except Exception:  # justified: fail-open, deferred state persistence is best-effort
-        logger.warning("deferred_results_persist_failed", exc_info=True)
-
-
-def _log_deferred_result(
-    trw_dir: Path,
-    results: dict[str, object],
-    errors: list[str],
-) -> None:
-    """Append deferred step results to an audit log."""
-    log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # PRD-FIX-085 FR04: rotate at 10 MB to match surface_tracking parity.
-    # Pre-fix this file grew unbounded -- observed 25 MB on the dev repo.
-    from trw_mcp.state._helpers import rotate_jsonl
-
-    rotate_jsonl(log_path, max_bytes=10 * 1024 * 1024)
-
-    entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "results": {k: v for k, v in results.items() if k != "timestamp"},
-        "errors": errors,
-        "success": len(errors) == 0,
-    }
-    try:
-        with log_path.open("a", encoding="utf-8") as f:
-            _lock_ex(f.fileno())
-            f.write(json.dumps(entry, default=str) + "\n")
-            f.flush()
-            _lock_un(f.fileno())
-    except Exception:  # justified: fail-open, deferred log is diagnostic only
-        logger.debug("deferred_log_write_failed", exc_info=True)
-
-
-def _resolve_step_budgets() -> tuple[float, float]:
-    """Read per-step and per-batch budgets from config, with safe defaults.
-
-    Reading happens inside ``_run_deferred_steps`` so the config can be
-    monkeypatched between tests. Defaults match the values in
-    ``_fields_build.py``.
-    """
-    try:
-        from trw_mcp.models.config import get_config
-
-        cfg = get_config()
-        step_s = float(getattr(cfg, "deferred_step_max_seconds", 60))
-        batch_s = float(getattr(cfg, "deferred_batch_max_seconds", 300))
-    except Exception:  # justified: fail-open, config load failure must not block the deferred batch
-        step_s, batch_s = 60.0, 300.0
-    # A non-positive budget disables the watchdog (escape hatch for ops
-    # who need an unbounded batch). Mirror Python's ``threading.Timer``
-    # behavior on 0.0 to mean "fire immediately"; we treat 0 as disabled.
-    return max(step_s, 0.0), max(batch_s, 0.0)
+def _log_deferred_result(trw_dir: Path, results: dict[str, object], errors: list[str]) -> None:
+    """Append deferred results while preserving the legacy lock patch seam."""
+    log_deferred_result(trw_dir, results, errors, _lock_ex, _lock_un)
 
 
 def _run_deferred_steps(
@@ -220,6 +133,7 @@ def _run_deferred_steps(
     critical_results: dict[str, object],
     *,
     skip_index_sync: bool = False,
+    operation_id: str = "",
 ) -> dict[str, object]:
     """Execute deferred delivery steps in the background.
 
@@ -321,37 +235,54 @@ def _run_deferred_steps(
         else:
             logger.info("deferred_step_ok", step=name, duration_ms=_duration_ms)
 
-    try:
-        _timed_step("auto_prune", lambda: _step_auto_prune(trw_dir))
-        _timed_step("consolidation", lambda: _step_consolidation(trw_dir))
-        _timed_step("tier_sweep", lambda: _step_tier_sweep(trw_dir))
-
-        if not skip_index_sync:
-            _timed_step("index_sync", lambda: _do_index_sync())
-        else:
-            results["index_sync"] = {"status": "skipped"}
-            logger.warning("deferred_step_skip", step="index_sync", reason="skip_index_sync=True")
-
-        _timed_step("auto_progress", lambda: _step_auto_progress(resolved_run))
-        _timed_step("publish_learnings", lambda: _step_publish_learnings())
-        _timed_step("outcome_correlation", lambda: _step_outcome_correlation())
-        _timed_step("recall_outcome", lambda: _step_recall_outcome(resolved_run))
-        _timed_step("telemetry", lambda: _step_telemetry(resolved_run))
-        _timed_step("batch_send", lambda: _step_batch_send())
-        _timed_step("trust_increment", lambda: _step_trust_increment(resolved_run))
-        # FIX-052: feed the LIVE deferred ``results`` (which already contains the
-        # ``telemetry`` step's computed ceremony_score, build_passed, and
-        # coverage_delta) rather than the PRE-deferred ``critical_results``
-        # snapshot. The snapshot never carried a ``telemetry`` key, so the
-        # feedback step recorded a constant ceremony_score=0.0 and the adaptive
-        # feedback loop had no gradient. The ``telemetry`` step runs above, so its
-        # output is present in ``results`` by the time this step executes.
-        _merge_results: dict[str, object] = dict(critical_results)
-        _merge_results.update(results)
-        _timed_step("ceremony_feedback", lambda: _step_ceremony_feedback(resolved_run, _merge_results))
-
+    # Map each roster name to its call-time thunk. Built here (not module-level)
+    # because the thunks close over trw_dir / resolved_run / critical_results /
+    # results. Each references the module-global ``_step_*`` names so test
+    # monkeypatches on ``_deferred_delivery._step_foo`` still bind at call time.
+    step_map: dict[str, object] = {
+        "auto_prune": lambda: _step_auto_prune(trw_dir),
+        "consolidation": lambda: _step_consolidation(trw_dir),
+        "tier_sweep": lambda: _step_tier_sweep(trw_dir),
+        "index_sync": lambda: _do_index_sync(),
+        "auto_progress": lambda: _step_auto_progress(resolved_run),
+        "publish_learnings": lambda: _step_publish_learnings(),
+        "outcome_correlation": lambda: _step_outcome_correlation(),
+        "recall_outcome": lambda: _step_recall_outcome(resolved_run),
+        "telemetry": lambda: _step_telemetry(resolved_run),
+        "batch_send": lambda: _step_batch_send(),
+        "trust_increment": lambda: _step_trust_increment(resolved_run),
+        # FIX-052: feed the LIVE deferred ``results`` (which by the time this
+        # step runs already contains the ``telemetry`` step's computed
+        # ceremony_score, build_passed, and coverage_delta) merged OVER the
+        # PRE-deferred ``critical_results`` snapshot. The snapshot alone never
+        # carried a ``telemetry`` key, so the feedback step recorded a constant
+        # ceremony_score=0.0 and the adaptive feedback loop had no gradient. The
+        # merge is evaluated at call time inside the thunk (telemetry runs
+        # earlier in the roster), so ``results`` is fully populated when it runs.
+        "ceremony_feedback": lambda: _step_ceremony_feedback(resolved_run, {**dict(critical_results), **results}),
         # Sprint 84: Delivery metrics (PRD-CORE-104)
-        _timed_step("delivery_metrics", lambda: _step_delivery_metrics(trw_dir, resolved_run))
+        "delivery_metrics": lambda: _step_delivery_metrics(trw_dir, resolved_run),
+    }
+
+    # PRD-CORE-208 FR02/FR06: journal each roster step over the already-claimed
+    # operation so a process death mid-batch (e.g. after the NON_REPLAYABLE trust
+    # increment) leaves a durable ``started`` step for FR04 recovery. Fully
+    # fail-open — a disabled journal makes every ``.step`` a no-op.
+    from trw_mcp.tools._delivery_journal_wiring import open_deferred_journal
+    from trw_mcp.tools._delivery_models import OperationState
+    from trw_mcp.tools._delivery_tracer import DEFERRED_STEP_EFFECT_IDS
+
+    deferred_journal = open_deferred_journal(trw_dir, operation_id)
+    deferred_journal.mark_state(OperationState.DEFERRED_RUNNING)
+
+    try:
+        for _step_name in DEFERRED_STEPS:
+            if _step_name == "index_sync" and skip_index_sync:
+                results["index_sync"] = {"status": "skipped"}
+                logger.warning("deferred_step_skip", step="index_sync", reason="skip_index_sync=True")
+                continue
+            with deferred_journal.step(DEFERRED_STEP_EFFECT_IDS.get(_step_name, "")):
+                _timed_step(_step_name, step_map[_step_name])
 
         metrics_result = results.get("delivery_metrics")
         if isinstance(metrics_result, dict):
@@ -381,6 +312,14 @@ def _run_deferred_steps(
         steps_failed = len(errors)
         elapsed = time.monotonic() - t0
         results["elapsed_seconds"] = round(elapsed, 2)
+        # Count of roster steps that actually executed (each ``_timed_step`` /
+        # ``_run_step`` writes ``results[name]`` for its roster entry, incl.
+        # skipped/cancelled/failed statuses). Deriving from DEFERRED_STEPS keeps
+        # this immune to non-step bookkeeping keys (timestamp, elapsed_seconds,
+        # watchdog): ``len(results) - 2`` drifted the moment such a key was added
+        # (reported 12 while DEFERRED_STEP_COUNT is 13). In a full batch this
+        # equals DEFERRED_STEP_COUNT.
+        executed_steps = sum(1 for _name in DEFERRED_STEPS if _name in results)
         logger.info(
             "deferred_delivery_complete",
             steps_ok=steps_ok,
@@ -388,7 +327,7 @@ def _run_deferred_steps(
         )
         logger.info(
             "deferred_deliver_complete",
-            steps=len(results) - 2,  # minus timestamp and elapsed
+            steps=executed_steps,
             errors=len(errors),
             elapsed=round(elapsed, 2),
         )
@@ -396,6 +335,29 @@ def _run_deferred_steps(
         errors.append(f"deferred_fatal: {exc}")
         logger.warning("deferred_deliver_fatal", error=str(exc), exc_info=True)
     finally:
+        # PRD-CORE-208 FR02: the operation is not complete when only the
+        # synchronous effects have finished.  Commit the aggregate terminal
+        # state after the deferred roster has actually stopped so status,
+        # idempotent retries, and retention all observe the same truth.
+        if not deferred_journal.wait_for_step_terminal("S20"):
+            errors.append("delivery_journal_terminal_failed: timed out waiting for synchronous S20")
+        terminal_state = (
+            OperationState.CANCELLED
+            if _ds._cancel_event.is_set()
+            else OperationState.FAILED
+            if errors
+            else OperationState.SUCCEEDED
+        )
+        try:
+            deferred_journal.mark_state(terminal_state)
+        except Exception as exc:  # the background caller cannot receive this error directly
+            errors.append(f"delivery_journal_terminal_failed: {exc}")
+            logger.exception(
+                "delivery_journal_terminal_failed",
+                operation_id=operation_id,
+                terminal_state=terminal_state.value,
+                error=str(exc),
+            )
         # Cancel the per-batch watchdog before we drop the file lock so it
         # can't fire after the batch already exited and spuriously flip
         # the cancel event for the next batch's first step.
@@ -413,6 +375,7 @@ def _launch_deferred(
     critical_results: dict[str, object],
     *,
     skip_index_sync: bool = False,
+    operation_id: str = "",
 ) -> str:
     """Launch deferred steps on a daemon thread.
 
@@ -445,7 +408,7 @@ def _launch_deferred(
         _ds._deferred_thread = threading.Thread(
             target=_run_deferred_steps,
             args=(trw_dir, resolved_run, critical_results),
-            kwargs={"skip_index_sync": skip_index_sync},
+            kwargs={"skip_index_sync": skip_index_sync, "operation_id": operation_id},
             name="trw-deliver-deferred",
             daemon=True,
         )

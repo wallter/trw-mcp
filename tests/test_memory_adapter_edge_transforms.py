@@ -308,6 +308,7 @@ class TestLearningToMemoryEntry:
             shard_id="shard-C",
             source_type="human",
             source_identity="Tyler",
+            scope="project",
         )
         assert entry.id == "L-map001"
         assert entry.content == "Summary text"

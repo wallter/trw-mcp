@@ -282,7 +282,7 @@ def test_gate_fails_on_localhost_only_platform_urls(tmp_path: Path) -> None:
 
     trw_dir = _make_trw_dir(tmp_path)
     _healthy_pipeline(trw_dir)
-    config = _make_config(platform_urls=["http://127.0.0.1:8100", "http://localhost:9000"])
+    config = _make_config(platform_urls=["http://127.0.0.1:5002", "http://localhost:9000"])
 
     result = check_pipeline_health(trw_dir, config)
 
@@ -296,7 +296,7 @@ def test_gate_silent_with_remote_platform_url(tmp_path: Path) -> None:
 
     trw_dir = _make_trw_dir(tmp_path)
     _healthy_pipeline(trw_dir)
-    config = _make_config(platform_urls=["http://localhost:8100", "https://api.trwframework.com"])
+    config = _make_config(platform_urls=["http://localhost:5002", "https://api.trwframework.com"])
 
     result = check_pipeline_health(trw_dir, config)
 
@@ -355,7 +355,7 @@ def test_kill_switch_disables_gate(tmp_path: Path) -> None:
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(99)})
     _make_memory_db(trw_dir, corpus=200, edges=0)
     config = _make_config(
-        platform_urls=["http://127.0.0.1:8100"],
+        platform_urls=["http://127.0.0.1:5002"],
         pipeline_health_gate_enabled=False,
     )
 

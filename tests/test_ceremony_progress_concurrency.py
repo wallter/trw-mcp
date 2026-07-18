@@ -9,12 +9,20 @@ RMW cycle atomic so no increment is lost.
 
 from __future__ import annotations
 
+import gc
+import multiprocessing
+import os
 import threading
 from pathlib import Path
 
 import pytest
 
 from trw_mcp.state import _ceremony_progress_state as cps
+
+
+def _increment_learnings_in_process(trw_dir: str, count: int) -> None:
+    for _ in range(count):
+        cps.increment_learnings(Path(trw_dir))
 
 
 def _trw(tmp_path: Path) -> Path:
@@ -117,54 +125,47 @@ def test_state_lock_is_shared_per_resolved_path(tmp_path: Path) -> None:
     assert lock_a is lock_b, "same state file must map to the same lock"
 
 
-def test_state_lock_registry_is_lru_capped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The lock registry evicts unheld LRU entries so it cannot grow unbounded.
-
-    A shared-HTTP server serving many distinct project roots would otherwise
-    leak one Lock per unique path for the life of the process.
-    """
-    # Isolate the module-level registry: save+restore so this test cannot leak
-    # state into alphabetically-later tests.
-    saved = cps._state_locks.copy()
+def test_state_lock_registry_reclaims_idle_locks(tmp_path: Path) -> None:
+    """Idle project locks do not accumulate in a long-lived shared server."""
     cps._state_locks.clear()
-    monkeypatch.setattr(cps, "_MAX_STATE_LOCKS", 4)
-    try:
-        # Register more distinct paths than the cap; none are held.
-        for i in range(20):
-            d = tmp_path / f"proj-{i}" / ".trw"
-            (d / "context").mkdir(parents=True, exist_ok=True)
-            cps._state_lock_for(d)
-        assert len(cps._state_locks) <= 4, "registry must stay within the cap"
-    finally:
-        cps._state_locks.clear()
-        cps._state_locks.update(saved)
+    for i in range(20):
+        d = tmp_path / f"proj-{i}" / ".trw"
+        (d / "context").mkdir(parents=True, exist_ok=True)
+        cps._state_lock_for(d)
+
+    gc.collect()
+    assert not cps._state_locks
 
 
-def test_held_lock_is_never_evicted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A currently-held lock survives eviction even when over the cap."""
-    saved = cps._state_locks.copy()
+def test_held_lock_remains_registered(tmp_path: Path) -> None:
+    """A held lock keeps a strong reference and cannot be replaced."""
     cps._state_locks.clear()
-    monkeypatch.setattr(cps, "_MAX_STATE_LOCKS", 2)
-    try:
-        held_dir = tmp_path / "held" / ".trw"
-        (held_dir / "context").mkdir(parents=True, exist_ok=True)
-        held_lock = cps._state_lock_for(held_dir)
-        held_key = str(cps._state_path(held_dir).resolve())
-        held_lock.acquire()
-        try:
-            # Flood the registry with fresh, unheld paths to force eviction.
-            for i in range(10):
-                d = tmp_path / f"other-{i}" / ".trw"
-                (d / "context").mkdir(parents=True, exist_ok=True)
-                cps._state_lock_for(d)
-            # The held lock's identity must be preserved: re-resolving returns
-            # the SAME object, so no concurrent caller bypasses serialization.
-            assert held_key in cps._state_locks
-            assert cps._state_lock_for(held_dir) is held_lock
-        finally:
-            held_lock.release()
-    finally:
-        cps._state_locks.clear()
-        cps._state_locks.update(saved)
+    held_dir = tmp_path / "held" / ".trw"
+    (held_dir / "context").mkdir(parents=True, exist_ok=True)
+    held_lock = cps._state_lock_for(held_dir)
+    held_key = str(cps._state_path(held_dir).resolve())
+    with held_lock:
+        gc.collect()
+        assert held_key in cps._state_locks
+        assert cps._state_lock_for(held_dir) is held_lock
+
+
+@pytest.mark.skipif(os.name == "nt", reason="advisory flock is unavailable on Windows")
+def test_multiprocess_increment_learnings_no_lost_updates(tmp_path: Path) -> None:
+    """The lock file serializes state updates across MCP server processes."""
+    trw = _trw(tmp_path)
+    process_count = 4
+    increments = 25
+    context = multiprocessing.get_context("spawn")
+    processes = [
+        context.Process(target=_increment_learnings_in_process, args=(str(trw), increments))
+        for _ in range(process_count)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=30)
+        assert process.exitcode == 0
+
+    assert cps.read_ceremony_state(trw).learnings_this_session == process_count * increments

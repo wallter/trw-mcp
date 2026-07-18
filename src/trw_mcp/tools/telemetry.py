@@ -271,6 +271,10 @@ def _write_tool_event(
         run_dir = _get_cached_run_dir()
     phase = "unknown"
     task_profile_hash = ""
+    capability_tier = ""
+    recommended_effort = ""
+    effort_source = ""
+    effort_adapter_status = ""
     if run_dir is not None:
         run_yaml = run_dir / "meta" / "run.yaml"
         if run_yaml.exists():
@@ -283,9 +287,19 @@ def _write_tool_event(
                 task_profile = run_data.get("task_profile")
                 if isinstance(task_profile, dict):
                     task_profile_hash = str(task_profile.get("profile_hash", ""))
+                    capability_tier = str(task_profile.get("capability_tier") or task_profile.get("model_tier") or "")
+                    recommended_effort = str(
+                        task_profile.get("recommended_effort") or task_profile.get("reasoning_effort") or ""
+                    )
+                    effort_source = str(task_profile.get("effort_source", ""))
+                    effort_adapter_status = str(task_profile.get("effort_adapter_status", ""))
             except Exception:  # justified: fail-open telemetry, phase read failure uses fallback
                 logger.debug("telemetry_phase_read_failed", exc_info=True)
     event_data["phase"] = phase
+    event_data["capability_tier"] = capability_tier
+    event_data["recommended_effort"] = recommended_effort
+    event_data["effort_source"] = effort_source
+    event_data["effort_adapter_status"] = effort_adapter_status
 
     merged_trace_fields = (
         with_task_profile_hash(trace_fields, task_profile_hash)

@@ -6,8 +6,6 @@ description: >
   improvement opportunities, get approval, then route each one to implementation
   (inline quick-fix, PRD pipeline, learning, or backlog) with a follow-through
   ledger. Run BEFORE /trw-deliver. Use: /trw-reflect [quick|standard|deep]
-user-invocable: true
-argument-hint: "[quick|standard|deep|action]"
 ---
 
 # Session Reflection Skill (PRD-CORE-187)
@@ -17,8 +15,6 @@ not just its code — to compound into the next session. This skill finds what
 slowed the session down or what's missing (commands, skills, agents, indexes,
 docs, conventions) and drives accepted fixes to implementation instead of
 leaving a report behind.
-
-Run this BEFORE `trw_deliver` so accepted learnings ride the delivery ceremony.
 
 ## Depth
 
@@ -39,7 +35,7 @@ pay down accumulated ledger-only debt.
 ## Step 0: Recurrence check (mandatory first)
 
 List `.trw/reflections/*.md` ledger entries — ignore `*-L-*.yaml` files there
-(those are delivery-ceremony reflect shards owned by `_do_reflect`, not
+(those are legacy reflection records from the retired full-reflect pipeline, not
 ledgers). Order by file MODIFICATION time, not filename date — filenames carry
 the session's date, and concurrent instances write same-day entries. Name the
 ledger files you actually found in your header; claim "first reflection" only
@@ -105,9 +101,8 @@ Then **dedup** before presenting:
 
 - `trw_recall(query=<topic>)` — if an existing learning already covers it, the
   opportunity becomes recurrence evidence on that learning, not a new row.
-- Grep `docs/documentation/improvement-backlog.md` (create it with a one-line
-  header if missing) — matches move to a "recurring" section with a pointer to
-  the existing entry.
+- Grep `docs/documentation/improvement-backlog.md` when it exists; a missing file means no backlog match. Matches
+  move to a "recurring" section with a pointer to the existing entry only after approval in Step 4.
 
 Respect the depth cap by dropping the rows with the lowest impact-to-effort
 ratio (score H=3/M=2/L=1; rank by impact ÷ effort). State that rows were
@@ -147,9 +142,8 @@ Route each approved opportunity to exactly one channel:
    Otherwise implement NOW, inline, and validate with the narrowest
    project-native check.
 2. **PRD** — anything structural (new tool/skill/agent, schema change,
-   cross-package behavior). Invoke the PRD pipeline (`/trw-prd-new "<title>"`,
-   or draft per `docs/requirements-aare-f/CLAUDE.md` including the mandatory
-   search-scope greps). The change then follows
+   cross-package behavior). Invoke `/trw-prd-new "<title>"`; if unavailable,
+   follow the repository's discovered PRD instructions and search-scope contract. The change then follows
    RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER — never implement
    structural changes ad hoc from a reflection.
 3. **learning** — durable gotcha/pattern: `trw_learn(summary, detail, tags,
@@ -160,13 +154,15 @@ Route each approved opportunity to exactly one channel:
 
 ## Step 5: Write the ledger
 
-Append (never overwrite) `.trw/reflections/YYYY-MM-DD-<session-slug>.md`,
-where `<session-slug>` is the active run's task name, or a 2-4 word
-kebab-case session summary when there is no run:
+Append (never overwrite) `.trw/reflections/YYYY-MM-DD-<session-slug>-<identity-short>.md`,
+where `<identity-short>` comes from the immutable active run/session ID. Without a run, use UTC time plus a short unique
+token. A task-name slug alone never proves ledger ownership. Record the full identity in the header; if a computed path
+already belongs to another identity, choose a unique path and never append to it.
 
 ```markdown
 # Reflection — <date> — <one-line session description>
 Reflected-at: <ISO timestamp> | Depth: <quick|standard|deep>
+Run/session-id: <immutable identity>
 Prior ledgers checked: <filenames found, or "first reflection">
 <if ledger-only mode: one line citing the operator directive>
 
@@ -217,3 +213,12 @@ shipped (with validation evidence), PRDs created, and a pointer to the ledger's
   approved targets; nothing destructive.
 - **Truthful routing**: a routed item is not a completed item — never report
   PRD-routed work as "done"; Step 0 of the next reflection holds the score.
+
+## Typed follow-through lifecycle (PRD-QUAL-120-FR06)
+
+Every routed improvement uses the typed lifecycle: proposed, approved, routed,
+implementing, verified_closed, rejected. Routing an item to a PRD or backlog
+is FILING, not closure — debt stays open until the TARGET shows verified
+implementation (implemented status with functionality_level live). The
+recorded state is an input, never the verdict: closure derives from current
+target evidence (scripts/count-reflection-debt.py --typed reconciles it).

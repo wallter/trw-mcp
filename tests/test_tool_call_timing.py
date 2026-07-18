@@ -163,6 +163,150 @@ def test_build_tool_call_event_includes_canonical_trace_fields() -> None:
     assert ev.payload["causal_relation"] == "nested"
 
 
+_FR04_EXPECTED_TOOLS = frozenset(
+    {
+        "trw_session_start",
+        "trw_status",
+        "trw_heartbeat",
+        "trw_adopt_run",
+        "trw_pre_compact_checkpoint",
+        "trw_init",
+        "trw_prd_create",
+        "trw_prd_validate",
+        "trw_learn",
+        "trw_learn_update",
+        "trw_checkpoint",
+        "trw_build_check",
+        "trw_review",
+        "trw_deliver",
+        "trw_delivery_status",
+        "trw_delivery_recover",
+    }
+)
+# Only trw_deliver is operation_backed; delivery_status/recover READ the CORE-208
+# journal but are synchronous_only (PRD-CORE-215 FR04 / §4 inventory).
+_FR04_OPERATION_BACKED = frozenset({"trw_deliver"})
+_FR04_CORE_208_OWNED = frozenset({"trw_deliver", "trw_delivery_status", "trw_delivery_recover"})
+
+
+def test_prd_core_215_fr04() -> None:
+    """PRD-CORE-215 FR04 — complete, fail-closed ceremony-tool execution inventory."""
+    # Lookup public surface is re-exported through tool_call_timing.py (the PRD
+    # reference); construction helpers live in the _ceremony_tool_manifest module.
+    from trw_mcp.telemetry._ceremony_tool_manifest import (
+        CeremonyToolSpec,
+        DuplicateCeremonyToolError,
+        build_ceremony_tool_manifest,
+    )
+    from trw_mcp.telemetry.tool_call_timing import (
+        CeremonyExecutionClass,
+        RequestIdentityPolicy,
+        UnknownCeremonyToolError,
+        ceremony_tool_disposition,
+        ceremony_tool_names,
+        ceremony_tool_spec,
+    )
+
+    # --- The inventory is EXACTLY the 16 named tools — no more, no fewer. ---
+    assert ceremony_tool_names() == _FR04_EXPECTED_TOOLS
+    assert len(_FR04_EXPECTED_TOOLS) == 16
+
+    # --- Every named tool has one disposition, budget, policy, and owner. ---
+    for name in _FR04_EXPECTED_TOOLS:
+        spec = ceremony_tool_spec(name)
+        assert isinstance(spec.disposition, CeremonyExecutionClass)
+        assert spec.budget_seconds > 0
+        assert isinstance(spec.request_identity, RequestIdentityPolicy)
+        assert spec.owner, f"{name} has no owner store"
+        assert ceremony_tool_disposition(name) is spec.disposition
+
+    # --- Disposition classification is exact. Only trw_deliver is operation_backed. ---
+    assert _FR04_OPERATION_BACKED == frozenset({"trw_deliver"})
+    for name in _FR04_OPERATION_BACKED:
+        spec = ceremony_tool_spec(name)
+        assert spec.disposition is CeremonyExecutionClass.OPERATION_BACKED
+        # operation_backed rows name the CORE-208 delivery journal owner.
+        assert "CORE-208" in spec.owner
+    # The delivery family all READ the CORE-208 journal (their authority), but
+    # status/recover are synchronous_only — they do not mint their own handle.
+    for name in _FR04_CORE_208_OWNED:
+        assert "CORE-208" in ceremony_tool_spec(name).owner
+    for name in ("trw_delivery_status", "trw_delivery_recover"):
+        assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
+    assert ceremony_tool_disposition("trw_prd_validate") is CeremonyExecutionClass.SYNCHRONOUS_BOUNDED
+    synchronous_only = _FR04_EXPECTED_TOOLS - _FR04_OPERATION_BACKED - {"trw_prd_validate"}
+    assert len(synchronous_only) == 14
+    for name in synchronous_only:
+        assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
+
+    # --- Mutating rows require a request identity; read-only rows do not. ---
+    assert ceremony_tool_spec("trw_learn").request_identity is RequestIdentityPolicy.REQUIRED
+    assert ceremony_tool_spec("trw_status").request_identity is RequestIdentityPolicy.READ_ONLY
+    assert ceremony_tool_spec("trw_prd_validate").request_identity is RequestIdentityPolicy.READ_ONLY
+
+    # --- Unknown tool fails closed (typed error, never a default disposition). ---
+    with pytest.raises(UnknownCeremonyToolError):
+        ceremony_tool_disposition("trw_not_a_real_tool")
+    with pytest.raises(UnknownCeremonyToolError):
+        ceremony_tool_spec("trw_not_a_real_tool")
+
+    # --- A tool cannot be operation_backed without an owner. ---
+    with pytest.raises(ValueError, match="operation_backed requires an owner"):
+        CeremonyToolSpec(
+            "trw_ghost",
+            CeremonyExecutionClass.OPERATION_BACKED,
+            1.0,
+            RequestIdentityPolicy.REQUIRED,
+            "",
+        )
+
+    # --- Duplicate registration fails. ---
+    dup = ceremony_tool_spec("trw_deliver")
+    with pytest.raises(DuplicateCeremonyToolError):
+        build_ceremony_tool_manifest([dup, dup])
+
+
+def test_prd_core_215_nfr02() -> None:
+    """PRD-CORE-215 NFR02 — bounded response: every ceremony manifest row declares
+    a positive, finite budget (so no operation runs unbounded), and the typed
+    envelope's bounded-diagnostics validators cap entry count and value length so
+    a returned handle/result can never smuggle an unbounded payload."""
+    import math
+
+    from pydantic import ValidationError
+
+    from trw_mcp.models.tool_result import (
+        MAX_DIAGNOSTIC_ENTRIES,
+        MAX_DIAGNOSTIC_VALUE_CHARS,
+        Outcome,
+        ToolResultEnvelope,
+    )
+    from trw_mcp.telemetry.tool_call_timing import ceremony_tool_names, ceremony_tool_spec
+
+    # Every classified tool has a positive, finite response budget.
+    names = ceremony_tool_names()
+    assert names  # non-empty inventory
+    for name in names:
+        budget = ceremony_tool_spec(name).budget_seconds
+        assert budget > 0, name
+        assert math.isfinite(budget), name
+
+    # Bounded diagnostics: exceeding the entry cap is rejected...
+    too_many = {f"k{i}": "v" for i in range(MAX_DIAGNOSTIC_ENTRIES + 1)}
+    with pytest.raises(ValidationError):
+        ToolResultEnvelope(outcome=Outcome.COMPLETED, diagnostics=too_many)
+    # ...and so is an over-long diagnostic value.
+    with pytest.raises(ValidationError):
+        ToolResultEnvelope(
+            outcome=Outcome.COMPLETED,
+            diagnostics={"note": "x" * (MAX_DIAGNOSTIC_VALUE_CHARS + 1)},
+        )
+    # A within-bounds envelope builds and stays bounded (positive control).
+    ok = ToolResultEnvelope(outcome=Outcome.COMPLETED, diagnostics={"note": "ok"})
+    assert len(ok.diagnostics) <= MAX_DIAGNOSTIC_ENTRIES
+    assert all(len(v) <= MAX_DIAGNOSTIC_VALUE_CHARS for v in ok.diagnostics.values())
+
+
 def test_tool_call_events_validate_parent_chain() -> None:
     start = datetime(2026, 4, 23, 12, 0, 0, tzinfo=timezone.utc)
     root = build_tool_call_event(tool="root", start_ts=start, end_ts=start, session_id="s1", run_id="r1")

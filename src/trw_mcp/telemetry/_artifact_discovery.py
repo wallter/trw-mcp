@@ -70,7 +70,6 @@ _SUB_CLAUDE_GLOBS: Final[tuple[str, ...]] = (
     "trw-mcp/src/**/CLAUDE.md",
     "trw-mcp/tests/CLAUDE.md",
     "trw-memory/src/**/CLAUDE.md",
-    "trw-distill/trw_distill/**/CLAUDE.md",
     "docs/**/CLAUDE.md",
 )
 

@@ -73,7 +73,7 @@ class TestDeliverPartialFailure:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If checkpoint raises, claude_md_sync still runs."""
+        """If checkpoint raises, deliver still completes fail-open."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -112,7 +112,7 @@ class TestDeliverPartialFailure:
             # Satisfy the PRD-DIST-1865 truthfulness gate so deliver proceeds
             # past the build-check guard to the checkpoint/sync steps this test
             # actually exercises. Without the override the gate returns early
-            # (success=False, no checkpoint/claude_md_sync keys).
+            # (success=False, no checkpoint key).
             result = tools["trw_deliver"].fn(
                 allow_unverified=True,
                 unverified_reason="test fixture: no build_check recorded for this synthetic run",
@@ -120,7 +120,6 @@ class TestDeliverPartialFailure:
 
         assert result["success"] is False
         assert result["checkpoint"]["status"] == "failed"
-        assert result["claude_md_sync"]["status"] == "skipped"
 
     def test_index_sync_failure_does_not_block_auto_progress(
         self,
@@ -343,3 +342,57 @@ class TestDeliverPartialFailure:
         event_types = [json.loads(line)["event"] for line in lines]
         assert "reflection_complete" in event_types
         assert "checkpoint" in event_types
+
+
+@pytest.mark.integration
+def test_legacy_no_id_delivery_is_compatible_but_not_recoverable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PRD-CORE-208 NFR01: a no-delivery_id call keeps legacy fields, gets a
+    server-generated operation ID, and truthfully reports it is NOT recoverable
+    by caller identity after a lost response."""
+    import uuid
+
+    from tests._ceremony_helpers import make_ceremony_server
+
+    tools = make_ceremony_server(monkeypatch, tmp_path)
+    trw_dir = tmp_path / ".trw"
+    for sub in ("learnings/entries", "reflections", "context"):
+        (trw_dir / sub).mkdir(parents=True, exist_ok=True)
+    run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+    (run_dir / "meta").mkdir(parents=True)
+    (run_dir / "meta" / "run.yaml").write_text(
+        "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n", encoding="utf-8"
+    )
+    (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+        patch(
+            "trw_mcp.tools.ceremony._do_instruction_sync",
+            return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
+        ),
+        patch(
+            "trw_mcp.tools._deferred_delivery._do_index_sync",
+            return_value={"status": "success", "index": {}, "roadmap": {}},
+        ),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+    ):
+        # No delivery_id / capability_token -> legacy compatibility path.
+        result = tools["trw_deliver"].fn(
+            allow_unverified=True,
+            unverified_reason="test fixture: no build_check recorded for this synthetic run",
+        )
+
+    # Legacy response keys remain present.
+    assert "reflect" in result
+    assert "checkpoint" in result
+    assert "deferred" in result
+    assert "success" in result
+    # A server-generated operation ID is returned, but it is NOT caller-recoverable.
+    op = result["delivery_operation"]
+    assert op["caller_recoverable"] is False
+    uuid.UUID(str(op["operation_id"]))  # a valid server-generated UUID
+    assert op["enabled"] is True

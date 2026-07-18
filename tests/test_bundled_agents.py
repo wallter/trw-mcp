@@ -43,7 +43,7 @@ class TestAgentDefinitions:
         return {"bundled": agents_dir / agent_name, "root": root_agents_dir / agent_name}
 
     @staticmethod
-    def _assert_variants_include_snippets(variant_paths: dict[str, Path], required_snippets: list[str]) -> None:
+    def _assert_variants_include_snippets(variant_paths: dict[str, Path], required_snippets: list[str]) -> int:
         """Assert every variant contains each required snippet.
 
         PRD-QUAL-073 FR10 (Route B): bundled agent files carry ``{tool:trw_X}``
@@ -54,11 +54,14 @@ class TestAgentDefinitions:
         import re as _re
 
         marker_re = _re.compile(r"\{tool:(trw_\w+)\}")
+        checked = 0
         for variant_name, path in variant_paths.items():
             raw = path.read_text(encoding="utf-8")
             content = marker_re.sub(lambda m: m.group(1), raw)
             for snippet in required_snippets:
                 assert snippet in content, f"{variant_name} {path.name} missing snippet: {snippet}"
+                checked += 1
+        return checked
 
     @pytest.mark.parametrize(
         "agent_name",
@@ -85,14 +88,6 @@ class TestAgentDefinitions:
                     "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
                 ],
             ),
-            (
-                "trw-adversarial-auditor.md",
-                [
-                    "label in `legacy_category` on the finding.",
-                    "note it as a finding with `category: spec_gap`",
-                    "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
-                ],
-            ),
         ],
     )
     def test_bundled_audit_agents_include_legacy_taxonomy_contract(
@@ -109,7 +104,7 @@ class TestAgentDefinitions:
         for snippet in required_snippets:
             assert snippet in bundled_content
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_prompt_pairs_match_root_sources(
         self,
         agents_dir: Path,
@@ -142,7 +137,27 @@ class TestAgentDefinitions:
             "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
         )
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    def test_adversarial_auditor_is_a_thin_lens_adapter(self, agents_dir: Path) -> None:
+        """Keep the shared audit protocol in one packaged, installed agent."""
+        import yaml
+
+        base = (agents_dir / "trw-auditor.md").read_text(encoding="utf-8")
+        adapter = (agents_dir / "trw-adversarial-auditor.md").read_text(encoding="utf-8")
+        _, frontmatter, body = adapter.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+
+        assert "trw-auditor.md" in "\n".join(body.splitlines()[:30])
+        assert len(body.split()) <= 650
+        assert "## Audit Protocol (7 Phases)" in base
+        assert "## Audit Protocol (7 Phases)" not in body
+        assert "## Output Contract" in base
+        assert "## Output Contract" not in body
+        for phrase in ("PARTIAL", "Every N/A", "property reachability", "Potemkin gate"):
+            assert phrase in body
+        assert "LSP" in meta["allowedTools"]
+        assert "Bash" in meta["disallowedTools"]
+
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_variants_include_finding_taxonomy_contract(
         self,
         agents_dir: Path,
@@ -156,12 +171,13 @@ class TestAgentDefinitions:
             "legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null",
         ]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, agent_name),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_variants_include_prior_learning_recall_contract(
         self,
         agents_dir: Path,
@@ -179,12 +195,13 @@ class TestAgentDefinitions:
             "missed_patterns: []",
         ]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, agent_name),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_variants_include_preflight_self_review_contract(
         self,
         agents_dir: Path,
@@ -198,12 +215,13 @@ class TestAgentDefinitions:
             "self_review_alignment: matches|underreported|missing",
         ]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, agent_name),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_variants_include_learning_capture_contract(
         self,
         agents_dir: Path,
@@ -217,10 +235,11 @@ class TestAgentDefinitions:
             "- `phase_affinity`: Determined by finding category per taxonomy table",
         ]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, agent_name),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
     def test_implementer_agent_variants_include_fr03_checklist_contract(
         self,
@@ -234,12 +253,13 @@ class TestAgentDefinitions:
         """
         required_snippets = ["Pre-Implementation Checklist (PRD-QUAL-056-FR03)"]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, "trw-implementer.md"),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-adversarial-auditor.md"])
+    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
     def test_audit_agent_variants_include_verdict_exit_criteria_and_escalation_contract(
         self,
         agents_dir: Path,
@@ -258,10 +278,11 @@ class TestAgentDefinitions:
             "# FAIL: any P0, 3+ P1 findings, or any FR verdict MISSING",
         ]
 
-        self._assert_variants_include_snippets(
+        checked = self._assert_variants_include_snippets(
             self._variant_paths(agents_dir, root_agents_dir, agent_name),
             required_snippets,
         )
+        assert checked == 2 * len(required_snippets)
 
     @pytest.mark.parametrize(
         ("agent_name", "expected_model"),
@@ -299,6 +320,17 @@ class TestAgentDefinitions:
         assert "Write" in disallowed, f"{agent_name}: Write must be disallowed"
         assert "Edit" in disallowed, f"{agent_name}: Edit must be disallowed"
 
+    @pytest.mark.parametrize("agent_name", ["trw-reviewer.md", "trw-researcher.md"])
+    def test_routing_descriptions_stay_concise(self, agents_dir: Path, agent_name: str) -> None:
+        """Discovery metadata should route the agent, not duplicate its playbook."""
+        import yaml
+
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        _, frontmatter, _ = content.split("---", 2)
+        description = yaml.safe_load(frontmatter)["description"]
+        assert len(description.split()) <= 60
+        assert "<example>" not in description
+
     def test_implementer_has_edit(self, agents_dir: Path) -> None:
         """Implementer agent has Edit and Write in tools list."""
         import yaml
@@ -324,9 +356,8 @@ class TestAgentDefinitions:
         """Agent definitions must not contain stray XML closing tags."""
         content = (agents_dir / agent_name).read_text(encoding="utf-8")
         lines = content.split("\n")
-        for i, line in enumerate(lines):
-            if line.strip() == "</output>":
-                raise AssertionError(f"{agent_name} line {i + 1}: stray </output> tag")
+        stray_lines = [i + 1 for i, line in enumerate(lines) if line.strip() == "</output>"]
+        assert not stray_lines, f"{agent_name} lines {stray_lines}: stray </output> tag"
 
     @pytest.mark.parametrize(
         "agent_name",

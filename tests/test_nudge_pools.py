@@ -95,8 +95,8 @@ def test_nudge_pool_weights_frozen() -> None:
 
 @pytest.mark.unit
 def test_light_profile_has_zero_ceremony() -> None:
-    """Light-mode profiles (opencode, codex, aider) have ceremony=0."""
-    for client_id in ("opencode", "codex", "aider"):
+    """Light-mode profiles (opencode, codex) have ceremony=0."""
+    for client_id in ("opencode", "codex"):
         profile = resolve_client_profile(client_id)
         assert profile.nudge_pool_weights.ceremony == 0, f"{client_id} should have ceremony=0"
         # Verify sum still equals 100

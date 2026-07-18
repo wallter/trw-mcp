@@ -36,10 +36,17 @@ from trw_mcp.models.typed_dicts import (
     SessionStartResultDict,
 )
 from trw_mcp.state._paths import TRWCallContext
+from trw_mcp.tools._ceremony_degradations import DegradationCollector, record_into
+from trw_mcp.tools._ceremony_pipeline_advisory import (
+    step_pipeline_health_advisory as step_pipeline_health_advisory,
+)
 from trw_mcp.tools._ceremony_runtime_helpers import _persist_surface_snapshot_pointer
-from trw_mcp.tools._pipeline_health import step_pipeline_health
+from trw_mcp.tools._connection_fingerprint import build_connection_fingerprint
+from trw_mcp.tools._pipeline_health import step_pipeline_health as step_pipeline_health
 
 if TYPE_CHECKING:
+    from collections.abc import MutableMapping
+
     from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
@@ -117,8 +124,12 @@ def step_run_resolve(
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
     try:
         raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    except Exception:
+    except Exception as exc:  # justified: fail-open, session-id probe must not block session start
+        # Previously a fully-silent fallback (no log, no payload trace). Record
+        # it as an info-severity degradation so the swallow is observable
+        # without changing the fallback control flow (raw_session stays None).
         raw_session = None
+        record_into(cast("MutableMapping[str, object]", results), "run_resolve_session_probe", exc, severity="info")
     call_ctx = TRWCallContext(
         session_id=pin_key,
         client_hint=None,
@@ -140,6 +151,7 @@ def step_run_resolve(
             if candidate_runs:
                 results["candidate_runs"] = candidate_runs
     except Exception as exc:  # justified: fail-open, run status check must not block session start
+        run_dir = None
         errors.append(f"status: {exc}")
         results["run"] = {"active_run": None, "status": "error"}
     return run_dir, call_ctx
@@ -163,7 +175,7 @@ def step_recall_learnings(
 
     reader = FileStateReader()
     try:
-        trw_dir = _ceremony.resolve_trw_dir()  # type: ignore[attr-defined]
+        trw_dir = _ceremony.resolve_trw_dir()
         learnings, _auto_recalled, extra = perform_session_recalls(trw_dir, query, config, reader)
         results["learnings"] = learnings
         results["learnings_count"] = len(learnings)
@@ -189,13 +201,37 @@ def step_recall_learnings(
         # failures that genuinely break the session_start contract.
         warnings = results.setdefault("warnings", [])
         warnings.append(f"recall: {exc}")
-        logger.info("session_recall_degraded", error=str(exc))
+        # Also record as a typed degradation (mcp-x-failopen) so recall failures
+        # are enumerable alongside every other swallowed step, not just in the
+        # free-standing ``warnings`` list. Still non-fatal — success unchanged.
+        record_into(cast("MutableMapping[str, object]", results), "recall", exc)
         results["learnings"] = []
         results["learnings_count"] = 0
 
 
-def step_surface_stamp(run_dir: Path | None, session_id: str) -> str:
-    """PRD-HPO-MEAS-001 FR-1/FR-2 — resolve SurfaceRegistry + stamp run snapshot."""
+def _record_or_debug(
+    degradations: DegradationCollector | None, step: str, exc: BaseException, fallback_event: str
+) -> None:
+    """Record a swallow on the threaded collector, else fall back to the debug log.
+
+    DRY helper for the fail-open steps that take an OPTIONAL per-call collector:
+    when threaded, the swallow becomes an observable typed degradation; when a
+    legacy caller passes ``None`` it keeps the old invisible debug log. Never
+    changes control flow — the caller still fails open either way.
+    """
+    if degradations is not None:
+        degradations.record(step, exc)
+    else:
+        logger.debug(fallback_event, exc_info=True)
+
+
+def step_surface_stamp(run_dir: Path | None, session_id: str, degradations: DegradationCollector | None = None) -> str:
+    """PRD-HPO-MEAS-001 FR-1/FR-2 — resolve SurfaceRegistry + stamp run snapshot.
+
+    ``degradations`` (optional): when the caller threads its per-call collector,
+    a stamping failure is recorded as a typed degradation instead of only a
+    debug log. Behaviour is unchanged — still fails open and returns ``""``.
+    """
     try:
         from trw_mcp.telemetry.artifact_registry import SurfaceRegistry, resolve_surface_registry
         from trw_mcp.telemetry.surface_manifest import stamp_session
@@ -219,8 +255,8 @@ def step_surface_stamp(run_dir: Path | None, session_id: str) -> str:
             artifact_count=len(registry.artifacts),
         )
         return snapshot_id
-    except Exception:  # justified: fail-open, surface stamping must not block session start
-        logger.debug("surface_snapshot_stamp_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open, surface stamping must not block session start
+        _record_or_debug(degradations, "surface_stamp", exc, "surface_snapshot_stamp_failed")
         return ""
 
 
@@ -246,7 +282,7 @@ def step_auto_recall_orchestrated(
                 "detail": "Phase auto-recall is optional and was left off the hot response path.",
             }
             return
-        trw_dir_ar = _ceremony.resolve_trw_dir()  # type: ignore[attr-defined]
+        trw_dir_ar = _ceremony.resolve_trw_dir()
         primary_ids = {str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")}
         outcome = step_phase_auto_recall(trw_dir_ar, query, config, run_dir, results.get("run"), primary_ids)
         if outcome is None:
@@ -255,8 +291,8 @@ def step_auto_recall_orchestrated(
         record_session_start_surfaces(trw_dir_ar, auto_ids)
         results["auto_recalled"] = phase_recalled
         results["auto_recall_count"] = len(phase_recalled)
-    except Exception:  # justified: fail-open, auto-recall must not block session start
-        logger.debug("session_auto_recall_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open, auto-recall must not block session start
+        record_into(cast("MutableMapping[str, object]", results), "phase_recall", exc)
 
 
 def step_phase_auto_recall(
@@ -287,8 +323,12 @@ def step_phase_auto_recall(
         return None
 
 
-def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
-    """PRD-CORE-086 FR07: assertion health summary from cached last_result fields."""
+def step_assertion_health(trw_dir: Path, degradations: DegradationCollector | None = None) -> dict[str, int] | None:
+    """PRD-CORE-086 FR07: assertion health summary from cached last_result fields.
+
+    ``degradations`` (optional): threads the per-call collector so a probe
+    failure is recorded as a typed degradation. Behaviour unchanged.
+    """
     from trw_mcp.state._constants import DEFAULT_NAMESPACE
     from trw_mcp.state.memory_adapter import get_backend
 
@@ -326,14 +366,14 @@ def step_assertion_health(trw_dir: Path) -> dict[str, int] | None:
             "unverifiable": unverifiable,
             "total": len(entries),
         }
-    except Exception:  # justified: fail-open per PRD-CORE-086 NFR
-        logger.debug("assertion_health_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open per PRD-CORE-086 NFR
+        _record_or_debug(degradations, "assertion_health", exc, "assertion_health_failed")
         return None
     finally:
         logger.debug("assertion_health_computed", duration_ms=round((time.monotonic() - started) * 1000, 1))
 
 
-def step_graph_health(trw_dir: Path) -> dict[str, object] | None:
+def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None = None) -> dict[str, object] | None:
     """PRD-FIX-COMPOUNDING-2 FR04 — graph-empty advisory for session_start.
 
     Queries ``SELECT COUNT(*) FROM memory_graph_edges`` on the live backend.
@@ -360,77 +400,9 @@ def step_graph_health(trw_dir: Path) -> dict[str, object] | None:
                 "advisory": ("knowledge graph empty — re-deliver (trw_deliver) to trigger graph backfill"),
             }
         return None
-    except Exception:  # justified: fail-open — graph-health probe must not block session start
-        logger.debug("graph_health_probe_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open — graph-health probe must not block session start
+        _record_or_debug(degradations, "graph_health", exc, "graph_health_probe_failed")
         return None
-
-
-def step_pipeline_health_advisory(
-    trw_dir: Path,
-    results: dict[str, object],
-    config: TRWConfig | None = None,
-) -> None:
-    """PRD-FIX-COMPOUNDING-6 FR03 + PRD-FIX-107 FR06 — pipeline-health advisory + escalation.
-
-    Calls step_pipeline_health() with all five probes. When degraded=True,
-    injects ``pipeline_health_advisory`` (a single-line string) into results.
-    When healthy, does NOT inject the key (PRD-INFRA-068 lesson: no
-    focus-distraction on healthy sessions).
-
-    FR06 ("enforce, don't suggest"): additionally runs the fail-closed
-    ``check_pipeline_health`` gate over the three hard-breakage signatures
-    (push staleness, dead graph, localhost-only target). When the gate trips,
-    ESCALATES — injecting a prominent structured ``pipeline_health_warning``
-    (``{"enforce": True, "severity": ..., "reasons": [...]}``) so the
-    breakage is surfaced, not buried in the compact advisory string.
-
-    This session-start surface is intentionally fail-OPEN (it never blocks the
-    hot path); the fail-CLOSED enforcement lives in ``check_pipeline_health``
-    for ``make check`` / CI / deliver-time use.
-
-    Args:
-        trw_dir: The resolved .trw directory path.
-        results: The session_start result dict (mutated in-place when degraded).
-        config: Optional TRWConfig; enables the FR06 gate thresholds + kill
-            switch + localhost-only check. Omitted in legacy callers.
-    """
-    try:
-        health = step_pipeline_health(trw_dir)
-        if bool(health.get("degraded")):
-            advisory = str(health.get("advisory", ""))
-            if advisory:
-                results["pipeline_health_advisory"] = advisory
-                logger.warning(
-                    "session_start_pipeline_degraded",
-                    advisory=advisory,
-                )
-    except Exception:  # justified: fail-open, pipeline health must not block session start
-        logger.debug("session_start_pipeline_health_failed", exc_info=True)
-
-    # FR06 escalation: when the fail-closed gate trips, surface a prominent
-    # structured warning. Fail-open: gate-eval errors never block session start.
-    try:
-        from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
-
-        verdict = check_pipeline_health(trw_dir, config)
-        if not bool(verdict.get("healthy")) and verdict.get("status") == "degraded":
-            reasons = [str(r) for r in verdict.get("reasons", [])]
-            results["pipeline_health_warning"] = {
-                "enforce": True,
-                "severity": "error",
-                "reasons": reasons,
-                "advisory": (
-                    "ENFORCE: compounding pipeline is broken — "
-                    "run check_pipeline_health / see trw_pipeline_health() and fix before delivery."
-                ),
-            }
-            logger.error(
-                "session_start_pipeline_gate_tripped",
-                reasons=reasons,
-                count=len(reasons),
-            )
-    except Exception:  # justified: fail-open, gate escalation must not block session start
-        logger.debug("session_start_pipeline_gate_failed", exc_info=True)
 
 
 def finalize_session_start(
@@ -438,27 +410,35 @@ def finalize_session_start(
     config: TRWConfig,
     step_durations_ms: dict[str, float],
     errors: list[str],
+    session_id: str | None = None,
 ) -> None:
-    """Finalize trw_session_start: errors, success, framework_reminder, ceremony_status, logs."""
+    """Finalize trw_session_start fields and ceremony state."""
     from trw_mcp.tools._ceremony_helpers import step_ceremony_status, step_mark_session_started
 
     results["errors"] = errors
     results["success"] = len(errors) == 0
 
+    # PRD-CORE-215 FR01: the session-start finalizer OWNS the public connection
+    # fingerprint. It describes exactly one stdio process (never a proxy) with a
+    # process-stable nonce so callers can distinguish distinct stdio processes.
+    # SessionStartResultDict is owned by another module, so the extra key is
+    # written through a MutableMapping cast (same pattern as record_into).
+    cast("MutableMapping[str, object]", results)["connection_fingerprint"] = build_connection_fingerprint()
+
     if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
         results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
     else:
         results["framework_reminder"] = (
-            "Read .trw/frameworks/FRAMEWORK.md — it defines the methodology "
+            "Read .trw/frameworks/FRAMEWORK-CORE.md — it defines the methodology "
             "your tools implement (6-phase execution model, exit criteria, "
             "formations, quality gates, phase reversion). Re-read after "
             "context compaction."
         )
 
     try:
-        step_mark_session_started()
-    except Exception:  # justified: fail-open, state mutation must not block session start
-        logger.debug("session_mark_started_failed", exc_info=True)
+        step_mark_session_started(session_id=session_id)
+    except Exception as exc:  # justified: fail-open, state mutation must not block session start
+        record_into(cast("MutableMapping[str, object]", results), "mark_session_started", exc)
 
     try:
         if bool(results.get("response_compacted")):
@@ -468,16 +448,23 @@ def finalize_session_start(
             }
         else:
             step_ceremony_status(cast("dict[str, object]", results))
-    except Exception:  # justified: fail-open, status decoration must not block session start
-        logger.debug("session_ceremony_status_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-open, status decoration must not block session start
+        record_into(cast("MutableMapping[str, object]", results), "ceremony_status", exc)
 
     results["step_durations_ms"] = step_durations_ms
 
+
+def log_session_start_complete(
+    results: SessionStartResultDict,
+    step_durations_ms: dict[str, float],
+    *,
+    learnings_count: int,
+) -> None:
+    """Log completion after finalization and payload shaping are measured."""
     run_info: RunStatusDict | None = results.get("run")
     active_run_id = str(run_info.get("active_run", "")) if run_info else ""
     phase = str(run_info.get("phase", "")) if run_info else ""
     task = str(run_info.get("task_name", "")) if run_info else ""
-    learnings_count = int(str(results.get("learnings_count", 0)))
     logger.info(
         "session_start_ok",
         run_id=active_run_id,

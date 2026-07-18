@@ -36,6 +36,7 @@ from trw_mcp.state.claude_md._static_sections import (
     render_codex_trw_section,
     render_opencode_instructions,
 )
+from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
 
 # ── Render Tests ──────────────────────────────────────────────────────────
 
@@ -48,24 +49,30 @@ class TestRenderCodexInstructions:
         """render_codex_instructions() returns valid markdown string."""
         result = render_codex_instructions()
         assert isinstance(result, str)
-        assert "## Codex Workflow" in result
+        assert "## Runtime Guardrails" in result
         assert "trw_session_start" in result
         assert "trw_deliver" in result
 
-    def test_render_codex_instructionsstructure(self) -> None:
-        """render_codex_instructions() has expected 5-step workflow structure."""
+    def test_codex_instruction_budget_avoids_duplicate_generic_workflow(self) -> None:
+        """QUAL-113 FR03: Codex deltas stay small; AGENTS.md owns generic workflow."""
         result = render_codex_instructions()
 
-        steps = [
-            "Start",
-            "Delegate",
-            "Verify",
-            "Learn",
-            "Finish",
-        ]
+        assert len(result.encode("utf-8")) <= 2_025
+        assert len(result.splitlines()) <= 42
+        assert "## Codex Workflow" not in result
+        assert "Generic TRW lifecycle/project rules come from `AGENTS.md`" in result
 
-        for step in steps:
-            assert f"**{step}**" in result or f"**{step}**" in result or f"**{step.lower().capitalize()}**" in result
+    def test_combined_codex_surfaces_only_duplicate_protected_lines(self) -> None:
+        """QUAL-113 FR02: exact duplicate prose is limited to standalone gate anchors."""
+        root_agents = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
+        codex = render_codex_instructions()
+        gate = render_deliver_gate_statement()
+
+        root_lines = {line.strip() for line in root_agents.splitlines() if line.strip() and not line.startswith("#")}
+        codex_lines = {line.strip() for line in codex.splitlines() if line.strip() and not line.startswith("#")}
+        allowed = {line.strip() for line in gate.splitlines() if line.strip() and not line.startswith("#")}
+
+        assert root_lines & codex_lines <= allowed
 
     def test_codex_guidance_avoids_stale_budget_and_framework_claims(self) -> None:
         """Codex instructions should not claim a fixed 200K budget or require FRAMEWORK.md."""
@@ -83,12 +90,14 @@ class TestRenderCodexInstructions:
         assert "## Codex Support Surface" in docs_text
         assert ".codex/INSTRUCTIONS.md" in docs_text
         assert ".codex/agents/*.toml" in docs_text
-        assert "experimental and optional" in docs_text.lower()
+        assert "stable in the locally verified cli" in docs_text.lower()
+        assert "optional and trust-gated" in docs_text.lower()
         assert "AGENTS.md" in docs_text
 
         assert ".codex/INSTRUCTIONS.md" in result
         assert ".codex/agents/*.toml" in result
-        assert "experimental and optional" in result.lower()
+        assert "stable in current codex" in result.lower()
+        assert "optional and trust-gated" in result.lower()
         assert "AGENTS.md" in result
 
     def test_codex_agents_section_avoids_stale_guidance(self) -> None:
@@ -98,7 +107,7 @@ class TestRenderCodexInstructions:
         assert "200K" not in result
         assert "Read `.trw/frameworks/FRAMEWORK.md`" not in result
         assert ".codex/agents/*.toml" in result
-        assert "experimental and optional" in result.lower()
+        assert "stable but optional and trust-gated" in result.lower()
 
 
 @pytest.mark.unit
@@ -135,6 +144,15 @@ class TestRenderOpencodeInstructions:
         assert "vLLM" not in result
         assert "chain-of-thought" not in result
         assert "extended thinking" not in result.lower()
+
+    def test_shared_instruction_output_has_no_foreign_client_identity(self) -> None:
+        """QUAL-113 FR04: shared lifecycle prose stays provider-neutral."""
+        result = render_opencode_instructions("generic").lower()
+
+        assert "openai" not in result
+        assert "anthropic" not in result
+        assert "claude code" not in result
+        assert "codex" not in result
 
 
 # ── Generate Instructions Tests ───────────────────────────────────────────

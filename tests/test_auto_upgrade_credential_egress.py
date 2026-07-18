@@ -33,7 +33,6 @@ from trw_mcp.state.auto_upgrade import (
     download_release_artifact,
 )
 
-
 # ---------------------------------------------------------------------------
 # _bearer_allowed_for — the host/scheme floor
 # ---------------------------------------------------------------------------
@@ -61,11 +60,11 @@ class TestBearerAllowedFor:
 
     def test_http_localhost_allowed_for_dev(self) -> None:
         assert _bearer_allowed_for(
-            "http://127.0.0.1:8100/v1/releases/latest",
+            "http://127.0.0.1:5002/v1/releases/latest",
             platform_host="127.0.0.1",
         )
         assert _bearer_allowed_for(
-            "http://localhost:8100/v1/releases/latest",
+            "http://localhost:5002/v1/releases/latest",
             platform_host="localhost",
         )
 
@@ -123,7 +122,7 @@ class TestCheckForUpdateEgress:
     def test_http_localhost_attaches_bearer(self) -> None:
         _reset_config(
             TRWConfig(
-                platform_url="http://127.0.0.1:8100",
+                platform_url="http://127.0.0.1:5002",
                 platform_api_key="secret-key",
             )
         )

@@ -29,9 +29,7 @@ def _install_ide_hooks(target_dir: Path) -> None:
 
 
 def _read_hooks_json(target_dir: Path) -> dict[str, object]:
-    parsed: dict[str, object] = json.loads(
-        (target_dir / ".cursor" / "hooks.json").read_text(encoding="utf-8")
-    )
+    parsed: dict[str, object] = json.loads((target_dir / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
     return parsed
 
 

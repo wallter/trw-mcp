@@ -103,11 +103,15 @@ class TestValidationImplementPhaseInvalidStatus:
         object.__setattr__(config, "prd_required_status_for_implement", "INVALID_STATUS")
 
         with (
-            patch("trw_mcp.state.validation._check_prd_enforcement", return_value=[]),
-            patch("trw_mcp.state.validation._best_effort_build_check"),
+            patch(
+                "trw_mcp.state.validation._phase_gates_exits._check_prd_enforcement", return_value=[]
+            ) as prd_enforcement,
+            patch("trw_mcp.state.validation._phase_gates_exits._best_effort_build_check") as build_check,
         ):
             result = check_phase_exit(Phase.IMPLEMENT, run_path, config)
 
+        prd_enforcement.assert_called_once()
+        build_check.assert_called_once()
         assert result is not None
         assert hasattr(result, "valid")
         assert isinstance(result.failures, list)

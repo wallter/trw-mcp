@@ -52,6 +52,7 @@ def test_install_claude_code_distill_channels_returns_correct_format(tmp_path: P
 
     result = install_claude_code_distill_channels(tmp_path)
     _assert_result_format(result)
+    assert {"created", "updated", "preserved", "errors"} <= set(result)
 
 
 def test_install_claude_code_distill_channels_populates_manifest(tmp_path: Path) -> None:
@@ -112,6 +113,7 @@ def test_install_cursor_distill_channels_returns_correct_format(tmp_path: Path) 
 
     result = install_cursor_distill_channels(tmp_path)
     _assert_result_format(result)
+    assert {"created", "updated", "preserved", "errors"} <= set(result)
 
 
 def test_install_cursor_distill_channels_populates_manifest(tmp_path: Path) -> None:
@@ -157,6 +159,7 @@ def test_install_codex_distill_channels_returns_correct_format(tmp_path: Path) -
 
     result = install_codex_distill_channels(tmp_path)
     _assert_result_format(result)
+    assert {"created", "updated", "preserved", "errors"} <= set(result)
 
 
 def test_install_codex_distill_channels_populates_manifest(tmp_path: Path) -> None:
@@ -200,6 +203,7 @@ def test_install_antigravity_distill_channels_returns_correct_format(tmp_path: P
 
     result = install_antigravity_distill_channels(tmp_path)
     _assert_result_format(result)
+    assert {"created", "updated", "preserved", "errors"} <= set(result)
 
 
 def test_install_antigravity_distill_channels_populates_manifest(tmp_path: Path) -> None:
@@ -229,6 +233,28 @@ def test_install_antigravity_distill_channels_installs_subagent(tmp_path: Path) 
     assert agent_path.exists(), f"AG-02 subagent not found at {agent_path}"
 
 
+def test_public_opencode_and_antigravity_artifacts_do_not_require_distill_cli(tmp_path: Path) -> None:
+    """Public adapters use bundled MCP tools rather than the proprietary CLI."""
+    from trw_mcp.bootstrap._antigravity_distill_channels import (
+        install_antigravity_distill_channels,
+    )
+    from trw_mcp.bootstrap._opencode_distill_channels import (
+        install_opencode_distill_channels,
+    )
+
+    install_opencode_distill_channels(tmp_path)
+    install_antigravity_distill_channels(tmp_path)
+
+    generated = [
+        tmp_path / "AGENTS.md",
+        *(tmp_path / ".opencode").rglob("*"),
+        *(tmp_path / ".antigravitycli").rglob("*"),
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in generated if path.is_file())
+    assert "trw-distill self-improve" not in text
+    assert "trw_codebase_risk_report" in text
+
+
 # ---------------------------------------------------------------------------
 # Copilot distill channels
 # ---------------------------------------------------------------------------
@@ -242,6 +268,7 @@ def test_install_copilot_distill_channels_returns_correct_format(tmp_path: Path)
 
     result = install_copilot_distill_channels(tmp_path)
     _assert_result_format(result)
+    assert {"created", "updated", "preserved", "errors"} <= set(result)
 
 
 def test_install_copilot_distill_channels_populates_manifest(tmp_path: Path) -> None:

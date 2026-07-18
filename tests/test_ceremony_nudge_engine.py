@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._ceremony_nudge_support import _trw_dir
-from trw_mcp.state.ceremony_nudge import CeremonyState, compute_nudge, write_ceremony_state
+from trw_mcp.state.ceremony_nudge import CeremonyState, compute_nudge
 
 
 class TestNudgeEngine:
@@ -171,27 +170,3 @@ class TestNudgeEngine:
             assert result == ""
         finally:
             ceremony_nudge._build_minimal_status_line = original
-
-    def test_fr01_append_ceremony_nudge_failopen(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge remains a compatibility wrapper over live status."""
-        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
-
-        original_response: dict[str, object] = {"status": "ok", "data": "result"}
-        bad_dir = tmp_path / "nonexistent" / ".trw"
-        result = append_ceremony_nudge(original_response.copy(), trw_dir=bad_dir)
-        assert result.get("status") == "ok"
-        assert result.get("data") == "result"
-        assert "ceremony_status" in result
-
-    def test_fr01_append_ceremony_nudge_adds_key(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge adds ceremony_status key to response dict."""
-        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
-
-        trw = _trw_dir(tmp_path)
-        state = CeremonyState(session_started=False)
-        write_ceremony_state(trw, state)
-
-        response: dict[str, object] = {"status": "ok"}
-        result = append_ceremony_nudge(response.copy(), trw_dir=trw)
-        assert "ceremony_status" in result
-        assert isinstance(result["ceremony_status"], str)

@@ -50,5 +50,5 @@ FR01: [PASS|FAIL|PARTIAL]
 
 - Never modify files — audit only
 - Check bidirectional traceability: code → PRD and PRD → code
-- Run `trw_build_check()` to verify tests actually pass
+- Run project-native tests, then record their observed result with `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)`; do not treat the reporter as a test runner
 - Use `trw_learn()` to persist audit patterns and common gaps

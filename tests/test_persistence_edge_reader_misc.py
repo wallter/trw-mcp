@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 
@@ -89,6 +92,17 @@ class TestExistsEdgeCases:
         link.symlink_to(target)
         target.unlink()
         assert reader.exists(link) is False
+
+    def test_symlink_loop_is_typed_content_free_state_error(self, tmp_path: Path) -> None:
+        loop = tmp_path / "loop.yaml"
+        loop.symlink_to(loop)
+        reader = FileStateReader(base_dir=tmp_path)
+
+        with pytest.raises(StateError, match="state read path resolution failed: RuntimeError") as exc_info:
+            reader.exists(loop)
+
+        assert exc_info.value.context["path"] == str(loop)
+        assert "Symlink loop" not in str(exc_info.value)
 
 
 class TestProtocolCompliance:

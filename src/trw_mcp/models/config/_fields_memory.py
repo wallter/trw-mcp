@@ -1,22 +1,24 @@
-"""Memory, learning storage, hybrid retrieval, dedup, consolidation, and tiered fields.
+"""Memory storage, retrieval, deduplication, consolidation, and tier fields.
 
-Covers sections 3-7 of the original _main_fields.py:
-  - Learning storage & retrieval
-  - Hybrid retrieval (CORE-041)
-  - Semantic dedup (CORE-042)
-  - Memory consolidation (CORE-044)
-  - Tiered memory (CORE-043)
+Extracted from sections 3-7 of the original ``_main_fields.py``.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from pydantic import Field
 
 from trw_mcp.models.config._defaults import (
     DEFAULT_LEARNING_MAX_ENTRIES,
+    DEFAULT_RECALL_INTERNAL_FIELDS,
     DEFAULT_RECALL_MAX_RESULTS,
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
 )
+
+# PRD-CORE-202-NFR05: per-external-store recall cap default — mirrors the
+# CORE-185 ``recall_user_tier_cap`` default (5) so the two tier caps move together.
+DEFAULT_EXTERNAL_STORE_RECALL_CAP = 5
 
 
 class _MemoryFields:
@@ -31,33 +33,16 @@ class _MemoryFields:
     recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
     recall_compact_fields: frozenset[str] = frozenset({"id", "summary", "impact", "tags", "status"})
+    recall_internal_fields: frozenset[str] = DEFAULT_RECALL_INTERNAL_FIELDS
 
     # -- Hybrid retrieval (CORE-041) --
 
-    # PRD-INFRA-102 FR-03 clarification (2026-05-04):
-    # `memory_store_path` is the SECONDARY embedding-sidecar path used by
-    # `dedup.py` re-indexing via `MemoryStore` (creates `vec_entries` tables).
-    # It is NOT the primary memory store path — that is hardcoded to
-    # `<trw_dir>/memory/memory.db` in `_memory_connection.get_backend` and
-    # contains the canonical `vec_memories` table. The field name's "memory
-    # store" wording is historical (CORE-041 era) and misleading; do not
-    # rename without coordinating with `_paths.resolve_memory_store_path`,
-    # `dedup.py:367`, and tests in `test_retrieval.py`.
+    # Secondary embedding sidecar used by dedup re-indexing; the canonical
+    # store remains <trw_dir>/memory/memory.db. Coordinate any rename with
+    # _paths.resolve_memory_store_path and dedup.py.
     memory_store_path: str = ".trw/memory/vectors.db"
-    # Council-ratified Option A+ (2026-06-10, PRD-DIST-254 §FR03 follow-up):
-    # default flipped False -> True. The MCP `recall_learnings` path the live
-    # `trw_recall` tool takes degrades to keyword-only AND-intersection when this
-    # is False, which collapses Recall@5 to 0.125 on a realistic corpus (vs
-    # 0.9375 for the full hybrid path) -- agents silently lost semantic recall.
-    # Option C (auto-enable on first vector hit) was REJECTED for a bootstrap
-    # deadlock: a vector-less fresh store never produces a vector hit, so it would
-    # never auto-enable. Accompaniments shipped with this flip: (a) a non-blocking
-    # first-recall download warm-up (`_schedule_embedder_warmup`) so the
-    # all-MiniLM-L6-v2 download never blocks the MCP hot path; (b) graceful
-    # keyword degradation while the warm-up is incomplete (the hot path uses
-    # `allow_cold_embedding_init=False` -> `get_initialized_embedder`); (c) the
-    # low-coverage backfill advisory + background self-heal already wired below.
-    # Operators can still opt out with `embeddings_enabled: false`.
+    # Hybrid retrieval defaults on; initialization remains non-blocking and
+    # degrades to keyword search until the embedder is ready. Operators may opt out.
     embeddings_enabled: bool = True
     retrieval_embedding_model: str = "all-MiniLM-L6-v2"
     retrieval_embedding_dim: int = 384
@@ -134,6 +119,36 @@ class _MemoryFields:
     memory_score_w1: float = 0.4
     memory_score_w2: float = 0.3
     memory_score_w3: float = 0.3
+
+    # -- External read-stores (PRD-CORE-202) --
+    # One or more EXTERNAL trw-memory SQLite DBs registered as READ-ONLY sources
+    # unioned into ``trw_recall`` (e.g. a consolidated/distributable corpus built
+    # by trw-distill). Each entry is a filesystem path to a trw-memory ``memory.db``.
+    # The default empty list preserves today's single-backend behavior exactly:
+    # with no entries (and no ``--memory-db`` flag), the external-federation step
+    # is skipped entirely (NFR01) and recall is byte-identical to HEAD (NFR06).
+    # External corpora are NEVER a write destination (FR04 / NFR02). May also be
+    # supplied via the ``TRW_EXTRA_READ_STORES`` env var (a JSON path-list) or the
+    # ``--memory-db`` startup flag (FR03).
+    extra_read_stores: list[Path] = Field(
+        default_factory=list,
+        description=(
+            "External trw-memory SQLite DBs registered as READ-ONLY sources unioned "
+            "into trw_recall (PRD-CORE-202 FR01). Empty (default) = project/user only. "
+            "Also settable via TRW_EXTRA_READ_STORES (JSON list) or --memory-db."
+        ),
+    )
+    # PRD-CORE-202-NFR05: bounds the records loaded per external store so a large
+    # (~1,200-record) corpus cannot inflate per-query latency or bury project
+    # precision. Typed Field(ge=1), not a literal (no magic numbers).
+    external_store_recall_cap: int = Field(
+        default=DEFAULT_EXTERNAL_STORE_RECALL_CAP,
+        ge=1,
+        description=(
+            "Maximum number of hits each external read-store may contribute to a "
+            "single federated recall result (PRD-CORE-202 NFR05)."
+        ),
+    )
 
     # -- Learning recall control (S7, PRD-CORE-125) --
 

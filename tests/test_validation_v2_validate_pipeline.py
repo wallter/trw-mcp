@@ -6,7 +6,7 @@ from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.models.requirements import QualityTier, ValidationResult, ValidationResultV2
-from trw_mcp.state.validation import validate_prd_quality, validate_prd_quality_v2
+from trw_mcp.state.validation import refresh_dynamic_prd_validation, validate_prd_quality, validate_prd_quality_v2
 
 from ._validation_v2_support import (
     _FILLED_PRD,
@@ -131,6 +131,75 @@ class TestValidatePrdQualityV2:
         assert result.valid is False
         assert any("Referenced repo path does not exist" in f.message for f in result.failures)
 
+    def test_dynamic_refresh_replaces_resolved_repository_failures(self, tmp_path: Path) -> None:
+        content = _build_integrity_prd(
+            prd_id="PRD-QUAL-997",
+            title="Refreshable repository truth fixture",
+            category="QUAL",
+            path_ref="src/missing.py",
+        )
+        pure = validate_prd_quality_v2(content, include_dynamic_checks=False)
+        missing = refresh_dynamic_prd_validation(pure, content, project_root=str(tmp_path))
+        assert any(failure.rule == "repo_path_exists" for failure in missing.failures)
+
+        path = tmp_path / "src" / "missing.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("value = 1\n", encoding="utf-8")
+        test_path = tmp_path / "tests" / "test_integrity.py"
+        test_path.parent.mkdir()
+        test_path.write_text("def test_contract(): assert True\n", encoding="utf-8")
+        refreshed = refresh_dynamic_prd_validation(missing, content, project_root=str(tmp_path))
+        reference = refresh_dynamic_prd_validation(pure, content, project_root=str(tmp_path))
+
+        assert not any(failure.rule == "repo_path_exists" for failure in refreshed.failures)
+        assert refreshed == reference
+        assert refresh_dynamic_prd_validation(refreshed, content, project_root=str(tmp_path)) == refreshed
+
+    def test_dynamic_refresh_preserves_authoritative_static_invalid_bit(self, tmp_path: Path) -> None:
+        content = _build_integrity_prd(
+            prd_id="PRD-QUAL-996",
+            title="Static invalidity fixture",
+            category="QUAL",
+            path_ref="src/existing.py",
+        )
+        path = tmp_path / "src" / "existing.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("value = 1\n", encoding="utf-8")
+        test_path = tmp_path / "tests" / "test_integrity.py"
+        test_path.parent.mkdir()
+        test_path.write_text("def test_contract(): assert True\n", encoding="utf-8")
+        pure = validate_prd_quality_v2(content, include_dynamic_checks=False).model_copy(
+            update={"valid": False, "failures": []}
+        )
+
+        refreshed = refresh_dynamic_prd_validation(pure, content, project_root=str(tmp_path))
+
+        assert refreshed.valid is False
+        assert refreshed.failures == []
+
+    def test_dynamic_refresh_does_not_duplicate_integrity_failures(self, tmp_path: Path) -> None:
+        content = _build_integrity_prd(
+            prd_id="PRD-QUAL-995",
+            title="Functionality integrity fixture",
+            category="QUAL",
+            path_ref="src/existing.py",
+        ).replace("status: draft", "status: implemented")
+        path = tmp_path / "src" / "existing.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("value = 1\n", encoding="utf-8")
+        test_path = tmp_path / "tests" / "test_integrity.py"
+        test_path.parent.mkdir()
+        test_path.write_text("def test_contract(): assert True\n", encoding="utf-8")
+        pure = validate_prd_quality_v2(content, include_dynamic_checks=False)
+
+        first = refresh_dynamic_prd_validation(pure, content, project_root=str(tmp_path))
+        second = refresh_dynamic_prd_validation(first, content, project_root=str(tmp_path))
+        rule = "aaref_functionality_level_required"
+
+        assert [failure.rule for failure in first.failures].count(rule) == 1
+        assert [failure.rule for failure in second.failures].count(rule) == 1
+        assert second == first
+
     def test_v2_integrity_warns_on_probable_duplicate(self, tmp_path: Path) -> None:
         shared_file = tmp_path / "src" / "shared.py"
         shared_file.parent.mkdir(parents=True)
@@ -204,6 +273,24 @@ prd:
     implements: [PRD-QUAL-081]
     depends_on: [PRD-CORE-080]
     enables: [PRD-QUAL-083]
+  verification:
+    mappings:
+      - requirement_id: FR01
+        acceptance_criteria:
+          - "Given llms.txt changes, When the marketing page renders, Then it mirrors the install phrase"
+        method: inspection
+        evidence_artifact: "artifacts/llms-parity.txt"
+        pass_condition: "Both public surfaces contain the identical install phrase"
+        automated: false
+        automation_infeasible_reason: "Static content parity is confirmed by inspection/grep, not a behavioral test"
+      - requirement_id: FR02
+        acceptance_criteria:
+          - "Given homepage data.ts changes, When llms.txt is regenerated, Then parity holds"
+        method: inspection
+        evidence_artifact: "artifacts/homepage-parity.txt"
+        pass_condition: "llms.txt stays in parity with the homepage data source"
+        automated: false
+        automation_infeasible_reason: "Static content parity is confirmed by inspection/grep, not a behavioral test"
 ---
 # PRD-QUAL-999: Content docs profile fixture
 ## 1. Problem Statement
@@ -249,6 +336,12 @@ None.
         traceability = next(d for d in result.dimensions if d.name == "traceability")
 
         assert readiness.details["validation_profile"] == "content_docs"
+        # PRD-QUAL-114 FR03: verification readiness credit is now method-neutral —
+        # it is earned from designed verification MAPPINGS, not from test-shaped
+        # references. The fixture therefore declares inspection-method mappings for
+        # FR01/FR02 so the content_docs profile scores static content well without
+        # relying on runtime behavior-switch matrices.
+        assert readiness.details["verification_design_ratio"] == 1.0
         assert readiness.score >= 20.0
         assert traceability.details["validation_profile"] == "content_docs"
         assert "ai_operational_evidence_detected" not in traceability.details

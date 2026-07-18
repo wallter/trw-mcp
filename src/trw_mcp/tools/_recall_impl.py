@@ -126,7 +126,7 @@ def execute_recall(
     if token_budget is not None and token_budget <= 0:
         raise ValueError(f"token_budget must be positive, got {token_budget}")
 
-    reader = FileStateReader()
+    reader = FileStateReader(base_dir=trw_dir)
     # Track whether the caller explicitly asked for a large result set before we
     # resolve the default cap, so the common default recall keeps full detail.
     caller_max_results = max_results
@@ -187,7 +187,12 @@ def execute_recall(
 
     # Update access tracking for recalled IDs
     matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
-    access_fn(trw_dir, matched_ids)
+    # The default adapter understands federated ownership; injected legacy
+    # doubles retain the historical two-argument contract.
+    if access_fn is _default_access:
+        access_fn(trw_dir, matched_ids, federated=True)
+    else:
+        access_fn(trw_dir, matched_ids)
 
     # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
     _track_recall(matched_ids, query)
@@ -223,16 +228,28 @@ def execute_recall(
     # of one finding can't crowd out distinct findings in the top-K.
     ranked_learnings, duplicates_collapsed = _dedup_ranked_learnings(trw_dir, ranked_learnings)
 
-    from trw_memory.retrieval.token_budget import apply_token_budget, estimate_entry_tokens
+    # Strip internal ranking/telemetry state at the MCP response boundary,
+    # BEFORE token budgeting so tokens_used reflects what the caller receives.
+    from trw_mcp.tools._recall_projection import strip_internal_response_fields
+
+    ranked_learnings = strip_internal_response_fields(ranked_learnings, config.recall_internal_fields)
+
+    from trw_memory.retrieval.token_budget import (
+        apply_token_budget,
+        estimate_serialized_entry_tokens,
+    )
 
     # F-002: apply a sane default token ceiling when the caller gives no budget,
-    # so a recall result can never overflow the context window.
+    # so a recall result can never overflow the context window. The serialized
+    # estimator budgets against the FULL entry the caller receives — the
+    # content-field heuristic undercounted by ~2-3x and let a "budgeted"
+    # recall balloon to ~22k real tokens.
     effective_budget = token_budget if token_budget is not None else DEFAULT_RECALL_TOKEN_BUDGET
     ranked_learnings, tokens_used, tokens_truncated = _apply_recall_token_budget(
         ranked_learnings,
         effective_budget,
         apply_token_budget=apply_token_budget,
-        estimate_entry_tokens=estimate_entry_tokens,
+        estimate_entry_tokens=estimate_serialized_entry_tokens,
     )
 
     # Apply result cap — must happen BEFORE tokens_used is finalised so the
@@ -241,7 +258,7 @@ def execute_recall(
         ranked_learnings = ranked_learnings[:max_results]
         # Recompute tokens_used for the capped set; truncation flag stays True
         # if the budget already trimmed the list (that state is unchanged).
-        tokens_used = sum(estimate_entry_tokens(entry) for entry in ranked_learnings)
+        tokens_used = sum(estimate_serialized_entry_tokens(entry) for entry in ranked_learnings)
 
     # --- Surface event logging (PRD-CORE-103-FR01) ---
     # Log each surfaced learning for telemetry/fatigue detection.
@@ -286,13 +303,16 @@ def execute_recall(
         "total_available": total_available,
         "compact": use_compact,
         "max_results": max_results,
-        "topic_filter_ignored": topic_filter_ignored,
-        "topic_filter_warning": topic_filter_warning,
         "tokens_used": tokens_used,
         "tokens_budget": effective_budget,
         "tokens_truncated": tokens_truncated,
         "duplicates_collapsed": duplicates_collapsed,
     }
+    # Topic-filter advisories are only meaningful when the caller scoped by
+    # topic — omit the constant false/empty pair from every other response.
+    if topic is not None:
+        recall_result["topic_filter_ignored"] = topic_filter_ignored
+        recall_result["topic_filter_warning"] = topic_filter_warning
 
     return recall_result
 
@@ -327,12 +347,16 @@ def _apply_recall_token_budget(
     ranked_learnings: list[dict[str, object]],
     token_budget: int | None,
     *,
-    apply_token_budget: Callable[[list[dict[str, object]], int], tuple[list[dict[str, object]], int, bool]],
+    apply_token_budget: Callable[..., tuple[list[dict[str, object]], int, bool]],
     estimate_entry_tokens: Callable[[dict[str, object]], int],
 ) -> tuple[list[dict[str, object]], int, bool]:
-    """Apply token-budget trimming when requested."""
+    """Apply token-budget trimming when requested.
+
+    The estimator is threaded into ``apply_token_budget`` so the budget bounds
+    the same serialized form whose token count is reported back to the caller.
+    """
     if token_budget is not None and ranked_learnings:
-        return apply_token_budget(ranked_learnings, token_budget)
+        return apply_token_budget(ranked_learnings, token_budget, estimator=estimate_entry_tokens)
     return ranked_learnings, sum(estimate_entry_tokens(entry) for entry in ranked_learnings), False
 
 

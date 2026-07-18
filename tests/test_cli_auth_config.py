@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.cli.auth import (
-    _save_api_key,
     _save_config_field,
     device_auth_logout,
     device_auth_status,
@@ -89,36 +88,6 @@ class TestDeviceAuthStatus:
         assert status["authenticated"] is False
 
 
-class TestSaveApiKey:
-    def test_creates_new_file(self, tmp_path: Path) -> None:
-        cfg = tmp_path / ".trw" / "config.yaml"
-        cfg.parent.mkdir(parents=True, exist_ok=True)
-        _save_api_key(cfg, "trw_dk_newkey")
-        content = cfg.read_text(encoding="utf-8")
-        assert 'platform_api_key: "trw_dk_newkey"' in content
-
-    def test_updates_existing_key(self, config_file: Path) -> None:
-        _save_api_key(config_file, "trw_dk_updated")
-        content = config_file.read_text(encoding="utf-8")
-        assert 'platform_api_key: "trw_dk_updated"' in content
-        assert "trw_dk_existing123" not in content
-
-    def test_appends_when_no_key_line(self, tmp_path: Path) -> None:
-        cfg = tmp_path / ".trw" / "config.yaml"
-        cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text('installation_id: "test"\n', encoding="utf-8")
-        _save_api_key(cfg, "trw_dk_appended")
-        content = cfg.read_text(encoding="utf-8")
-        assert 'platform_api_key: "trw_dk_appended"' in content
-        assert 'installation_id: "test"' in content
-
-    def test_no_existing_file(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "config.yaml"
-        _save_api_key(cfg, "trw_dk_brand_new")
-        content = cfg.read_text(encoding="utf-8")
-        assert 'platform_api_key: "trw_dk_brand_new"' in content
-
-
 class TestSaveConfigField:
     def test_creates_field_in_new_file(self, tmp_path: Path) -> None:
         cfg = tmp_path / "config.yaml"
@@ -160,7 +129,6 @@ class TestRunAuthLoginPersistence:
 
         with (
             patch("trw_mcp.cli.auth.device_auth_login", return_value=mock_result),
-            patch("trw_mcp.cli.auth.select_organization", return_value=mock_result["organizations"][0]),
         ):
             exit_code = run_auth_login("https://api.example.com", cfg)
 

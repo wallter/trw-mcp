@@ -11,10 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -47,6 +48,33 @@ def _record_write(result: dict[str, list[str]], rel_path: str, *, existed: bool)
         result.setdefault("updated", []).append(rel_path)
     else:
         result.setdefault("created", []).append(rel_path)
+
+
+def write_agent_templates(
+    target_dir: Path,
+    *,
+    agents_dir: str,
+    templates: Mapping[str, str],
+    force: bool,
+) -> dict[str, list[str]]:
+    """Write one client's managed agent templates without touching user files."""
+    result = _new_result()
+    target_agents_dir = target_dir / agents_dir
+    target_agents_dir.mkdir(parents=True, exist_ok=True)
+
+    for filename, content in templates.items():
+        path = target_agents_dir / filename
+        existed = path.exists()
+        rel_path = f"{agents_dir}/{filename}"
+        if existed and not force:
+            result["preserved"].append(rel_path)
+            continue
+        try:
+            path.write_text(content, encoding="utf-8")
+            _record_write(result, rel_path, existed=existed)
+        except OSError as exc:
+            result["errors"].append(f"Failed to write {path}: {exc}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +352,55 @@ def _files_identical(a: Path, b: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def find_marker_line_span(
+    content: str,
+    marker: str,
+    *,
+    anchor: str = "start",
+    last: bool = False,
+) -> tuple[int, int] | None:
+    """Locate a line-anchored *marker*, returning the (start, end) of its text.
+
+    Marker searches MUST be line-anchored, never a raw substring scan: prose can
+    *mention* a marker inline (e.g. inside backticks mid-paragraph), and matching
+    the first substring occurrence once truncated 705 lines of ROADMAP.md
+    (2026-06-11). A marker embedded in prose is neither at the start of a line
+    nor the sole content of one, so anchoring to the line boundary rejects it.
+
+    Section delimiters are boundary-anchored (not strictly whole-line) so the two
+    legitimate degenerate forms survive: a CRLF (``\\r\\n``) marker line, and a
+    collapsed empty section where the start and end markers sit adjacent on one
+    line (``START END``). Pure whole-line matching would drop both.
+
+    Args:
+        content: Text to search.
+        marker: Literal marker string.
+        anchor: ``"start"`` requires the marker to BEGIN a line (only whitespace
+            before it) — used for opening markers and header lines. ``"end"``
+            requires the marker to END a line (only whitespace/``\\r`` after it)
+            — used for closing markers. In both modes the returned span covers
+            only the marker TEXT, so callers preserve surrounding indentation and
+            line endings exactly (mirrors the old ``str.find`` splice offsets).
+        last: When ``True``, return the LAST matching occurrence (the ``rfind``
+            semantics needed to bind a header line to the start marker below it).
+
+    Returns:
+        ``(text_start, text_end)`` of the marker, or ``None`` when no
+        line-anchored occurrence exists.
+    """
+    escaped = re.escape(marker)
+    if anchor == "end":
+        pattern = re.compile(rf"(?P<m>{escaped})[ \t]*\r?$", flags=re.MULTILINE)
+    else:
+        pattern = re.compile(rf"^[ \t]*(?P<m>{escaped})", flags=re.MULTILINE)
+    span: tuple[int, int] | None = None
+    for match in pattern.finditer(content):
+        span = (match.start("m"), match.end("m"))
+        if not last:
+            return span
+    return span
+
+
 def smart_merge_marker_section(
     existing: str,
     trw_section: str,
@@ -359,12 +436,11 @@ def smart_merge_marker_section(
     Returns:
         The merged document. Idempotent: ``f(f(x)) == f(x)`` for any *x*.
     """
-    start_idx = existing.find(start_marker)
-    end_idx = existing.find(end_marker)
+    start_span = find_marker_line_span(existing, start_marker, anchor="start")
+    end_span = find_marker_line_span(existing, end_marker, anchor="end")
 
-    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-        end_idx += len(end_marker)
-        merged = existing[:start_idx] + trw_section.rstrip("\n") + existing[end_idx:]
+    if start_span is not None and end_span is not None and start_span[0] < end_span[0]:
+        merged = existing[: start_span[0]] + trw_section.rstrip("\n") + existing[end_span[1] :]
         if merged == existing:
             return existing
         return merged

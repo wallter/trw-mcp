@@ -133,26 +133,26 @@ class TestTrwClaudeMdSync:
         """Query '*' or empty returns all learnings (filtered by other params)."""
         tools = _get_tools()
 
-        tools["trw_learn"].fn(summary="Alpha learning", detail="First", impact=0.8)
-        tools["trw_learn"].fn(summary="Beta learning", detail="Second", impact=0.3)
-        tools["trw_learn"].fn(summary="Gamma learning", detail="Third", impact=0.9)
+        tools["trw_learn"].fn(summary="Alpha learning", detail="First", impact=0.8, scope="project")
+        tools["trw_learn"].fn(summary="Beta learning", detail="Second", impact=0.3, scope="project")
+        tools["trw_learn"].fn(summary="Gamma learning", detail="Third", impact=0.9, scope="project")
 
         # Wildcard query should return all
-        result = tools["trw_recall"].fn(query="*")
+        result = tools["trw_recall"].fn(query="*", include_tiers=["project"])
         assert len(result["learnings"]) == 3
 
         # Wildcard with min_impact filter
-        result = tools["trw_recall"].fn(query="*", min_impact=0.5)
+        result = tools["trw_recall"].fn(query="*", min_impact=0.5, include_tiers=["project"])
         assert len(result["learnings"]) == 2
 
     def test_empty_query_returns_all_learnings(self, tmp_path: Path) -> None:
         """Empty string query returns all learnings."""
         tools = _get_tools()
 
-        tools["trw_learn"].fn(summary="One", detail="Detail", impact=0.5)
-        tools["trw_learn"].fn(summary="Two", detail="Detail", impact=0.5)
+        tools["trw_learn"].fn(summary="One", detail="Detail", impact=0.5, scope="project")
+        tools["trw_learn"].fn(summary="Two", detail="Detail", impact=0.5, scope="project")
 
-        result = tools["trw_recall"].fn(query="")
+        result = tools["trw_recall"].fn(query="", include_tiers=["project"])
         assert len(result["learnings"]) == 2
 
 

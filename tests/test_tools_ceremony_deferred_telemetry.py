@@ -276,7 +276,7 @@ class TestDeliverTelemetryIntegration:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Critical path reports 3 steps; deferred_steps reports 11."""
+        """Critical path reports 2 completed steps and launches the deferred batch."""
         from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -299,9 +299,57 @@ class TestDeliverTelemetryIntegration:
             result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)
 
         assert result["critical_steps_completed"] == 2
-        assert result["deferred_steps"] == 11
+        # The deferred-step count is no longer re-emitted per deliver response
+        # (token-bloat trim — it is a compile-time constant). Its anti-drift
+        # guarantee lives in ``test_deferred_step_count_matches_executed_steps``.
         assert result["deferred"] == "launched"
         assert result["success"] is True
+
+    def test_deferred_step_count_matches_executed_steps(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """DEFERRED_STEP_COUNT equals the number of steps _run_deferred_steps actually runs.
+
+        This is the anti-drift guard for the truthfulness fix: it drives the
+        REAL orchestrator with every step stubbed and asserts that the set of
+        per-step result keys equals the DEFERRED_STEPS roster. If someone adds a
+        ``_timed_step`` call without adding it to the roster (or vice versa),
+        this test fails — so the reported ``deferred_steps`` count can never
+        again claim a number different from what runs.
+        """
+        import structlog
+
+        from trw_mcp.tools._deferred_delivery import (
+            DEFERRED_STEP_COUNT,
+            DEFERRED_STEPS,
+        )
+
+        trw_dir = _make_deferred_trw_dir(tmp_path)
+        stubs = _stub_all_deferred_steps()
+        with (
+            patch(
+                "trw_mcp.tools._deferred_delivery._step_delivery_metrics",
+                return_value={"status": "skipped"},
+            ),
+            _apply_stubs(stubs),
+            structlog.testing.capture_logs() as cap_logs,
+        ):
+            results = _run_deferred_steps(trw_dir, None, {})
+
+        # Every roster name produced a result key.
+        executed = {k for k in results if k not in ("timestamp", "elapsed_seconds", "watchdog")}
+        assert executed == set(DEFERRED_STEPS)
+        assert len(DEFERRED_STEPS) == DEFERRED_STEP_COUNT
+        # index_sync runs by default (skip_index_sync defaults False).
+        assert "index_sync" in executed
+
+        # The self-reported completion log derives ``steps`` from the roster, so
+        # it can never again claim a number different from what actually ran
+        # (the old ``len(results) - 2`` reported 12 while 13 steps executed).
+        complete = next(e for e in cap_logs if e["event"] == "deferred_deliver_complete")
+        assert complete["steps"] == DEFERRED_STEP_COUNT
+        assert complete["steps"] == len(executed)
 
 
 @pytest.mark.integration

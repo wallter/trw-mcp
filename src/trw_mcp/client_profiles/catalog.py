@@ -6,8 +6,16 @@ from dataclasses import dataclass
 
 from trw_mcp.models.config import resolve_client_profile
 from trw_mcp.models.config._client_profile import ClientProfile
-from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS, TOOL_PRESETS
+from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS
 
+# ``gemini`` and ``aider`` were retired 2026-07-11 (Gemini CLI deprecated by
+# Google; aider never had an adapter). They are RETAINED in ``_CLIENT_ORDER``
+# because ``uninstall_surfaces()`` is keyed by it — existing ``.gemini/`` and
+# ``.aider.conf.yml`` installs must remain removable via ``trw-mcp uninstall``
+# forever. Presence here means "has uninstall surfaces", NOT "supported": the
+# documentation-facing ``build_client_profile_rows`` iterates
+# ``_ACTIVE_CLIENT_ORDER`` (retired ids excluded) so retired clients never
+# appear as active/documented profiles.
 _CLIENT_ORDER: tuple[str, ...] = (
     "claude-code",
     "opencode",
@@ -19,6 +27,13 @@ _CLIENT_ORDER: tuple[str, ...] = (
     "antigravity-cli",
     "aider",
 )
+
+# Retired client identifiers — retained in _CLIENT_ORDER only for uninstall
+# surface cleanup; excluded from every "supported/documented" consumer.
+_RETIRED_CLIENTS: frozenset[str] = frozenset({"gemini", "aider"})
+
+# Active (installable, documented) client order — retired ids removed.
+_ACTIVE_CLIENT_ORDER: tuple[str, ...] = tuple(c for c in _CLIENT_ORDER if c not in _RETIRED_CLIENTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +47,7 @@ class ClientProfileDocRow:
     write_target_label: str
     review_weight: int
     nudge_enabled: bool
-    tool_exposure_mode: str
+    tool_resolution_mode: str
     learning_recall_enabled: bool
     mcp_instructions_enabled: bool
     hooks_enabled: bool
@@ -76,8 +91,6 @@ def _write_target_label(profile: ClientProfile) -> str:
         return ".cursor/rules/"
     if targets.copilot_instructions:
         return ".github/copilot-instructions.md"
-    if targets.gemini_md:
-        return "GEMINI.md"
     if targets.claude_md:
         return "CLAUDE.md"
     if targets.antigravitycli_md:
@@ -91,9 +104,15 @@ def _format_pool_weights(profile: ClientProfile) -> str:
 
 
 def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
-    """Return documentation rows for all built-in client profiles."""
+    """Return documentation rows for all active (non-retired) built-in profiles."""
+    from trw_mcp.models.config import get_config
+
+    # PRD-CORE-218 FR04: tool exposure is now a single global authority
+    # (``tool_resolution_mode``), not a per-profile preset — surface the
+    # resolved value uniformly across profile rows.
+    tool_resolution_mode = str(getattr(get_config(), "tool_resolution_mode", "standard"))
     rows: list[ClientProfileDocRow] = []
-    for client_id in _CLIENT_ORDER:
+    for client_id in _ACTIVE_CLIENT_ORDER:
         profile = resolve_client_profile(client_id)
         rows.append(
             ClientProfileDocRow(
@@ -104,7 +123,7 @@ def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
                 write_target_label=_write_target_label(profile),
                 review_weight=profile.ceremony_weights.review,
                 nudge_enabled=profile.nudge_enabled,
-                tool_exposure_mode=profile.tool_exposure_mode,
+                tool_resolution_mode=tool_resolution_mode,
                 learning_recall_enabled=profile.learning_recall_enabled,
                 mcp_instructions_enabled=profile.mcp_instructions_enabled,
                 hooks_enabled=profile.hooks_enabled,
@@ -120,11 +139,6 @@ def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
             )
         )
     return tuple(rows)
-
-
-def tool_preset_counts() -> tuple[tuple[str, int], ...]:
-    """Return tool preset names and counts in stable display order."""
-    return tuple((name, len(TOOL_PRESETS[name])) for name in ("all", "standard", "minimal", "core"))
 
 
 # ---------------------------------------------------------------------------
@@ -148,16 +162,41 @@ class UninstallSurface:
             removes the TRW-managed marker block and leaves the rest, instead
             of deleting the file wholesale.
         merged_config: When True, the path is a structured client config file
-            (JSON/TOML) TRW deep-merges its MCP server entry into -- e.g.
-            ``.gemini/settings.json`` (``mcpServers.trw``) or
-            ``.codex/config.toml`` (``[mcp_servers.trw]``). Uninstall strips
-            ONLY the TRW server entry and writes the rest back; the file is
-            never deleted wholesale (sec-006).
+            (JSON/TOML) TRW deep-merges its own entries into -- e.g.
+            ``.gemini/settings.json`` (``mcpServers.trw`` + a managed BeforeTool
+            hook), ``.codex/config.toml`` (``[mcp_servers.trw]``), or
+            ``.codex/hooks.json`` (TRW-managed hook groups). Uninstall strips
+            ONLY the TRW-owned entries and writes the rest back; the file is
+            deleted only when nothing user-owned remains (sec-006).
+        config_shape: For a ``merged_config`` surface, names the structural
+            strategy the uninstall stripper uses. One of ``"mcp-server-map"``
+            (JSON ``mcpServers.trw``), ``"codex-toml"`` (TOML
+            ``[mcp_servers.trw]``), ``"hook-group-list"`` (JSON ``hooks`` map of
+            event -> groups, TRW groups tagged by ``"TRW managed:"``
+            description), or ``"gemini-settings"`` (``mcpServers.trw`` plus the
+            managed ``hooks.BeforeTool`` block). Empty for non-merged surfaces;
+            the stripper falls back to a suffix heuristic when unset.
     """
 
     relpath: str
     managed_block: bool = False
     merged_config: bool = False
+    config_shape: str = ""
+
+
+# Instruction-file uninstall surfaces for retired clients (2026-07-11). Resolved
+# explicitly here rather than via resolve_client_profile(), which now returns the
+# claude-code fallback for retired ids — that fallback would surface
+# ``.claude/INSTRUCTIONS.md`` and LOSE the GEMINI.md managed-block markers.
+# Keeping GEMINI.md here guarantees existing installs stay removable forever.
+_RETIRED_INSTRUCTION_SURFACES: dict[str, UninstallSurface] = {
+    "gemini": UninstallSurface("GEMINI.md", managed_block=True),
+    # aider's pre-retirement _light_profile wrote a managed block into
+    # ``.aider/instructions.md`` (retire commit e1466da411 removed the writer but
+    # dropped this surface — release-verify 2026-07-17 P1). Existing aider installs
+    # must stay strippable forever; managed_block preserves any user content.
+    "aider": UninstallSurface(".aider/instructions.md", managed_block=True),
+}
 
 
 # Framework-core surfaces created by init-project regardless of client profile.
@@ -188,6 +227,9 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         UninstallSurface(".cursor/skills"),
         UninstallSurface(".cursor/hooks"),
         UninstallSurface(".cursor/hooks.json"),
+        # Smart-merged MCP-server map (generate_cursor_mcp_config deep-merges
+        # user servers) -- strip only the ``trw`` entry, never delete wholesale.
+        UninstallSurface(".cursor/mcp.json", merged_config=True, config_shape="mcp-server-map"),
     ),
     "cursor-cli": (
         UninstallSurface(".cursor/cli.json"),
@@ -195,14 +237,52 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         UninstallSurface(".cursor/hooks.json"),
     ),
     "codex": (
-        UninstallSurface(".codex/config.toml", merged_config=True),
-        UninstallSurface(".codex/hooks.json"),
+        UninstallSurface(".codex/config.toml", merged_config=True, config_shape="codex-toml"),
+        # hooks.json merges TRW hook GROUPS alongside user groups
+        # (merge_codex_hooks preserves non-TRW groups) -- strip only TRW groups.
+        UninstallSurface(".codex/hooks.json", merged_config=True, config_shape="hook-group-list"),
         UninstallSurface(".codex/hooks"),
     ),
-    "gemini": (UninstallSurface(".gemini/settings.json", merged_config=True),),
-    "copilot": (UninstallSurface(".github/agents"),),
+    "gemini": (
+        # settings.json carries both mcpServers.trw AND a managed BeforeTool
+        # hook block (install_gemini_distill_channels) -- strip both.
+        UninstallSurface(".gemini/settings.json", merged_config=True, config_shape="gemini-settings"),
+        UninstallSurface(".gemini/agents"),
+        UninstallSurface(".gemini/hooks"),
+    ),
+    "copilot": (
+        UninstallSurface(".github/agents"),
+        UninstallSurface(".github/skills"),
+        # hooks.json merges TRW hook groups alongside user groups
+        # (_merge_copilot_hooks preserves non-TRW groups) -- strip only TRW groups.
+        UninstallSurface(".github/hooks/hooks.json", merged_config=True, config_shape="hook-group-list"),
+        UninstallSurface(".github/hooks/trw-copilot-adapter.sh"),
+        # .github/instructions/ is a SHARED GitHub dir users may own -- register
+        # only the specific TRW-written path-scoped files, never the dir.
+        UninstallSurface(".github/instructions/python-testing.instructions.md"),
+        UninstallSurface(".github/instructions/typescript-react.instructions.md"),
+    ),
     "aider": (UninstallSurface(".aider.conf.yml"),),
-    "antigravity-cli": (UninstallSurface(".antigravitycli"),),
+    "antigravity-cli": (
+        # settings.json is a smart-merged MCP-server map (preserves user
+        # servers) -- strip only the ``trw`` entry, never rmtree the dir.
+        UninstallSurface(".antigravitycli/settings.json", merged_config=True, config_shape="mcp-server-map"),
+        UninstallSurface(".antigravitycli/agents"),
+        # AG-03 PreToolUse hook cleanup. install_before_edit_hook writes BOTH the
+        # hooks.json entry AND the hook script under hooks/, so uninstall must
+        # remove both or a live TRW PreToolUse hook is left registered.
+        #
+        # hooks.json here is a FLAT ``{"<event>": [entry, ...]}`` map (see
+        # channels/antigravity/_before_edit_hook.py::_merge_hooks_json), NOT the
+        # codex/copilot ``{"hooks": {event: [group]}}`` shape with ``"TRW
+        # managed:"`` descriptions. The ``hook-group-list`` merged-strip strategy
+        # therefore does not match this file and would strip nothing, leaving the
+        # hook behind. TRW is the sole writer of .antigravitycli/hooks.json, so
+        # whole-file removal (a plain surface, like ``.cursor/hooks.json``) is the
+        # correct and only in-module cleanup that guarantees no live hook remains.
+        UninstallSurface(".antigravitycli/hooks.json"),
+        UninstallSurface(".antigravitycli/hooks"),
+    ),
 }
 
 
@@ -243,6 +323,14 @@ def uninstall_surfaces() -> tuple[UninstallSurface, ...]:
     for client_id in _CLIENT_ORDER:
         for surface in _PROFILE_DIR_SURFACES.get(client_id, ()):
             _add(surface)
+        if client_id in _RETIRED_CLIENTS:
+            # Retired clients no longer resolve to their own profile
+            # (resolve_client_profile returns the claude-code fallback), so use
+            # the explicit retired-instruction map to preserve GEMINI.md cleanup.
+            retired_instr = _RETIRED_INSTRUCTION_SURFACES.get(client_id)
+            if retired_instr is not None:
+                _add(retired_instr)
+            continue
         instr = _instruction_surface(resolve_client_profile(client_id))
         if instr is not None:
             _add(instr)

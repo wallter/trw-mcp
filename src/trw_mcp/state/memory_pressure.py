@@ -186,14 +186,12 @@ def should_defer_session_start_optional_work(
 
     Pressure is measured against PEER writers — pids registered in the writer
     registry that are NOT the calling process. Self-only registration is the
-    normal steady state for both:
-
-    * stdio per-instance MCP servers (one writer per process), and
-    * the shared HTTP MCP server (one long-lived process owns the backend).
+    normal steady state for a stdio per-instance MCP server (one writer per
+    process).
 
     Treating self-only as "writer_present" pressure (the previous behavior)
-    caused 100% of session-start calls in the shared HTTP server to defer
-    every optional maintenance step — auto-upgrade check, stale-run close,
+    caused session-start calls in a long-lived server process to defer every
+    optional maintenance step — auto-upgrade check, stale-run close,
     embeddings backfill, and WAL checkpoint — turning the deferral path into
     a permanent skip and letting the WAL grow unbounded.
     """
@@ -210,3 +208,29 @@ def should_defer_session_start_optional_work(
     if len(pids) >= threshold:
         return True, pids, "writer_pressure"
     return True, pids, "writer_present"
+
+
+def writer_pressure_details(
+    defer_reason: str,
+    writer_pids: list[int],
+    *,
+    threshold: int,
+    retain_legacy_reason: bool = False,
+) -> dict[str, object]:
+    """Build the compact writer-pressure deferral advisory block.
+
+    Single source of truth for the ``*_deferred`` advisory shape emitted across
+    the session-start / ceremony / embeddings-maintenance paths:
+    ``{reason, writer_count, threshold}`` (plus ``defer_reason`` when a legacy
+    ``"writer_pressure"`` reason is retained). ``writer_pids`` stay in the
+    structlog events only — a full pid list in every deferral block is
+    diagnostic noise for the calling LLM.
+    """
+    details: dict[str, object] = {
+        "reason": "writer_pressure" if retain_legacy_reason else defer_reason,
+        "writer_count": len(writer_pids),
+        "threshold": threshold,
+    }
+    if retain_legacy_reason:
+        details["defer_reason"] = defer_reason
+    return details

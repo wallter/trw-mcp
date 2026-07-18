@@ -47,8 +47,10 @@ def apply_scope(
         raise CapabilityScopeError(f"tool {tool_name!r} is not authorized for server {server_name!r}")
     if scope.tool_name != tool_name:
         raise CapabilityScopeError(f"tool {tool_name!r} does not match scope {scope.tool_name!r}")
-    if current_phase is not None and scope.allowed_phases and current_phase not in scope.allowed_phases:
-        raise CapabilityScopeError(f"tool {tool_name!r} is not allowed during phase {current_phase!r}")
+    if current_phase is not None and scope.allowed_phases:
+        allowed_phases = {phase.strip().lower() for phase in scope.allowed_phases}
+        if current_phase.strip().lower() not in allowed_phases:
+            raise CapabilityScopeError(f"tool {tool_name!r} is not allowed during phase {current_phase!r}")
     if requested_scope is not None and scope.allowed_scopes and requested_scope not in scope.allowed_scopes:
         raise CapabilityScopeError(f"tool {tool_name!r} is not allowed for scope {requested_scope!r}")
 

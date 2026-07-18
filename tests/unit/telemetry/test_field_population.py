@@ -125,7 +125,7 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
         session_id="s1",
         run_id="r1",
         surface_snapshot_id="snap_a",
-        payload={"learnings_loaded": 42, "framework_version": "v26_TRW"},
+        payload={"learnings_loaded": 42, "framework_version": "v26.1_TRW"},
     ),
     "session_end": HPOSessionEndEvent(
         session_id="s1",

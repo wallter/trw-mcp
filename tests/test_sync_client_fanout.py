@@ -9,7 +9,7 @@ Covers:
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from pydantic import SecretStr
@@ -149,7 +149,7 @@ class TestFanoutInitLogging:
 
         # No-op cycle should return without error and without touching coordinator.
         client._coordinator = MagicMock()
-        asyncio.get_event_loop().run_until_complete(client._run_one_cycle())
+        asyncio.run(client._run_one_cycle())
         client._coordinator.acquire_sync_lock.assert_not_called()
 
 
@@ -165,7 +165,7 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
 
     client._coordinator = MagicMock()
     client._coordinator.should_sync.return_value = True
-    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.acquire_sync_lock.side_effect = _acquired_lock
     client._coordinator.get_last_pull_seq.return_value = 0
     client._coordinator.get_last_outcome_line.return_value = 0
 
@@ -188,15 +188,21 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
     )
     client._mark_synced = MagicMock()
 
-    # Must not propagate.
-    await client._run_one_cycle()
+    pending_outcome = SimpleNamespace(payload={"session_id": "s1"}, line_no=1)
+    # Must not propagate, and unacknowledged learnings/outcomes retry next cycle.
+    with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[pending_outcome]):
+        await client._run_one_cycle()
+        await client._run_one_cycle()
 
-    primary_pusher.push_learnings.assert_called_once()
-    secondary_pusher.push_learnings.assert_called_once()
-    # Any-target-succeeded path clears dirty.
-    client._mark_synced.assert_called_once()
-    # Success path does NOT record_sync_failure.
-    client._coordinator.record_sync_failure.assert_not_called()
+    assert primary_pusher.push_learnings.call_count == 2
+    assert secondary_pusher.push_learnings.call_count == 2
+    # Replica fan-out acknowledges only after every configured target succeeds.
+    client._mark_synced.assert_not_called()
+    assert client._coordinator.record_sync_failure.call_args_list == [
+        call("1 of 2 targets failed"),
+        call("1 of 2 targets failed"),
+    ]
+    client._coordinator.record_outcome_push_success.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -209,7 +215,7 @@ async def test_fanout_reports_partial_error_for_payload_failures() -> None:
     pusher = MagicMock()
     pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=0, failed=2, skipped=98))
 
-    report, aggregate, any_success = await fanout_push(
+    report, aggregate = await fanout_push(
         client_id="c1",
         targets=[target],
         primary_pusher=pusher,
@@ -224,7 +230,6 @@ async def test_fanout_reports_partial_error_for_payload_failures() -> None:
     assert report["localhost"]["failed"] == 2
     assert report["localhost"]["error"] is None
     assert aggregate == PushResult()
-    assert any_success is False
 
 
 @pytest.mark.asyncio
@@ -279,4 +284,5 @@ async def test_429_on_one_target_does_not_stop_others(tmp_path) -> None:
     await client._run_one_cycle()
 
     secondary.push_learnings.assert_called_once()
-    client._mark_synced.assert_called_once()
+    client._mark_synced.assert_not_called()
+    client._coordinator.record_sync_failure.assert_called_once_with("1 of 2 targets failed")

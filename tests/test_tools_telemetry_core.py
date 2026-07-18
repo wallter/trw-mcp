@@ -120,7 +120,11 @@ class TestLogToolCallDecorator:
 
     def test_t04_p95_overhead_under_5ms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """T-04: P95 overhead of the decorator on a no-op function is < 5 ms (100 iterations)."""
-        monkeypatch.setattr(telemetry, "get_config", lambda: _config_with(telemetry_enabled=True, telemetry=False))
+        # Production ``get_config()`` is cached. Constructing a fresh Pydantic
+        # settings graph inside every timed call measures fixture/environment
+        # parsing rather than decorator overhead.
+        config = _config_with(telemetry_enabled=True, telemetry=False)
+        monkeypatch.setattr(telemetry, "get_config", lambda: config)
         monkeypatch.setattr(telemetry, "_write_tool_event", MagicMock())
         monkeypatch.setattr(telemetry, "_write_telemetry_record", MagicMock())
 

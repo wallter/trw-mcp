@@ -29,6 +29,7 @@ import structlog
 from fastmcp import Context, FastMCP
 
 import trw_mcp.tools._q_learning_state as _qls
+from trw_mcp.models._evidence_plans import BuildCommandResult
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts._tools import (
@@ -40,6 +41,16 @@ from trw_mcp.state._paths import (
     find_active_run,
     resolve_pin_key,
     resolve_trw_dir,
+)
+from trw_mcp.tools._evidence_persistence import WriteOutcome
+from trw_mcp.tools.build._build_check_helpers import (
+    _BUILD_CHECK_USAGE as _BUILD_CHECK_USAGE,
+)
+from trw_mcp.tools.build._build_check_helpers import (
+    _finalize_build_result as _finalize_build_result,
+)
+from trw_mcp.tools.build._build_check_helpers import (
+    _require_tests_passed as _require_tests_passed,
 )
 from trw_mcp.tools.build._core import (
     cache_build_status,
@@ -55,10 +66,6 @@ logger = structlog.get_logger(__name__)
 # is an implementation detail of the dispatcher.
 _DispatchThreadState = Literal["launched", "queued", "queue_full"]
 
-_BUILD_CHECK_USAGE = (
-    "trw_build_check(tests_passed=True, test_count=47, coverage_pct=92.3, static_checks_clean=True, scope='full')"
-)
-
 
 def _build_call_context(ctx: Context | None) -> TRWCallContext:
     """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
@@ -73,23 +80,6 @@ def _build_call_context(ctx: Context | None) -> TRWCallContext:
         explicit=False,
         fastmcp_session=raw_session if isinstance(raw_session, str) else None,
     )
-
-
-def _find_active_run_compat(ctx: Context | None) -> Path | None:
-    """Call ``find_active_run`` with ctx when supported, else fall back safely.
-
-    Several tests monkeypatch ``find_active_run`` with legacy zero-arg lambdas.
-    Production code now prefers the ctx-aware signature, but sprint-close build
-    gates still need those patches to work without TypeError.
-    """
-    call_ctx = _build_call_context(ctx)
-    try:
-        return find_active_run(context=call_ctx)
-    except TypeError:
-        try:
-            return find_active_run(session_id=call_ctx.session_id)
-        except TypeError:
-            return find_active_run()  # compat: legacy zero-argument test doubles
 
 
 def register_build_tools(server: FastMCP) -> None:
@@ -109,6 +99,7 @@ def register_build_tools(server: FastMCP) -> None:
         failures: list[str] | None = None,
         run_path: str | None = None,
         min_coverage: float | None = None,
+        command_results: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         """Record build/test results for ceremony tracking and delivery gates.
 
@@ -132,6 +123,9 @@ def register_build_tools(server: FastMCP) -> None:
         - run_path: optional run directory for event logging.
         - min_coverage: when set, falls tests_passed to False if coverage_pct
           is below the threshold (adds ``coverage_threshold_failed`` flag).
+        - command_results: typed results for the server-required ``tests`` and
+          ``static_checks`` command IDs. Required in evidence enforce mode;
+          legacy booleans are accepted only by observe mode.
 
         Output: dict with fields
         {status, run_id?, outcome, tests_passed, coverage_pct,
@@ -158,7 +152,22 @@ def register_build_tools(server: FastMCP) -> None:
         bound_id = bound_ctx.get("tool_call_id")
         tool_call_id: str = bound_id if isinstance(bound_id, str) and bound_id else uuid.uuid4().hex[:12]
 
-        reported_tests_passed = _require_tests_passed(tests_passed)
+        from trw_mcp.tools._evidence_writers import parse_build_command_results
+
+        typed_command_results = parse_build_command_results(command_results)
+        if typed_command_results is None:
+            reported_tests_passed = _require_tests_passed(tests_passed)
+            effective_static_checks_clean = mypy_clean if static_checks_clean is None else static_checks_clean
+        else:
+            by_id = {item.command_id: item for item in typed_command_results}
+            typed_tests_passed = by_id.get("tests") is not None and by_id["tests"].passed
+            typed_static_clean = by_id.get("static_checks") is not None and by_id["static_checks"].passed
+            if tests_passed is not None and tests_passed != typed_tests_passed:
+                raise ValueError("tests_passed contradicts typed command result 'tests'")
+            if static_checks_clean is not None and static_checks_clean != typed_static_clean:
+                raise ValueError("static_checks_clean contradicts typed command result 'static_checks'")
+            reported_tests_passed = typed_tests_passed
+            effective_static_checks_clean = typed_static_clean
         config = get_config()
         if not config.build_check_enabled:
             return {
@@ -173,8 +182,6 @@ def register_build_tools(server: FastMCP) -> None:
         logger.info("build_check_started", scope=scope)
 
         effective_failures = (failures or [])[:10]
-
-        effective_static_checks_clean = mypy_clean if static_checks_clean is None else static_checks_clean
 
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
@@ -195,7 +202,12 @@ def register_build_tools(server: FastMCP) -> None:
         cache_path = cache_build_status(trw_dir, status)
 
         # PRD-FIX-077-FR01: persist build outcome for delivery-gate fallback.
-        persist_build_progress_state(trw_dir, status, scope=scope)
+        persist_build_progress_state(
+            trw_dir,
+            status,
+            scope=scope,
+            session_id=resolve_pin_key(ctx=ctx, explicit=None),
+        )
         _record_step("persist", _persist_started)
 
         # Step: run_resolve + phase update
@@ -208,9 +220,24 @@ def register_build_tools(server: FastMCP) -> None:
             resolved_run = Path(run_path).resolve()
         else:
             # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run.
-            resolved_run = _find_active_run_compat(ctx)
+            resolved_run = find_active_run(context=_build_call_context(ctx))
 
         try_update_phase(resolved_run, Phase.VALIDATE)
+
+        # PRD-CORE-205-FR04: dual-write a per-run content-bound BuildReceipt in
+        # observe mode. Receipts are keyed per-run beneath meta/receipts/ so a
+        # concurrent session cannot overwrite this run's proof (the 88c669bf4
+        # global build-status incident). Strictly fail-open — a scope/binding
+        # problem skips the receipt and leaves the legacy projection intact.
+        receipt_write = _dual_write_build_receipt(
+            resolved_run,
+            status,
+            scope,
+            effective_static_checks_clean,
+            coverage_pct,
+            typed_command_results,
+            min_coverage,
+        )
         _record_step("run_resolve", _run_resolve_started)
 
         # Step: log_event
@@ -249,6 +276,9 @@ def register_build_tools(server: FastMCP) -> None:
             "duration_secs": status.duration_secs,
             "cache_path": str(cache_path),
             "q_learning_deferred": q_learning_deferred,
+            "build_receipt_id": receipt_write.receipt_id if receipt_write is not None else "",
+            "typed_receipt_state": "written" if receipt_write is not None and receipt_write.ok else "missing",
+            "typed_receipt_reason": receipt_write.reason_code if receipt_write is not None else "receipt_not_written",
         }
 
         # PRD-IMPROVE-MCP-02 FR1: triage each reported failure as
@@ -451,6 +481,39 @@ def get_q_learning_health() -> QLearningHealthDict:
     )
 
 
+def _dual_write_build_receipt(
+    resolved_run: Path | None,
+    status: BuildStatus,
+    scope: str,
+    static_checks_clean: bool,
+    coverage_pct: float,
+    command_results: tuple[BuildCommandResult, ...] | None,
+    coverage_threshold: float | None,
+) -> WriteOutcome | None:
+    """PRD-CORE-205-FR04 BuildReceipt write; failure is missing evidence."""
+    if resolved_run is None:
+        return None
+    try:
+        from trw_mcp.state._paths import resolve_project_root
+        from trw_mcp.tools._evidence_writers import record_build_receipt
+
+        mode = str(getattr(get_config(), "evidence_receipt_mode", "observe"))
+        return record_build_receipt(
+            resolved_run,
+            resolve_project_root(),
+            tests_passed=status.tests_passed,
+            static_checks_clean=static_checks_clean,
+            scope_label=scope,
+            coverage_pct=coverage_pct if coverage_pct > 0 else None,
+            policy_mode=mode,
+            command_results=command_results,
+            coverage_threshold=coverage_threshold,
+        )
+    except Exception:  # justified: dual-write must never break the reporter tool
+        logger.warning("build_receipt_dual_write_skipped", exc_info=True)
+        return None
+
+
 def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> None:
     """Log build_check_complete event to run's events.jsonl."""
     if resolved_run is None:
@@ -477,29 +540,3 @@ def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> N
             "duration_secs": str(getattr(status, "duration_secs", 0)),
         },
     )
-
-
-def _finalize_build_result(
-    result: dict[str, object],
-    min_coverage: float | None,
-) -> None:
-    """Apply coverage threshold enforcement and enrich result dict."""
-    if min_coverage is None:
-        return
-    coverage_pct = float(str(result.get("coverage_pct", 0)))
-    if coverage_pct < min_coverage:
-        result["tests_passed"] = False
-        result["coverage_threshold_failed"] = True
-        result["coverage_threshold"] = min_coverage
-        result["coverage_threshold_message"] = (
-            f"Coverage {coverage_pct:.1f}% is below required threshold {min_coverage:.1f}%"
-        )
-
-
-def _require_tests_passed(tests_passed: bool | None) -> bool:
-    """Require explicit tests_passed reporting with a usage example."""
-    if tests_passed is None:
-        raise ValueError(
-            f"tests_passed is required. Report the outcome after running tests via Bash. Example: {_BUILD_CHECK_USAGE}"
-        )
-    return tests_passed

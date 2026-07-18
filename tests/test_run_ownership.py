@@ -362,3 +362,114 @@ class TestOwnershipWarning:
 
         status = _get_run_status(run_dir)
         assert "owner_session_id" not in status
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-219-FR01: content-bound ownership manifest
+# ---------------------------------------------------------------------------
+
+
+def test_prd_core_219_fr01(tmp_path: Path) -> None:
+    """FR01 acceptance: Given unowned, overlapping, traversal, escape, or
+    changed-since-claim paths, When ownership validates, Then preparation fails
+    and worktree, shared index, HEAD, and refs remain semantically unchanged."""
+    import hashlib
+    import subprocess
+
+    from trw_mcp.models.git_commit_transaction import OwnershipManifest
+    from trw_mcp.state.git_commit_transaction import snapshot_shared_state, validate_ownership
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    owned = repo / "src" / "owned.py"
+    owned.parent.mkdir()
+    owned.write_text("v1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True, capture_output=True)
+    parent = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    digest = "sha256:" + hashlib.sha256(owned.read_bytes()).hexdigest()
+
+    def manifest(paths: tuple[str, ...], digests: dict[str, str]) -> OwnershipManifest:
+        return OwnershipManifest(
+            transaction_id="txn-1",
+            run_id="run-1",
+            parent_oid=parent,
+            owned_paths=paths,
+            path_digests=digests,
+        )
+
+    # Valid claim: no failures.
+    assert validate_ownership(manifest(("src/owned.py",), {"src/owned.py": digest}), repo) == []
+    # Unowned (no content binding).
+    assert any("unowned" in f for f in validate_ownership(manifest(("src/owned.py",), {}), repo))
+    # Traversal and absolute paths.
+    assert any(
+        "traversal" in f for f in validate_ownership(manifest(("../etc/passwd",), {"../etc/passwd": digest}), repo)
+    )
+    assert any("traversal" in f for f in validate_ownership(manifest(("/etc/passwd",), {"/etc/passwd": digest}), repo))
+    # Escape via symlink.
+    outside = tmp_path / "outside.py"
+    outside.write_text("x", encoding="utf-8")
+    link = repo / "src" / "link.py"
+    link.symlink_to(outside)
+    assert any("escapes" in f for f in validate_ownership(manifest(("src/link.py",), {"src/link.py": digest}), repo))
+    # Overlap with another transaction's claim.
+    other = manifest(("src/owned.py",), {"src/owned.py": digest})
+    assert any(
+        "overlaps" in f
+        for f in validate_ownership(manifest(("src/owned.py",), {"src/owned.py": digest}), repo, other_claims=(other,))
+    )
+    # Changed since claim.
+    owned.write_text("v2\n", encoding="utf-8")
+    before = snapshot_shared_state(repo)
+    assert any(
+        "changed since claim" in f
+        for f in validate_ownership(manifest(("src/owned.py",), {"src/owned.py": digest}), repo)
+    )
+
+    # Read-only guarantee: validation changed nothing (worktree, index, HEAD, refs).
+    assert snapshot_shared_state(repo) == before
+
+
+def test_prd_core_219_nfr02(tmp_path) -> None:
+    """NFR02 acceptance: under foreign staged AND unstaged noise, the
+    candidate's tree delta is exactly the owned paths — no unowned byte can
+    enter a candidate through the production path."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    for name in ("owned.py", "foreign_a.py", "foreign_b.py"):
+        (repo / name).write_text(f"{name}-v1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True, capture_output=True)
+    # Foreign noise: one staged, one unstaged, one untracked.
+    (repo / "foreign_a.py").write_text("staged-noise\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "foreign_a.py"], check=True, capture_output=True)
+    (repo / "foreign_b.py").write_text("unstaged-noise\n", encoding="utf-8")
+    (repo / "untracked.py").write_text("untracked-noise\n", encoding="utf-8")
+    (repo / "owned.py").write_text("owned-v2\n", encoding="utf-8")
+
+    from tests._git_commit_workflow_support import verified_candidate
+
+    result, _run_dir = verified_candidate(repo, ("owned.py",), "feat: owned\n", "run/nfr02")
+    delta = subprocess.run(
+        ["git", "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", result["candidate_oid"]],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert delta == ["owned.py"]  # strictly the owned claim, nothing foreign
+    blob = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{result['candidate_oid']}:foreign_a.py"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert blob == "foreign_a.py-v1\n"  # foreign staged noise NOT absorbed

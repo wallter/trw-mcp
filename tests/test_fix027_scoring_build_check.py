@@ -55,7 +55,7 @@ class TestBuildCheckQLearningWiring:
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda **_kwargs: None)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
@@ -185,7 +185,7 @@ class TestBuildCheckMypyOnlyScope:
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda **_kwargs: None)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
             lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],
@@ -264,7 +264,7 @@ class TestBuildCheckMypyOnlyScope:
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: cfg)
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: trw_dir)
-        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda **_kwargs: None)
 
         server = FastMCP("test")
         build_mod.register_build_tools(server)
@@ -294,7 +294,7 @@ class TestBuildCheckMypyOnlyScope:
 
         monkeypatch.setattr(reg_mod, "get_config", lambda: mock_config)
         monkeypatch.setattr(reg_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
-        monkeypatch.setattr(reg_mod, "find_active_run", lambda: None)
+        monkeypatch.setattr(reg_mod, "find_active_run", lambda **_kwargs: None)
         monkeypatch.setattr(
             "trw_mcp.scoring.process_outcome_for_event",
             lambda event_type, event_data=None, **_kw: called_events.append(event_type) or [],

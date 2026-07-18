@@ -304,3 +304,32 @@ def test_load_pending_outcomes_threads_recall_outcomes_into_payload(tmp_path: Pa
     # regression: existing propensity fields still present
     assert propensity["composite_outcome"] == 0.8
     assert propensity["normalized_reward"] == 0.69
+
+
+def test_load_pending_outcomes_aggregates_recall_log_once(tmp_path: Path, monkeypatch) -> None:
+    """The append-only recall log is parsed once, not once per pending run."""
+    from trw_mcp.sync import outcomes
+
+    _write_recall_tracking(tmp_path, [{"learning_id": "L-1", "outcome": None}])
+    for run_id in ("run-1", "run-2"):
+        meta = tmp_path / "runs" / "task-a" / run_id / "meta"
+        meta.mkdir(parents=True, exist_ok=True)
+        (meta / "run.yaml").write_text(
+            "session_metrics:\n  status: success\n  learning_exposure:\n    ids: [L-1]\n",
+            encoding="utf-8",
+        )
+
+    real_aggregate = outcomes._aggregate_recall_outcomes
+    calls = 0
+
+    def counted_aggregate(trw_dir: Path | None) -> dict[str, dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        return real_aggregate(trw_dir)
+
+    monkeypatch.setattr(outcomes, "_aggregate_recall_outcomes", counted_aggregate)
+
+    pending = outcomes.load_pending_outcomes(tmp_path)
+
+    assert len(pending) == 2
+    assert calls == 1

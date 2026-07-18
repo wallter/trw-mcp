@@ -9,146 +9,76 @@ argument-hint: "[sprint name]"
 ---
 <!-- ultrathink -->
 
-# Sprint Initialization Skill
+# Sprint Initialization
 
-Initialize a new sprint by selecting PRDs, creating a sprint planning document, and bootstrapping the TRW run directory.
+Create a sprint contract from selected PRDs, establish ownership, and bootstrap a resumable run. Do not start implementation inside this skill.
 
-## Path Discovery
+## 1. Resolve project state
 
-Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate the PRD directory. The INDEX.md and sprints directories are siblings of the prds directory under the same parent.
+1. Read `prds_relative_path` from `.trw/config.yaml`; default to `docs/requirements-aare-f/prds` only when absent.
+2. Treat `INDEX.md` and `sprints/{active,completed}` as siblings of that PRD directory when those paths exist. Follow project-native alternatives instead of creating duplicate catalogues.
+3. Find existing sprint numbers in active and completed locations. Use the user-supplied number when present; otherwise choose the next unused number.
+4. If a prior or parallel sprint is active, report its PRDs and exact overlapping files. Do not infer safety from a universal overlap percentage.
 
-## Sprint Number Auto-Detection
+## 2. Select verified candidates
 
-Automatically determine the next sprint number — never ask the user for it:
+Read the catalogue and candidate PRD frontmatter/body. Present ID, title, lifecycle status, priority, problem, and known file ownership. Source searches may reveal likely implementation, but identifier existence is not proof of completion; label it as inspection evidence and recommend an audit when lifecycle state appears stale.
 
-1. List all sprint docs: `ls sprints/active/sprint-*.md sprints/completed/sprint-*.md archive/sprints/sprint-*.md 2>/dev/null`
-2. Extract sprint numbers from filenames using regex: `sprint-(\d+)`
-3. Take the maximum number found and add 1 → that's the new sprint number
-4. If the user provides a sprint number in `$ARGUMENTS` (e.g., `/trw-sprint-init "Sprint 76: Feature X"`), use that instead
+Ask the user to confirm the sprint scope unless the invocation already names exact PRDs. Do not silently include every draft.
 
-This eliminates the manual step of scanning directories to find the next number.
+## 3. Plan ownership and execution mode
 
-## Pre-flight: Prior Sprint Verification
+Group work by actual dependencies and file ownership:
 
-Before creating a new sprint, check that the prior sprint (N-1) has been properly archived:
-1. Look for `sprint-{N-1}*.md` in `sprints/completed/` or `archive/sprints/`
-2. If the prior sprint doc is still in `sprints/active/` or `sprints/planned/`, **warn** the user: "Sprint N-1 has not been completed yet. Run `/trw-sprint-finish` first, or acknowledge this gap."
-3. This is a **warning**, not a blocker -- the user can proceed if they acknowledge.
+- shared files or ordered interfaces stay in one sequential track;
+- disjoint tracks may run concurrently only when the active harness and project policy allow delegation;
+- a single-session sequential plan is always valid;
+- every track must name owned paths, inputs/outputs, validation, and handoff evidence.
 
-## Parallel Sprint Detection
+Do not launch helpers automatically. Sprint initialization prepares the contract; execution begins after scope/ownership approval.
 
-When another sprint is active, automatically assess file overlap:
+## 4. Write the sprint document
 
-1. Read the active sprint doc(s) from `sprints/active/`
-2. Extract the PRD IDs from each active sprint's "PRD Assignments" table
-3. Read the Key Files table from each active sprint's PRDs
-4. Compare against the candidate PRDs' Key Files
-5. Report overlap:
-   - **0-5% overlap**: "Safe to run in parallel — independent file ownership"
-   - **5-20% overlap**: "Caution — partial overlap in: {files}. Consider sequential execution."
-   - **>20% overlap**: "High conflict risk — these sprints modify the same modules. Recommend completing Sprint N before starting."
-6. This is advisory — the user decides whether to proceed.
+Write one active sprint document using the project's convention. Keep the schema compact:
 
-## Workflow
-
-1. **Survey draft PRDs**: Read `INDEX.md` in the PRD parent directory (sibling of the configured `prds_relative_path`) to find all draft PRDs. Read each draft PRD's Problem Statement and Goals sections to understand scope.
-
-2. **Present PRD candidates**: Show the user a summary table of available draft PRDs with:
-   - PRD ID, title, priority
-   - Brief problem statement (1-2 sentences)
-   - Estimated complexity (based on section count and requirement density)
-
-3. **Pre-implementation state check**: For each candidate PRD, verify whether its FRs are already implemented:
-   a. Read each FR's Description and Acceptance sections.
-   b. Extract key identifiers (function names, class names, endpoint paths) from backtick-wrapped terms.
-   c. Grep the codebase for each identifier.
-   d. If >80% of identifiers for a PRD already exist: flag as `LIKELY IMPLEMENTED` in the candidate table.
-   e. If >50% exist: flag as `PARTIALLY IMPLEMENTED`.
-   f. Present the implementation status alongside each candidate.
-   This prevents wasting agent sessions on already-implemented PRDs. Sprint 64 caught 3 PRDs that were already done but still marked "groomed".
-
-4. **Select PRDs**: Ask the user which PRDs to include in this sprint (or accept all drafts).
-
-5. **Create sprint document**: Write a sprint planning doc to the `sprints/active/` subdirectory (sibling of `prds_relative_path`) using the template below. Use the sprint name from `$ARGUMENTS` or generate one.
-
-6. **Bootstrap run**: Call `trw_init(task_name="$ARGUMENTS", prd_scope=[selected_prd_ids])` to create the run directory with event tracking.
-
-7. **Checkpoint**: Call `trw_checkpoint(message="Sprint initialized: $ARGUMENTS")`.
-
-8. **Report**: Output sprint doc path, run directory, selected PRDs, and suggested next steps (groom PRDs, begin implementation tracks).
-
-## Sprint Document Template
-
-Sprint docs should include YAML frontmatter for machine-readable exit criteria. The `sprint-finish` skill reads this frontmatter for automated verification.
-
-````markdown
----
-sprint: {N}
-coverage_threshold: 80
+```yaml
+sprint: <number>
+name: <name>
+run_task_name: <safe <=128-char slug, e.g. sprint-16-skills-architecture>
+status: active
+prd_ids: [<PRD-ID>]
+run_path: <filled after trw_init>
+coverage_threshold: null  # Populate only from project config or an accepted requirement.
+tracks:
+  - id: A
+    prd_ids: [<PRD-ID>]
+    owned_paths: [<path>]
+    depends_on: []
 exit_criteria:
-  - id: prd-status
-    description: All assigned PRDs reach done status
-    type: auto
+  - id: prd-lifecycle
+    description: Assigned PRDs reached their evidence-backed terminal sprint state
     verified: false
-  - id: build-gate
-    description: Build gate passes -- project-native validation is clean
-    type: auto
-    command: "trw_build_check(scope='full')"
+  - id: project-validation
+    description: Project-native validation passed and observed results were recorded
     verified: false
-  - id: coverage
-    description: "Coverage >= {coverage_threshold}%"
-    type: auto
+  - id: review
+    description: Required substantive review completed
     verified: false
-  - id: delivery
-    description: Delivery ceremony completed (/trw-deliver)
-    type: auto
-    verified: false
----
+completion_actions:
+  - trw_deliver  # Final TRW action after completion files are settled.
+```
 
-# {Sprint Name}
+Derive `run_task_name` deterministically from the display name, then require it to match
+`^[a-zA-Z0-9][a-zA-Z0-9_-]*$` and contain at most 128 characters. Reject and report an empty, invalid, or ambiguous
+slug rather than silently stripping it into a different sprint identity. Keep `name` as the human-facing title.
 
-**Created**: {date}
-**Status**: Active
-**Run**: {run_path}
+If no coverage threshold is configured or explicitly accepted, keep it null and omit any coverage pass/fail criterion; do not invent a percentage. Add project-specific exit criteria only when the PRDs or repository define them. Do not copy framework-internal incident checklists into unrelated projects.
 
-## Goals
+## 5. Bootstrap and report
 
-{1-3 sprint goals derived from selected PRDs}
+1. Call `trw_init(task_name=<run_task_name>, objective=<display sprint name>, prd_scope=[...])`; never pass the display title directly as `task_name`.
+2. Insert the returned run path into the sprint document.
+3. Checkpoint the selected PRDs, track ownership, dependencies, execution mode, and open risks.
+4. Report the sprint path, run path, scope, ownership conflicts, and next approval/action.
 
-## PRD Assignments
-
-| Track | PRD | Title | Priority | Owner |
-|-------|-----|-------|----------|-------|
-| A | {PRD-ID} | {title} | {priority} | -- |
-
-## Timeline
-
-- Sprint start: {date}
-- Mid-sprint review: --
-- Sprint end: --
-
-## Exit Criteria
-
-- [ ] All assigned PRDs reach done status
-- [ ] Build gate passes: project-native validation is clean
-- [ ] Coverage >= {coverage_threshold}%
-- [ ] Delivery ceremony completed (/trw-deliver)
-````
-
-## After Grooming: Auto-Parallel Implementation
-
-Once PRDs are groomed and approved, proceed to implementation automatically:
-
-1. **Analyze file overlap**: For each PRD, identify the modules/files it touches
-2. **Group into tracks**: PRDs with <5% file overlap go in separate tracks (parallelizable). PRDs sharing modules go in the same track (sequential)
-3. **Launch parallel subagents**: One subagent per track (not per PRD). Each subagent implements its track's PRDs sequentially, writes tests, and validates
-4. **Final gate**: After all tracks complete, run `trw_build_check(scope="full")` to verify no cross-track regressions
-
-The user does not need to direct parallelism -- this is the default behavior after PRD approval.
-
-## Notes
-
-- Sprint docs live in the `sprints/active/` subdirectory while active
-- On sprint completion (`/trw-sprint-finish`), the doc moves to `sprints/completed/` or `archive/sprints/`
-- Each sprint can have multiple tracks (A, B, C) for parallel work streams
-- The YAML frontmatter `exit_criteria` section enables machine-readable verification by `sprint-finish`
+Initialization is complete when the sprint contract and run are resumable—not when implementation has been launched.

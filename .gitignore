@@ -44,3 +44,4 @@ docs/requirements-aare-f/
 
 # Internal dev telemetry event logs (rides the public subtree split otherwise)
 meta/
+.trw/distill/anon_salt

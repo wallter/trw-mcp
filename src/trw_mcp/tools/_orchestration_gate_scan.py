@@ -23,9 +23,9 @@ from trw_mcp.tools._delivery_build_gates import _build_evidence_is_stale, _build
 
 logger = structlog.get_logger(__name__)
 
-# A review verdict of "block" is the only verdict that keeps the review gate
-# from being ready; any other recorded verdict (including the acceptable-failure
-# label) counts as a satisfied review gate (PRD-QUAL-105-FR02).
+# A review verdict of "block" is the only substantive verdict that keeps the
+# review gate from being ready. Acceptable failures belong to the structured
+# delivery-override schema; they are not review verdict labels.
 _REVIEW_BLOCK_VERDICT = "block"
 
 
@@ -144,7 +144,8 @@ def _summarize_deliver_gate(
 
     Note: the summary reflects the gate posture WITHOUT the ``trw_deliver``
     ``allow_unverified=True`` override applied. An agent may still deliver a
-    BLOCKED gate by passing ``allow_unverified=true`` + an ``unverified_reason``;
+    BLOCKED gate by passing ``allow_unverified=true`` plus a valid, unexpired
+    structured acceptable-failure record in ``unverified_reason``;
     the summary describes the unforced state, not a hard prohibition.
     """
     if not build_ready:

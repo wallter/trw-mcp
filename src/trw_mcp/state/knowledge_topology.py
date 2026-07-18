@@ -440,22 +440,22 @@ def execute_knowledge_sync(
             entry_count=total_count,
             threshold=config.knowledge_sync_threshold,
         )
-        return _base_result(
-            total_count,
-            config,
-            trw_dir,
-            threshold_met=False,
-            dry_run=dry_run,
-        )
+        if dry_run:
+            # A dry-run caller is asking "would a sync run?" — keep the full
+            # status shape so the answer carries the run mode + output target.
+            return _base_result(total_count, config, trw_dir, threshold_met=False, dry_run=True)
+        # Compact below-threshold shape for the live (deliver) path. When nothing
+        # is clustered, topics_generated/entries_clustered are always 0,
+        # output_dir is a static config path, dry_run is constant False, and
+        # errors is empty — all derivable/noise. Surface only the actionable trio.
+        return {
+            "threshold_met": False,
+            "entry_count": total_count,
+            "threshold": config.knowledge_sync_threshold,
+        }
 
     if dry_run:
-        return _base_result(
-            total_count,
-            config,
-            trw_dir,
-            threshold_met=True,
-            dry_run=True,
-        )
+        return _base_result(total_count, config, trw_dir, threshold_met=True, dry_run=True)
 
     # Step 2: list active entries
     backend = get_backend(trw_dir)
@@ -537,6 +537,9 @@ def execute_knowledge_sync(
         "entries_clustered": entries_clustered,
         "output_dir": str(output_dir),
         "dry_run": False,
-        "clusters": list(cluster_map.keys()),
+        # Cluster NAMES live in clusters.json under output_dir — echoing the
+        # full slug list (~200 entries on a mature store) into every deliver
+        # response was ~1.5k tokens of duplication.
+        "cluster_count": len(cluster_map),
         "errors": errors,
     }

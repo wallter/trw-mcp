@@ -40,8 +40,18 @@ _TEST_REF_RE = re.compile(
 )
 
 # Backtick-wrapped implementation file references.
+#
+# The trailing anchor accepts a single ``:line`` / ``#anchor`` segment AND an
+# OPTIONAL second ``:col`` segment (``(?::\d+)?``). Without the second segment a
+# two-colon reference like ``src/foo.py:42:5`` failed to match ENTIRELY — the
+# inner class ``[-\w./*#]`` excludes ``:``, so the greedy suffix consumed only
+# ``:42`` and then the closing backtick assertion failed with no backtracking
+# path, silently dropping the whole token from extraction. That let hallucinated
+# ``missing.py:42:5`` references escape the grounding penalty (round-2 audit
+# P1-8). The ``:col`` extension is purely additive: every previously-matching
+# shape (``src/foo.py``, ``:42``, ``#L10``, multi-``#``) is byte-identical.
 _IMPL_REF_RE = re.compile(
-    r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+)?)`",
+    r"`(?:[-\w./*]+(?:\.[\w]+)(?:[:#][-\w./*#]+(?::\d+)?)?)`",
 )
 
 # Bare (non-backtick-wrapped) test file references.

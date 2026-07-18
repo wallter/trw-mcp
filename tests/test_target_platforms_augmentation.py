@@ -54,7 +54,7 @@ class TestAugmentationPreservesExistingPlatforms:
                 "opencode",
                 "codex",
                 "copilot",
-                "gemini",
+                "antigravity-cli",
             ],
         )
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
@@ -69,7 +69,7 @@ class TestAugmentationPreservesExistingPlatforms:
         assert "opencode" in platforms
         assert "codex" in platforms
         assert "copilot" in platforms
-        assert "gemini" in platforms
+        assert "antigravity-cli" in platforms
         # File should be reported as preserved (no diff — cursor-ide already present)
         assert str(cfg) in result["preserved"]
         assert str(cfg) not in result["updated"]
@@ -78,7 +78,7 @@ class TestAugmentationPreservesExistingPlatforms:
         """Augmentation preserves the user's preferred ordering."""
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
-        original = ["gemini", "claude-code", "opencode"]
+        original = ["antigravity-cli", "claude-code", "opencode"]
         cfg = _seed_config(tmp_path, target_platforms=original)
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
@@ -86,7 +86,7 @@ class TestAugmentationPreservesExistingPlatforms:
 
         platforms = _read_platforms(cfg)
         # Original ordering preserved + new entry appended at end
-        assert platforms == ["gemini", "claude-code", "opencode", "cursor-cli"]
+        assert platforms == ["antigravity-cli", "claude-code", "opencode", "cursor-cli"]
 
 
 @pytest.mark.integration
@@ -113,10 +113,10 @@ class TestAugmentationAddsNewIdes:
         cfg = _seed_config(tmp_path, target_platforms=["claude-code"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        _update_config_target_platforms(tmp_path, ["cursor-ide", "cursor-cli", "gemini"], result)
+        _update_config_target_platforms(tmp_path, ["cursor-ide", "cursor-cli", "antigravity-cli"], result)
 
         platforms = _read_platforms(cfg)
-        assert platforms == ["claude-code", "cursor-ide", "cursor-cli", "gemini"]
+        assert platforms == ["claude-code", "cursor-ide", "cursor-cli", "antigravity-cli"]
 
 
 @pytest.mark.integration
@@ -166,9 +166,8 @@ class TestPreservesOtherConfigFields:
         cfg = _seed_config(
             tmp_path,
             target_platforms=["claude-code"],
-            mcp_transport="streamable-http",
-            mcp_host="127.0.0.1",
-            mcp_port=8100,
+            update_channel="latest",
+            task_root="docs",
             installation_id="test-dev",
             embeddings_enabled=True,
             platform_api_key="trw_test_secret",
@@ -179,9 +178,8 @@ class TestPreservesOtherConfigFields:
 
         data = yaml.safe_load(cfg.read_text())
         assert data["target_platforms"] == ["claude-code", "cursor-cli"]
-        assert data["mcp_transport"] == "streamable-http"
-        assert data["mcp_host"] == "127.0.0.1"
-        assert data["mcp_port"] == 8100
+        assert data["update_channel"] == "latest"
+        assert data["task_root"] == "docs"
         assert data["installation_id"] == "test-dev"
         assert data["embeddings_enabled"] is True
         assert data["platform_api_key"] == "trw_test_secret"
@@ -197,7 +195,7 @@ class TestDeduplication:
 
         cfg = _seed_config(
             tmp_path,
-            target_platforms=["claude-code", "opencode", "claude-code", "gemini"],
+            target_platforms=["claude-code", "opencode", "claude-code", "antigravity-cli"],
         )
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
@@ -205,7 +203,7 @@ class TestDeduplication:
 
         platforms = _read_platforms(cfg)
         assert platforms.count("claude-code") == 1
-        assert platforms == ["claude-code", "opencode", "gemini"]
+        assert platforms == ["claude-code", "opencode", "antigravity-cli"]
         # Duplicate collapse is a meaningful change → updated, not preserved
         assert str(cfg) in result["updated"]
 
@@ -270,7 +268,7 @@ class TestObservability:
         _seed_config(tmp_path, target_platforms=["claude-code"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        _update_config_target_platforms(tmp_path, ["cursor-cli", "gemini"], result)
+        _update_config_target_platforms(tmp_path, ["cursor-cli", "antigravity-cli"], result)
 
         info_logs = [
             log_entry
@@ -281,9 +279,9 @@ class TestObservability:
         log = info_logs[0]
         assert log["outcome"] == "success"
         assert log["previous"] == ["claude-code"]
-        assert log["current"] == ["claude-code", "cursor-cli", "gemini"]
-        assert log["added"] == ["cursor-cli", "gemini"]
-        assert log["requested"] == ["cursor-cli", "gemini"]
+        assert log["current"] == ["claude-code", "cursor-cli", "antigravity-cli"]
+        assert log["added"] == ["cursor-cli", "antigravity-cli"]
+        assert log["requested"] == ["cursor-cli", "antigravity-cli"]
 
     def test_no_change_emits_debug_unchanged_log(self, tmp_path: Path, captured_structlog: list[dict]) -> None:
         """When merge is a no-op, structlog emits config_target_platforms_unchanged."""
@@ -300,3 +298,52 @@ class TestObservability:
             if log_entry.get("event") == "config_target_platforms_unchanged"
         ]
         assert len(unchanged_logs) == 1
+
+
+@pytest.mark.integration
+class TestRetiredIdentifierMigration:
+    """Retired ids (gemini/aider — 2026-07-11) are DROPPED with a warning, not
+    migrated to a replacement (the on-disk artifacts differ)."""
+
+    def test_gemini_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
+
+        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "gemini", "opencode"])
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+
+        # Pure migration of the existing list (no new ide_targets).
+        _update_config_target_platforms(tmp_path, [], result)
+
+        platforms = _read_platforms(cfg)
+        assert "gemini" not in platforms
+        assert platforms == ["claude-code", "opencode"]
+        assert str(cfg) in result["updated"]
+        warnings = result.get("warnings", [])
+        assert any("gemini support retired" in w for w in warnings)
+        # The retired id must NOT be silently rewritten to antigravity-cli.
+        assert "antigravity-cli" not in platforms
+
+    def test_aider_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
+
+        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "aider"])
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+
+        _update_config_target_platforms(tmp_path, [], result)
+
+        platforms = _read_platforms(cfg)
+        assert platforms == ["claude-code"]
+        assert str(cfg) in result["updated"]
+        assert any("aider support retired" in w for w in result.get("warnings", []))
+
+    def test_retired_id_in_ide_targets_not_appended(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
+
+        cfg = _seed_config(tmp_path, target_platforms=["claude-code"])
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
+
+        _update_config_target_platforms(tmp_path, ["gemini"], result)
+
+        platforms = _read_platforms(cfg)
+        assert platforms == ["claude-code"]
+        assert "gemini" not in platforms

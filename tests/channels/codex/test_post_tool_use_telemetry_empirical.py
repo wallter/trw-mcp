@@ -2,8 +2,8 @@
 
 PRD-DIST-2402 audit finding P0-03.
 
-Verification date: 2026-05-28
-Codex version tested: codex-cli 0.133.0
+Verification date: 2026-07-09
+Codex version tested: codex-cli 0.144.1
 Method: Binary string analysis of Rust binary at
   ~/.nvm/versions/node/v24.14.0/lib/node_modules/@openai/
   codex/node_modules/@openai/codex-linux-x64/vendor/
@@ -39,10 +39,10 @@ import pytest
 
 CODEX_BIN = os.environ.get(
     "CODEX_BIN",
-    "/home/wallter/.nvm/versions/node/v24.14.0/bin/codex",
+    "/usr/local/bin/codex",
 )
 CODEX_RUST_BIN = (
-    "/home/wallter/.nvm/versions/node/v24.14.0/lib/node_modules/@openai/codex"
+    "/usr/local/lib/node_modules/@openai/codex"
     "/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
 )
 
@@ -71,7 +71,7 @@ def _rust_binary_available() -> bool:
     not (_rust_binary_available() and _strings_available()),
     reason=(
         "Codex Rust binary not found at expected path or 'strings' not available. "
-        "Install codex-cli 0.133.0 and ensure 'strings' (binutils) is installed."
+        "Install codex-cli 0.144.1 and ensure 'strings' (binutils) is installed."
     ),
 )
 def test_codex_hook_input_absent_from_binary() -> None:
@@ -186,7 +186,7 @@ def test_hook_script_reads_stdin_as_primary(tmp_path: Path) -> None:
 def test_hook_script_does_not_require_codex_hook_input_env_var(tmp_path: Path) -> None:
     """Empirical: hook works correctly WITHOUT CODEX_HOOK_INPUT env var.
 
-    Codex 0.133.0 never sets CODEX_HOOK_INPUT. The hook must function using
+    Codex 0.144.1 does not set CODEX_HOOK_INPUT. The hook must function using
     stdin alone — the env var fallback is forward-compat only.
     """
     from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script
@@ -292,7 +292,7 @@ def test_hook_script_documents_stdin_as_primary() -> None:
 def test_codex_version_matches_verified_version() -> None:
     """Guard: if Codex version changes, flag for re-verification.
 
-    This test captures the version at verification time (0.133.0).
+    This test captures the version at verification time (0.144.3).
     If the installed version changes significantly (major/minor bump),
     re-run scripts/verify-codex-hook-input.sh to confirm the mechanism
     hasn't changed.
@@ -306,8 +306,8 @@ def test_codex_version_matches_verified_version() -> None:
     assert result.returncode == 0, f"codex --version failed: {result.stderr}"
     version_output = result.stdout.strip()
 
-    # Verified at 0.133.0. Warn (don't fail) on version change.
-    verified_version = "0.133.0"
+    # Verified at 0.144.1. Warn (don't fail) on version change.
+    verified_version = "0.144.3"
     if verified_version not in version_output:
         pytest.warns(
             UserWarning,

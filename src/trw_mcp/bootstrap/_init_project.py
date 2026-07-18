@@ -11,6 +11,9 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.bootstrap._client_integrations import run_install_integrations
+from trw_mcp.canons.registry import install_view, load_registry
+
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
@@ -52,9 +55,6 @@ from trw_mcp.bootstrap._init_project_ide import (
 )
 from trw_mcp.bootstrap._init_project_ide import (
     _install_cursor_cli_artifacts as _install_cursor_cli_artifacts,
-)
-from trw_mcp.bootstrap._init_project_ide import (
-    _install_gemini_artifacts as _install_gemini_artifacts,
 )
 from trw_mcp.bootstrap._init_project_ide import (
     _install_opencode_artifacts as _install_opencode_artifacts,
@@ -175,7 +175,15 @@ def _copy_bundled_data_files(
     """Copy all bundled data files from ``_DATA_FILE_MAP`` to *target_dir*."""
     from . import _DATA_FILE_MAP
 
+    # Canon bodies are promoted together with VERSION.yaml and DEPLOYMENT.json
+    # by _write_version_yaml after config creation. Writing them here would
+    # expose a mixed generation if init were interrupted.
+    canon_destinations = {
+        destination for _, destination in install_view(load_registry()) if destination.startswith(".trw/frameworks/")
+    }
     for data_name, dest_rel in _DATA_FILE_MAP:
+        if dest_rel in canon_destinations:
+            continue
         _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result, on_progress)
 
 
@@ -303,8 +311,6 @@ def init_project(
     Returns:
         Dict with ``created``, ``skipped``, ``errors`` lists.
     """
-    from ._update_project import _write_manifest
-
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
 
     logger.info("project_init_started", project_root=str(target_dir), ide=ide)
@@ -319,6 +325,58 @@ def init_project(
             error="not a git repository",
         )
         return result
+
+    try:
+        _run_init_phases(
+            target_dir,
+            result,
+            force=force,
+            source_package=source_package,
+            test_path=test_path,
+            runs_root=runs_root,
+            ide=ide,
+            on_progress=on_progress,
+        )
+    except Exception as exc:  # justified: honor the dict-contract return, never raise a raw traceback
+        logger.exception("project_init_exception", project_root=str(target_dir))
+        result["errors"].append(f"init-project failed: {type(exc).__name__}: {exc}")
+
+    if result["errors"]:
+        logger.warning(
+            "project_init_partial",
+            project_root=str(target_dir),
+            errors=result["errors"][:3],
+        )
+    logger.info(
+        "project_init_ok",
+        project_root=str(target_dir),
+        dirs_created=len([p for p in result["created"] if p.endswith("/")]),
+        files_created=len(result["created"]),
+        skipped=len(result["skipped"]),
+        errors=len(result["errors"]),
+    )
+    return result
+
+
+def _run_init_phases(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    *,
+    force: bool,
+    source_package: str,
+    test_path: str,
+    runs_root: str,
+    ide: str | None,
+    on_progress: ProgressCallback,
+) -> None:
+    """Run the ordered init-project phases (steps 1-10).
+
+    Extracted from :func:`init_project` so its body sits behind a single
+    top-level exception boundary: any failure here is captured into
+    ``result['errors']`` by the caller rather than escaping as a raw traceback
+    that would violate the documented dict-contract return.
+    """
+    from ._update_project import _write_manifest
 
     # Resolve IDE targets before creating any provider-specific directories.
     # Otherwise new scaffold directories can pollute auto-detection.
@@ -382,43 +440,8 @@ def init_project(
             on_progress,
         )
 
-    # 7b. OpenCode artifacts (FR15: multi-IDE support)
-    if "opencode" in ide_targets:
-        _install_opencode_artifacts(target_dir, force=force, result=result)
-
-    # 7c. Cursor artifacts (FR05, FR06, FR07: cursor-ide and cursor-cli support)
-    if "cursor-ide" in ide_targets or "cursor-cli" in ide_targets:
-        _install_cursor_artifacts(target_dir, force=force, result=result, ide_targets=ide_targets)
-
-    # 7d. Codex artifacts
-    if "codex" in ide_targets:
-        _install_codex_artifacts(target_dir, force=force, result=result)
-
-    # 7e. Copilot artifacts (PRD-CORE-127)
-    if "copilot" in ide_targets:
-        _install_copilot_artifacts(target_dir, force=force, result=result)
-
-    # 7f. Gemini CLI artifacts
-    if "gemini" in ide_targets:
-        _install_gemini_artifacts(target_dir, force=force, result=result)
-
-        # 7f-1. Gemini distill channels (GM-01 BeforeTool hint hook).
-        # Opt-in via the shared cc03_hook_enabled gate — registering the hook
-        # is a clean no-op until the operator enables it (PRD-DIST-2459 FR-3).
-        try:
-            from ._gemini_distill_channels import install_gemini_distill_channels
-
-            gm_dc = install_gemini_distill_channels(target_dir, force=force)
-            result["created"].extend(gm_dc.get("created", []))
-            result.setdefault("updated", []).extend(gm_dc.get("updated", []))
-            result.setdefault("skipped", []).extend(gm_dc.get("preserved", []))
-            result["errors"].extend(gm_dc.get("errors", []))
-        except Exception as _exc:  # justified: fail-open, distill channels are additive
-            result.setdefault("warnings", []).append(f"gemini distill channels skipped: {_exc}")
-
-    # 7g. Antigravity CLI artifacts
-    if "antigravity-cli" in ide_targets:
-        _install_antigravity_artifacts(target_dir, force=force, result=result)
+    # 7b-7g. Registry-ordered client integrations (PRD-CORE-148).
+    run_install_integrations(target_dir, ide_targets, force=force, result=result)
 
     # 7g. PRD-CORE-149 FR04: write .trw/runtime/hook-env.sh so hook scripts
     # can honor per-profile hooks_enabled / nudge_enabled without re-reading
@@ -437,19 +460,3 @@ def init_project(
     # is tightened. Makes the README "`.trw/` dirs are 0700" claim true on the
     # install path, not just the run-scaffold path.
     _harden_trw_permissions(target_dir)
-
-    if result["errors"]:
-        logger.warning(
-            "project_init_partial",
-            project_root=str(target_dir),
-            errors=result["errors"][:3],
-        )
-    logger.info(
-        "project_init_ok",
-        project_root=str(target_dir),
-        dirs_created=len([p for p in result["created"] if p.endswith("/")]),
-        files_created=len(result["created"]),
-        skipped=len(result["skipped"]),
-        errors=len(result["errors"]),
-    )
-    return result

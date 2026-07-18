@@ -79,7 +79,11 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
         f"export PYTHONPATH={pip_target}:$PYTHONPATH\n"
         f'exec {sys.executable} -B -c "from trw_mcp.server import main; main()" "$@"\n'
     )
-    verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
+    # The import-verification calls (exclude the PRD-INFRA-150 downgrade-guard
+    # version-probe calls, which also use -c but run importlib.metadata).
+    verify_calls = [
+        call for call in run_calls if "-c" in call["cmd"] and str(call["cmd"][-1]).startswith("import trw_")
+    ]
     assert [call["cmd"] for call in verify_calls] == [
         [sys.executable, "-B", "-c", "import trw_memory"],
         [sys.executable, "-B", "-c", "import trw_mcp"],
@@ -89,7 +93,18 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
     assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in verify_calls)
     assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in verify_calls)
     assert all(call["env"]["XDG_CACHE_HOME"] == f"{pip_target}/.cache" for call in verify_calls)
+    assert all(call["env"]["XDG_DATA_HOME"] == f"{pip_target}/.local/share" for call in verify_calls)
     assert all(call["env"]["TMPDIR"] == f"{pip_target}/.tmp" for call in verify_calls)
+
+    install_calls = [
+        call
+        for call in run_calls
+        if isinstance(call["cmd"], list) and "pip" in call["cmd"] and "install" in call["cmd"]
+    ]
+    assert install_calls
+    assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in install_calls)
+    assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in install_calls)
+    assert all(call["env"]["XDG_DATA_HOME"] == f"{pip_target}/.local/share" for call in install_calls)
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
@@ -147,7 +162,10 @@ def test_phase_install_packages_keeps_default_install_behavior_without_pip_targe
     assert str(memory_whl) in installed_wheels, f"expected memory wheel install; got {installed_wheels}"
     assert str(mcp_whl) in installed_wheels, f"expected mcp wheel install; got {installed_wheels}"
     assert not wrapper_path.exists()
-    verify_calls = [call for call in run_calls if "-c" in call["cmd"]]
+    # Exclude the PRD-INFRA-150 downgrade-guard version-probe -c calls.
+    verify_calls = [
+        call for call in run_calls if "-c" in call["cmd"] and str(call["cmd"][-1]).startswith("import trw_")
+    ]
     assert [call["cmd"] for call in verify_calls] == [
         [sys.executable, "-B", "-c", "import trw_memory"],
         [sys.executable, "-B", "-c", "import trw_mcp"],
@@ -167,6 +185,9 @@ def test_phase_install_extras_passes_pip_target_to_all_optional_installs(install
         "pip_install",
         lambda python, package, label, ui, target_dir="": pip_calls.append((package, target_dir)) or True,
     )
+    # This unit test verifies pip-target propagation, not the heavyweight
+    # sentence-transformers runtime. Keep it deterministic under xdist host load.
+    monkeypatch.setattr(module, "verify_embeddings_runtime", lambda _python, target_dir="": True)
 
     features = module.phase_install_extras(
         ui,

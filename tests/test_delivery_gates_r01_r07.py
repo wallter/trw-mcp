@@ -15,6 +15,7 @@ import pytest
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_helpers import (
     _check_checkpoint_blocker_gate,
+    _check_complexity_drift,
     _check_review_file_count_gate,
     _count_file_modified_current_session,
     _events_since_last_session_start,
@@ -115,7 +116,7 @@ class TestReviewScopeBlock:
         # Write review.yaml so gate should NOT fire
         writer.write_yaml(
             run_dir / "meta" / "review.yaml",
-            {"verdict": "pass", "critical_count": 0},
+            {"verdict": "pass", "critical_count": 0, "substantive": True},
         )
 
         result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
@@ -163,6 +164,24 @@ class TestReviewScopeBlock:
         bad_events: list[dict[str, object]] = [{"broken": True}] * 10
         result = _check_review_file_count_gate(run_dir, bad_events)
         assert result is None
+
+    def test_delivery_gate_keeps_each_sessions_review_scope(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        events = [
+            {"event": "session_start", "session_id": "session-a"},
+            *[{"event": "file_modified", "file": f"src/a-{index}.py", "session_id": "session-a"} for index in range(6)],
+            {"event": "session_start", "session_id": "session-b"},
+        ]
+        (run_dir / "meta" / "events.jsonl").write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n",
+            encoding="utf-8",
+        )
+
+        assert "review_scope_block" in check_delivery_gates(run_dir, reader, session_id="session-a")
+        assert "review_scope_block" not in check_delivery_gates(run_dir, reader, session_id="session-b")
 
 
 # --- Session-scoped file_modified counting ---
@@ -224,6 +243,62 @@ class TestSessionScopedFileCounting:
         ]
         result = _events_since_last_session_start(events)
         assert len(result) == 2
+
+    def test_other_session_start_does_not_hide_callers_modifications(self) -> None:
+        events: list[dict[str, object]] = [
+            {"event": "session_start", "session_id": "session-a"},
+            *[{"event": "file_modified", "file": f"src/a-{index}.py", "session_id": "session-a"} for index in range(6)],
+            {"event": "session_start", "session_id": "session-b"},
+        ]
+
+        assert _count_file_modified_current_session(events, session_id="session-a") == 6
+        assert _count_file_modified_current_session(events, session_id="session-b") == 0
+
+    def test_same_session_compaction_start_does_not_reset_scope(self) -> None:
+        events: list[dict[str, object]] = [
+            {"event": "session_start", "session_id": "stable-a"},
+            *[{"event": "file_modified", "file": f"src/a-{index}.py", "session_id": "stable-a"} for index in range(6)],
+            {"event": "session_start", "session_id": "stable-a"},
+        ]
+
+        assert _count_file_modified_current_session(events, session_id="stable-a") == 6
+
+    def test_completed_delivery_starts_a_new_scope_for_same_session(self) -> None:
+        events: list[dict[str, object]] = [
+            {"event": "session_start", "session_id": "stable-a"},
+            *[
+                {"event": "file_modified", "file": f"src/old-{index}.py", "session_id": "stable-a"}
+                for index in range(6)
+            ],
+            {"event": "trw_deliver_complete", "session_id": "stable-a"},
+            {"event": "session_start", "session_id": "stable-a"},
+            {"event": "file_modified", "file": "src/new.py", "session_id": "stable-a"},
+        ]
+
+        assert _count_file_modified_current_session(events, session_id="stable-a") == 1
+
+    def test_legacy_boundary_does_not_hide_existing_scoped_events(self) -> None:
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "file": "src/before.py", "session_id": "stable-a"},
+            {"event": "session_start"},
+            {"event": "file_modified", "file": "src/after.py", "session_id": "stable-a"},
+        ]
+
+        assert _count_file_modified_current_session(events, session_id="stable-a") == 2
+
+    def test_complexity_drift_is_session_isolated(self) -> None:
+        events: list[dict[str, object]] = [
+            {"event": "session_start", "session_id": "session-a"},
+            *[{"event": "file_modified", "file": f"src/a-{index}.py", "session_id": "session-a"} for index in range(6)],
+            {"event": "session_start", "session_id": "session-b"},
+        ]
+        run_data: dict[str, object] = {
+            "complexity_class": "MINIMAL",
+            "complexity_signals": {"files_affected": 1},
+        }
+
+        assert _check_complexity_drift(run_data, events, "session-a") is not None
+        assert _check_complexity_drift(run_data, events, "session-b") is None
 
     def test_stale_run_70_files_current_session_1_file(
         self,
@@ -346,6 +421,126 @@ class TestSessionScopedFileCounting:
         result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
         assert result is not None
         assert "8 files modified" in result
+
+
+# --- FR02a: Distinct-path counting (PRD-QUAL-101) ---
+
+
+@pytest.mark.integration
+class TestDistinctPathCounting:
+    """PRD-QUAL-101-FR02a: the review-scope gate counts DISTINCT file paths.
+
+    Production ``file_modified`` events carry the modified path in a top-level
+    ``file`` field (written by ``post-tool-event.sh`` / ``append_event``). N
+    edits to one file must count once, not N times.
+    """
+
+    def test_ten_edits_one_file_counts_one(self) -> None:
+        """10 file_modified events for ONE file → distinct count of 1."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": f"2026-03-18T00:00:{i:02d}Z", "file": "src/app.py"} for i in range(10)
+        ]
+        assert _count_file_modified_current_session(events) == 1
+
+    def test_mixed_repeated_and_unique_paths(self) -> None:
+        """Repeated + unique paths collapse to the distinct set size."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "t0", "file": "src/a.py"},
+            {"event": "file_modified", "ts": "t1", "file": "src/a.py"},
+            {"event": "file_modified", "ts": "t2", "file": "src/a.py"},
+            {"event": "file_modified", "ts": "t3", "file": "src/b.py"},
+            {"event": "file_modified", "ts": "t4", "file": "src/c.py"},
+            {"event": "file_modified", "ts": "t5", "file": "src/c.py"},
+        ]
+        # 3 distinct paths (a, b, c) despite 6 occurrences
+        assert _count_file_modified_current_session(events) == 3
+
+    def test_ten_edits_one_file_does_not_block(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """Regression for the FR02a defect: 10 edits to ONE file, no review →
+        distinct count 1 ≤ threshold → NO block (occurrence counting would have
+        reported 10 and blocked)."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events = [
+            {"event": "file_modified", "ts": f"2026-03-18T00:00:{i:02d}Z", "file": "src/app.py"} for i in range(10)
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
+        assert result is None
+
+    def test_pathless_events_still_counted_per_event(self) -> None:
+        """Events lacking a ``file`` field are counted per-event (not dropped),
+        so attribution gaps can only make the gate stricter, never weaker."""
+        events: list[dict[str, object]] = [{"event": "file_modified", "ts": f"t{i}"} for i in range(6)]
+        assert _count_file_modified_current_session(events) == 6
+
+    def test_pathless_events_block_when_over_threshold(
+        self,
+        run_dir: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """6 pathless file_modified events → count 6 > threshold → block fires."""
+        events_path = run_dir / "meta" / "events.jsonl"
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": f"2026-03-18T00:00:{i:02d}Z"} for i in range(6)
+        ]
+        events_path.write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _check_review_file_count_gate(run_dir, _read_run_events(run_dir, reader))
+        assert result is not None
+        assert "6 files modified" in result
+
+    def test_mixed_pathed_and_pathless(self) -> None:
+        """Distinct paths + per-event pathless combine additively."""
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "t0", "file": "src/a.py"},
+            {"event": "file_modified", "ts": "t1", "file": "src/a.py"},  # dup → not counted
+            {"event": "file_modified", "ts": "t2", "file": "src/b.py"},
+            {"event": "file_modified", "ts": "t3"},  # pathless → +1
+            {"event": "file_modified", "ts": "t4"},  # pathless → +1
+        ]
+        # 2 distinct paths + 2 pathless = 4
+        assert _count_file_modified_current_session(events) == 4
+
+    def test_distinct_counting_respects_session_boundary(self) -> None:
+        """FR02a distinct counting composes with the session_start boundary:
+        pre-boundary edits are excluded, distinct-path semantics apply after."""
+        events: list[dict[str, object]] = [
+            # previous session: many edits to several files (must be excluded)
+            {"event": "file_modified", "ts": "t0", "file": "src/old1.py"},
+            {"event": "file_modified", "ts": "t1", "file": "src/old2.py"},
+            {"event": "file_modified", "ts": "t2", "file": "src/old3.py"},
+            {"event": "session_start", "ts": "t3"},
+            # current session: 4 edits but only 1 distinct file
+            {"event": "file_modified", "ts": "t4", "file": "src/new.py"},
+            {"event": "file_modified", "ts": "t5", "file": "src/new.py"},
+            {"event": "file_modified", "ts": "t6", "file": "src/new.py"},
+            {"event": "file_modified", "ts": "t7", "file": "src/new.py"},
+        ]
+        assert _count_file_modified_current_session(events) == 1
+
+    def test_absolute_and_relative_same_file_dedupe(self, run_dir: Path) -> None:
+        """When repo_root is known, an absolute and a repo-relative reference to
+        the same file dedupe to one (FR02a normalization)."""
+        from trw_mcp.tools._delivery_helpers import _count_file_modified
+
+        repo_root = run_dir / "repo"
+        (repo_root / "src").mkdir(parents=True)
+        events: list[dict[str, object]] = [
+            {"event": "file_modified", "ts": "t0", "file": str(repo_root / "src" / "x.py")},
+            {"event": "file_modified", "ts": "t1", "file": "src/x.py"},
+        ]
+        assert _count_file_modified(events, repo_root) == 1
 
 
 # --- R-07: Checkpoint blocker warning ---

@@ -23,7 +23,8 @@ import math
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+
+from typing_extensions import TypedDict
 
 from trw_mcp.scoring._utils import _LN2, TRWConfig, _clamp01, get_config, logger
 from trw_mcp.state.skill_surface_tracking import (

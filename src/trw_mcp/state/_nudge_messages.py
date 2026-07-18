@@ -179,7 +179,7 @@ def _build_check_message(context: NudgeContext, urgency: str) -> str | None:
     if context.build_passed is not True:
         return None
 
-    suffix = "independent verification catches spec drift that passing tests miss. THEN: trw_deliver()"
+    suffix = "independent verification catches spec drift that passing tests miss"
     if urgency == "high":
         return f"NEXT: trw_review() SHOULD be performed — {suffix}"
     if urgency == "medium":
@@ -201,9 +201,8 @@ def _review_message(context: NudgeContext) -> str:
 def _checkpoint_message() -> str:
     """Return the checkpoint reminder message."""
     return (
-        "Progress saved. Quick check: have you recorded what you discovered so far? "
-        "trw_learn() persists your insights across sessions \u2014 "
-        "even a one-line root cause compounds for future agents."
+        "Progress saved. If you found a non-obvious reusable insight, trw_learn() "
+        "persists it across sessions. Do not manufacture a learning for routine work."
     )
 
 
@@ -211,23 +210,15 @@ def _learn_message(ceremony_mode: str) -> str:
     """Return the learning follow-up message."""
     if ceremony_mode == "light":
         return "Learning persisted. Continue the work, then call trw_deliver() when done."
-    return (
-        "Learning persisted. NEXT: trw_checkpoint() at next milestone. "
-        "THEN: trw_build_check() when the work is complete."
-    )
+    return "Learning persisted. NEXT: trw_checkpoint() at the next milestone."
 
 
 def _session_start_message(ceremony_mode: str) -> str:
     """Return the session-start guidance message."""
     if ceremony_mode == "light":
-        return (
-            "What's your approach? State it before editing files. "
-            "THEN: trw_init() for new work or trw_status() to resume."
-        )
+        return "State your approach before editing, then call trw_init() for new work or trw_status() to resume."
     return (
-        "NEXT: Read FRAMEWORK.md (phases, gates, reversion rules). "
-        "What's your approach? State it before editing files. "
-        "THEN: trw_init() for new work or trw_status() to resume."
+        "State your approach after reading FRAMEWORK.md, then call trw_init() for new work or trw_status() to resume."
     )
 
 
@@ -300,6 +291,16 @@ def _assemble_nudge(
     _TRUNCATION_MARKER = " [truncated]"
     _MARKER_LEN = len(_TRUNCATION_MARKER)  # 12
 
+    def _record_budget_exhausted(component: str) -> None:
+        logger.debug(
+            "nudge_skipped",
+            reason="budget_exhausted",
+            pool="assembly",
+            learning_id="",
+            client_id="",
+            component=component,
+        )
+
     components: list[str] = [status_line]
 
     # Check remaining budget before adding reactive_msg
@@ -311,18 +312,25 @@ def _assemble_nudge(
                 components.append(reactive_msg)
             else:
                 # Truncate reactive_msg to fit within budget
+                _record_budget_exhausted("reactive_msg")
                 if remaining > _MARKER_LEN:
                     components.append(reactive_msg[: remaining - _MARKER_LEN] + _TRUNCATION_MARKER)
                 else:
                     components.append(reactive_msg[:remaining])
 
     current = "\n".join(components)
-    if next_then and len(current) + len(next_then) + 1 <= budget:
-        components.append(next_then)
-        current = "\n".join(components)
+    if next_then:
+        if len(current) + len(next_then) + 1 <= budget:
+            components.append(next_then)
+            current = "\n".join(components)
+        else:
+            _record_budget_exhausted("next_then")
 
-    if reversion and len(current) + len(reversion) + 1 <= budget:
-        components.append(reversion)
+    if reversion:
+        if len(current) + len(reversion) + 1 <= budget:
+            components.append(reversion)
+        else:
+            _record_budget_exhausted("reversion")
 
     result = "\n".join(components)
 

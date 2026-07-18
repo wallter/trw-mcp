@@ -17,11 +17,14 @@ class ReviewFindingDict(TypedDict, total=False):
     """One finding from ``trw_review``."""
 
     reviewer_role: str
-    confidence: int
+    confidence: float
     category: str
     severity: str
     description: str
     line: int
+    file_path: str
+    suggestion: str
+    evidence: str
 
 
 class ReviewModeResult(TypedDict, total=False):
@@ -60,6 +63,18 @@ class ManualReviewResult(ReviewResultBase, total=False):
     info_count: int
     run_path: str | None
     review_yaml: str
+    substantive: bool
+    non_substantive_reason: str
+    # PRD-CORE-213-FR01: reviewer provenance block
+    # {source, run_id, session_id, receipt_id?, ts}. ``source`` is one of
+    # self|subagent|cross_model|operator, derived honestly from the review mode
+    # (self for manual) unless set explicitly. ``receipt_id`` is present only for
+    # independent sources. Consumed by the FR02/FR03 independence classifier.
+    reviewer: dict[str, object]
+    review_receipt_id: str
+    review_plan_id: str
+    typed_receipt_state: str
+    typed_receipt_reason: str
 
 
 class CrossModelReviewResult(ReviewResultBase, total=False):
@@ -83,6 +98,10 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
       findings (0 on the degraded path), so a consumer seeing ``verdict='block'``
       with ``total_findings=0`` reads this field to find the findings the verdict
       was actually computed from. 0 on the cross-family path.
+    - ``auto_analysis_limited`` / ``limited_reason`` / ``substantive`` preserve
+      the fallback analysis honesty labels. A pattern-scan-only degradation is
+      non-substantive; realized cross-family or substantive same-family evidence
+      remains substantive.
     """
 
     mode: str
@@ -94,6 +113,13 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
     single_family_caveat: str
     honeypots_present: bool
     same_family_findings_count: int
+    auto_analysis_limited: bool
+    limited_reason: str
+    substantive: bool
+    review_receipt_id: str
+    review_plan_id: str
+    typed_receipt_state: str
+    typed_receipt_reason: str
 
 
 class ReconcileReviewResult(TypedDict, total=False):
@@ -166,7 +192,12 @@ class AutoReviewResult(TypedDict, total=False):
     review_yaml: str
     auto_analysis_limited: bool
     limited_reason: str
+    substantive: bool
     # Cross-family coverage stamp (PRD-QUAL-108). Auto mode is same-family
     # today, so coverage is always ``single_family`` (OQ1 resolution).
     review_family_coverage: str
     single_family_caveat: str
+    review_receipt_id: str
+    review_plan_id: str
+    typed_receipt_state: str
+    typed_receipt_reason: str

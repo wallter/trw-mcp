@@ -240,14 +240,6 @@ class TestLightClientGateInjection:
         assert _DELIVER_GATE_PHRASE in body
         assert _SESSION_START_PHRASE in body
 
-    def test_gemini_instructions_gate_present(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._gemini import generate_gemini_instructions
-
-        generate_gemini_instructions(tmp_path, force=True)
-        body = (tmp_path / "GEMINI.md").read_text(encoding="utf-8")
-        assert _DELIVER_GATE_PHRASE in body
-        assert _SESSION_START_PHRASE in body
-
     def test_gate_text_survives_advisory_deliver_gate_mode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -258,7 +250,6 @@ class TestLightClientGateInjection:
         reload_config(cfg)
         try:
             from trw_mcp.bootstrap._copilot import generate_copilot_instructions
-            from trw_mcp.bootstrap._gemini import generate_gemini_instructions
             from trw_mcp.bootstrap._opencode import (
                 generate_codex_instructions,
                 generate_opencode_instructions,
@@ -267,13 +258,11 @@ class TestLightClientGateInjection:
             generate_opencode_instructions(tmp_path, "generic", force=True)
             generate_codex_instructions(tmp_path, force=True)
             generate_copilot_instructions(tmp_path, force=True)
-            generate_gemini_instructions(tmp_path, force=True)
 
             for rel in (
                 ".opencode/INSTRUCTIONS.md",
                 ".codex/INSTRUCTIONS.md",
                 ".github/copilot-instructions.md",
-                "GEMINI.md",
             ):
                 body = (tmp_path / rel).read_text(encoding="utf-8")
                 assert _DELIVER_GATE_PHRASE in body, f"gate text suppressed in {rel}"
@@ -522,6 +511,46 @@ class TestLintInstructionSurfaces:
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 0, proc.stdout
 
+    def test_externalized_claude_carrier_lints_imported_gate(self, tmp_path: Path) -> None:
+        """An @.trw carrier is compliant when its imported protocol has the gate."""
+        good_prefix = _bundled_lifecycle_hash_prefix()
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "INSTRUCTIONS.md").write_text(
+            f"<!-- trw:lifecycle-sync:sha256-{good_prefix} -->\n{_DELIVER_GATE_PHRASE} at least one of (a)/(b)/(c).\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "CLAUDE.md").write_text(
+            "<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
+            encoding="utf-8",
+        )
+
+        proc = _run_lint("--strict", cwd=tmp_path)
+
+        assert proc.returncode == 0, proc.stdout
+
+    def test_standard_externalized_carrier_lints_in_clean_clone(self, tmp_path: Path) -> None:
+        """The canonical runtime sidecar may be absent before the first sync."""
+        (tmp_path / "CLAUDE.md").write_text(
+            "<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
+            encoding="utf-8",
+        )
+
+        proc = _run_lint("--strict", cwd=tmp_path)
+
+        assert proc.returncode == 0, proc.stdout
+
+    def test_arbitrary_missing_import_still_fails_closed(self, tmp_path: Path) -> None:
+        """Only the standard generated sidecar receives canonical fallback."""
+        (tmp_path / "CLAUDE.md").write_text(
+            "<!-- trw:start -->\n@missing-instructions.md\n<!-- trw:end -->\n",
+            encoding="utf-8",
+        )
+
+        proc = _run_lint("--strict", cwd=tmp_path)
+
+        assert proc.returncode == 1, proc.stdout
+        assert "missing_gate" in proc.stdout
+
     def test_default_mode_exits_0_with_report(self, tmp_path: Path) -> None:
         """Default (non-strict) mode exits 0 even with findings, printing a report."""
         block = "<!-- trw:start -->\nno gate here\n<!-- trw:end -->\n"
@@ -555,7 +584,7 @@ def test_marker_hash_helper_is_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_framework_md(root: Path, version_line: str = "v26_TRW — MODEL-AGNOSTIC FRAMEWORK") -> None:
+def _write_framework_md(root: Path, version_line: str = "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK") -> None:
     """Write a fake canonical FRAMEWORK.md under <root>/.trw/frameworks/."""
     fw = root / ".trw" / "frameworks"
     fw.mkdir(parents=True, exist_ok=True)
@@ -594,7 +623,7 @@ class TestDuplicateBlock:
 
     def test_single_block_clean(self, tmp_path: Path) -> None:
         """A file with exactly one TRW block is not flagged duplicate_block."""
-        content = "<!-- trw:start -->\n" f"{_DELIVER_GATE_PHRASE} ...\n" "<!-- trw:end -->\n"
+        content = f"<!-- trw:start -->\n{_DELIVER_GATE_PHRASE} ...\n<!-- trw:end -->\n"
         (tmp_path / "AGENTS.md").write_text(content, encoding="utf-8")
         _write_framework_md(tmp_path)
         proc = _run_lint("--strict", cwd=tmp_path)
@@ -629,9 +658,7 @@ class TestGluedMarker:
     def test_marker_glued_midline_flagged(self, tmp_path: Path) -> None:
         """A start marker glued onto the end of a prose line -> glued_marker."""
         content = (
-            "# Notes\n"
-            "Approve this before review.<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
-            "more text\n"
+            "# Notes\nApprove this before review.<!-- TRW AUTO-GENERATED — do not edit between markers -->\nmore text\n"
         )
         (tmp_path / "AGENTS.md").write_text(content, encoding="utf-8")
         _write_framework_md(tmp_path)
@@ -641,11 +668,7 @@ class TestGluedMarker:
 
     def test_marker_on_own_line_clean(self, tmp_path: Path) -> None:
         """The same marker on its own line is a legitimate boundary, not glued."""
-        content = (
-            "<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
-            "body\n"
-            "<!-- /TRW AUTO-GENERATED -->\n"
-        )
+        content = "<!-- TRW AUTO-GENERATED — do not edit between markers -->\nbody\n<!-- /TRW AUTO-GENERATED -->\n"
         (tmp_path / "AGENTS.md").write_text(content, encoding="utf-8")
         _write_framework_md(tmp_path)
         proc = _run_lint("--strict", cwd=tmp_path)
@@ -653,22 +676,22 @@ class TestGluedMarker:
 
 
 class TestVersionDrift:
-    """version_drift: a vN_TRW / TRW vN token disagreeing with canonical FRAMEWORK.md."""
+    """version_drift: a vN[.M]_TRW / TRW vN[.M] token disagreeing with canon."""
 
     def test_stale_version_flagged_with_correct_version(self, tmp_path: Path) -> None:
-        """v25_TRW token while canonical is v26 -> version_drift citing 25 vs 26."""
+        """v25_TRW token while canonical is v26.1 -> version_drift."""
         (tmp_path / "AGENTS.md").write_text("This follows the v25_TRW protocol.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 1, proc.stdout
         assert "version_drift" in proc.stdout, proc.stdout
         assert "v25_TRW" in proc.stdout
-        assert "v26" in proc.stdout
+        assert "v26.1" in proc.stdout
 
     def test_matching_version_clean(self, tmp_path: Path) -> None:
-        """A v26_TRW token matching canonical v26 is not flagged."""
-        (tmp_path / "AGENTS.md").write_text("This follows the v26_TRW protocol.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        """A v26.1_TRW token matching canonical v26.1 is not flagged."""
+        (tmp_path / "AGENTS.md").write_text("This follows the v26.1_TRW protocol.\n", encoding="utf-8")
+        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert "version_drift" not in proc.stdout, proc.stdout
 
@@ -685,7 +708,7 @@ class TestVersionDrift:
     def test_trw_v_prose_form_flagged(self, tmp_path: Path) -> None:
         """The 'TRW v25' prose form is also detected (case-insensitive)."""
         (tmp_path / "CLAUDE.md").write_text("Built on TRW v25 conventions.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert "version_drift" in proc.stdout, proc.stdout
 
@@ -695,9 +718,7 @@ class TestHardcodedCount:
 
     def test_baked_learning_and_session_counts_flagged(self, tmp_path: Path) -> None:
         """'2407 learnings from 1578 prior sessions' -> hardcoded_count."""
-        (tmp_path / "AGENTS.md").write_text(
-            "Start with 2407 learnings from 1578 prior sessions.\n", encoding="utf-8"
-        )
+        (tmp_path / "AGENTS.md").write_text("Start with 2407 learnings from 1578 prior sessions.\n", encoding="utf-8")
         _write_framework_md(tmp_path)
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 1, proc.stdout
@@ -706,8 +727,7 @@ class TestHardcodedCount:
     def test_suppression_marker_clears_hardcoded_count(self, tmp_path: Path) -> None:
         """A whole-line trw-lint-allow: hardcoded_count opts the file out."""
         (tmp_path / "AGENTS.md").write_text(
-            "<!-- trw-lint-allow: hardcoded_count -->\n"
-            'NARRATOR: "Across 249 sessions, 492 learnings compound."\n',
+            '<!-- trw-lint-allow: hardcoded_count -->\nNARRATOR: "Across 249 sessions, 492 learnings compound."\n',
             encoding="utf-8",
         )
         _write_framework_md(tmp_path)
@@ -773,8 +793,7 @@ class TestSuppressionGenerality:
     def test_suppress_one_kind_leaves_others(self, tmp_path: Path) -> None:
         """trw-lint-allow: machine_path suppresses machine_path but NOT hardcoded_count."""
         (tmp_path / "CLAUDE.md").write_text(
-            "<!-- trw-lint-allow: machine_path -->\n"
-            "Path /home/wallter/x and 2407 learnings here.\n",
+            "<!-- trw-lint-allow: machine_path -->\nPath /home/wallter/x and 2407 learnings here.\n",
             encoding="utf-8",
         )
         _write_framework_md(tmp_path)
@@ -786,8 +805,7 @@ class TestSuppressionGenerality:
     def test_suppress_all_clears_every_drift_kind(self, tmp_path: Path) -> None:
         """trw-lint-allow: all suppresses every drift kind for the file."""
         (tmp_path / "CLAUDE.md").write_text(
-            "<!-- trw-lint-allow: all -->\n"
-            "Path /home/wallter/x, 2407 learnings, v25_TRW.\n",
+            "<!-- trw-lint-allow: all -->\nPath /home/wallter/x, 2407 learnings, v25_TRW.\n",
             encoding="utf-8",
         )
         _write_framework_md(tmp_path)

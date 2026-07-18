@@ -59,6 +59,7 @@ class PrdFrontmatterDict(TypedDict, total=False):
     confidence: dict[str, object]
     evidence: dict[str, object]
     traceability: dict[str, object]
+    verification: dict[str, object]
     quality_gates: dict[str, object]
     dates: dict[str, object]
     template_version: str | None
@@ -92,7 +93,10 @@ class ValidateResultDict(TypedDict, total=False):
     valid: bool
     completeness_score: float
     traceability_coverage: float
+    measured_traceability_coverage: float
+    verification_mapping_coverage: float
     ambiguity_rate: float
+    prd_status: str
     sections_found: list[str]
     sections_expected: list[str]
     failures: list[ValidationFailureDict]
@@ -101,19 +105,41 @@ class ValidateResultDict(TypedDict, total=False):
     grade: str
     dimensions: list[DimensionScoreDict]
     improvement_suggestions: list[ImprovementSuggestionDict]
+    # PRD token-bloat W5: compact-by-default. ``smell_findings`` is grouped by
+    # category (``{category, count, severity, suggestion, sample_lines[:5]}``)
+    # in compact mode and a flat per-occurrence list in verbose mode.
     smell_findings: list[dict[str, object]]
-    ears_classifications: list[dict[str, object]]
-    readability: dict[str, float]
+    # Compact mode: ``{counts: {pattern: n}, actionable_lines: [int]}``.
+    # Verbose mode: full per-line list of ``{line_number, pattern, text}``.
+    ears_classifications: list[dict[str, object]] | dict[str, object]
     section_scores: list[SectionScoreDict]
+    # True when the response was compacted (verbose=False); False otherwise.
+    compact: bool
     effective_risk_level: str
     risk_scaled: bool
     status_drift_warnings: list[str]
+    # Integrity warnings surfaced from ``run_prd_integrity_checks``. When the
+    # repo bare-filename basename index truncates at a runaway cap
+    # (path_index_max_files / path_index_max_seconds), grounding degrades to
+    # advisory-skip and a LOUD leading entry prefixed ``path_index_partial:``
+    # is inserted here naming how many references were skipped. An agent reading
+    # validation output MUST treat that marker as "hallucinated-path detection
+    # was NOT performed" rather than "all paths grounded".
     integrity_warnings: list[str]
     # Wiring gate (PRD-CORE-190 FR03): advisory wiring_gate_warning /
     # seam_schema_warning strings for public-surface FRs lacking consumer/
     # wiring_test/seam coverage. Always present (possibly empty); block-mode
     # failures additionally appear in `failures` with rule WIRING_GATE_FAIL.
     wiring_gate_warnings: list[str]
+    # PRD-FIX-112: cooperative budget guard + fast mode. ``validation_partial`` is
+    # True when fast mode was requested OR the ``prd_validate_budget_seconds``
+    # wall-clock budget was exceeded mid-run, in which case ``checks_skipped``
+    # names the skipped dynamic check groups (see DYNAMIC_CHECK_GROUPS /
+    # INTEGRITY_CHECK_GROUPS) and ``integrity_warnings`` carries a leading
+    # ``validation_partial:`` marker. A partial result is NEVER a silent pass —
+    # treat it as "the skipped groups were NOT grounded".
+    validation_partial: bool
+    checks_skipped: list[str]
     # Ceremony
     ceremony_status: str
     # Substrate-First gate (PRD-DIST-218 FR-2)

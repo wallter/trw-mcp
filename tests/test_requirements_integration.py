@@ -90,6 +90,74 @@ prd:
 
 
 # ---------------------------------------------------------------------------
+# prd_create — PRD-QUAL-121-FR02 identity collision gate
+# ---------------------------------------------------------------------------
+
+
+class TestPrdCreateIdentityCollisionGate:
+    """FR02 acceptance: an existing active or archived identifier blocks creation
+    BEFORE any write; the failure names both paths."""
+
+    def test_explicit_sequence_collision_fails_with_both_paths_and_writes_nothing(self, tmp_path: Path) -> None:
+        from trw_mcp.exceptions import ValidationError
+
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        existing = prds_dir / "PRD-CORE-153-registry-hygiene.md"
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_text("---\nprd:\n  id: PRD-CORE-153\n  title: Registry hygiene\n---\n")
+        before = sorted(p.name for p in prds_dir.glob("*.md"))
+
+        tools = _get_tools()
+        with pytest.raises(ValidationError) as excinfo:
+            tools["trw_prd_create"].fn(
+                input_text="Conflicting thing",
+                category="CORE",
+                sequence=153,
+                title="Conflicting thing",
+            )
+
+        message = str(excinfo.value)
+        assert "PRD-CORE-153" in message
+        assert "PRD-CORE-153-registry-hygiene.md" in message  # existing owner path
+        assert str(prds_dir / "PRD-CORE-153.md") in message  # intended path
+        # Nothing was written.
+        assert sorted(p.name for p in prds_dir.glob("*.md")) == before
+
+    def test_archived_identifier_blocks_creation(self, tmp_path: Path) -> None:
+        from trw_mcp.exceptions import ValidationError
+
+        archive = tmp_path / "docs" / "requirements-aare-f" / "archive" / "prds"
+        archive.mkdir(parents=True)
+        (archive / "PRD-CORE-042.md").write_text("---\nprd:\n  id: PRD-CORE-042\n---\n")
+
+        tools = _get_tools()
+        with pytest.raises(ValidationError, match="PRD-CORE-042"):
+            tools["trw_prd_create"].fn(
+                input_text="Reuse attempt",
+                category="CORE",
+                sequence=42,
+                title="Reuse attempt",
+            )
+
+    def test_auto_allocation_skips_suffixed_owner_and_succeeds(self, tmp_path: Path) -> None:
+        prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
+        prds_dir.mkdir(parents=True)
+        (prds_dir / "PRD-CORE-153-registry-hygiene.md").write_text(
+            "---\nprd:\n  id: PRD-CORE-153\n  title: Registry hygiene\n---\n"
+        )
+
+        tools = _get_tools()
+        result = tools["trw_prd_create"].fn(
+            input_text="New feature",
+            category="CORE",
+            title="New feature",
+        )
+        # The allocator must NOT re-issue 153 (suffixed stem owns it).
+        assert result["prd_id"] == "PRD-CORE-154"
+        assert (prds_dir / "PRD-CORE-154.md").exists()
+
+
+# ---------------------------------------------------------------------------
 # prd_create — edge cases not covered
 # ---------------------------------------------------------------------------
 
@@ -240,3 +308,57 @@ class TestExtractPrefillEdgeCases:
 
         result = _extract_prefill(123)  # type: ignore[arg-type]
         assert result["file_refs"] == []
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-114-NFR05 — cache/verification hardening preserves public contract
+# ---------------------------------------------------------------------------
+
+
+class TestCacheHardeningBackwardCompatibility:
+    """The public trw_prd_validate response stays compatible; new keys are additive."""
+
+    def test_prd_validate_cache_hardening_preserves_public_contract(self, tmp_path: Path) -> None:
+        prd_path = _create_prd_file(
+            tmp_path,
+            prd_id="PRD-CORE-114",
+            status="draft",
+            with_traceability=True,
+            with_fr=True,
+            with_matrix=True,
+        )
+        tools = _get_tools()
+        first = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+        second = tools["trw_prd_validate"].fn(prd_path=str(prd_path))
+
+        # Prior public response keys remain present.
+        for key in (
+            "path",
+            "valid",
+            "completeness_score",
+            "traceability_coverage",
+            "measured_traceability_coverage",
+            "total_score",
+            "quality_tier",
+            "grade",
+            "failures",
+            "cache",
+        ):
+            assert key in first, f"missing public response key: {key}"
+
+        # Validity and severity are stable across a cache miss then hit.
+        assert first["valid"] == second["valid"]
+        assert first["total_score"] == second["total_score"]
+        assert {f["severity"] for f in first["failures"]} == {f["severity"] for f in second["failures"]}
+        assert first["cache"]["hit"] is False
+        assert second["cache"]["hit"] is True
+
+        # New cache diagnostics are additive and do not weaken the result.
+        assert second["cache"]["storage_version"] == 2
+        assert second["cache"]["miss_reason"] == ""
+        assert second["cache"]["degraded"] is False
+        # Token-bloat W5: the deprecated ``implementation_test_link_coverage``
+        # alias (an exact duplicate of measured_traceability_coverage) is no
+        # longer emitted on the wire; the canonical metric remains.
+        assert isinstance(first["measured_traceability_coverage"], float)
+        assert "implementation_test_link_coverage" not in first

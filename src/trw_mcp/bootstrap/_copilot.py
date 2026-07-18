@@ -30,7 +30,6 @@ from ._file_ops import (
     _new_result,
     _record_write,
     read_json_object,
-    smart_merge_marker_section,
     write_instruction_file_with_merge,
 )
 
@@ -126,7 +125,7 @@ This project uses the TRW (The Real Work) framework for structured AI-assisted d
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On discoveries | Saves findings for future sessions |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action after validation | Persists session work only after build-check evidence or an explicit acceptable-failure note |
+| `trw_deliver()` | Last action after validation | Persists work after build evidence or a valid structured acceptable-failure record |
 
 ## Available MCP Tools
 
@@ -144,20 +143,6 @@ TRW tools are available via MCP server. Key tools: `trw_session_start`, `trw_lea
 {_copilot_deliver_gate_block()}
 {_COPILOT_TRW_END_MARKER}
 """
-
-
-def _smart_merge_instructions(existing: str, trw_content: str) -> str:
-    """Backward-compatible wrapper around the shared marker-merge helper.
-
-    Kept so external callers / tests targeting this private symbol still work.
-    New code should call :func:`smart_merge_marker_section` directly.
-    """
-    return smart_merge_marker_section(
-        existing,
-        trw_content,
-        start_marker=_COPILOT_TRW_START_MARKER,
-        end_marker=_COPILOT_TRW_END_MARKER,
-    )
 
 
 def generate_copilot_instructions(
@@ -195,7 +180,7 @@ _PATH_SCOPED_TEMPLATES: dict[str, PathScopedTemplate] = {
 - Follow `test_*.py` naming convention
 - Add type annotations to test functions
 - Use fixtures for shared setup
-- Target 90%+ coverage for new code
+- Meet the project-configured coverage gate; if none exists, report measured coverage without inventing a percentage
 """,
     },
     "typescript-react.instructions.md": {

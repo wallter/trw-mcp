@@ -24,7 +24,7 @@ _delivery      — TrustIncrementResult, TelemetryStepResult, PublishLearningsRe
 _audit         — AuditReport, AuditLearningsResult, etc.
 _dashboard     — CeremonyTrendResult, CoverageTrendResult, ReviewTrendResult, etc.
 _orchestration — TrwStatusDict, WaveProgressDict, CheckpointRecordDict, etc.
-_trust         — TrustLevelResult, HumanReviewResult, TrustSessionIncrementResult
+_trust         — TrustLevelResult, HumanReviewResult
 _export        — ExportSummary, ExportMetadata, SyncIndexMdResult, etc.
 _dedup         — DedupHandleResult
 _bootstrap     — BootstrapFileResult (IDE config generation return shapes)
@@ -222,6 +222,7 @@ from trw_mcp.models.typed_dicts._telemetry import (
 from trw_mcp.models.typed_dicts._tools import (
     BuildCheckResultDict,
     CheckpointResultDict,
+    Degradation,
     DeliverResultDict,
     KnowledgeSyncResultDict,
     LearnResultDict,
@@ -240,7 +241,6 @@ from trw_mcp.models.typed_dicts._tools import (
 from trw_mcp.models.typed_dicts._trust import (
     HumanReviewResult,
     TrustLevelResult,
-    TrustSessionIncrementResult,
 )
 
 # _validation
@@ -309,6 +309,7 @@ __all__ = [
     "CoverageTrendResult",
     "CrossModelReviewResult",
     "DedupHandleResult",
+    "Degradation",
     "DegradationAlertResult",
     "DeliverGateScanDict",
     "DeliverResultDict",
@@ -392,7 +393,6 @@ __all__ = [
     "TrwAdoptRunResultDict",
     "TrwHeartbeatResultDict",
     "TrustLevelResult",
-    "TrustSessionIncrementResult",
     "TrwInitConfigDataDict",
     "TrwStatusDict",
     "ValidateResultDict",

@@ -52,6 +52,8 @@ from trw_mcp.middleware._mcp_security_helpers import (
 from trw_mcp.middleware._mcp_security_helpers import (
     resolve_runtime_peer_metadata as resolve_runtime_peer_metadata,
 )
+from trw_mcp.middleware._mcp_security_list_tools import filter_listed_tools, safe_session_id
+from trw_mcp.middleware.phase_exposure import resolve_active_phase
 from trw_mcp.security.anomaly_detector import (
     AnomalyDetector,
     AnomalyObservation,
@@ -63,23 +65,7 @@ from trw_mcp.security.mcp_registry import MCPAllowlist, MCPRegistry
 logger = structlog.get_logger(__name__)
 
 
-def _safe_session_id(fastmcp_ctx: object | None) -> str:
-    """Return ``ctx.session_id`` or ``""`` when no request context exists.
-
-    Recent FastMCP versions raise :class:`RuntimeError` from the
-    ``Context.session_id`` property descriptor when accessed outside a
-    request context (rather than returning a generated id).  ``getattr``
-    only catches :class:`AttributeError`, so we need an explicit
-    ``try``/``except`` to keep startup-time and test-time code paths
-    (where there is no live MCP session) from blowing up.
-    """
-    if fastmcp_ctx is None:
-        return ""
-    try:
-        value = fastmcp_ctx.session_id  # type: ignore[attr-defined]
-    except (AttributeError, RuntimeError):
-        return ""
-    return value if isinstance(value, str) else ""
+_safe_session_id = safe_session_id
 
 
 class MCPSecurityMiddleware(Middleware):
@@ -325,23 +311,7 @@ class MCPSecurityMiddleware(Middleware):
         context: MiddlewareContext[ListToolsRequest],
         call_next: CallNext[ListToolsRequest, Sequence[Tool]],
     ) -> Sequence[Tool]:
-        tools = list(await call_next(context))
-        fastmcp_ctx = context.fastmcp_context
-        sid = _safe_session_id(fastmcp_ctx)
-        _, run_id = resolve_run_context(
-            configured_run_dir=self._run_dir,
-            session_id=sid,
-            fastmcp_context=fastmcp_ctx,
-        )
-        allowed_ads = self.filter_advertised_tools(
-            transport=resolve_transport_from_ctx(fastmcp_ctx),
-            advertisements=[AdvertisedTool(server=self.default_server_name, name=tool.name) for tool in tools],
-            session_id=sid,
-            run_id=run_id,
-            fastmcp_context=fastmcp_ctx,
-        )
-        allowed_names = {ad.name for ad in allowed_ads}
-        return [tool for tool in tools if normalize_tool_name(tool.name) in allowed_names]
+        return await filter_listed_tools(self, context, call_next, resolve_active_phase)
 
     async def on_call_tool(
         self,
@@ -368,6 +338,7 @@ class MCPSecurityMiddleware(Middleware):
             args=context.message.arguments or {},
             session_id=sid,
             run_id=run_id,
+            current_phase=resolve_active_phase(session_id=sid, fastmcp_context=fastmcp_ctx),
             observed_fingerprint=runtime_peer.observed_fingerprint,
         )
         if not decision.allowed:

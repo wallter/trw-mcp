@@ -100,6 +100,38 @@ _py=$(_get_python_path 2>/dev/null) || {
 _hints_dir="${_repo}/.trw/context/cc03-hints"
 mkdir -p "$_hints_dir" 2>/dev/null || true
 
+# Write a dependency-free provisional CC-04 record before the bounded
+# intelligence subprocess. If the 2.5s advisory budget expires, correlation is
+# still preserved truthfully as a T0 timeout fallback; a successful computation
+# overwrites this record below with its final tier/status. Environment variables
+# keep untrusted hook fields out of Python source interpolation.
+if [ -n "$_tool_use_id" ]; then
+    TRW_CC04_HINTS_DIR="$_hints_dir" \
+    TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
+    TRW_CC04_FILE_PATH="$_file_path" \
+    "$_py" -c '
+import datetime, json, os, pathlib, re
+tool_use_id = os.environ["TRW_CC04_TOOL_USE_ID"]
+if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
+    hints_dir = pathlib.Path(os.environ["TRW_CC04_HINTS_DIR"])
+    record = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "file_path": os.environ["TRW_CC04_FILE_PATH"],
+        "tier": "T0",
+        "hint_emitted": True,
+        "tokens_emitted": 9,
+        "distill_status": "timeout_fallback",
+        "tool_use_id": tool_use_id,
+        "outcome_captured": False,
+        "was_edited": None,
+        "edit_survived": None,
+        "test_outcome": "unknown",
+        "hint_acknowledged": None,
+    }
+    (hints_dir / f"{tool_use_id}.json").write_text(json.dumps(record), encoding="utf-8")
+' >/dev/null 2>&1 || true
+fi
+
 _hint_output=$(
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
     timeout 2.5 "$_py" -c "

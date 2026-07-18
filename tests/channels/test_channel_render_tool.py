@@ -7,6 +7,18 @@ from unittest.mock import patch
 
 from trw_mcp.tools.channel_render import compute_channel_render
 
+_RESULT_KEYS = (
+    "channel_id",
+    "status",
+    "tier_used",
+    "tokens_emitted",
+    "bytes_written",
+    "conflict_detected",
+    "ttl_commits_remaining",
+    "would_write",
+    "error",
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -70,9 +82,12 @@ class TestChannelNotFound:
             repo_root=str(tmp_path),
         )
 
+        assert tuple(result) == _RESULT_KEYS
         assert result["channel_id"] == "does-not-exist"
         assert result["status"] == "not_found"
-        assert "not_found" in result["status"] or result["error"] is not None
+        assert result["conflict_detected"] is False
+        assert result["tier_used"] is None
+        assert result["error"] is not None
 
     def test_does_not_raise(self, tmp_path: Path) -> None:
         channels_dir = tmp_path / ".trw" / "channels"
@@ -188,18 +203,7 @@ class TestDryRun:
             dry_run=True,
         )
 
-        required_keys = {
-            "channel_id",
-            "status",
-            "tier_used",
-            "tokens_emitted",
-            "bytes_written",
-            "conflict_detected",
-            "ttl_commits_remaining",
-            "would_write",
-            "error",
-        }
-        assert required_keys.issubset(result.keys()), f"Missing keys: {required_keys - result.keys()}"
+        assert tuple(result) == _RESULT_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -266,3 +270,8 @@ class TestRegisterChannelRenderTools:
                 break
 
         assert tool_fn is not None
+        with patch("trw_mcp.tools.channel_render.compute_channel_render", side_effect=RuntimeError("boom")):
+            result = tool_fn.fn(channel_id="broken")
+        assert tuple(result) == _RESULT_KEYS
+        assert result["status"] == "error"
+        assert result["error"] == "boom"

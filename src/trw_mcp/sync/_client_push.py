@@ -130,11 +130,10 @@ async def fanout_push(
     outcomes: list[dict[str, object]],
     learning_sharing_enabled: bool = False,
     platform_telemetry_enabled: bool = False,
-) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
+) -> tuple[dict[str, dict[str, object]], PushResult]:
     """PRD-FIX-087 FR03: async — awaits _push_to_target per target."""
     report: dict[str, dict[str, object]] = {}
     aggregate: PushResult = PushResult()
-    any_success = False
     primary_target_label = targets[0].label if targets else None
     for target in targets:
         try:
@@ -177,8 +176,6 @@ async def fanout_push(
             "error": None,
             "status": status,
         }
-        if status == _TARGET_STATUS_SUCCESS:
-            any_success = True
-            if aggregate.pushed == 0 and aggregate.skipped == 0:
-                aggregate = result
-    return report, aggregate, any_success
+        if status == _TARGET_STATUS_SUCCESS and aggregate.pushed == 0 and aggregate.skipped == 0:
+            aggregate = result
+    return report, aggregate

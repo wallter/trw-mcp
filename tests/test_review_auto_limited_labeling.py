@@ -99,6 +99,7 @@ class TestHandleAutoModeLabeling:
                 None,  # no pre-collected reviewer findings -> pattern-scan path
             )
         assert result["auto_analysis_limited"] is True
+        assert result["substantive"] is False
         assert result["limited_reason"] == PATTERN_SCAN_LIMITED_REASON
         assert result["limited_reason"]
         # The defect signature: verdict=pass on a limited scan, now honestly labeled.
@@ -147,16 +148,13 @@ class TestHandleAutoModeLabeling:
             )
         assert result["auto_analysis_limited"] is False
         assert result["limited_reason"] == ""
+        assert result["substantive"] is True
         # Real critical finding actually blocks — proves substantive analysis.
         assert result["verdict"] == "block"
         assert result["critical_count"] == 1
 
-    def test_empty_reviewer_findings_list_is_substantive(self, run_dir: Path) -> None:
-        """An explicit (non-None) empty findings list is a real review with no findings.
-
-        Distinct from the None pattern-scan fallback: the caller ran reviewers
-        and they found nothing, so the result must NOT be flagged limited.
-        """
+    def test_empty_reviewer_findings_list_is_non_substantive(self, run_dir: Path) -> None:
+        """An empty list has no independently verifiable receipt and fails closed."""
         config = _make_config()
         with patch(
             "trw_mcp.tools._review_helpers._get_git_diff",
@@ -165,12 +163,29 @@ class TestHandleAutoModeLabeling:
             result = handle_auto_mode(
                 config,
                 run_dir,
-                "review-empty-real",
+                "review-empty-unverified",
                 "2026-06-04T00:00:00Z",
-                [],  # reviewers ran, found nothing -> substantive, not limited
+                [],
             )
-        assert result["auto_analysis_limited"] is False
-        assert result["limited_reason"] == ""
+        assert result["auto_analysis_limited"] is True
+        assert "no schema-valid findings" in result["limited_reason"]
+        assert result["substantive"] is False
+        assert result["total_findings_count"] == 0
+
+    def test_placeholder_reviewer_finding_is_non_substantive(self, run_dir: Path) -> None:
+        """A non-empty list is not evidence when its only mapping is invalid."""
+        config = _make_config()
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=_DIFF_WITH_TODO):
+            result = handle_auto_mode(
+                config,
+                run_dir,
+                "review-placeholder-unverified",
+                "2026-06-04T00:00:00Z",
+                [{}],
+            )
+        assert result["auto_analysis_limited"] is True
+        assert result["substantive"] is False
+        assert result["total_findings_count"] == 0
 
     def test_limited_label_persisted_to_review_yaml(self, run_dir: Path) -> None:
         """The honest label is written into review.yaml for downstream readers."""
@@ -192,5 +207,6 @@ class TestHandleAutoModeLabeling:
         assert review_yaml_path.exists()
         data = yaml.safe_load(review_yaml_path.read_text(encoding="utf-8"))
         assert data["auto_analysis_limited"] is True
+        assert data["substantive"] is False
         assert data["limited_reason"]
         assert data["review_kind"] == "pattern-scan (limited)"

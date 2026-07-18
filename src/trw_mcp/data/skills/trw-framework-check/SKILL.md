@@ -10,69 +10,58 @@ description: >
 user-invocable: true
 ---
 
-# Framework Compliance Check Skill
+# Framework Compliance Check
 
-Use when: a session has finished and you need to confirm phase gates, active run health, and ceremony adherence before closing.
+Use when: checking current TRW ceremony obligations, gates, and run evidence.
 
-Check the current state of TRW framework compliance including ceremony adherence, phase gate status, learning layer health, and active run state.
+Read-only check of current TRW obligations and evidence. Report observed state separately from missing/unknown evidence; do not mutate runs or invent health thresholds.
 
 ## Workflow
 
-1. **Run status**: Call `trw_status()` to get current run state (phase, confidence, wave progress, or "no active run").
+1. **Resolve live state**
+   - Call `trw_status()` for run state. Resolve artifact paths only from an explicit caller path or this session's `trw_session_start().run.active_run`; status itself does not return a path. It may resolve its own session pin internally, but never inspect pin files or scan runs to reconstruct that path. When no verified path was returned, rely on status and mark path-bound checks `UNKNOWN`.
+   - If no run is active, report which session-level obligations are observable and mark run-specific checks N/A.
+   - Do not discover runs through guessed `{task_root}/*/runs/*` globs.
 
-2. **Ceremony checklist** — verify each ceremony step:
-   - Was `trw_session_start` called this session? (Check `.trw/context/` for recent session markers)
-   - Are there checkpoints in the active run? (Read `checkpoints.jsonl` if run exists)
-   - Is client instruction auto-section current? (Read the active client instruction file, check `trw:start`/`trw:end` markers exist and have content)
+2. **Check tier/phase obligations**
+   - Read the resolved ceremony profile/tier when available.
+   - Compare completed evidence with only the phases required for that tier.
+   - Treat `trw_status()` fields `build_gate_ready`, `review_gate_ready`, and `deliver_gate_summary` as primary gate evidence when present. Verify session start, applicable validation/build evidence, substantive review at STANDARD+, completion artifacts, and delivery state.
+   - Use the resolved run's `meta/run.yaml`, `meta/review.yaml`, reports, and other artifacts only when their run/session binding is verified. The project-global `.trw/context/build-status.yaml` may support diagnostics but cannot prove run/session compliance. Missing or unbound evidence is `UNKNOWN`, not automatic pass or fail.
 
-3. **Learning layer health**:
-   - Call `trw_recall('*', compact=true)` for active learning count
-   - Check if learning count is in healthy range (20-40 active)
-   - Verify index.yaml `last_updated` is recent
+3. **Check framework deployment**
+   - Compare the version/hash reported by `trw_status()` with the deployed compact framework under `.trw/frameworks/`.
+   - In the framework repository, prefer the project-native runtime-integrity check when present; distinguish authoring-source parity from deployed-runtime integrity.
+   - Report stale deployment explicitly rather than copying files in this read-only skill.
 
-4. **Framework version check**:
-   - Read `.trw/frameworks/FRAMEWORK.md` for version string
-   - Compare with the version shown in `trw_status()` output
-   - Flag if versions differ (deployed copy may be out of date)
+4. **Check learning availability**
+   - Use focused `trw_recall` or a bounded wildcard sample to confirm retrieval works.
+   - Use `/trw-memory-audit` for a full memory-health assessment. Do not classify health from a universal active-entry count or index timestamp.
 
-5. **PRD catalogue check**:
-   - Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) and search for `INDEX.md` in its parent directory
-   - If found, read PRD status counts
-   - Flag any PRDs stuck in `review` or `approved` status (should progress to implementation)
+5. **Check governing requirements when present**
+   - Resolve `prds_relative_path` from config and inspect only PRDs in the active scope.
+   - Validate lifecycle state against current phase and evidence. Age alone does not prove a PRD is stuck.
 
-6. **Report**: Structured compliance checklist:
+## Report
 
-   ```
-   ## Framework Compliance Report
+```markdown
+## TRW Framework Compliance
+- Project/run: <path or no active run>
+- Tier/phase: <observed>
+- Framework deployment: MATCH | STALE | UNKNOWN
 
-   ### Ceremony Status
-   - [x/!] Session start ceremony
-   - [x/!] Active checkpoints
-   - [x/!] client instruction auto-section
+| Obligation | PASS/WARN/BLOCK/N/A/UNKNOWN | Evidence |
+|---|---|---|
+| session start | | |
+| required phases | | |
+| validation/build | | |
+| substantive review | | |
+| completion/delivery | | |
+| learning retrieval | | |
+| scoped PRD lifecycle | | |
 
-   ### Run Status
-   - Phase: {current phase or "no run"}
-   - Confidence: {score}
+### Gaps and next actions
+- <gap, authority, safest action>
+```
 
-   ### Learning Layer
-   - Active: {N} entries (healthy: 20-40)
-   - Last updated: {date}
-
-   ### Framework Version
-   - FRAMEWORK.md: {version}
-   - Bundled copy: {version}
-   - Status: {synced/out-of-date}
-
-   ### PRD Status
-   - {N} draft, {N} review, {N} approved, {N} done
-   - Warnings: {any stuck PRDs}
-
-   ### Recommendations
-   - {actionable next steps}
-   ```
-
-## Notes
-
-- This skill is read-only — it reports status but does not fix issues
-- Use at the start of a session to verify framework health
-- If issues are found, the recommendations will point to the right tools/skills to fix them
+A compliance report is diagnostic evidence, not permission to bypass a gate.

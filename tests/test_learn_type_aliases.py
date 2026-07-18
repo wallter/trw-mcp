@@ -16,6 +16,7 @@ from structlog.testing import capture_logs
 from trw_mcp.tools._learning_module_helpers import (
     _LEARN_TYPE_ALIASES,
     _coerce_learn_type,
+    _note_run_path_compat,
     _validate_learn_enums,
 )
 
@@ -75,6 +76,67 @@ def test_trw_learn_tool_accepts_gotcha_end_to_end() -> None:
         summary="watch out: editable install resolves to MAIN repo not the worktree",
         detail="set PYTHONPATH=$PWD/src or your edits are not exercised",
         type="gotcha",
+    )
+    assert isinstance(result, dict)
+    assert result["status"] != "rejected", result
+
+
+def test_note_run_path_compat_emits_debug_log_when_passed() -> None:
+    """P2-7: run_path is accept-and-log ONLY (never validated against a run
+    directory). The debug event fires so the accepted-but-storage-inert value
+    is observable rather than silently dropped."""
+    structlog.configure(
+        processors=[structlog.testing.LogCapture()],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+    )
+    with capture_logs() as logs:
+        _note_run_path_compat("/repo/.trw/runs/some-task/some-run")
+    events = [e for e in logs if e.get("event") == "learn_run_path_accepted_for_compat"]
+    assert len(events) == 1
+    assert events[0]["run_path"] == "/repo/.trw/runs/some-task/some-run"
+
+
+def test_note_run_path_compat_silent_when_none() -> None:
+    """No run_path supplied -> no compat log noise."""
+    with capture_logs() as logs:
+        _note_run_path_compat(None)
+    assert not [e for e in logs if e.get("event") == "learn_run_path_accepted_for_compat"]
+
+
+def test_project_alias_coerces_to_convention() -> None:
+    """'project' maps to 'convention' (feedback sub_5qbmT6WPNoP58rlv item 8)."""
+    assert "project" in _LEARN_TYPE_ALIASES
+    assert _LEARN_TYPE_ALIASES["project"] == "convention"
+    coerced = _coerce_learn_type("project")
+    assert coerced == "convention"
+    assert _validate_learn_enums(type=coerced, confidence="unverified", protection_tier="normal") is None
+
+
+def test_project_alias_coercion_emits_debug_log() -> None:
+    """The 'project' coercion is observable via the same logged-coercion path."""
+    structlog.configure(
+        processors=[structlog.testing.LogCapture()],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+    )
+    with capture_logs() as logs:
+        _coerce_learn_type("project")
+    events = [e for e in logs if e.get("event") == "learn_type_alias_coerced"]
+    assert len(events) == 1
+    assert events[0]["requested"] == "project"
+    assert events[0]["resolved"] == "convention"
+
+
+def test_trw_learn_tool_accepts_run_path_for_compat() -> None:
+    """trw_learn accepts a run_path kwarg without failing the call
+    (feedback sub_5qbmT6WPNoP58rlv item 8)."""
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    learn_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
+    result = learn_fn(
+        summary="prefer path-limited git commit to dodge the shared-index race",
+        detail="git add + separate commit lets a concurrent agent swallow staged files",
+        type="project",
+        run_path="/repo/.trw/runs/some-task/some-run",
     )
     assert isinstance(result, dict)
     assert result["status"] != "rejected", result

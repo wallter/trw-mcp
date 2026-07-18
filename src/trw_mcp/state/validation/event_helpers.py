@@ -61,36 +61,3 @@ def _is_validate_pass(event: dict[str, object]) -> bool:
     if not isinstance(data, dict):
         return False
     return data.get("phase") == "validate" and data.get("valid") is True
-
-
-def _event_has_tool(event: dict[str, object], tool_name: str) -> bool:
-    """Check if an event has a specific tool invocation.
-
-    Args:
-        event: Single event dict from events.jsonl.
-        tool_name: Tool name to match.
-
-    Returns:
-        True if the event references the given tool.
-    """
-    if event.get("event") == "tool_invocation" and event.get("tool_name") == tool_name:
-        return True
-    data = event.get("data")
-    return isinstance(data, dict) and data.get("tool_name") == tool_name
-
-
-def _event_has_score(event: dict[str, object], key: str) -> bool:
-    """Check if an event data dict contains a numeric score for a key.
-
-    Args:
-        event: Single event dict from events.jsonl.
-        key: Key to look for in event data.
-
-    Returns:
-        True if the key exists with a numeric value.
-    """
-    data = event.get("data")
-    if not isinstance(data, dict):
-        return False
-    val = data.get(key)
-    return isinstance(val, (int, float))

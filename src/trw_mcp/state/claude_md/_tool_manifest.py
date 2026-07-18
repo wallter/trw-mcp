@@ -17,9 +17,22 @@ from typing import Final, NamedTuple
 
 import structlog
 
-from trw_mcp.models.config._defaults import TOOL_PRESETS
+# PRD-CORE-218: the authoritative surface is the CORE-218 manifest. We read its
+# pure single-source-of-truth membership module (``surface_packs``) directly
+# rather than ``server._surface_manifest_registry.eligible_tool_names()``, because
+# importing the registry triggers ``server/__init__`` (eager tool registration) —
+# an unwanted import-time side effect for this state-layer module. The eligible
+# public surface computed here is byte-identical to ``eligible_tool_names()``
+# (both = PACK_TOOLS minus OPERATOR_ONLY_TOOLS).
+from trw_mcp.models.surface_packs import KERNEL_TOOLS, OPERATOR_ONLY_TOOLS, PACK_TOOLS
 
 _logger = structlog.get_logger(__name__)
+
+#: The full eligible (public) tool surface — what ``all`` mode exposes. Identical
+#: to ``server._surface_manifest_registry.eligible_tool_names()``.
+_ELIGIBLE_TOOLS: frozenset[str] = frozenset(
+    tool for tools in PACK_TOOLS.values() for tool in tools if tool not in OPERATOR_ONLY_TOOLS
+)
 
 # ---------------------------------------------------------------------------
 # FR01: Canonical tool description mapping (single source of truth)
@@ -103,6 +116,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Memory
     "trw_recall": "Retrieve relevant learnings for a specific topic",
     "trw_learn_update": "Update an existing learning entry with new detail or status",
+    "trw_graph_related": "Traverse a bounded typed neighborhood from one learning",
     # Quality
     "trw_build_check": "Record project-native test/build/static-check results after you run them",
     "trw_review": "Run code review analysis on changed files",
@@ -132,6 +146,12 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_profile_explain": "Explain how the resolved session profile was layered (read-only introspection)",
     # Intelligence pipeline (PRD-FIX-COMPOUNDING-6 FR02)
     "trw_pipeline_health": "Report intelligence-pipeline health for a project (read-only probe)",
+    # Cross-client dispatch (Phase 3) — second-opinion audit by another agent CLI
+    "trw_dispatch": "Dispatch a prompt to another coding-agent CLI for a second opinion (background job; poll trw_dispatch_status)",
+    "trw_dispatch_status": "Poll a background dispatch job and return its status + redacted result when terminal",
+    # Crash-safe delivery operations (PRD-CORE-208)
+    "trw_delivery_status": "Read a delivery operation's durable status without mutation",
+    "trw_delivery_recover": "Perform capability-bound stale/crash recovery for a delivery operation",
     # Code intelligence + risk (read-only / advisory)
     "trw_skill_discovery": "Discover available TRW skills and their metadata (read-only)",
     "trw_code_search": "Search local code by query and look up symbols",
@@ -150,13 +170,14 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_submit_feedback": "Submit feedback to the TRW backend portal (thin client)",
 }
 
-# Validate at import time: every tool in the "all" preset has a description
-_ALL_TOOLS = set(TOOL_PRESETS["all"])
+# Validate at import time: every eligible (public) manifest tool has a
+# description, and no description names a non-eligible tool.
+_ALL_TOOLS = set(_ELIGIBLE_TOOLS)
 _DESCRIBED_TOOLS = set(TOOL_DESCRIPTIONS)
 if _ALL_TOOLS != _DESCRIBED_TOOLS:
     _missing = _ALL_TOOLS - _DESCRIBED_TOOLS
     _extra = _DESCRIBED_TOOLS - _ALL_TOOLS
-    raise RuntimeError(f"TOOL_DESCRIPTIONS / TOOL_PRESETS mismatch: missing={_missing}, extra={_extra}")
+    raise RuntimeError(f"TOOL_DESCRIPTIONS / eligible-manifest mismatch: missing={_missing}, extra={_extra}")
 
 
 # ---------------------------------------------------------------------------
@@ -164,28 +185,29 @@ if _ALL_TOOLS != _DESCRIBED_TOOLS:
 # ---------------------------------------------------------------------------
 
 
-def resolve_exposed_tools(
-    mode: str = "all",
-    custom_list: tuple[str, ...] | list[str] = (),
-) -> frozenset[str]:
-    """Resolve the set of exposed tool names from mode + custom list.
+def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:
+    """Resolve the tool surface an instruction file should describe (PRD-CORE-218).
+
+    Instruction files (CLAUDE.md/AGENTS.md/etc.) project the TASK-INDEPENDENT
+    baseline of the CORE-218 resolution authority:
+
+      * ``"all"`` — the full eligible public surface (operator-escape mode).
+      * anything else (``"standard"``, the default) — the kernel-only baseline,
+        i.e. ``resolve_tool_surface(None, "standard").tools``. A concrete run's
+        task packs are resolved per-session at the middleware layer
+        (SurfaceAuthorityMiddleware); instruction files stay task-independent so
+        they never over-promise tools a given session has masked.
 
     Args:
-        mode: Tool exposure mode (all, core, minimal, standard, custom).
-        custom_list: Explicit tool list when mode is "custom".
+        mode: ``tool_resolution_mode`` (``"standard"`` | ``"all"``).
 
     Returns:
-        Immutable set of tool names that are currently exposed.
+        Immutable set of tool names the instruction surface may describe.
     """
-    if mode == "custom":
-        result = frozenset(custom_list)
-        _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
-        return result
-    preset = TOOL_PRESETS.get(mode)
-    if preset is None:
-        _logger.warning("unknown_tool_exposure_mode", mode=mode, fallback="all")
-        return frozenset(TOOL_PRESETS["all"])
-    result = frozenset(preset)
+    if mode == "all":
+        result = frozenset(_ELIGIBLE_TOOLS)
+    else:
+        result = frozenset(KERNEL_TOOLS)
     _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
     return result
 

@@ -115,7 +115,6 @@ class TestAgentsMdLearningInjection:
             patch("trw_mcp.state.claude_md.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state.claude_md.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
             patch(
                 "trw_mcp.state.claude_md._sync.recall_learnings",
                 side_effect=RuntimeError("DB error"),

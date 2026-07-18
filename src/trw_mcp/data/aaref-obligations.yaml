@@ -1,0 +1,458 @@
+{
+  "canon_id": "aaref",
+  "classes": {
+    "compatibility": 1,
+    "example": 1,
+    "normative": 24,
+    "rationale": 1,
+    "reference": 22
+  },
+  "core_digest": "aebc588e777c5f8557af81aeafdf26d179342acd90e6e4f8919b0aa2cc2c5273",
+  "obligations": [
+    {
+      "body_lines": 13,
+      "class": "normative",
+      "dest": "both",
+      "digest": "2d73784663f7bde62ccff7fa8a14185679dcbed64191cc3f374bd80b7de5c60f",
+      "id": "af-title",
+      "nonblank_lines": 8,
+      "start_line": 1
+    },
+    {
+      "body_lines": 16,
+      "class": "normative",
+      "dest": "core",
+      "digest": "f2a59d29c8c4e5db1227be4bf7bb2c4331e6c8faa3566ac119d9bb40ed0cf2cf",
+      "id": "af-0-what-this-framework-is-and-is-not",
+      "nonblank_lines": 9,
+      "start_line": 15
+    },
+    {
+      "body_lines": 15,
+      "class": "normative",
+      "dest": "core",
+      "digest": "29946580fd182c21bcad613c61e18f90b084ca25cb77258ec61a660f232e420b",
+      "id": "af-1-foundational-principles",
+      "nonblank_lines": 11,
+      "start_line": 32
+    },
+    {
+      "body_lines": 4,
+      "class": "normative",
+      "dest": "core",
+      "digest": "1476555b5c0b3d3490793d9888182813a99e52734149a4e27c9c577f17d7f1e0",
+      "id": "af-2-the-requirement-quality-standard",
+      "nonblank_lines": 2,
+      "start_line": 48
+    },
+    {
+      "body_lines": 18,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "d9bc5dc7992df2c556cc52d27d251bdf8626affddfe7df0205c36b4bbfe2ff12",
+      "id": "af-2-1-ears-requirement-phrasing-patterns",
+      "nonblank_lines": 13,
+      "start_line": 53
+    },
+    {
+      "body_lines": 11,
+      "class": "normative",
+      "dest": "core",
+      "digest": "9e5da80a7105c3c46526182ce6146a0013a45c0e3f1391989cc918f7e62c68ee",
+      "id": "af-2-2-iso-iec-ieee-29148-2018-quality-char",
+      "nonblank_lines": 7,
+      "start_line": 72
+    },
+    {
+      "body_lines": 15,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "131014bf77c55fb0ad560c1f0c01091535d62f54db7e3ada510a33160c394d5b",
+      "id": "af-2-3-incose-gtwr-v4-2023-rule-families",
+      "nonblank_lines": 12,
+      "start_line": 84
+    },
+    {
+      "body_lines": 8,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "21c13903c8f0509e753fafdb4384070013a08cb4623924c9fbd00c783e585a09",
+      "id": "af-2-4-requirements-smells-detection-taxono",
+      "nonblank_lines": 4,
+      "start_line": 100
+    },
+    {
+      "body_lines": 27,
+      "class": "normative",
+      "dest": "core",
+      "digest": "ab88d2dde099677e4fb278fe633c16703d721595c02461fcb149ac54329a5b6b",
+      "id": "af-2-5-acceptance-criteria-and-verification",
+      "nonblank_lines": 20,
+      "start_line": 109
+    },
+    {
+      "body_lines": 28,
+      "class": "example",
+      "dest": "reference",
+      "digest": "57348b6a98df65ed677553fa86d246079509977a4f44a2a7a15d9228b30b72d9",
+      "id": "af-3-framework-architecture",
+      "nonblank_lines": 24,
+      "start_line": 137
+    },
+    {
+      "body_lines": 2,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "148728b16ea30aa7d878f8230ed0c21fcd07a7279d16ccdf20ef727d83a36971",
+      "id": "af-4-core-components",
+      "nonblank_lines": 1,
+      "start_line": 166
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "225d7ff1a7788950594b4f1758748d70e106c77c6f4e995abbc73b6ffabcd340",
+      "id": "af-foundation-layer",
+      "nonblank_lines": 1,
+      "start_line": 169
+    },
+    {
+      "body_lines": 8,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "3a9c557f5468aa44ff4e15bb49926287a317e186ae52ec4c8f11dcc222b0f318",
+      "id": "af-c1-end-to-end-traceability-infrastructur",
+      "nonblank_lines": 7,
+      "start_line": 172
+    },
+    {
+      "body_lines": 4,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "a47b6081a36f2443a1eb2de8eb7b288bc0708a23e64f7b90b8a4e9976c1daf8e",
+      "id": "af-c4-semantic-infrastructure-layer-guide",
+      "nonblank_lines": 3,
+      "start_line": 181
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "48c74e9ff1b8eff53d0b8e51aa92682c5f585e36f726e997223cad36a3e4afb5",
+      "id": "af-governance-layer",
+      "nonblank_lines": 1,
+      "start_line": 186
+    },
+    {
+      "body_lines": 10,
+      "class": "normative",
+      "dest": "core",
+      "digest": "314efc8841cd6d14c1bed11534bb832d21342c6c90a17911ab8a093a7252cbd9",
+      "id": "af-c2-ai-in-the-loop-governance-partial",
+      "nonblank_lines": 6,
+      "start_line": 189
+    },
+    {
+      "body_lines": 12,
+      "class": "normative",
+      "dest": "core",
+      "digest": "b4ad894462e4ca0a8af3927cc8c00b378fd690d7c3858f37660b6375f7c56eae",
+      "id": "af-c3-risk-based-rigor-scaling-partial",
+      "nonblank_lines": 9,
+      "start_line": 200
+    },
+    {
+      "body_lines": 5,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "840f9bc2c5e7c1be96d33dd3d845a442e4574126c611a8b34482ba2782fa5334",
+      "id": "af-c8-ai-guardrails-safety-partial",
+      "nonblank_lines": 4,
+      "start_line": 213
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "382a52a0379eb8e30657b5a86d55f6cd23cf83a84c6642648ad8b32faba7cf54",
+      "id": "af-execution-layer",
+      "nonblank_lines": 1,
+      "start_line": 219
+    },
+    {
+      "body_lines": 7,
+      "class": "normative",
+      "dest": "core",
+      "digest": "9b929f0bcc43ece0e623b53c25c611c1756375140170fb8f354fcaa0db704f4c",
+      "id": "af-c5-independent-analysis-role-separation-",
+      "nonblank_lines": 4,
+      "start_line": 222
+    },
+    {
+      "body_lines": 12,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "39ef10ce1f6aab9ef145b7b7eccaf6e3e7fa047587d3438da47ad2de1c0bb515",
+      "id": "af-c6-uncertainty-management-over-zero-defe",
+      "nonblank_lines": 9,
+      "start_line": 230
+    },
+    {
+      "body_lines": 5,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "8a9dae459787523bf7b89f8f083b1f2d5df8238e8e40674a8b0a1776da2611c3",
+      "id": "af-c10-conflict-detection-resolution-partia",
+      "nonblank_lines": 4,
+      "start_line": 243
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "2f9258a5c5122c47f6d9206ed60039123957e6e1fa2faa21ee48ae02545e4415",
+      "id": "af-operations-layer",
+      "nonblank_lines": 1,
+      "start_line": 249
+    },
+    {
+      "body_lines": 11,
+      "class": "normative",
+      "dest": "core",
+      "digest": "e8647ea1994c15f8a1153c8d07feff3ec25c7514efbc822449b73ea44edfda6f",
+      "id": "af-c7-requirements-as-code-with-devops-part",
+      "nonblank_lines": 8,
+      "start_line": 252
+    },
+    {
+      "body_lines": 6,
+      "class": "normative",
+      "dest": "core",
+      "digest": "eb97de30c131d82cd6ce625cb89b10087a3cb1a2499ed604686fd38d3ec881f2",
+      "id": "af-c9-continuous-observability-partial",
+      "nonblank_lines": 4,
+      "start_line": 264
+    },
+    {
+      "body_lines": 4,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "ad700389b9ace4a10f1576daff1dcc975606594a098e42b76c0b5e4c5896e21a",
+      "id": "af-5-the-live-quality-model-reference-imple",
+      "nonblank_lines": 2,
+      "start_line": 271
+    },
+    {
+      "body_lines": 11,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "39baaad61d08064fc3169688d20ffd3c6856006ce0d9baa1470c3279fab0fb76",
+      "id": "af-5-1-scored-dimensions-default-medium-ris",
+      "nonblank_lines": 8,
+      "start_line": 276
+    },
+    {
+      "body_lines": 11,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "85ccabe5274a3f0c2d9e1dfdf9f93b8f54c29311bbe3e6f2cecf10c337196816",
+      "id": "af-5-2-tiers-grades",
+      "nonblank_lines": 8,
+      "start_line": 288
+    },
+    {
+      "body_lines": 5,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "6850d2e645de549e40b2f96e2eb9a3e153c7c5f46dcd8876705866144cb37a7f",
+      "id": "af-5-3-anti-gaming-features-in-the-live-sco",
+      "nonblank_lines": 3,
+      "start_line": 300
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "3aaa24d011cce7264619c3a4fbfeb03cb3cdc7b46ba6c1b7b60d95e5fd062c4c",
+      "id": "af-6-quality-gates-verified-closure",
+      "nonblank_lines": 1,
+      "start_line": 306
+    },
+    {
+      "body_lines": 8,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "577baa40d4828244243dca21d5657f50a01ec48199991acd52d00b531cf92219",
+      "id": "af-6-1-prd-authoring-gates-text-level-neces",
+      "nonblank_lines": 7,
+      "start_line": 309
+    },
+    {
+      "body_lines": 10,
+      "class": "normative",
+      "dest": "core",
+      "digest": "eeeffbae0cb35e3d8496501aa5a0468daf7c7a6b59aa3dfa528e2bee66f4fcdd",
+      "id": "af-6-2-verified-closure-standard-evidence-l",
+      "nonblank_lines": 7,
+      "start_line": 318
+    },
+    {
+      "body_lines": 22,
+      "class": "normative",
+      "dest": "core",
+      "digest": "00cd6faf3065e673e35ef1c456c18fb6c672bbdf4da836ef13aaf528bcc4d1b0",
+      "id": "af-7-anti-patterns-including-the-truthfulne",
+      "nonblank_lines": 17,
+      "start_line": 329
+    },
+    {
+      "body_lines": 16,
+      "class": "rationale",
+      "dest": "reference",
+      "digest": "87791ffb2e98a6982c51868625700937a3045b467d45a290d72a2b83af2b1065",
+      "id": "af-7b-rationalization-watchlist",
+      "nonblank_lines": 12,
+      "start_line": 352
+    },
+    {
+      "body_lines": 15,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "b4b1ae01bbc16903949024e0c67c9eb66455250e1a86d6a9550c15a08bcf756d",
+      "id": "af-8-risk-based-rigor-live-profiles-referen",
+      "nonblank_lines": 10,
+      "start_line": 369
+    },
+    {
+      "body_lines": 2,
+      "class": "normative",
+      "dest": "core",
+      "digest": "42183b0f09960e9d5c30e398db0256f16d9fe849f1f05760862f254664647c02",
+      "id": "af-9-getting-started-in-a-new-project",
+      "nonblank_lines": 1,
+      "start_line": 385
+    },
+    {
+      "body_lines": 14,
+      "class": "normative",
+      "dest": "core",
+      "digest": "5c3e9c04f2f0219ead702afeb641d24042428c2541bcb795f311fe9c79755d0c",
+      "id": "af-minimum-viable-setup",
+      "nonblank_lines": 13,
+      "start_line": 388
+    },
+    {
+      "body_lines": 10,
+      "class": "normative",
+      "dest": "core",
+      "digest": "5bd904e69cdbb006369b911c4b58e4f0d1eee9ba238d9d667184706b43ecabed",
+      "id": "af-template-variants-sections-required-scal",
+      "nonblank_lines": 8,
+      "start_line": 403
+    },
+    {
+      "body_lines": 8,
+      "class": "normative",
+      "dest": "core",
+      "digest": "9da06527949046ac0a17cfebfe423c22ba24b9d6a735058fc8d717770f1cf91e",
+      "id": "af-lifecycle",
+      "nonblank_lines": 6,
+      "start_line": 414
+    },
+    {
+      "body_lines": 5,
+      "class": "normative",
+      "dest": "core",
+      "digest": "328bd6dd138a76a23452e1532a026c31cec5e26465922ae2aa108dd3c5a04675",
+      "id": "af-adoption-sequence-for-a-new-project-hone",
+      "nonblank_lines": 4,
+      "start_line": 423
+    },
+    {
+      "body_lines": 20,
+      "class": "normative",
+      "dest": "core",
+      "digest": "219441e222fe335309927e5fca5625a7f5270ee77df10a766fb462b773c76158",
+      "id": "af-reference-implementation-status-not-norm",
+      "nonblank_lines": 15,
+      "start_line": 429
+    },
+    {
+      "body_lines": 13,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "712220bf0f31b8cd23667eaa4c93e23729e94cf063d1a82549d6f83c6bd9c24b",
+      "id": "af-10-governance-readiness-mapping-not-comp",
+      "nonblank_lines": 10,
+      "start_line": 450
+    },
+    {
+      "body_lines": 13,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "0afb6d0a85f27125d197c2f1aab28316fdb1af926474b17891aacd79dc1cc7f4",
+      "id": "af-11-relationship-to-framework-md",
+      "nonblank_lines": 9,
+      "start_line": 464
+    },
+    {
+      "body_lines": 12,
+      "class": "compatibility",
+      "dest": "core",
+      "digest": "341932c2c2e20aa8534b7076bbe596e5901d3bbc1ea7714623f1d7bd091f313f",
+      "id": "af-12-maintenance-versioning",
+      "nonblank_lines": 8,
+      "start_line": 478
+    },
+    {
+      "body_lines": 13,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "1f425ac97b2e5d7983bb2e9788e1566f68e811b4add5908dce5d724446c4026d",
+      "id": "af-version-history",
+      "nonblank_lines": 10,
+      "start_line": 491
+    },
+    {
+      "body_lines": 15,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "fb288c9da1a732fc96ace22f3a84047e5d9616c379a44718dff3cee20fea5d3c",
+      "id": "af-appendix-a-glossary",
+      "nonblank_lines": 13,
+      "start_line": 505
+    },
+    {
+      "body_lines": 13,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "a5a2a6409afa477bf8b11f0b0036ecfb62b5fc0a3904b26baa4d92c2cf8c1412",
+      "id": "af-appendix-b-references",
+      "nonblank_lines": 11,
+      "start_line": 521
+    },
+    {
+      "body_lines": 14,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "27e8aea20ece877dc34072e18217423a89b51eba71cbc3cf8fb411bc7c2f4193",
+      "id": "af-appendix-c-related-documents",
+      "nonblank_lines": 11,
+      "start_line": 535
+    },
+    {
+      "body_lines": 13,
+      "class": "reference",
+      "dest": "reference",
+      "digest": "8e7e47c4456c8a91504c5d8e4e3eedb8795c1ede5c1d590983a8fcdba426d6e5",
+      "id": "af-appendix-d-execution-plan-artifact",
+      "nonblank_lines": 8,
+      "start_line": 550
+    }
+  ],
+  "reference_digest": "40b8a2dacec2a25da77debe63e1d6cc7150bc1c2cb7ea465c059a31801af5e74",
+  "schema": 1,
+  "source_digest_combined": "16f00cd7d23c3898ce8b86d52536f262c294a4d482fdd865f5f1038cfeb11a00",
+  "span_count": 49
+}

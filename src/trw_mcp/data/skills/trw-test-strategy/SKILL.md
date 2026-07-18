@@ -23,7 +23,7 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
    - If a specific module path (e.g., `tools/learning.py`), focus on that module
    - If `all` or empty, discover source roots from the repo layout and config: `src/`, `lib/`, `packages/`, `apps/`, `cmd/`, `crates/`, service directories, or top-level language packages/modules
 
-2. **Run coverage/test signal**: Use the project's configured test command when known (`make test`, `pytest`, `vitest`, `npm test`, `cargo test`, `go test`, etc.). Then call `trw_build_check(scope="{actual command}")` with the observed result. If no safe command is evident, report the likely commands and continue with static analysis rather than inventing one.
+2. **Run coverage/test signal**: Use the project's configured test command when known (`make test`, `pytest`, `vitest`, `npm test`, `cargo test`, `go test`, etc.). Capture the exact command, scope, outcome, counts, and coverage provenance. Do not call `trw_build_check` from this read-only audit: return the evidence to the owning orchestrator, which may record it only when it satisfies the active validation plan. If no safe command is evident, report likely commands and continue with static analysis rather than inventing one.
 
 3. **Analyze test structure**:
    - Glob for test files using project conventions: `tests/**`, `*.test.*`, `*.spec.*`, `*_test.go`, `*_test.rs`, `test_*.py`, integration/e2e folders, or configured test globs
@@ -48,7 +48,7 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
    ## Test Strategy Report
 
    ### Coverage Summary
-   - Overall: {X}% (threshold: 80%)
+   - Overall: {X}% (configured gate: {Y}% | not configured)
    - Tests: {N} total, {N} passed, {N} failed
 
    ### Module Coverage
@@ -78,6 +78,6 @@ Audit test coverage and strategy for the project codebase. Identifies untested m
 
 - This skill is read-only — it identifies gaps but does not write tests
 - Use the recommendations to guide test writing during IMPLEMENT phase
-- Use the coverage threshold enforced by the project's config. If no threshold is present, report 80% as the TRW default recommendation, not as a claimed project fact.
+- Use the coverage threshold enforced by project config or an explicit accepted requirement. If no coverage threshold is configured, report `not configured`; do not invent a percentage.
 - Focus on testing edge cases and error paths, not just happy paths
 - Prefer recommendations that prove a thin vertical slice before asking for broad horizontal layer coverage

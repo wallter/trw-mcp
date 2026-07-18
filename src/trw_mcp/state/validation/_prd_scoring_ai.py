@@ -9,11 +9,23 @@ Two helpers + 2 constants:
   scoring (returns 3-tuple of [0, 1] floats)
 
 Extracted as DIST-243 batch 55.
+
+Non-AI opt-out (feedback sub_5qbmT6WPNoP58rlv item 7): the heuristic trips on
+as few as two incidental keyword hits (e.g. a PRD that merely mentions
+"prompt" and "inference"). A PRD author can short-circuit the classification —
+and therefore the extra AI-operational-evidence weighting/requirements — by
+declaring ``ai_operational: false`` in the frontmatter. Any explicit false-y
+value (bool ``false`` or the strings 'false'/'no'/'off') forces
+``_is_ai_agentic_prd`` to return ``False`` regardless of body keywords. Absent
+or truthy values leave the heuristic untouched (backward compatible).
 """
 
 from __future__ import annotations
 
 import re
+
+# Explicit false-y frontmatter values for the ``ai_operational`` opt-out key.
+_AI_OPT_OUT_VALUES: frozenset[str] = frozenset({"false", "no", "off", "0"})
 
 # AI/Agentic detection keywords (PRD-QUAL-055). Keep these boundary-aware to
 # avoid false positives from ordinary words like "maintainers".
@@ -35,8 +47,27 @@ _AI_OPERATIONAL_HEADINGS = (
 )
 
 
+def _ai_operational_opt_out(frontmatter: dict[str, object]) -> bool:
+    """Return True when the PRD explicitly declares ``ai_operational: false``.
+
+    Only an explicit false-y value opts out; a missing key or a truthy value
+    leaves the heuristic in force (backward compatible).
+    """
+    value = frontmatter.get("ai_operational")
+    if value is False:
+        return True
+    return isinstance(value, str) and value.strip().lower() in _AI_OPT_OUT_VALUES
+
+
 def _is_ai_agentic_prd(frontmatter: dict[str, object], content: str) -> bool:
-    """Heuristic detection of AI/LLM/agentic PRDs."""
+    """Heuristic detection of AI/LLM/agentic PRDs.
+
+    Honors an explicit ``ai_operational: false`` frontmatter opt-out
+    (feedback sub_5qbmT6WPNoP58rlv item 7) that short-circuits the keyword
+    heuristic before any body scanning.
+    """
+    if _ai_operational_opt_out(frontmatter):
+        return False
     category = str(frontmatter.get("category", "")).upper()
     title = str(frontmatter.get("title", ""))
     title_keyword_match = _AI_KEYWORD_RE.search(title) is not None

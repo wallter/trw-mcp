@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import trw_mcp.state.analytics.report as analytics_mod
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateWriter
 
 
@@ -53,7 +54,7 @@ def multi_run_project(
 ) -> Path:
     """Create three runs across two tasks under tmp_path/.trw/runs."""
     monkeypatch.setattr(analytics_mod, "resolve_project_root", lambda: tmp_path)
-    monkeypatch.setattr(analytics_mod._config, "runs_root", ".trw/runs")
+    monkeypatch.setattr(analytics_mod, "get_config", lambda: TRWConfig(runs_root=".trw/runs"))
     monkeypatch.setattr(analytics_mod, "resolve_trw_dir", lambda: tmp_path / ".trw")
 
     run_events_a1: list[dict[str, object]] = [

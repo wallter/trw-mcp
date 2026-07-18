@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 
 import structlog
 
+from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import ValidationFailure
+from trw_mcp.state.validation._path_exclusions import PATH_INDEX_EXCLUDE_DIRS
 
 logger = structlog.get_logger(__name__)
+
+# Fallback caps used only when ``get_config()`` is unavailable; they MIRROR the
+# ``path_index_max_files`` / ``path_index_max_seconds`` Pydantic field defaults
+# in ``models/config/_fields_prd.py`` (the config knobs are authoritative).
+_DEFAULT_PATH_INDEX_MAX_FILES = 1_000_000
+_DEFAULT_PATH_INDEX_MAX_SECONDS = 5.0
 
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 _PATH_SUFFIXES = frozenset(
@@ -50,22 +59,13 @@ _ROOT_FILENAMES = frozenset(
 _KNOWN_SOURCE_SUFFIXES: frozenset[str] = frozenset(
     {".py", ".ts", ".tsx", ".md", ".yaml", ".yml", ".json", ".sh", ".toml"}
 )
-# Directories excluded from bare-filename rglob so vendor trees, build outputs,
-# and run-artifact dumps don't inflate match counts or latency (NFR-02/NFR-04).
-_GLOB_EXCLUDE_DIRS: frozenset[str] = frozenset(
-    {
-        "node_modules",
-        ".venv",
-        "venv",
-        ".git",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        "dist",
-        "build",
-        ".trw",
-    }
-)
+# Directories excluded from the bare-filename basename walk so vendor trees,
+# build outputs, and run-artifact dumps don't inflate match counts or latency
+# (NFR-02/NFR-04). Module-level alias of the single shared constant
+# ``PATH_INDEX_EXCLUDE_DIRS`` — kept as a named attribute so existing test
+# monkeypatches on ``_GLOB_EXCLUDE_DIRS`` still resolve, and the walk (which
+# reads the module global by name at call time) still sees the patch.
+_GLOB_EXCLUDE_DIRS: frozenset[str] = PATH_INDEX_EXCLUDE_DIRS
 
 
 def _check_repo_path_references(
@@ -73,6 +73,7 @@ def _check_repo_path_references(
     project_root: Path,
     *,
     extra_roots: list[Path] | None = None,
+    partial_report: dict[str, object] | None = None,
 ) -> list[ValidationFailure]:
     """Verify backtick-quoted repo paths in *content* exist.
 
@@ -85,9 +86,18 @@ def _check_repo_path_references(
     6 hard ``repo_path_exists`` errors and dragged a structurally-perfect PRD
     to grade D / valid:false. *extra_roots* defaults to ``None`` so the
     single-repo contract is byte-for-byte unchanged.
+
+    *partial_report* (opt-in out-param): when supplied, it is populated with the
+    grounding-degrade signal so callers can surface it in the validation result.
+    Keys written: ``path_index_partial`` (bool — the basename index truncated at
+    a runaway cap) and ``path_index_skipped_refs`` (int — bare filenames that
+    degraded to advisory-skip because a partial index cannot prove absence). A
+    silent skip is exactly what let a broken (always-partial) index masquerade as
+    a passing grounding check, so this makes the degrade observable.
     """
     roots = [project_root, *(extra_roots or [])]
     failures: list[ValidationFailure] = []
+    skipped_bare_refs = 0
     # One basename index PER root (lazily built on first bare lookup).
     bare_caches: list[dict[str, tuple[bool, int]]] = [{} for _ in roots]
     for ref in _extract_repo_path_refs(content):
@@ -116,6 +126,15 @@ def _check_repo_path_references(
                         ),
                         severity="warning",
                     )
+                )
+            elif _index_is_partial(bare_caches):
+                # Bounded walk hit a file/time cap: a truncated index cannot
+                # prove the basename is absent, so degrade to advisory-skip
+                # rather than emit a false "no match in repo" warning.
+                skipped_bare_refs += 1
+                logger.debug(
+                    "prd_integrity_bare_filename_partial_skip",
+                    raw=ref,
                 )
             else:
                 logger.debug(
@@ -146,6 +165,9 @@ def _check_repo_path_references(
                 severity="error",
             )
         )
+    if partial_report is not None:
+        partial_report["path_index_partial"] = _index_is_partial(bare_caches)
+        partial_report["path_index_skipped_refs"] = skipped_bare_refs
     return failures
 
 
@@ -225,36 +247,92 @@ def _path_exists_under_root(project_root: Path, rel_path: str) -> bool:
 
 
 _INDEX_BUILT_SENTINEL = "\x00__index_built__\x00"
+# Marks a basename index that stopped early at a file/time cap. When present,
+# an absent basename is NOT a proven miss (the walk may have skipped the file),
+# so the resolver degrades to advisory-skip instead of a false "no match"
+# warning. Keyed with a leading NUL so it can never collide with a real file.
+_INDEX_PARTIAL_SENTINEL = "\x00__index_partial__\x00"
+
+
+def _resolve_walk_bounds() -> tuple[frozenset[str], int, float]:
+    """Resolve the effective exclude-dir set and file/time caps for the walk.
+
+    Unions the shared :data:`_GLOB_EXCLUDE_DIRS` with the project's
+    ``path_index_exclude_dirs`` knob, and reads the ``path_index_max_files`` /
+    ``path_index_max_seconds`` caps. Reads ``_GLOB_EXCLUDE_DIRS`` as a module
+    global (not a closure) so test monkeypatches on it still apply. Degrades to
+    the shared constant + default caps if config is unavailable.
+    """
+    exclude = _GLOB_EXCLUDE_DIRS
+    max_files = _DEFAULT_PATH_INDEX_MAX_FILES
+    max_seconds = _DEFAULT_PATH_INDEX_MAX_SECONDS
+    try:
+        cfg = get_config()
+        extra = getattr(cfg, "path_index_exclude_dirs", None) or []
+        if extra:
+            exclude = exclude | frozenset(str(d) for d in extra)
+        max_files = int(getattr(cfg, "path_index_max_files", max_files))
+        max_seconds = float(getattr(cfg, "path_index_max_seconds", max_seconds))
+    except Exception:  # justified: config unavailable must not break validation
+        logger.warning("prd_integrity_path_index_config_unavailable", exc_info=True)
+    return exclude, max_files, max_seconds
 
 
 def _populate_basename_index(
     project_root: Path,
     cache: dict[str, tuple[bool, int]],
 ) -> None:
-    """One-shot walk that builds {basename: (unique, count)} for every file
-    under ``project_root``, pruning :data:`_GLOB_EXCLUDE_DIRS` in-place so
-    vendor / cache / build trees never get descended into.
+    """One-shot BOUNDED walk that builds {basename: (unique, count)} for files
+    under ``project_root``, pruning the exclude-dir set in-place so vendor /
+    cache / build trees never get descended into.
 
-    Single os.walk pass replaces per-token ``rglob`` calls. The previous
-    implementation was O(R * F) wall-clock — for a ~100k-file repo with 10+
-    bare references, that exceeded the MCP tool timeout. New cost is O(F)
-    once + O(1) per lookup.
+    Single os.walk pass replaces per-token ``rglob`` calls. The walk is bounded
+    by ``path_index_max_files`` and ``path_index_max_seconds``: on a large
+    monorepo an unbounded walk cost ~8s per validated PRD. When either cap trips
+    the walk stops early and the index is marked partial via
+    :data:`_INDEX_PARTIAL_SENTINEL`, so a truncated index can never emit a false
+    "no match in repo" warning (the resolver degrades to advisory-skip).
     """
 
+    exclude, max_files, max_seconds = _resolve_walk_bounds()
     counts: dict[str, int] = {}
+    seen = 0
+    partial = False
+    start = time.monotonic()
     try:
         for _dirpath, dirnames, filenames in os.walk(project_root):
             # Prune excluded subtrees BEFORE descending — this is the order-of-
             # magnitude speedup vs the prior rglob-then-filter approach.
-            dirnames[:] = [d for d in dirnames if d not in _GLOB_EXCLUDE_DIRS]
+            dirnames[:] = [d for d in dirnames if d not in exclude]
             for fname in filenames:
                 counts[fname] = counts.get(fname, 0) + 1
+                seen += 1
+            if seen >= max_files or (time.monotonic() - start) >= max_seconds:
+                partial = True
+                break
     except OSError:
         return
 
     for fname, n in counts.items():
         cache[fname] = (n == 1, n)
     cache[_INDEX_BUILT_SENTINEL] = (True, 0)
+    if partial:
+        cache[_INDEX_PARTIAL_SENTINEL] = (True, 0)
+        logger.debug(
+            "prd_integrity_basename_index_partial",
+            files_indexed=seen,
+            max_files=max_files,
+            max_seconds=max_seconds,
+        )
+
+
+def _index_is_partial(caches: list[dict[str, tuple[bool, int]]]) -> bool:
+    """True when ANY root's basename index stopped early at a cap.
+
+    A partial index cannot prove a basename is absent, so its unresolved
+    lookups degrade to advisory-skip rather than a false-negative warning.
+    """
+    return any(_INDEX_PARTIAL_SENTINEL in cache for cache in caches)
 
 
 def _resolve_bare_filename(

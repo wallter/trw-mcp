@@ -5,11 +5,19 @@ Registers:
   view of every :class:`HPOTelemetryEvent` written to the unified
   ``events-YYYY-MM-DD.jsonl`` files under a run's ``meta/`` directory.
 - ``trw_surface_diff(snapshot_id_a, snapshot_id_b)`` — structured diff
-  between two run snapshots: ``{added, removed, changed}`` artifact
-  records keyed by ``surface_id``.
+  between two run snapshots: a single ``changes`` list of per-surface
+  objects (each carrying ``change_type``) plus ``*_count`` totals.
 
 Both tools are read-only queries over already-persisted state — no
 writes, no network. Fail-open on malformed rows per NFR-8.
+
+Response compaction (token-bloat wave 4): the diff tools return a single
+``changes`` representation instead of duplicating it as bare ``added``/
+``removed``/``changed`` id-lists — callers filter ``changes`` by
+``change_type`` client-side; ``*_count`` ints give the totals cheaply.
+``query_events`` drops the constant ``sort_order`` (documented below) and
+caps ``source_files`` to ``_MAX_SOURCE_FILES`` with a ``source_file_count``
+total so a long-lived repo does not re-list every run's path on each call.
 """
 
 from __future__ import annotations
@@ -17,10 +25,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import yaml
+from typing_extensions import TypedDict
 
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.telemetry.surface_manifest import MANIFEST_FILENAME
@@ -34,12 +43,17 @@ _REQ_ROW_RE = re.compile(r"^\|\s*(FR\d+|NFR-\d+|AC-\d+|US-\d+)\s*\|", re.IGNOREC
 _METRIC_HINT_RE = re.compile(r"\b(metric|slo|threshold|target|latency|coverage|error rate|gate)\b", re.IGNORECASE)
 
 
+# Cap on the raw ``source_files`` path list returned by ``query_events``. The
+# full count is always reported via ``source_file_count``; callers rarely need
+# the raw paths, so only the first N are echoed to bound the response size.
+_MAX_SOURCE_FILES = 20
+
+
 class SurfaceChange(TypedDict):
     surface_id: str
     change_type: str
     before_hash: str | None
     after_hash: str | None
-    content_diff_summary: str
 
 
 def _iter_events_files(run_root: Path) -> list[Path]:
@@ -139,13 +153,16 @@ def query_events(
     filtered = _apply_event_filters(merged, full_filters)
 
     # FR-7 contract: ascending by (ts, event_id) with stable lexicographic
-    # tiebreak on event_id.
+    # tiebreak on event_id. (This ordering is a fixed guarantee, so it lives in
+    # the contract/docstring rather than a constant ``sort_order`` echoed on
+    # every response.)
     filtered.sort(key=lambda r: (str(r.get("ts", "")), str(r.get("event_id", ""))))
+    source_files = [str(p) for p in files]
     return {
         "events": filtered,
         "count": len(filtered),
-        "source_files": [str(p) for p in files],
-        "sort_order": ["ts", "event_id"],
+        "source_file_count": len(source_files),
+        "source_files": source_files[:_MAX_SOURCE_FILES],
         "applied_filters": full_filters,
     }
 
@@ -184,9 +201,12 @@ def surface_diff(
 ) -> dict[str, Any]:
     """FR-8: structured diff between two surface snapshots.
 
-    Returns ``{added, removed, changed}`` — each a list of surface_id
-    strings. ``changed`` entries are artifacts present in both snapshots
-    with different ``content_hash``.
+    Returns a single ``changes`` list of per-surface objects (each carrying
+    ``change_type`` ∈ {added, removed, changed}) plus ``added_count`` /
+    ``removed_count`` / ``changed_count`` totals. ``changed`` entries are
+    artifacts present in both snapshots with different ``content_hash``.
+    Callers wanting just the ids of one bucket filter ``changes`` by
+    ``change_type`` client-side.
     """
     resolved = trw_dir if trw_dir is not None else resolve_trw_dir()
     runs_root = resolved / "runs"
@@ -196,9 +216,10 @@ def surface_diff(
 
     if snap_a is None or snap_b is None:
         return {
-            "added": [],
-            "removed": [],
-            "changed": [],
+            "changes": [],
+            "added_count": 0,
+            "removed_count": 0,
+            "changed_count": 0,
             "error": "snapshot_not_found",
             "a_found": snap_a is not None,
             "b_found": snap_b is not None,
@@ -227,7 +248,6 @@ def surface_diff(
             "change_type": "added",
             "before_hash": None,
             "after_hash": arts_b[surface_id],
-            "content_diff_summary": f"surface added with content_hash {arts_b[surface_id]}",
         }
         for surface_id in added
     ]
@@ -237,28 +257,24 @@ def surface_diff(
             "change_type": "removed",
             "before_hash": arts_a[surface_id],
             "after_hash": None,
-            "content_diff_summary": f"surface removed; prior content_hash was {arts_a[surface_id]}",
         }
         for surface_id in removed
     )
-    for surface_id in changed:
-        before_hash = arts_a[surface_id]
-        after_hash = arts_b[surface_id]
-        changes.append(
-            {
-                "surface_id": surface_id,
-                "change_type": "changed",
-                "before_hash": before_hash,
-                "after_hash": after_hash,
-                "content_diff_summary": f"content_hash changed from {before_hash} to {after_hash}",
-            }
-        )
+    changes.extend(
+        {
+            "surface_id": surface_id,
+            "change_type": "changed",
+            "before_hash": arts_a[surface_id],
+            "after_hash": arts_b[surface_id],
+        }
+        for surface_id in changed
+    )
 
     return {
-        "added": added,
-        "removed": removed,
-        "changed": changed,
         "changes": changes,
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
         "snapshot_a_artifact_count": len(arts_a),
         "snapshot_b_artifact_count": len(arts_b),
     }
@@ -299,9 +315,9 @@ def prd_diff_report(*, before_path: str, after_path: str) -> dict[str, Any]:
     return {
         "before_path": str(before),
         "after_path": str(after),
-        "added": added,
-        "removed": removed,
-        "changed": changed,
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
         "changes": [{"key": key, "change_type": "added", "after": after_items[key]["line"]} for key in added]
         + [{"key": key, "change_type": "removed", "before": before_items[key]["line"]} for key in removed]
         + [
@@ -376,9 +392,10 @@ def register_query_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Structured diff between two surface snapshots.
 
-        Returns ``{added, removed, changed}`` lists of ``surface_id``
-        strings. ``changed`` entries appear in both snapshots with
-        different ``content_hash`` values.
+        Returns a single ``changes`` list of per-surface objects (each with
+        ``change_type`` ∈ {added, removed, changed}) plus ``added_count`` /
+        ``removed_count`` / ``changed_count`` totals. ``changed`` entries
+        appear in both snapshots with different ``content_hash`` values.
         """
         consult_mcp_security(
             "trw_surface_diff",

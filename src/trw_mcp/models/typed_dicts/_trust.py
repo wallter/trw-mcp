@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class TrustLevelResult(TypedDict):
@@ -40,18 +40,3 @@ class ApprovalControlMapResult(TypedDict):
     non_compliance_boundary: str
     operator_diagnostics: tuple[str, ...]
     controls: dict[str, ApprovalControlPrimitive]
-
-
-class TrustSessionIncrementResult(TypedDict, total=True):
-    """Return shape of ``increment_session_count()`` in ``state/trust.py``.
-
-    Note: distinct from ``TrustIncrementResult`` which covers the
-    ``_step_trust_increment()`` delivery-pipeline step.
-    """
-
-    session_count: int
-    previous_tier: str
-    new_tier: str
-    transitioned: bool
-    # Added for observability in _step_trust_increment():
-    reason: NotRequired[str]

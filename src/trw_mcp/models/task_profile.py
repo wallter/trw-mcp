@@ -7,17 +7,21 @@ import json
 
 from pydantic import BaseModel, ConfigDict
 
-from trw_mcp.models.config import ClientProfile, ModelTier
+from trw_mcp.models.config import CapabilityTier, ClientProfile, ModelTier, normalize_capability_tier
 from trw_mcp.models.run import ComplexityClass, ComplexitySignals
 from trw_mcp.models.task_profile_types import (
     _TASK_TYPE_NUDGE_DEFAULTS,
     CeremonyDepth,
+    EffortAdapterStatus,
+    EffortSource,
+    ExecutionEffort,
     NudgePolicy,
     RecallPolicy,
     TaskArchetype,
     TaskProfile,
     TaskProfileOverrides,
     TaskType,
+    ToolExposurePreset,
     TraceDepth,
     task_type_recall_policy,
 )
@@ -30,7 +34,10 @@ class _TaskProfileFingerprint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     profile_id: str
-    model_tier: str
+    capability_tier: CapabilityTier
+    recommended_effort: ExecutionEffort
+    effort_source: EffortSource
+    effort_adapter_status: EffortAdapterStatus
     complexity_class: str
     task_archetype: str
     task_type: str
@@ -103,6 +110,21 @@ def _coerce_trace_depth(trace_depth: str) -> TraceDepth:
     return "standard"
 
 
+def _recommended_effort_for_complexity(tier: ComplexityClass) -> ExecutionEffort:
+    """Resolve a portable effort label without assuming a provider/model ID.
+
+    Routine bounded work starts low, ordinary engineering work starts medium,
+    and high-blast-radius work starts high. ``xhigh`` and ``max`` are never
+    selected automatically; adapters or explicit evaluated overrides may use
+    them when the active harness supports them.
+    """
+    if tier == ComplexityClass.MINIMAL:
+        return "low"
+    if tier == ComplexityClass.COMPREHENSIVE:
+        return "high"
+    return "medium"
+
+
 def _extend_rationale(
     profile: ClientProfile, mandatory_phases: tuple[str, ...], base: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -132,6 +154,7 @@ def _apply_overrides(
                 "trace_depth": overrides.trace_depth,
                 "instruction_budget_lines": overrides.instruction_budget_lines,
                 "context_window_tokens": overrides.context_window_tokens,
+                "recommended_effort": overrides.recommended_effort,
             }.items()
             if value is not None
         }
@@ -146,6 +169,7 @@ def resolve_task_profile(
     complexity_signals: ComplexitySignals | None = None,
     task_archetype: TaskArchetype = "unknown",
     task_type: TaskType = "unknown",
+    tool_resolution_mode: ToolExposurePreset = "standard",
     config_overrides: TaskProfileOverrides | None = None,
 ) -> TaskProfile:
     """Resolve client profile + task complexity into a first-class TaskProfile.
@@ -158,11 +182,17 @@ def resolve_task_profile(
     contract = get_ceremony_depth_contract(tier)
     mandatory_phases = tuple(contract.mandatory_phases)
     rationale = _extend_rationale(client_profile, mandatory_phases, complexity_rationale)
+    recommended_effort = _recommended_effort_for_complexity(tier)
+    effort_source: EffortSource = "task_complexity"
+    rationale = (*rationale, f"execution effort recommended as {recommended_effort} from task complexity")
     nudge_pool_weights = _TASK_TYPE_NUDGE_DEFAULTS.get(task_type, (40, 30, 20, 10))
     recall_policy: RecallPolicy = task_type_recall_policy(task_type)
     fingerprint = _TaskProfileFingerprint(
         profile_id=client_profile.client_id,
-        model_tier=model_tier or client_profile.default_model_tier,
+        capability_tier=normalize_capability_tier(model_tier or client_profile.default_model_tier),
+        recommended_effort=recommended_effort,
+        effort_source=effort_source,
+        effort_adapter_status="advisory",
         complexity_class=tier.value,
         task_archetype=task_archetype,
         task_type=task_type,
@@ -170,7 +200,9 @@ def resolve_task_profile(
         nudge_pool_weights=nudge_pool_weights,
         ceremony_depth=_resolve_ceremony_depth(client_profile, tier, contract.ceremony_depth),
         mandatory_phases=mandatory_phases,
-        exposed_tool_preset=client_profile.tool_exposure_mode,
+        # PRD-CORE-218 FR04: exposure is the global tool_resolution_mode (the
+        # kernel/pack authority), no longer a per-client-profile preset.
+        exposed_tool_preset=tool_resolution_mode,
         nudge_policy=_resolve_nudge_policy(client_profile, tier, contract.nudge_policy),
         trace_depth=_coerce_trace_depth(contract.trace_depth),
         instruction_budget_lines=client_profile.instruction_max_lines,
@@ -178,4 +210,11 @@ def resolve_task_profile(
         rationale=rationale,
     )
     resolved = _apply_overrides(fingerprint=fingerprint, overrides=config_overrides)
+    if config_overrides is not None and config_overrides.recommended_effort is not None:
+        resolved = resolved.model_copy(
+            update={
+                "effort_source": "explicit_override",
+                "rationale": (*resolved.rationale, "execution effort supplied by explicit override"),
+            }
+        )
     return TaskProfile(**resolved.model_dump(mode="python"), profile_hash=_profile_hash(resolved))

@@ -382,6 +382,29 @@ def recall_learnings(
             include_superseded=include_superseded,
         )
 
+    # PRD-CORE-202 FR02/FR05: federate operator-named EXTERNAL read-stores
+    # (``extra_read_stores`` / ``--memory-db``) as an additional, orthogonal
+    # union step. Skipped entirely (no backend constructed) when none are
+    # configured (NFR01); fail-open so a broken corpus never breaks recall
+    # (NFR03). The project's own default store is excluded by resolved path so
+    # an operator pointing ``--memory-db`` at the live DB cannot double-count
+    # (RISK-02).
+    from trw_mcp.state._external_store import federate_external_stores
+
+    entries = federate_external_stores(
+        entries,
+        query,
+        default_db_path=trw_dir / "memory" / "memory.db",
+        tags=tags,
+        mem_status=mem_status,
+        min_impact=min_impact,
+        max_results=max_results,
+        is_wildcard=is_wildcard,
+        allow_cold_embedding_init=allow_cold_embedding_init,
+        as_of=as_of_dt,
+        include_superseded=include_superseded,
+    )
+
     # PRD-CORE-194 FR03: apply the validity prior on the MCP recall path so a
     # superseded record is EXCLUDED by default here too (the wildcard list_entries
     # branch and the keyword fallback do not pass through hybrid_search's prior).

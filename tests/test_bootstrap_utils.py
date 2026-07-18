@@ -37,9 +37,16 @@ def test_supported_ides_does_not_contain_bare_cursor() -> None:
 
 
 @pytest.mark.unit
-def test_supported_ides_has_nine_entries() -> None:
-    """SUPPORTED_IDES has exactly 9 entries after the cursor split and antigravity-cli."""
-    assert len(SUPPORTED_IDES) == 9
+def test_supported_ides_has_seven_entries() -> None:
+    """SUPPORTED_IDES has 7 entries: 9 minus the retired gemini + aider (2026-07-11)."""
+    assert len(SUPPORTED_IDES) == 7
+
+
+@pytest.mark.unit
+def test_supported_ides_excludes_retired_clients() -> None:
+    """Retired clients (gemini, aider) are no longer installable targets."""
+    assert "gemini" not in SUPPORTED_IDES
+    assert "aider" not in SUPPORTED_IDES
 
 
 # ---------------------------------------------------------------------------

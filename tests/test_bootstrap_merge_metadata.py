@@ -127,6 +127,100 @@ class TestInstallerMetadata:
         assert data["skills_count"] > 0
         assert data["agents_count"] > 0
 
+    def test_installer_meta_v2_historical_schema(self, fake_git_repo: Path) -> None:
+        """PRD-INFRA-164 FR11 / D-26: installer-meta uses the v2 historical schema
+        with unambiguous *_at_install fields and record_kind=historical_install_snapshot;
+        legacy fields are retained as history only, never a current authority."""
+        init_project(fake_git_repo)
+        meta_path = fake_git_repo / ".trw" / "installer-meta.yaml"
+
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state.persistence import FileStateReader
+
+        data = FileStateReader().read_yaml(meta_path)
+        config = TRWConfig()
+
+        # v2 unambiguous install-time schema.
+        assert data["record_kind"] == "historical_install_snapshot"
+        assert data["installer_meta_schema_version"] == 2
+        assert data["framework_version_at_install"] == config.framework_version
+        assert data["aaref_version_at_install"] == config.aaref_version
+        assert "trw_mcp_version_at_install" in data
+        assert "recorded_at" in data
+
+        # Legacy fields retained one release for compatibility (history only).
+        assert "framework_version" in data
+        assert "package_version" in data
+
+    def test_installer_meta_v2_is_read_as_historical_never_current(self, fake_git_repo: Path) -> None:
+        """The unified status taxonomy reports the installer snapshot as historical
+        and never places it in a current must_match pair (FR09/D-26 read-side)."""
+        init_project(fake_git_repo)
+
+        from trw_mcp.server._version_status_layers import historical_installer_layer
+
+        layer = historical_installer_layer(fake_git_repo)
+        assert layer["present"] is True
+        assert layer["record_kind"] == "historical_install_snapshot"
+        assert "never a current runtime authority" in str(layer["note"])
+
+    def test_update_project_migrates_v1_snapshot_to_v2_history(self, initialized_repo: Path) -> None:
+        """D-26: the real update path safely replaces a v1 snapshot with v2 history."""
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.server._version_status_layers import historical_installer_layer
+        from trw_mcp.state.persistence import FileStateReader
+
+        meta_path = initialized_repo / ".trw" / "installer-meta.yaml"
+        meta_path.write_text(
+            "framework_version: v25_TRW\n"
+            "package_version: 0.48.1\n"
+            "last_updated: '2026-05-01T04:28:20+00:00'\n"
+            "installed_by: trw-mcp update-project\n",
+            encoding="utf-8",
+        )
+
+        result = update_project(initialized_repo)
+
+        assert not result["errors"]
+        data = FileStateReader().read_yaml(meta_path)
+        config = TRWConfig()
+        assert data["record_kind"] == "historical_install_snapshot"
+        assert data["installer_meta_schema_version"] == 2
+        assert data["framework_version_at_install"] == config.framework_version
+        assert data["aaref_version_at_install"] == config.aaref_version
+        assert data["framework_version"] == config.framework_version
+        assert data["recorded_at"] != "2026-05-01T04:28:20+00:00"
+        layer = historical_installer_layer(initialized_repo)
+        assert layer["record_kind"] == "historical_install_snapshot"
+        assert "never a current runtime authority" in str(layer["note"])
+
+    def test_installer_metadata_write_failure_preserves_prior_snapshot(
+        self, initialized_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The atomic writer reports failure without truncating the v1 snapshot."""
+        from trw_mcp.bootstrap._utils import _write_installer_metadata
+        from trw_mcp.state.persistence import FileStateWriter
+
+        meta_path = initialized_repo / ".trw" / "installer-meta.yaml"
+        original = "framework_version: v25_TRW\npackage_version: 0.48.1\n"
+        meta_path.write_text(original, encoding="utf-8")
+
+        def fail_write(self: FileStateWriter, path: Path, data: object) -> None:
+            raise OSError("synthetic atomic-write failure")
+
+        monkeypatch.setattr(FileStateWriter, "write_yaml", fail_write)
+        result: dict[str, list[str]] = {
+            "created": [],
+            "updated": [],
+            "skipped": [],
+            "warnings": [],
+            "errors": [],
+        }
+        _write_installer_metadata(initialized_repo, "update-project", result)
+
+        assert result["errors"]
+        assert meta_path.read_text(encoding="utf-8") == original
+
 
 # ── Dry-Run Tests ─────────────────────────────────────────────────────────
 
@@ -296,6 +390,6 @@ class TestManagedArtifactsManifest:
         # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed,
         # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
         # or if the skill/agent/change is for an internal monorepo skill
-        assert len(skills) == 26
+        assert len(skills) == 28
         assert len(agents) == 12
         assert len(hooks) > 0

@@ -237,7 +237,9 @@ class AnomalyDetector:
             tool = row.get("tool")
             args_hash = row.get("arg_hash")
             if isinstance(server, str) and isinstance(tool, str) and isinstance(args_hash, str):
-                self._remember_arg_hash((server, tool), args_hash)
+                key = (server, tool)
+                self._baseline_pairs.add(key)
+                self._remember_arg_hash(key, args_hash)
 
     def _persist_arg_hash_baseline(self, obs: AnomalyObservation) -> None:
         path = self._config.baseline_store_path

@@ -80,6 +80,7 @@ class TestBestEffortMigrationCheck:
         failures: list[ValidationFailure] = []
         _best_effort_migration_check(config, failures)
         assert failures == []
+        assert failures == []
 
     def test_enabled_appends_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
@@ -115,6 +116,7 @@ class TestBestEffortDryCheck:
         failures: list[ValidationFailure] = []
         _best_effort_dry_check(config, failures)
         assert failures == []
+        assert failures == []
 
     def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
@@ -132,6 +134,7 @@ class TestBestEffortSemanticCheck:
         config = TRWConfig(semantic_checks_enabled=False)
         failures: list[ValidationFailure] = []
         _best_effort_semantic_check(config, failures)
+        assert failures == []
         assert failures == []
 
     def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:

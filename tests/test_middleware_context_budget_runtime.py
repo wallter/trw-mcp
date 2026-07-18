@@ -15,6 +15,7 @@ from tests._test_middleware_context_budget_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
+    _clean_state,  # noqa: F401 - importing registers the autouse fixture
 )
 from trw_mcp.middleware.context_budget import ContextBudgetMiddleware, get_turn_count
 
@@ -25,6 +26,9 @@ class TestTurnTracking:
     @pytest.fixture
     def middleware(self) -> ContextBudgetMiddleware:
         return ContextBudgetMiddleware()
+
+    def test_clean_state_fixture_is_collected(self, request: pytest.FixtureRequest) -> None:
+        assert "_clean_state" in request.fixturenames
 
     @pytest.mark.asyncio
     async def test_turn_count_increments(self, middleware: ContextBudgetMiddleware) -> None:

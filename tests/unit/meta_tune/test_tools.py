@@ -128,7 +128,7 @@ def test_dispatch_replay_inherits_full_env_not_sanitized(tmp_path: Path, monkeyp
     """
     import os
 
-    from trw_mcp.meta_tune import dispatch
+    from trw_mcp.meta_tune import promote
     from trw_mcp.meta_tune.sandbox import SandboxResult
     from trw_mcp.models.config._main import TRWConfig
     from trw_mcp.models.config._sub_models import MetaTuneConfig
@@ -154,7 +154,7 @@ def test_dispatch_replay_inherits_full_env_not_sanitized(tmp_path: Path, monkeyp
             timed_out=False,
         )
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", _fake_run_sandboxed)
+    monkeypatch.setattr(promote, "run_sandboxed", _fake_run_sandboxed)
 
     cfg = TRWConfig(
         meta_tune=MetaTuneConfig(
@@ -166,7 +166,7 @@ def test_dispatch_replay_inherits_full_env_not_sanitized(tmp_path: Path, monkeyp
     target = tmp_path / "CLAUDE.md"
     target.write_text("before")
 
-    dispatch.promote_candidate(
+    promote.promote_candidate(
         target_path=target,
         candidate_content="after",
         proposer_id="agent-1",

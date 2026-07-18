@@ -196,37 +196,3 @@ def find_duplicated_blocks(
     # Sort by number of occurrences descending
     results.sort(key=lambda b: len(b.locations), reverse=True)
     return results
-
-
-def format_dry_report(
-    blocks: list[DuplicatedBlock],
-    *,
-    max_blocks: int = 10,
-) -> str:
-    """Format duplication findings as a human-readable report.
-
-    Args:
-        blocks: List of duplicated blocks to report.
-        max_blocks: Maximum number of blocks to include.
-
-    Returns:
-        Markdown-formatted report string.
-    """
-    if not blocks:
-        return "No duplicated blocks found."
-
-    lines: list[str] = [
-        f"## DRY Check: {len(blocks)} duplicated block(s) found\n",
-    ]
-
-    for i, block in enumerate(blocks[:max_blocks]):
-        lines.append(f"### Block {i + 1} ({len(block.locations)} occurrences)")
-        lines.append(f"Hash: `{block.block_hash}`\n")
-        lines.append("Locations:")
-        lines.extend(f"- `{loc.file_path}` lines {loc.start_line}-{loc.end_line}" for loc in block.locations)
-        lines.append(f"\n```\n{block.content}\n```\n")
-
-    if len(blocks) > max_blocks:
-        lines.append(f"\n... and {len(blocks) - max_blocks} more blocks")
-
-    return "\n".join(lines)

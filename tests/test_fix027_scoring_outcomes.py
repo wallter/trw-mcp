@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from trw_mcp.models.run import EventType
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -36,7 +37,6 @@ class TestProcessOutcomeForEvent:
 
     def test_outcome_history_appended(self, tmp_path: Path) -> None:
         """Outcome history grows with each process_outcome call."""
-        import trw_mcp.scoring as _sc
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import process_outcome as po
 
@@ -72,31 +72,19 @@ class TestProcessOutcomeForEvent:
         }
         writer.append_jsonl(logs_dir / "recall_tracking.jsonl", receipt)
 
-        old_config = _sc._config
-        old_reader = _sc._reader
-        old_writer = _sc._writer
-
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)
         object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
-        _sc._config = cfg
-        _sc._reader = reader
-        _sc._writer = writer
 
-        try:
+        with patch("trw_mcp.scoring._correlation.get_config", return_value=cfg):
             po(trw_dir, 0.8, "build_passed")
             stored = reader.read_yaml(entry_path)
             history = stored.get("outcome_history", [])
             assert isinstance(history, list)
             assert len(history) >= 1
-        finally:
-            _sc._config = old_config
-            _sc._reader = old_reader
-            _sc._writer = old_writer
 
     def test_negative_outcome_decreases_q_value(self, tmp_path: Path) -> None:
         """Negative reward (build_failed) decreases q_value for correlated entries."""
-        import trw_mcp.scoring as _sc
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.scoring import process_outcome as po
 
@@ -131,23 +119,12 @@ class TestProcessOutcomeForEvent:
         }
         writer.append_jsonl(logs_dir / "recall_tracking.jsonl", receipt)
 
-        old_config = _sc._config
-        old_reader = _sc._reader
-        old_writer = _sc._writer
-
         cfg = TRWConfig()
         object.__setattr__(cfg, "learning_outcome_correlation_window_minutes", 9999)
         object.__setattr__(cfg, "learning_outcome_correlation_scope", "window")
-        _sc._config = cfg
-        _sc._reader = reader
-        _sc._writer = writer
 
-        try:
+        with patch("trw_mcp.scoring._correlation.get_config", return_value=cfg):
             po(trw_dir, -0.4, "build_failed")
             stored = reader.read_yaml(entry_path)
             q_new = float(str(stored.get("q_value", 0.8)))
             assert q_new < 0.8, "Negative reward should decrease q_value"
-        finally:
-            _sc._config = old_config
-            _sc._reader = old_reader
-            _sc._writer = old_writer

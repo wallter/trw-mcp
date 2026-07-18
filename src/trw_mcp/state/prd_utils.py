@@ -33,6 +33,11 @@ logger = structlog.get_logger(__name__)
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _SECTION_HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
 _PRD_REF_RE = re.compile(r"PRD-[A-Z]+-\d{3}")
+_QUICK_REFERENCE_RE = re.compile(
+    r"^(?:\*\*Quick Reference\*\*:?|#{1,6}\s+Quick Reference)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_QUICK_REFERENCE_END_RE = re.compile(r"^\s*(?:---\s*$|#{1,6}\s+)", re.MULTILINE)
 
 # Patterns for non-substantive lines in content density calculation
 _NON_SUBSTANTIVE_PATTERNS: list[re.Pattern[str]] = [
@@ -132,6 +137,15 @@ def extract_prd_refs(content: str) -> list[str]:
     return sorted(set(matches))
 
 
+def _quick_reference_block_span(body: str) -> tuple[int, int] | None:
+    """Return the body slice containing Quick Reference fields, if present."""
+    marker = _QUICK_REFERENCE_RE.search(body)
+    if marker is None:
+        return None
+    end = _QUICK_REFERENCE_END_RE.search(body, marker.end())
+    return marker.end(), end.start() if end is not None else len(body)
+
+
 def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
     """Update YAML frontmatter fields in a PRD file using round-trip YAML.
 
@@ -187,12 +201,16 @@ def update_frontmatter(path: Path, updates: dict[str, object]) -> None:
         # FR02 (PRD-FIX-056): Sync prose Quick Reference status line when status changes
         if "status" in updates:
             new_status = str(updates["status"])
-            body = re.sub(
-                r"(- \*\*Status\*\*:\s*)(\w+)",
-                lambda m: m.group(1) + new_status.capitalize(),
-                body,
-                count=1,
-            )
+            span = _quick_reference_block_span(body)
+            if span is not None:
+                start, end = span
+                quick_reference = re.sub(
+                    r"(- \*\*Status\*\*:\s*)(\w+)",
+                    lambda m: m.group(1) + new_status.capitalize(),
+                    body[start:end],
+                    count=1,
+                )
+                body = f"{body[:start]}{quick_reference}{body[end:]}"
 
         new_content = f"---\n{new_fm}---{body}"
 
@@ -414,11 +432,120 @@ def _deep_merge(target: object, source: dict[str, object]) -> None:
             target[key] = value
 
 
+# ---------------------------------------------------------------------------
+# PRD-QUAL-120-FR01: single-writer authority map for requirements truth
+# ---------------------------------------------------------------------------
+
+
+class AuthorityEntry(BaseModel):
+    """One requirements truth field with its sole writer (PRD-QUAL-120-FR01)."""
+
+    field_name: str
+    writer: str
+    kind: str  # "source" | "derived" | "projection"
+    source: str = ""  # mandatory for derived/projection entries
+    write_paths: tuple[str, ...] = ()
+
+
+# The authoritative single-writer census. Sources are authored; derived and
+# projection surfaces name the exact input they render. AcceptanceManifest is
+# deliberately given NO write path into PRD source bytes, INDEX, or ROADMAP.
+REQUIREMENTS_AUTHORITY_MAP: tuple[AuthorityEntry, ...] = (
+    AuthorityEntry(
+        field_name="lifecycle_intent(status)",
+        writer="prd_source_frontmatter",
+        kind="source",
+        write_paths=("docs/requirements-aare-f/prds",),
+    ),
+    AuthorityEntry(
+        field_name="functionality_level+stubs",
+        writer="prd_source_frontmatter",
+        kind="source",
+        write_paths=("docs/requirements-aare-f/prds",),
+    ),
+    AuthorityEntry(
+        field_name="executable_queue_state",
+        writer="state/requirements_registry.py",
+        kind="derived",
+        source="prd_source_frontmatter + scheduling_ledger",
+        write_paths=(".trw/registry",),
+    ),
+    AuthorityEntry(
+        field_name="catalogue_rows(INDEX,ROADMAP)",
+        writer="state/index_sync.py",
+        kind="projection",
+        source="requirements_registry + prd_source_frontmatter",
+        write_paths=("docs/requirements-aare-f/INDEX.md", "docs/requirements-aare-f/ROADMAP.md"),
+    ),
+    AuthorityEntry(
+        field_name="acceptance_state",
+        writer="state/acceptance_manifest.py",
+        kind="derived",
+        source="raw_prd_bytes + typed_receipts",
+        write_paths=(".trw/requirements/acceptance-manifests",),
+    ),
+    AuthorityEntry(
+        field_name="reflection_action_state",
+        writer="reflection_ledger",
+        kind="derived",
+        source="approved_actions + target_evidence",
+        write_paths=(".trw/reflections",),
+    ),
+)
+
+_MANIFEST_FORBIDDEN_WRITE_PATHS: tuple[str, ...] = (
+    "docs/requirements-aare-f/prds",
+    "docs/requirements-aare-f/INDEX.md",
+    "docs/requirements-aare-f/ROADMAP.md",
+)
+
+
+def validate_requirements_authority(
+    entries: tuple[AuthorityEntry, ...] = REQUIREMENTS_AUTHORITY_MAP,
+) -> list[str]:
+    """Validate the single-writer contract (PRD-QUAL-120-FR01).
+
+    Failures: a field with more than one writer; a derived/projection entry
+    that does not name its source; any acceptance-manifest write path into the
+    PRD source directory, INDEX, or ROADMAP (the manifest must never become a
+    second writer of authored truth or human projections).
+    """
+    failures: list[str] = []
+    writers_by_field: dict[str, set[str]] = {}
+    for entry in entries:
+        writers_by_field.setdefault(entry.field_name, set()).add(entry.writer)
+        if entry.kind in ("derived", "projection") and not entry.source.strip():
+            failures.append(f"{entry.field_name}: {entry.kind} entry must name its source")
+        if entry.writer == "state/acceptance_manifest.py":
+            failures.extend(
+                f"{entry.field_name}: AcceptanceManifest must have no write path into {path}"
+                for path in entry.write_paths
+                if any(path.startswith(forbidden) for forbidden in _MANIFEST_FORBIDDEN_WRITE_PATHS)
+            )
+    failures.extend(
+        f"{field_name}: multiple writers {sorted(writers)}"
+        for field_name, writers in sorted(writers_by_field.items())
+        if len(writers) > 1
+    )
+    return failures
+
+
+def _identity_scan_dirs(prds_dir: Path) -> list[Path]:
+    """Active + archived PRD directories — the full identity namespace (PRD-QUAL-121-FR02)."""
+    return [prds_dir, prds_dir.parent / "archive" / "prds"]
+
+
 def next_prd_sequence(prds_dir: Path, category: str) -> int:
     """Scan existing PRD files and return max sequence + 1 for a category.
 
     Scans both the active ``prds/`` directory and the sibling
     ``archive/prds/`` directory to avoid reusing IDs from archived PRDs.
+
+    PRD-QUAL-121-FR02: suffixed filenames (``PRD-CORE-153-registry-hygiene.md``)
+    own their leading sequence too. The pre-fix parser did ``int(stem[len(prefix):])``,
+    which raised on the suffix and silently SKIPPED such files — so the allocator
+    re-issued identifiers already owned by suffixed files. That defect produced the
+    13 duplicate-ID pairs in the 2026-07-11 baseline census.
 
     Args:
         prds_dir: Directory containing PRD markdown files.
@@ -427,20 +554,57 @@ def next_prd_sequence(prds_dir: Path, category: str) -> int:
     Returns:
         Next available sequence number (minimum 1).
     """
-    prefix = f"PRD-{category}-"
+    pattern = re.compile(rf"^PRD-{re.escape(category)}-(\d+)")
     sequences: list[int] = []
 
-    # Scan active and archived PRD directories
-    dirs_to_scan = [prds_dir, prds_dir.parent / "archive" / "prds"]
-    for scan_dir in dirs_to_scan:
+    for scan_dir in _identity_scan_dirs(prds_dir):
         if not scan_dir.exists():
             continue
         for prd_file in scan_dir.glob("*.md"):
-            name = prd_file.stem
-            if name.startswith(prefix):
-                try:
-                    sequences.append(int(name[len(prefix) :]))
-                except ValueError:
-                    continue
+            match = pattern.match(prd_file.stem)
+            if match:
+                sequences.append(int(match.group(1)))
 
     return max(sequences, default=0) + 1
+
+
+def find_identity_collisions(prds_dir: Path, prd_id: str) -> list[str]:
+    """Return paths of active or archived PRD files that already own ``prd_id``.
+
+    PRD-QUAL-121-FR02: allocation and root verification share one collision rule —
+    an identifier is owned by a file when its frontmatter ``id`` equals ``prd_id``
+    OR its filename stem starts with ``prd_id`` at a name boundary (exact stem or
+    ``{prd_id}-suffix``). Creation MUST call this before any write and fail with
+    every conflicting path; a collision blocks allocation until migration.
+
+    Args:
+        prds_dir: Active PRD directory (the archive sibling is scanned too).
+        prd_id: Candidate identifier, e.g. ``PRD-CORE-153``.
+
+    Returns:
+        Sorted list of conflicting file paths (empty when the ID is free).
+    """
+    id_line = re.compile(rf"^\s*id:\s*['\"]?{re.escape(prd_id)}['\"]?\s*$", re.MULTILINE)
+    conflicts: list[str] = []
+    for scan_dir in _identity_scan_dirs(prds_dir):
+        if not scan_dir.exists():
+            continue
+        # Scan EVERY markdown file, not just PRD-*.md — a renamed/legacy file
+        # whose frontmatter claims the identifier still owns it (adversarial
+        # audit 2026-07-11, finding 7).
+        for prd_file in sorted(scan_dir.glob("*.md")):
+            stem = prd_file.stem
+            if stem == prd_id or stem.startswith(f"{prd_id}-"):
+                conflicts.append(str(prd_file))
+                continue
+            # Frontmatter can claim an ID the filename does not carry (renamed
+            # files). Bounded head-read + line regex keeps creation O(corpus)
+            # cheap instead of full-YAML-parsing ~3k files per allocation.
+            try:
+                with prd_file.open(encoding="utf-8", errors="replace") as handle:
+                    head = handle.read(2048)
+            except OSError:
+                continue
+            if id_line.search(head):
+                conflicts.append(str(prd_file))
+    return sorted(set(conflicts))

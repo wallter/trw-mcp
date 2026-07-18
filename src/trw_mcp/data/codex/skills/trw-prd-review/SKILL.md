@@ -9,11 +9,14 @@ description: "Internal phase: Review a PRD for quality, returning a structured R
 
 # PRD Review Skill
 
-Performs a comprehensive quality review of a PRD using the trw-requirement-reviewer agent.
+Performs a comprehensive read-only quality review of a PRD.
 
 ## How It Works
 
-This skill forks execution to the `trw-requirement-reviewer` agent, which performs a read-only 5-dimension quality assessment:
+Use an independent reviewer only when the active client explicitly provides one. Otherwise perform a separate same-context
+read-only pass and disclose that independent execution was unavailable. Assess five dimensions:
+
+Use the caller's immediately preceding full `trw_prd_validate` result; if it is absent, run full validation before review.
 
 1. **Structure** — AARE-F section completeness and formatting
 2. **Content Quality** — substantive depth vs. placeholder content
@@ -23,30 +26,35 @@ This skill forks execution to the `trw-requirement-reviewer` agent, which perfor
 
 ## Input
 
-Pass a PRD ID or file path as the argument:
-- `/trw-prd-review PRD-CORE-020`
-- `/trw-prd-review path/to/PRD-CORE-020.md`
+The internal `/trw-prd-ready` or `/trw-prd-new` caller provides a PRD ID or file path. Treat it as the
+review target; do not prompt for or advertise direct invocation.
 
 To resolve a PRD ID to a file path, read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`).
 
 ## Output
 
-The agent returns a structured review with:
+Return a structured review with:
 - Per-dimension scores (0-100%)
 - Overall verdict: **READY** / **NEEDS WORK** / **BLOCK**
 - Specific findings with severity and recommendations
 - Suggested next actions
 
-## Execution Plan Readiness Advisory
+### Verdict contract
 
-When the verdict is **READY** and this skill was invoked standalone (not as part of `/trw-prd-ready` pipeline), include an advisory note:
+- **READY** requires `validation_partial: false`, `valid: true`, and risk-scaled `quality_tier: approved`. It also
+  requires no unresolved blocking finding.
+- **NEEDS WORK** means the PRD is reviewable but has bounded missing, ambiguous, untestable, or weakly evidenced content.
+- **BLOCK** applies when the file is unreadable, validation is partial in a way that hides readiness, core scope or
+  requirements are absent, evidence is fabricated, or a systemic issue prevents safe planning.
 
-> "This PRD is sprint-ready. Use `/trw-prd-ready {PRD-ID}` to generate an execution plan, or proceed directly to implementation."
+Scores are diagnostic only. Do not invent a percentage gate or let document length determine the verdict.
 
-When invoked as part of the `/trw-prd-ready` pipeline, return only the structured verdict and findings — omit the advisory.
+### Finding contract
+
+For every finding include severity (`blocking | warning | suggestion`), section/line, violated rule, concrete impact,
+smallest remediation or acceptance condition, evidence checked, and uncertainty.
 
 ## Notes
 
 - This skill is read-only — it never modifies the PRD file
-- Uses fork mode to keep the review output out of the main conversation context
-- The trw-requirement-reviewer agent runs on the default model with project memory
+- Never claim independent or forked review when the active client did not provide it

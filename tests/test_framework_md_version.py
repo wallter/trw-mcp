@@ -1,4 +1,4 @@
-"""PRD-CORE-161 FR01/FR02: FRAMEWORK.md version + copy-parity verification (v26 refresh 2026-06-10)."""
+"""PRD-CORE-161 FR01/FR02: FRAMEWORK version + copy parity (v26.1 refresh 2026-07-09)."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def _canonical_text() -> str:
 
 def test_framework_version() -> None:
     text = _canonical_text()
-    assert "v26_TRW" in text
-    assert "Version date: 2026-06-10" in text
+    assert "v26.1_TRW" in text
+    assert "Version date: 2026-07-09" in text
     assert "Model policy: capability-based" in text
     assert "v24.6_TRW" not in text
 
@@ -53,7 +53,7 @@ def test_provider_specific_cutover_removed() -> None:
 
 def test_callout_within_execution_summary() -> None:
     head = "\n".join(_canonical_text().splitlines()[:20])
-    assert "v26 mandate" in head
+    assert "v26.1 mandate" in head
     assert "model prompt" in head
 
 

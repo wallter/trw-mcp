@@ -1,23 +1,22 @@
 ---
 name: trw-security-check
-context: fork
-agent: Explore
 description: >
-  OWASP-focused, language-aware security audit of the TRW codebase. Checks
+  OWASP-focused, language-aware security audit of a target repository. Checks
   command injection, unsafe deserialization, path traversal, secrets,
   dependency risk, and input validation. Read-only.
   Use: /trw-security-check [module or 'all']
-user-invocable: true
-argument-hint: "[module or 'all']"
 ---
 
 > Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
 
+Prefer a read-only isolated helper when available. Otherwise remain read-only in the current thread and disclose the
+reduced independence.
+
 # Security Audit Skill
 
-Use when: running a read-only OWASP-style security review for a TRW package or module.
+Use when: running a read-only OWASP-style security review for a repository, package, or module.
 
-Perform an OWASP-focused security audit of the selected TRW package or module. This skill is read-only — it identifies vulnerabilities but does not modify code. Infer language and framework from the target path before choosing checks.
+Perform an OWASP-focused security audit of the selected target. This skill is read-only — it identifies vulnerabilities but does not modify code. Infer language, framework, trust boundaries, and deployment model before choosing checks.
 
 ## Workflow
 
@@ -40,7 +39,7 @@ Perform an OWASP-focused security audit of the selected TRW package or module. T
 4. **Path Traversal (OWASP A01)**: Check file operations:
    - Grep for `open()`, `Path()`, file read/write operations
    - Check if user-provided paths are validated against a base directory
-   - Verify the target package's path-resolution helpers prevent directory escape (for trw-mcp this includes `state/_paths.py`)
+   - Verify path-resolution helpers prevent directory escape (in TRW MCP, `state/_paths.py` is one conditional example)
    - Look for `..` traversal in path construction
 
 5. **Secrets Exposure (OWASP A02)**: Check for hardcoded credentials:
@@ -52,12 +51,12 @@ Perform an OWASP-focused security audit of the selected TRW package or module. T
 6. **Input Validation (OWASP A03)**: Check system boundaries:
    - MCP/API/CLI parameter validation (Pydantic, Zod, JSON Schema, typed DTOs, Clap/Click validators, etc.)
    - Check for unvalidated string interpolation in file paths
-   - Verify PRD file path resolution validates input
-   - Check that `trw_prd_create` input_text is sanitized
+   - Verify repository-specific file/path inputs are validated at their boundary
+   - For TRW MCP scope, include `trw_prd_create` input handling as a conditional example
 
 7. **Dependency Security (OWASP A06)**: Check dependencies:
    - Read dependency manifests for the target package (`pyproject.toml`, `package.json`, lockfiles, `Cargo.toml`, `go.mod`, etc.)
-   - Flag any dependencies without version pins
+   - Inspect lockfiles, resolver constraints, integrity metadata, and update policy; report concrete reproducibility or known-vulnerability risk rather than flagging every version range
    - Note if a language-appropriate dependency audit is configured (`pip-audit`, `safety`, `npm audit`, `pnpm audit`, `cargo audit`, `govulncheck`, etc.)
 
 8. **Report**: Structured security report:
@@ -97,6 +96,6 @@ Perform an OWASP-focused security audit of the selected TRW package or module. T
 ## Notes
 
 - This skill is read-only — it audits but does not fix issues
-- Focus on source code, not documentation or configs
+- Include security-relevant manifests and configuration; exclude unrelated prose and generated noise
 - Treat framework validators and schemas as helpful but still verify boundary coverage and coercion behavior
 - Adjust network/auth priority to the target package: local CLI tools, MCP servers, web apps, and public services have different threat models

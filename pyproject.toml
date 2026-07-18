@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.55.17"
+version = "0.57.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -25,10 +25,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "cryptography>=46.0.7",
+    "cryptography>=48.0.1",
     "fastmcp>=3.2.0,<4.0.0",
     "httpx>=0.27.0",
     "mcp>=1.26.0",
+    "packaging>=24.0",
     # Same rationale as trw-memory: prefer pysqlite3 to mitigate the SQLite
     # WAL-reset bug. trw-memory's __init__ performs the actual sys.modules
     # swap; trw-mcp listing the dep here keeps installs of the MCP server
@@ -38,18 +39,21 @@ dependencies = [
     # back to stdlib sqlite3 via the storage._dbapi shim.
     "pysqlite3-binary>=0.5.4; platform_system == 'Linux'",
     "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic-settings>=2.14.2",
     "PyYAML>=6.0.0",
     "ruamel.yaml>=0.18.0",
-    "starlette>=1.0.1",
+    "starlette>=1.3.1",
     "structlog>=24.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
-    # Floor 0.9.0 is the lowest release carrying BOTH rrf_fuse(importances=) and
-    # SQLiteBackend.find_active_by_content — the trw-mcp caller hard-depends on
-    # both (recall RRF impact-blend + embedding-independent exact-content dedup).
-    # Earlier releases (0.8.x) lacked them, surfacing as runtime skew (F7/F8/F9)
-    # instead of an install-time failure. Raise the floor so the skew fails fast.
-    "trw-memory>=0.9.0,<1.0.0",
+    # Floor 0.11.0 is the lowest release carrying token_budget.estimate_serialized_entry_tokens,
+    # which _recall_impl.py imports UNGUARDED. It also carries the earlier hard deps
+    # rrf_fuse(importances=) and SQLiteBackend.find_active_by_content (recall RRF
+    # impact-blend + embedding-independent exact-content dedup). A lower floor lets pip
+    # resolve an older trw-memory (0.9.x is on PyPI) that satisfies the constraint but
+    # lacks the symbol, so every trw_recall raises ImportError at runtime. Raise the
+    # floor so the skew fails fast at install instead. When adding an import from a
+    # new trw-memory symbol, bump this floor to that trw-memory version IN THE SAME PR.
+    "trw-memory>=0.11.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -74,7 +78,7 @@ dev = [
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.5.0",
     "pytest-timeout>=2.3.0",
-    "mypy>=1.11.0",
+    "mypy>=1.11.0,<2.0",  # pin to the 1.x line: mypy 2.x is a major release with behavior changes (set-literal `in` narrowing, stricter unused-ignore) that a raw `pip install .[dev]` would otherwise resolve (2.3.0), diverging from the verified uv.lock (1.20.2). Migrate to 2.x deliberately, not via CI drift.
     "types-pyyaml>=6.0.0",
     "hypothesis>=6.0.0",
     "rank-bm25>=0.2.0",
@@ -133,8 +137,9 @@ package_module_name_map = { "opentelemetry-distro" = "opentelemetry_distro", "op
 # intentionally fall back to char/4 when absent.
 DEP001 = ["tiktoken"]
 # Optional OpenTelemetry installers are exercised through namespace imports and
-# runtime environment, not direct package-name imports.
-DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp"]
+# runtime environment, not direct package-name imports. Starlette is an
+# intentional direct security-floor pin for FastMCP's transitive web surface.
+DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
 DEP003 = ["opentelemetry", "tiktoken"]
 # rank_bm25 is an optional quality booster; retrieval degrades gracefully when
 # the import is absent, so it stays out of the required runtime set.
@@ -204,12 +209,17 @@ unfixable = ["F841"]
 "src/trw_mcp/_logging.py" = ["ANN401", "S110"]
 # Sandbox primitive — subprocess + /tmp paths are intrinsic to the sandbox purpose
 "src/trw_mcp/meta_tune/sandbox.py" = ["S603", "S108"]
+# Dispatch runner — launching another coding-agent CLI is the module's whole purpose;
+# argv is a list (shell=False), env is sanitized/allowlisted, prompt is a single token.
+"src/trw_mcp/dispatch/_runner.py" = ["S603", "S607"]
+# Dispatch job registry — spawns the detached _run_job child via [sys.executable,
+# "-m", ...]; argv is a fixed list (shell=False), only paths we created are appended.
+"src/trw_mcp/dispatch/_jobs.py" = ["S603"]
 "src/trw_mcp/audit.py" = ["E402"]
 "src/trw_mcp/resources/config.py" = ["E402"]
 "src/trw_mcp/resources/run_state.py" = ["E402"]
 "src/trw_mcp/state/dry_check.py" = ["E402"]
 "src/trw_mcp/state/receipts.py" = ["E402"]
-"src/trw_mcp/state/reflection.py" = ["E402"]
 "src/trw_mcp/state/_nudge_messages.py" = ["E402"]
 "src/trw_mcp/tools/build/_audit.py" = ["E402"]
 "src/trw_mcp/tools/build/_core.py" = ["E402"]
@@ -233,7 +243,7 @@ unfixable = ["F841"]
 "src/trw_mcp/state/artifact_scanner.py" = ["C901"]
 # _step_delivery_metrics collects metrics from 10+ sources — structural complexity
 "src/trw_mcp/tools/_deferred_steps_learning.py" = ["C901"]
-# append_ceremony_nudge applies multi-phase ceremony logic — structural complexity
+# perform_session_recalls coordinates focused, baseline, and pressure paths — structural complexity
 "src/trw_mcp/tools/_session_recall_helpers.py" = ["C901"]
 # Backward-compat re-exports for _template_updater decomposition
 "src/trw_mcp/bootstrap/_template_updater.py" = ["E402"]
@@ -312,6 +322,5 @@ exclude_lines = [
 ]
 omit = [
     "src/trw_mcp/server/__main__.py",
-    "src/trw_mcp/server/_proxy.py",
     "src/trw_mcp/server/_transport.py",
 ]

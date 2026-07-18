@@ -20,8 +20,6 @@ from trw_mcp.models.config._credentials import (
     remove_credentials_key,
 )
 
-_YAML_KEY_RE = re.compile(r"^(\s*)(platform_api_key)\s*:\s*(.*)$")
-
 
 def _read_config_lines(config_path: Path) -> list[str] | None:
     """Read config file lines, or None if file doesn't exist."""
@@ -71,38 +69,5 @@ def _save_config_field(config_path: Path, key: str, value: str) -> None:
 
     if not replaced:
         new_lines.append(f'{key}: "{value}"\n')
-
-    config_path.write_text("".join(new_lines), encoding="utf-8")
-
-
-def _save_api_key(config_path: Path, api_key: str) -> None:
-    """Write or update ``platform_api_key`` in config YAML.
-
-    DEPRECATED (PRD-SEC-005): the credential no longer belongs in the tracked
-    ``config.yaml``. Retained only for backward compatibility; production login
-    writes to ``credentials.yaml`` via ``write_credentials_key``.
-    """
-    lines = _read_config_lines(config_path)
-    if lines is None:
-        # Create minimal config
-        config_path.write_text(
-            f'platform_api_key: "{api_key}"\n',
-            encoding="utf-8",
-        )
-        return
-
-    new_lines: list[str] = []
-    replaced = False
-    for line in lines:
-        m = _YAML_KEY_RE.match(line.rstrip("\n"))
-        if m:
-            indent = m.group(1)
-            new_lines.append(f'{indent}platform_api_key: "{api_key}"\n')
-            replaced = True
-        else:
-            new_lines.append(line if line.endswith("\n") else line + "\n")
-
-    if not replaced:
-        new_lines.append(f'platform_api_key: "{api_key}"\n')
 
     config_path.write_text("".join(new_lines), encoding="utf-8")

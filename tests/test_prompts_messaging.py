@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from trw_mcp.prompts import get_message_lines as exported_get_message_lines
 from trw_mcp.prompts.messaging import (
     _load_messages,
     get_message,
@@ -85,6 +86,9 @@ class TestGetMessageLines:
     def test_missing_key_raises_key_error(self) -> None:
         with pytest.raises(KeyError):
             get_message_lines("nonexistent_key_xyz")
+
+    def test_exported_from_prompts_package(self) -> None:
+        assert exported_get_message_lines is get_message_lines
 
 
 class TestLoadMessages:

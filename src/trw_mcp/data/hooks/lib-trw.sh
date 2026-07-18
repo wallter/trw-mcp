@@ -4,6 +4,23 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
+# PRD-CORE-149 FR04/FR05: load the profile-resolved hook policy before any
+# caller starts timers or emits output.  Keep the legacy TRW_HOOKS_ENABLED
+# name as an input fallback, but normalize all shipped hooks onto the generated
+# HOOKS_ENABLED / NUDGE_ENABLED contract.
+_trw_hook_env_root="${CLAUDE_PROJECT_DIR:-}"
+if [ -z "$_trw_hook_env_root" ]; then
+  _trw_hook_env_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+if [ -f "$_trw_hook_env_root/.trw/runtime/hook-env.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_trw_hook_env_root/.trw/runtime/hook-env.sh" 2>/dev/null || true
+fi
+HOOKS_ENABLED="${HOOKS_ENABLED:-${TRW_HOOKS_ENABLED:-true}}"
+NUDGE_ENABLED="${NUDGE_ENABLED:-true}"
+export HOOKS_ENABLED NUDGE_ENABLED
+unset _trw_hook_env_root
+
 # get_repo_root: Resolve the project root portably.
 # Priority: $CLAUDE_PROJECT_DIR (set by Claude Code) > git > $PWD fallback.
 # All hooks MUST use this function instead of hardcoded paths.

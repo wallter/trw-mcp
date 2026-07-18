@@ -1,30 +1,46 @@
 """Built-in client profile registry and resolution.
 
-Eight profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot, gemini, aider)
-with eval-data-calibrated ceremony and scoring weights. Unknown client IDs
-fall back to claude-code with a structured warning.
+Seven profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot,
+antigravity-cli) with eval-data-calibrated ceremony and scoring weights.
+Unknown client IDs fall back to claude-code with a structured warning.
 
-Migration note: the bare ``cursor`` profile ID was removed in Sprint 91.
-Use ``cursor-ide`` for interactive Cursor IDE or ``cursor-cli`` for headless
-``cursor-agent`` CI runs.
+Migration notes:
+- The bare ``cursor`` profile ID was removed in Sprint 91. Use ``cursor-ide``
+  for interactive Cursor IDE or ``cursor-cli`` for headless ``cursor-agent``
+  CI runs.
+- ``gemini`` and ``aider`` were retired 2026-07-11 (Google deprecated the
+  Gemini CLI; aider never had an adapter). ``resolve_client_profile`` still
+  accepts both — they resolve to the claude-code fallback with a single
+  ``client_profile_retired`` warning so no tool crashes on a stale
+  ``target_platforms: [gemini]`` config.
 """
 
 from __future__ import annotations
 
-import structlog
+from typing import Literal
 
+import structlog
+from pydantic import BaseModel, ConfigDict
+
+from trw_mcp.models.config._capability import CapabilityTier, ModelTier, normalize_capability_tier
 from trw_mcp.models.config._client_profile import (
     CeremonyWeights,
     ClientProfile,
-    ModelTier,
     NudgePoolWeights,
     ScoringDimensionWeights,
     WriteTargets,
 )
+from trw_mcp.models.config._defaults import (
+    CAPABILITY_PACKS,
+    HIGH_RISK_PACKS,
+    KERNEL_TOOLS,
+    KEYWORD_PACK_HINTS,
+    STANDARD_TASK_PACKS,
+)
 
 logger = structlog.get_logger(__name__)
 
-# Shared constants for light-mode profiles (opencode, codex, aider) — DRY (P1-B)
+# Shared constants for light-mode profiles (opencode, codex) — DRY (P1-B)
 _LIGHT_CEREMONY = CeremonyWeights(
     session_start=30,
     deliver=30,
@@ -44,17 +60,7 @@ _LIGHT_PHASES = ["implement", "deliver"]
 
 # Capability tier adjustments for resolve_client_profile (F06 -- model_copy, not mutate).
 # Legacy names remain aliases so existing configs do not break during the v25 transition.
-_TIER_ALIASES: dict[ModelTier, ModelTier] = {
-    "cloud-opus": "frontier",
-    "cloud-sonnet": "balanced",
-    "local-30b": "local-large",
-    "local-8b": "local-small",
-    "frontier": "frontier",
-    "balanced": "balanced",
-    "local-large": "local-large",
-    "local-small": "local-small",
-}
-_TIER_OVERRIDES: dict[ModelTier, dict[str, object]] = {
+_TIER_OVERRIDES: dict[CapabilityTier, dict[str, object]] = {
     "frontier": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
     "balanced": {"context_window_tokens": 200_000, "instruction_max_lines": 500},
     "local-large": {"context_window_tokens": 128_000, "instruction_max_lines": 350},
@@ -67,6 +73,8 @@ def _light_profile(
     display_name: str,
     instruction_path: str,
     *,
+    default_model_tier: ModelTier = "local-small",
+    nudge_enabled: bool = False,
     on_transition: str = "require_reconnect",
 ) -> ClientProfile:
     """Construct a light-mode profile with eval-calibrated defaults.
@@ -86,14 +94,13 @@ def _light_profile(
         nudge_pool_weights=NudgePoolWeights(workflow=60, learnings=30, ceremony=0, context=10),
         mandatory_phases=_LIGHT_PHASES,
         scoring_weights=_LIGHT_SCORING,
-        default_model_tier="local-small",
+        default_model_tier=default_model_tier,
         hooks_enabled=False,
         agents_md_enabled=True,
         include_framework_ref=False,
         include_delegation=False,
         # Surface control (PRD-CORE-125)
-        nudge_enabled=False,
-        tool_exposure_mode="standard",
+        nudge_enabled=nudge_enabled,
         learning_recall_enabled=True,
         mcp_instructions_enabled=False,
         skills_enabled=False,
@@ -114,7 +121,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,
-        tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
@@ -122,6 +128,10 @@ _PROFILES: dict[str, ClientProfile] = {
         tool_namespace_prefix="mcp__trw__",
         # PRD-INTENT-002 FR04: claude-code supports tools.listChanged.
         on_transition="notify",
+        # PRD-CORE-203 FR01: this client (claude-code) supports `@<path>`
+        # in-file imports, so the TRW block can be externalized to
+        # `.trw/INSTRUCTIONS.md`.
+        instruction_import_syntax="at_path",
     ),
     "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
     "cursor-ide": ClientProfile(
@@ -144,7 +154,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
-        tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
@@ -186,13 +195,19 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=False,
         include_delegation=False,
         nudge_enabled=True,
-        tool_exposure_mode="standard",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         on_transition="silent",  # PRD-INTENT-002 FR04
     ),
-    "codex": _light_profile("codex", "Codex CLI", ".codex/INSTRUCTIONS.md", on_transition="silent"),
+    "codex": _light_profile(
+        "codex",
+        "Codex CLI",
+        ".codex/INSTRUCTIONS.md",
+        default_model_tier="balanced",
+        nudge_enabled=True,
+        on_transition="silent",
+    ),
     "copilot": ClientProfile(
         client_id="copilot",
         display_name="GitHub Copilot CLI",
@@ -210,39 +225,10 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,
-        tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         on_transition="silent",  # PRD-INTENT-002 FR04
-    ),
-    "gemini": ClientProfile(
-        client_id="gemini",
-        display_name="Google Gemini CLI",
-        write_targets=WriteTargets(
-            claude_md=False,
-            agents_md=True,
-            gemini_md=True,
-            instruction_path="GEMINI.md",
-        ),
-        instruction_max_lines=500,
-        context_window_tokens=1_000_000,
-        ceremony_mode="full",
-        ceremony_weights=CeremonyWeights(),  # defaults: 25/25/15/10/10/15
-        nudge_pool_weights=NudgePoolWeights(),  # defaults: 40/30/20/10
-        scoring_weights=ScoringDimensionWeights(),
-        response_format="yaml",
-        hooks_enabled=True,
-        agents_md_enabled=True,
-        include_framework_ref=True,
-        include_delegation=True,
-        # Surface control (PRD-CORE-125)
-        nudge_enabled=True,
-        tool_exposure_mode="all",
-        learning_recall_enabled=True,
-        mcp_instructions_enabled=True,
-        skills_enabled=True,
-        on_transition="silent",  # PRD-INTENT-002 FR04 (gemini)
     ),
     "antigravity-cli": ClientProfile(
         client_id="antigravity-cli",
@@ -265,13 +251,17 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
-        tool_exposure_mode="all",
         learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
     ),
-    "aider": _light_profile("aider", "Aider", ".aider/instructions.md"),
 }
+
+# Retired client identifiers (2026-07-11): Google deprecated the Gemini CLI in
+# favor of Antigravity CLI; aider never had a TRW adapter. They resolve to the
+# claude-code fallback with a single ``client_profile_retired`` warning so a
+# stale ``target_platforms: [gemini]`` config never crashes a tool.
+_RETIRED_PROFILES: frozenset[str] = frozenset({"gemini", "aider"})
 
 
 def resolve_client_profile(
@@ -281,11 +271,30 @@ def resolve_client_profile(
     """Resolve a built-in profile, optionally adjusted for model tier.
 
     Unknown client_ids fall back to claude-code with a warning (F04/FR04).
-    Model tier adjustments return a NEW profile via model_copy (F06).
+    Retired client_ids (``gemini``, ``aider``) fall back to claude-code with a
+    single ``client_profile_retired`` warning so no tool crashes on a stale
+    ``target_platforms`` entry. Model tier adjustments return a NEW profile via
+    model_copy (F06).
     """
     profile = _PROFILES.get(client_id)
     if profile is None:
-        if client_id == "cursor":
+        if client_id in _RETIRED_PROFILES:
+            logger.warning(
+                "client_profile_retired",
+                client_id=client_id,
+                fallback="claude-code",
+                message=(
+                    f"The '{client_id}' client profile was retired 2026-07-11 "
+                    "and resolves to the claude-code fallback. "
+                    + (
+                        "Configure 'antigravity-cli' as the Gemini CLI successor "
+                        if client_id == "gemini"
+                        else "Pick a supported client profile "
+                    )
+                    + "and update your target_platforms configuration."
+                ),
+            )
+        elif client_id == "cursor":
             logger.warning(
                 "unknown_client_id_fallback",
                 client_id=client_id,
@@ -306,10 +315,131 @@ def resolve_client_profile(
         profile = _PROFILES["claude-code"]
 
     if model_tier is not None:
-        normalized_tier = _TIER_ALIASES.get(model_tier, model_tier)
+        normalized_tier = normalize_capability_tier(model_tier)
         if normalized_tier in _TIER_OVERRIDES:
             profile = profile.model_copy(
                 update={**_TIER_OVERRIDES[normalized_tier], "default_model_tier": normalized_tier}
             )
 
     return profile
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-218-FR03: task-selected capability packs.
+#
+# Resolution builds a bounded, explainable tool surface from a stable kernel
+# plus capability packs selected by (1) the standard task->pack fixture,
+# (2) explicit phase rules, and (3) operator grants. Provider identity and
+# vague keywords can NEVER grant a high-risk pack (security monotonicity).
+# Pack membership is the versioned manifest fixture from PRD-CORE-218 §4,
+# owned by ``_defaults`` (single source of truth) and imported here.
+# ---------------------------------------------------------------------------
+
+PackGrantSource = Literal["kernel", "task_type", "phase_rule", "operator_grant", "keyword", "denied"]
+
+
+class PackGrant(BaseModel):
+    """One pack decision with the layer that produced it and a reason.
+
+    ``source == "denied"`` records a refused grant (e.g. a high-risk pack a
+    vague keyword or provider identity failed to grant).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    pack: str
+    source: PackGrantSource
+    reason: str
+
+
+class CapabilityResolution(BaseModel):
+    """Resolved kernel+pack tool surface with per-capability explanations."""
+
+    model_config = ConfigDict(frozen=True)
+
+    task: str
+    packs: tuple[str, ...]
+    tools: tuple[str, ...]
+    tool_count: int
+    grants: tuple[PackGrant, ...]
+    #: Every resolved tool -> the reason it is present (FR03 "explanation for
+    #: every capability"). Keys are exactly ``tools``.
+    explanations: dict[str, str]
+
+
+def resolve_capability_packs(
+    task: str,
+    *,
+    phase_pack_grants: tuple[str, ...] = (),
+    operator_pack_grants: tuple[str, ...] = (),
+    keyword_hints: tuple[str, ...] = (),
+    provider_identity: str | None = None,
+) -> CapabilityResolution:
+    """Resolve the bounded capability-pack surface for ``task``.
+
+    Layers, highest authority last: standard task fixture, explicit phase rule,
+    operator grant, then vague keyword hints. Provider identity never grants a
+    pack and vague keywords never grant a high-risk pack; both refusals are
+    recorded as ``denied`` grants (FR03 guard).
+    """
+    grants: list[PackGrant] = [PackGrant(pack="kernel", source="kernel", reason="universal minimal kernel")]
+    ordered_packs: list[str] = []
+
+    def _grant(pack: str, source: PackGrantSource, reason: str) -> None:
+        if pack not in CAPABILITY_PACKS:
+            grants.append(PackGrant(pack=pack, source="denied", reason=f"unknown pack '{pack}'"))
+            return
+        if pack not in ordered_packs:
+            ordered_packs.append(pack)
+            grants.append(PackGrant(pack=pack, source=source, reason=reason))
+
+    if task not in STANDARD_TASK_PACKS:
+        grants.append(PackGrant(pack="*", source="denied", reason=f"task '{task}' unmapped; kernel only"))
+    for pack in STANDARD_TASK_PACKS.get(task, ()):
+        _grant(pack, "task_type", f"standard mapping for task '{task}'")
+
+    for pack in phase_pack_grants:
+        _grant(pack, "phase_rule", f"explicit phase rule granted '{pack}'")
+    for pack in operator_pack_grants:
+        _grant(pack, "operator_grant", f"operator granted '{pack}'")
+
+    for keyword in keyword_hints:
+        hinted = KEYWORD_PACK_HINTS.get(keyword.strip().lower())
+        if hinted is None:
+            continue
+        if hinted in HIGH_RISK_PACKS:
+            grants.append(
+                PackGrant(
+                    pack=hinted,
+                    source="denied",
+                    reason=f"vague keyword '{keyword}' cannot grant high-risk pack '{hinted}'",
+                )
+            )
+            continue
+        _grant(hinted, "keyword", f"keyword '{keyword}' hinted low-risk pack '{hinted}'")
+
+    if provider_identity is not None:
+        grants.append(
+            PackGrant(
+                pack="*",
+                source="denied",
+                reason=f"provider identity '{provider_identity}' cannot grant any pack",
+            )
+        )
+
+    tools: list[str] = list(KERNEL_TOOLS)
+    explanations: dict[str, str] = dict.fromkeys(KERNEL_TOOLS, "kernel: always present")
+    for pack in ordered_packs:
+        for tool in CAPABILITY_PACKS[pack]:
+            if tool not in explanations:
+                tools.append(tool)
+                explanations[tool] = f"pack '{pack}': present via task/phase/operator selection"
+
+    return CapabilityResolution(
+        task=task,
+        packs=("kernel", *ordered_packs),
+        tools=tuple(tools),
+        tool_count=len(tools),
+        grants=tuple(grants),
+        explanations=explanations,
+    )

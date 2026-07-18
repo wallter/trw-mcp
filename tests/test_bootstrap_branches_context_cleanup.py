@@ -63,12 +63,41 @@ class TestContextCleanupEdgeCases:
         stale.write_text("stale", encoding="utf-8")
 
         result: dict[str, list[str]] = {"cleaned": [], "errors": []}
-        with patch.object(Path, "unlink", side_effect=OSError("permission denied")):
+        with patch("trw_mcp.bootstrap._version_migration.os.unlink", side_effect=OSError("permission denied")):
             _cleanup_context_transients(tmp_path, result)
 
         assert len(result["errors"]) == 1
         assert "permission denied" in result["errors"][0]
         assert result["cleaned"] == []
+
+    def test_cleanup_skips_symlinked_context_directory(self, tmp_path: Path) -> None:
+        """A redirected context parent is advisory state, never a deletion target."""
+        external = tmp_path / "external"
+        external.mkdir()
+        victim = external / "victim.txt"
+        victim.write_text("keep", encoding="utf-8")
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "context").symlink_to(external, target_is_directory=True)
+
+        result: dict[str, list[str]] = {"cleaned": [], "errors": [], "warnings": []}
+        _cleanup_context_transients(tmp_path, result)
+
+        assert victim.read_text(encoding="utf-8") == "keep"
+        assert result["cleaned"] == []
+        assert any("Skipped unsafe context cleanup" in warning for warning in result["warnings"])
+
+    def test_cleanup_skips_unreadable_context_directory(self, tmp_path: Path) -> None:
+        context = tmp_path / ".trw" / "context"
+        context.mkdir(parents=True)
+        result: dict[str, list[str]] = {"cleaned": [], "errors": [], "warnings": []}
+
+        with patch("trw_mcp.bootstrap._version_migration.os.listdir", side_effect=OSError("read failed")):
+            _cleanup_context_transients(tmp_path, result)
+
+        assert result["cleaned"] == []
+        assert result["errors"] == []
+        assert any("Skipped unreadable context cleanup" in warning for warning in result["warnings"])
 
     def test_cleanup_empty_context_dir(self, tmp_path: Path) -> None:
         """Empty context dir produces no errors and empty cleaned list."""

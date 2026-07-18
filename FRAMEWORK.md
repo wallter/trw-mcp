@@ -1,23 +1,23 @@
-v26_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v26.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
-Version date: 2026-06-10 | Model policy: capability-based, never provider-bound
+Version date: 2026-07-09 | Model policy: capability-based, never provider-bound
 
-> **v26 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26 adds enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules.
+> **v26.1 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refines enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules.
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v26_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
+**v26.1_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
 Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
-**Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`, or (2) a documented acceptable failure — review evidence carrying an explicit "acceptable-failure" label and rationale, recorded at the deliver call via `allow_unverified=true` + a concrete `unverified_reason`, or (3) an explicit config-level override. Anything else misrepresents the state of the work.
+**Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`; (2) a durable acceptable-failure record naming the failed check, residual risk, owner, and expiry, passed through `allow_unverified=true` + `unverified_reason`; or (3) an authorized operator/config override recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.
 Ceremony scales by tier — MINIMAL (IMPLEMENT+VALIDATE+DELIVER) / STANDARD (+PLAN+REVIEW) / COMPREHENSIVE (all six); VALIDATE is never skipped (see CEREMONY TIERS).
-TRW tools are the canonical interface. Client commands, slash commands, hooks, skills, and custom agents are convenience adapters only.
+The method is canonical; TRW MCP tools are its preferred implementation. Client commands, hooks, skills, custom agents, and manual/project-native fallbacks are adapters that MUST preserve the same evidence obligations.
 Parallel work is OPTIONAL and harness-dependent. If a client cannot delegate, run the same protocol in one session with smaller checkpoints.
 Principles: P1 Evidence > assertion. P2 Prevention > detection. P3 External checks > self-belief. P4 Small context > overloaded context. P5 Coordinate by contracts. P6 PRD-to-code traceability.
-Empirical posture (TRW eval corpus, 2026 — qualitative by design; numbers live in the canonical synthesis, never here): cross-session knowledge compounding is confirmed; within-session single-shot lift from ceremony alone is rejected at power. The framework's measured value is persistence + verification, not ritual — shed optional ceremony before shedding evidence.
+Empirical posture (TRW eval corpus, 2026 — qualitative by design; numbers live in the canonical synthesis, never here): the cross-session transfer mechanism is confirmed on purpose-built surfaces, and magnitude is positive on one locally-solvable surface; lift on arbitrary natural tasks is not generally demonstrated. Within-session single-shot lift from ceremony alone is rejected at power. Preserve the strata and caveats in the canonical synthesis. The framework's measured value is persistence + verification, not ritual — shed optional ceremony before shedding evidence.
 </execution-summary>
 
 <standards>
@@ -25,32 +25,37 @@ RFC 2119/8174: MUST, MUST NOT, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED
 </standards>
 
 <variables>
+REPO_ROOT  := project_root            # resolve once from the active project/VCS; use an absolute path thereafter
 TASK       := task_short_desc
-TASK_DIR   := ./docs/{TASK}      # default; adjust to the project's own layout convention
-RUNS_ROOT  := ./.trw/runs
+TASK_DIR   := {REPO_ROOT}/docs/{TASK} # default; adjust to the project's own layout convention
+RUNS_ROOT  := {REPO_ROOT}/.trw/runs
 RUN_ID     := {utc_ts}-{short_id}
 RUN_ROOT   := {RUNS_ROOT}/{TASK}/{RUN_ID}
-REPO_ROOT  := $(git rev-parse --show-toplevel)
-BRANCH     := feat/{TASK}-{short_id}
+BRANCH     := feat/{TASK}-{short_id}  # optional VCS adapter value
 ORC        := Orchestrator
 </variables>
+
+---
+
+## READING CONTRACT: METHOD, RUNTIME, ADAPTERS
+
+| Layer | Authority | Interpretation |
+|-------|-----------|----------------|
+| Method | RFC-keyword requirements in this document | The operating discipline. A warning-only implementation does not make a `MUST` optional. |
+| Runtime | Current MCP/tool and project-check behavior | The enforcement boundary. Do not call a rule machine-enforced unless source or an executable probe proves it. |
+| Adapter | Hooks, skills, slash commands, client config, delegates | Optional convenience. An adapter may automate the method but MUST NOT redefine it. |
+
+When the layers drift, report the mismatch, follow the higher-authority instruction without inventing enforcement, and repair or backlog the drift. Never use a permissive runtime as evidence that a methodological obligation disappeared; never use normative prose as evidence that a runtime gate exists.
 
 ---
 
 ## DEFAULTS
 
 ```yaml
-PARALLELISM_MAX: 6           # max concurrent delegate shards when the harness supports it
-MIN_SHARDS_TARGET: 3         # preferred independent evidence axes for non-trivial work
-MIN_SHARDS_FLOOR: 1          # single-session fallback is always valid
-CONSENSUS_QUORUM: 0.67       # 2/3 reviewers or checks agree
-CORRELATION_MIN: 0.7         # inter-reviewer agreement when multiple reviewers exist
-TIMEBOX_HOURS: 8
-MAX_CHILD_DEPTH: 1           # avoid recursive delegation unless the user explicitly asks
-MAX_RESEARCH_WAVES: 3
+MAX_RESEARCH_WAVES: 3        # bounded reconciliation; not a reason to invent extra waves
 ```
 
-Defaults are not laws. Use fewer shards when the task is small, the harness cannot delegate, or file ownership would be unclear.
+Use the harness's safe concurrency limit, the fewest independent evidence axes that cover the task, and explicit file ownership. A single-session fallback is always valid. Time, cost, and recursion budgets belong to the task/harness rather than universal framework constants.
 
 ---
 
@@ -63,27 +68,62 @@ Defaults are not laws. Use fewer shards when the task is small, the harness cann
 | `low` | Assumption, stale memory, unverified output, or conflicting evidence | Block → investigate |
 
 Run confidence = the lowest confidence among active requirements. Do not average away a blocking gap.
-Where the project defines an evidence taxonomy (e.g., Observed / Verified / Inferred / Unknown), map: high ≈ Observed/Verified; medium ≈ Inferred with partial verification; low ≈ Unknown or conflicting. Status reports SHOULD use the evidence taxonomy; run gating uses these three levels.
+Where the project defines an evidence taxonomy (e.g., Observed / Verified / Inferred / Unknown), map: high ≈ Verified; medium ≈ Observed but not independently verified, or Inferred with partial verification; low ≈ Unknown or conflicting. Status reports SHOULD use the evidence taxonomy; run gating uses these three levels. Never collapse Observed into Verified.
 
 ---
 
 ## PERSISTENCE
 
+When a run directory exists, paths below are relative to `{RUN_ROOT}`. A task for which `trw_init` is legitimately skipped MUST still leave durable completion evidence in the nearest project-native artifact (issue/PR, requested handoff, checked-in report, or final response captured by the harness). No-run work is not exempt from persistence, and it MUST NOT fabricate a run layout that was never initialized.
+
 | File | Update When | Failure |
 |------|-------------|---------|
-| `reports/plan.md` | Plan changes or scope decisions | Block IMPLEMENT for STANDARD+ work |
-| `reports/final.md` | Run completes | Block DELIVER for STANDARD+ work |
-| `meta/run.yaml` | Phase/status changes | Invalid state |
-| `meta/events.jsonl` | Significant event | Lost audit trail |
-| `scratch/**/findings.yaml` | Delegate or wave findings | Lost resume point |
+| `{RUN_ROOT}/reports/plan.md` | Plan changes or scope decisions | Block IMPLEMENT for STANDARD+ run-backed work |
+| `{RUN_ROOT}/reports/final.md` | Run completes | Block DELIVER for STANDARD+ run-backed work |
+| `{RUN_ROOT}/meta/run.yaml` | Phase/status changes | Invalid run state |
+| `{RUN_ROOT}/meta/events.jsonl` | Significant event | Lost run audit trail |
+| `{RUN_ROOT}/scratch/**/findings.yaml` | Delegate or wave findings | Lost resume point |
 
-Write important state to disk before relying on it. Treat persistence failures as P0 blockers unless the task is explicitly throwaway.
+Write important state to disk before relying on it. Treat failure of a required persistence surface as a P0 blocker; choose the surface from actual task continuity needs rather than ceremony for its own sake.
+
+### Inline Comment Markers
+
+A learning can be anchored to the code it describes by leaving a marker in a
+comment. When a learning's anchors are re-validated, a marker referencing that
+learning's ID is counted as corroborating evidence that the learning is still
+live — so a marker keeps a learning from decaying while the code it explains
+still exists.
+
+Pattern (`MARKER_PATTERN`, PRD-CORE-111 FR05):
+
+```
+mcp\.trw\.recall\(id=([A-Za-z]-[a-zA-Z0-9]{4,8}(?:,[A-Za-z]-[a-zA-Z0-9]{4,8})*)\)
+```
+
+Usage — any comment syntax, one or more IDs:
+
+```python
+# mcp.trw.recall(id=L-a3Fq)
+def handle_webhook(request):  # the retry semantics here are non-obvious
+    ...
+```
+
+```rust
+// mcp.trw.recall(id=L-a3Fq,L-b2Xp)
+pub fn reconcile(&self) -> Result<()> { ... }
+```
+
+IDs are 4-8 alphanumeric characters after a single-letter prefix, which covers
+both the legacy 8-char hex IDs and current 4-char base62 IDs. Comma-separated
+lists must not contain spaces. Write a marker when a non-obvious constraint in
+the code is explained by a stored learning; do not scatter them decoratively —
+a marker that points at a retired learning is worse than no marker.
 
 ---
 
 ## CEREMONY TIERS
 
-`trw_init` classifies each run from complexity signals (or an explicit `complexity_hint`); the tier sets which phases are mandatory. **VALIDATE is never skipped at any tier — skipping tests is never OK.**
+`trw_init` classifies each run from complexity signals (or an explicit `complexity_hint`); the tier sets which phases are mandatory. **VALIDATE is never skipped at any tier.** Machine-observable code normally requires tests; analysis, inspection, demonstration, or other project-native evidence may be the correct method for other requirements.
 
 | Tier | Typical Scope | Mandatory Phases | Skipped |
 |------|---------------|------------------|---------|
@@ -94,7 +134,7 @@ Write important state to disk before relying on it. Treat persistence failures a
 "STANDARD+" in this document means STANDARD or COMPREHENSIVE. REVIEW is mandatory at STANDARD+ because self-review validates the implementation, not the spec — the implementing agent MUST NOT be the sole reviewer when any independent reviewer is available; when the harness truly cannot delegate, do a cold-context second pass and label it self-review. (The mandate is methodological: machine enforcement warns on a missing review and hard-blocks on a block-verdict review — see GATES.)
 Light clients and small/local models keep the same mandatory phases but a reduced ceremony surface (fewer nudges, smaller recall payloads, curated tool presets). The compounding value is persistence, not ritual weight.
 
-Session-type rule: a task with no expected continuity (one-shot, no prior learnings, no run to resume) drops RESEARCH-phase weight and ceremony density — but the tier still follows scope (a one-shot multi-file change is still STANDARD). Cross-session and multi-session work is where full ceremony pays — compounding is the confirmed mechanism, so spend ceremony where it compounds.
+Session-type rule: a task with no expected continuity (one-shot, no prior learnings, no run to resume) drops RESEARCH-phase weight and ceremony density — but the tier still follows scope (a one-shot multi-file change is still STANDARD). Cross-session and multi-session work is where persistence can compound; positive evidence is scoped to the surfaces described in the canonical synthesis, not a universal-lift claim.
 
 Ceremony tiers are orthogonal to **trust tiers** (crawl → walk → run): a project accumulates trust with session history, which tunes guardrail strictness and review-sampling policy (advisory metadata — delivery gates still check review evidence at STANDARD+ independently). New projects start at crawl (max guardrails); trust names describe the project's history, not the task's complexity.
 
@@ -115,9 +155,9 @@ RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER
 | REVIEW | Diff inspected against requirements by an independent reviewer (mandatory at STANDARD+; a block-verdict review with critical findings blocks delivery) | `trw_review` artifact + independent reviewer or cold-context pass | 10% |
 | DELIVER | Final summary; committed/archived artifacts; learnings preserved; new modules/entry points have a verified consumer or an explicit seam/backlog entry (delivered ≠ wired); `trw_deliver` called | client instruction sync + final checkpoint | 5% |
 
-ORC MUST NOT advance until exit criteria are met OR a cap is exceeded with written rationale. Fix the phase, not the narrative.
+ORC MUST NOT advance until exit criteria are met. A cap breach triggers scope reduction, re-planning, or escalation with written rationale; it never waives the exit criteria. A ceremony tier may skip a phase only when its tier definition says so. Fix the phase, not the narrative.
 
-Enforcement honesty: phase-gate enforcement defaults to lenient (warn-and-proceed; strict mode is a config opt-in) and the % caps are orchestration targets, not machine limits. The machine-enforced gates live at delivery — the build gate and the review gates (see GATES). Everything else is discipline you apply because it prevents rework, not because a tool will stop you.
+Per the READING CONTRACT, phase-gate enforcement defaults to lenient (warn-and-proceed; strict mode is a config opt-in) and the % caps are orchestration targets, not machine limits. The machine-enforced gates live at delivery — the build gate and the review gates (see GATES).
 
 ### Dynamic Research
 
@@ -131,7 +171,7 @@ If you catch yourself thinking any of these, stop and follow the process — the
 
 | Thought | Why it is wrong | Consequence |
 |---------|-----------------|-------------|
-| "This is too simple for ceremony" | Small tasks still lose context and repeat known gotchas | No checkpoint → compaction/interruption → rework |
+| "This is too simple for fundamentals" | MINIMAL still requires session start, validation, and delivery; checkpoint only when continuity risk makes it useful | Skipped evidence or lost state → rework |
 | "I will checkpoint/deliver after this part" | Unpersisted progress is invisible to future sessions | Learning transfer is lost |
 | "I already know the codebase" | Prior learnings often contain exact repo gotchas | You rediscover old failures |
 | "I can implement directly; delegation is overhead" | Focused review/delegation catches defects when scope is non-trivial | Integration gaps reach VALIDATE |
@@ -148,9 +188,9 @@ Rigid tools have zero discretion. Flexible tools MUST happen when their trigger 
 
 **Rigid (unconditional):**
 - `trw_session_start(query?)` — first TRW action of every session; load memory and active state
-- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state. **Gate (no fourth path)**: (1) a recorded passing `trw_build_check`, OR (2) a documented acceptable failure — review evidence with an explicit "acceptable-failure" label and rationale, recorded via `allow_unverified=true` + a concrete `unverified_reason` at the deliver call, OR (3) an explicit config-level override (discouraged outside ceremony-only repositories)
-- `trw_build_check()` — record project-native validation at VALIDATE and before DELIVER after code/test changes
-- `trw_review()` — before DELIVER for STANDARD+ complexity. The tool records the review artifact and runs a marker scan only (it honestly labels itself `auto_analysis_limited`); the substantive review comes from an independent reviewer, skill, or cold-context pass — not from the tool
+- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state. **Gate (no fourth path)**: (1) a recorded passing `trw_build_check`, OR (2) `allow_unverified=true` with a valid, unexpired acceptable-failure record (`failed_command`, `residual_risk`, `owner`, `expiry_iso`) in `unverified_reason`, OR (3) an authorized operator/config-level override recorded with technical rationale (discouraged outside ceremony-only repositories)
+- `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` — record observed project-native validation at VALIDATE and before DELIVER after code/test changes; it does not run checks
+- `trw_review()` — before DELIVER for STANDARD+ complexity. The tool records an artifact; limited auto scans and empty manual/no-argument passes are stamped `substantive: false` and do not satisfy REVIEW readiness. Evidence comes from supplied reviewer findings, an independent reviewer, or—when independence is unavailable—an explicitly identified cold-context self-pass
 - Completion artifacts — before claiming done
 - Dirty-workspace check — before staging, committing, or delegating write work
 
@@ -175,10 +215,10 @@ Quality contested?         → CRITIC / independent reviewer
 None of the above          → checkpoint only
 ```
 
-**Machine-enforced at delivery** (the only gates a tool computes): the build gate — a recorded passing `trw_build_check` or an explicit `allow_unverified` override (blocks build-artifact task types — coding/rca/eval; docs/research/planning stay advisory); the review block gate — a review artifact with `verdict=block` plus critical findings blocks STANDARD+ delivery; and missing-review warnings at STANDARD+. Everything below is orchestration discipline — apply it yourself; no tool computes it for you.
+**Machine-enforced at delivery** (the only gates a tool computes): the build gate blocks missing verification for coding/rca/eval under the default `block_coding` policy while docs/research/planning/unknown remain advisory; hard build or review blocks require the structured acceptable-failure record above; STANDARD+ substantive reviews with `verdict=block` plus critical findings block; integration-review and >5-file/no-substantive-review scope gates block; configured missing-review policy warns or blocks. Empty and limited-scan review artifacts do not satisfy readiness. Everything below is orchestration discipline—apply it yourself; no tool computes it for you.
 
 Manual review rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
-Multi-reviewer pass: `consensus >= quorum` AND `correlation >= CORRELATION_MIN`. Prefer reviewers from different model families — LLM judges carry measured verbosity, position, and self-preference biases; instruct against length preference and swap comparison order where the format allows. If there is only one reviewer, require explicit evidence and residual-risk notes; single-judge scores are unstable.
+Multi-reviewer pass: at least `ceil(2n/3)` reviewers/checks support pass, with every critical dissent resolved explicitly. Do not manufacture a correlation statistic from incomparable or too-few judgments. Use independent perspectives, instruct against length preference, and swap comparison order where the format allows. If there is only one reviewer, require explicit evidence and residual-risk notes; single-judge scores are unstable.
 Fail: document → revert to prior phase → retry. Two consecutive failures → escalate to user.
 
 ---
@@ -217,7 +257,7 @@ For STANDARD+ scope, structure the plan as three parts — requirements (verifia
 
 ## TRW TOOLS (MCP-FIRST, MANUAL-FALLBACK)
 
-Use MCP tools when available. If MCP is unavailable, use the equivalent file/CLI workflow and record the gap.
+The method is canonical; MCP is its preferred TRW realization. If MCP is unavailable, use the equivalent project-native/file workflow and record the gap.
 
 | Tool | Phase | Required | What It Does |
 |------|-------|----------|--------------|
@@ -234,15 +274,25 @@ Use MCP tools when available. If MCP is unavailable, use the equivalent file/CLI
 | `trw_status(run_path?)` | Any | SHOULD | Inspect run state and ceremony health |
 | `trw_prd_create(input_text)` | PLAN | TASK-DEPENDENT | Create PRD when feature work needs one |
 | `trw_prd_validate(prd_path)` | PLAN | TASK-DEPENDENT | Validate PRD structure/readiness |
-| `trw_build_check(scope?)` | VALIDATE | MUST after validation | Record project-native build/test/type/lint/security outcome |
-| `trw_review()` | REVIEW | STANDARD+ | Record the review artifact (auto-analysis is a marker scan; pair with an independent reviewer) |
+| `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` | VALIDATE | MUST after validation | Record the observed project-native build/test/type/lint/security outcome; does not run checks |
+| `trw_review()` | REVIEW | STANDARD+ | Record the review artifact (auto mode is a limited marker scan; manual/no-arg pass is not substantive evidence; pair with an independent reviewer) |
 | `trw_instructions_sync()` | DELIVER | SHOULD † | Refresh the client instruction file (also called automatically inside trw_deliver) |
 
-† Admin-preset tools: light-client profiles expose a reduced `standard` preset that omits these — when a tool is not exposed, use the fallback (`trw_checkpoint` for compaction recovery; `trw_deliver` covers instruction sync) and record the gap. The live tool surface is larger still (security, observability, code-intelligence); discover it through the client's tool list. Fewer tool definitions cost less context and less accuracy — reduced presets are deliberate.
+† Admin-preset tools: light-client profiles expose a reduced `standard` preset that omits these — when a tool is not exposed, use the fallback (`trw_checkpoint` for compaction recovery; `trw_deliver` covers instruction sync) and record the gap. The live tool surface is larger still (security, observability, code-intelligence); discover it through the client's tool list. Fewer tool definitions consume less context and can improve tool selection accuracy — reduced presets are deliberate.
 
 Lifecycle: `trw_session_start → research/plan as needed → implement + checkpoint/learn → validate with project-native checks + trw_build_check → review when needed → trw_deliver`.
 
 Quick tasks: `trw_session_start → work → targeted project-native validation → trw_learn if discovery → trw_build_check if code changed → trw_deliver`.
+
+Minimum manual equivalents when a tool is unavailable:
+
+| Method obligation | Manual/project-native evidence |
+|-------------------|--------------------------------|
+| Start/recall | Read the active instruction file, relevant durable learnings, and any active run/handoff. |
+| Checkpoint | Write a timestamped progress/resume record with decisions and residual risk. |
+| Build check | Preserve exact command/procedure, result, failures, and scope after the last edit. |
+| Review | Record reviewer, inspected scope, findings, verdict, and residual risk; an empty artifact is not review. |
+| Deliver | Write completion/handoff evidence, preserve reusable learning, and sync instructions/indexes by the supported project path. |
 
 ---
 
@@ -336,7 +386,7 @@ RESEARCH and PLAN SHOULD use independent evidence axes for non-trivial work.
 
 ORC MUST: identify axes → assign or execute shards → persist findings → synthesize into a plan.
 
-Shard count: `clamp(MIN_SHARDS_FLOOR, axes_of_inquiry, PARALLELISM_MAX)`.
+Shard count: `min(independent_axes_with_clear_outputs, harness_safe_parallelism)`, with a floor of one. Quality comes from independent evidence and explicit ownership, not from reaching an arbitrary shard count.
 
 Shard output fields:
 
@@ -359,7 +409,7 @@ files_examined: [path]
 - Partial results MUST be labeled `status: partial`.
 - ORC reads persisted findings or explicit final outputs, not vibes.
 - On resume, skip completed findings and continue incomplete axes.
-- If wave outputs agree suspiciously well (similarity > CORRELATION_MIN), spawn a dissenting shard in the next wave with an altered perspective or formation — convergence without dissent is a groupthink signal, not a confidence signal.
+- If wave outputs repeat materially identical rationales without independent evidence, run a dissenting pass with an altered perspective or formation — convergence without an attempted falsification is a groupthink signal, not a confidence signal.
 </exploration-rules>
 
 ---
@@ -395,6 +445,7 @@ Before IMPLEMENT:
 Before DELIVER:
 - Each requirement maps to implementation files and validation evidence.
 - Any deferred requirement is labeled with severity and owner/backlog path.
+- The completion artifact names changed paths, requirement outcomes, exact validation results, and residual risks; include a checked-in handoff when the task or user requires continuity.
 - Final response distinguishes completed work from remaining risk.
 
 PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD have PRDs. Small fixes MAY use the user request as the governing requirement.
@@ -407,7 +458,7 @@ PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD 
 - Infer the project's language, framework, build system, package manager, and test runner from files and config before choosing commands.
 - Non-trivial production behavior SHOULD have tests first or tests in the same commit, using the project's native test framework.
 - Production behavior changes without nearby tests or an explicit validation rationale SHOULD fail review, regardless of language.
-- Tests MUST verify behavior — assert on output values and observable effects — not mere existence (a symbol is present, `is not None`, `callable`, or a mock `assert_called`). A test that mocks the unit under test verifies the mock, not the code; coverage built on mock-only or existence-only tests is false confidence (it passes while the real path is dead — see VALIDATE blindness). Every requirement claimed done SHOULD have at least one test that exercises the real data path and asserts the produced value, and any "verified/implemented" claim SHOULD name a test that actually exists and passes.
+- Tests MUST match the contract they claim to verify. For behavioral or wiring requirements, assert output values and observable effects on the real path; existence or interaction assertions (`is not None`, `callable`, `assert_called`) are not proxies for behavior. Existence checks are valid when existence/parity is itself the requirement. A test that mocks the primary unit under test verifies the mock, not the real path; disclose and offset such isolation with an appropriate integration check. Every implemented behavior SHOULD have a real-path assertion, and every “verified/implemented” claim SHOULD name evidence that actually exists and passes.
 - Coverage, type-safety, lint, formatting, security, and build targets come from package/repo config; do not invent universal percentages or single-language gates.
 - Run the narrowest meaningful check first, then broaden before delivery when risk warrants it.
 - Record the exact command(s), result, and residual risk with `trw_build_check` after checks run. Build evidence is agent-reported — keep it honest by preserving the raw command and its observable outcome (exit code, failure names), not a paraphrase; misreporting a check is a hard-boundary violation, not an efficiency.
@@ -420,9 +471,15 @@ PRD lifecycle is task-dependent. New features and broad behavior changes SHOULD 
 
 ## TOOL RETRY
 
-Max: 3 | Backoff: immediate → 2s+jitter → 4s+jitter → fail + log + alternate path.
+Retry budgets are ceilings, not required attempts. For plausibly transient
+non-TRW operations, use at most three total attempts: the initial attempt,
+2s+jitter before attempt two, and 4s+jitter before attempt three; then fail,
+record the gap, and use an alternate path when safe.
 
-Retry only when the failure is plausibly transient. Do not retry deterministic schema/path errors without changing the input.
+Bundled helpers use the narrower MCP policy for a failed or unavailable
+`trw_*` call: retry once, then record the skipped ceremony step loudly before
+continuing. A role-local persistence-critical policy may be stricter and wins.
+Do not retry deterministic schema/path errors without changing the input.
 
 ---
 
@@ -441,17 +498,25 @@ Prevention: validate inputs, constrain write paths, set timeouts, request struct
 
 ---
 
-## GIT
+## VERSION CONTROL (GIT ADAPTER)
+
+Use the project's native version-control workflow. The commands below apply only when the project uses Git; otherwise preserve the same invariants (narrow change sets, no destructive shared-state operations, reviewable history) with the active VCS.
+
+In concurrent work, prefer an isolated worktree/index or explicit file ownership. Commit each coherent, focused, green milestone promptly so validated work is not left exposed; “frequent” is a preservation rule, not a commit-count target, and never requires broken, cosmetic, or invented commits.
 
 ```bash
-git status --short
-git add -- <new-untracked-paths>        # only for NEW files; tracked changes need no add
-git diff --cached --check
-git commit -m "feat(scope): msg" -m "WHY: rationale" -- <specific-paths>
+git -C "$REPO_ROOT" status --short
+git -C "$REPO_ROOT" diff -- <absolute-owned-paths>
+git -C "$REPO_ROOT" add -- <absolute-new-paths>
+git -C "$REPO_ROOT" diff --cached --name-only
+git -C "$REPO_ROOT" diff --cached --check
+git -C "$REPO_ROOT" commit --only -m "feat(scope): msg" -m "WHY: rationale" -- <absolute-owned-paths>
 ```
 
-Stage narrowly. Never sweep unrelated dirty files into a commit. Commit runtime state separately from source when both must be saved.
-Concurrent agents share the git index: for tracked files, stage-and-commit in ONE path-limited command (`git commit ... -- <paths>`) — `git add` followed by a separate `git commit` lets another agent's commit silently claim your staged files. New/untracked files are the exception: `git add -- <paths>` then commit immediately, path-limited. Never stash, reset, or clean when other agents may be working in the same tree.
+A path-only commit excludes unrelated staged paths but commits the complete current version of every named tracked file; use it only when you own every current byte. Mixed-ownership files require coordination or an isolated patch/index. In a shared index, verify the staged set immediately before committing and never use a plain commit that can consume another worker's staging.
+
+Standing task authorization covers routine narrow, non-amending commits. Commands that can replace shared files/index/refs or rewrite history require command-specific operator authorization and exclusive ownership: `checkout`/`switch`/`restore`, `reset`, `clean`, `stash`, `rebase`, `merge`, `cherry-pick`, `revert`, `commit --amend`, force-push, `git rm --cached`, and related abort operations. Never use `git add -A`, `git add .`, `git add -u`, `git commit -a`, wildcard staging, or stage credentials, secrets, private runtime state, caches, or other sensitive paths. On an unexpected diff, preserve it and re-establish ownership—do not clean or overwrite it. Commit approved runtime state separately from source when both must be saved.
+
 File paths in commands, logs, and shard outputs MUST be absolute (derived from REPO_ROOT or TASK_DIR) — cwd drifts across tool calls, and relative paths under a drifted cwd have destroyed real work.
 Update the project changelog (`[Unreleased]`) for user-visible changes at DELIVER when the project maintains one.
 
@@ -479,7 +544,7 @@ Nudge pools (pool emphasis is configurable per client/task profile):
 | ceremony | validation/review/delivery gates | run project-native check, record build result |
 | context | scope and evidence hygiene | read source path, shrink prompt, preserve uncertainty |
 
-Nudges are part of the operating layer because they make the right next step cheap across clients. Keep them short, actionable, and grounded in observable state. They are load-bearing: never remove or bypass nudge infrastructure as a "performance optimization."
+Nudges are a supported operating-layer mechanism because they can make the right next step cheap across clients. Each nudge MUST remain conditional, configurable, and reversible; profiles MAY suppress it when redundant or empirically harmful. Do not bypass configured nudge infrastructure ad hoc as a “performance optimization”; tune or retire behavior through an explicit, measured design change.
 
 ---
 
@@ -554,6 +619,7 @@ When TRW governs unattended loops or campaigns (repeated deliver → session_sta
 
 Memory discipline:
 - Engineering knowledge (gotchas, root causes, validated patterns, architecture constraints) → `trw_learn`. Personal/communication preferences → the client's native memory. Episodic "what happened this run" → checkpoints and run artifacts, not learnings.
+- Delivery reflection is mandatory output even when it yields no learning; `skip_reflect` is only for a reflection already completed. A clean session is a valid result: do not record routine status or invent improvements to look productive, and keep edits minimal.
 - Learnings route to the project tier by default; an opt-in user tier holds machine-local cross-repo knowledge; `trw_recall` federates both.
 - Background consolidation (dedup, decay, tier sweeps) runs at delivery — one more reason `trw_deliver` is rigid.
 
@@ -585,31 +651,31 @@ Delegate prompts SHOULD include: context, task, constraints, output contract, an
 | Trigger | Action |
 |---------|--------|
 | Session start | Read this document before non-trivial edits |
-| After compaction/resume | Reload this document and active client instructions |
+| After compaction/resume | Reload the execution summary, current phase/gate sections, and active client instructions; reload the full document when the task or governing instruction requires it |
 | Phase transition | Re-read relevant phase/gate section |
 | Before delegation | Re-read Delegation and File Ownership |
 | Before delivery | Re-read Rigid Tools, Gates, Requirements, and Git |
 
-On compact: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes) → commit green work when safe → reload this framework + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state.
+On compact: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes) → commit green work when safe → reload the execution summary + relevant phase/gate sections + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state. Reload the full framework when explicitly required; do not pull 40KB of unrelated detail into a narrow continuation by reflex.
 
 ### Mid-Stream User Input
 
-| Progress | Action |
-|----------|--------|
-| <50% through current shard | Checkpoint, defer shard, address user |
-| >50% through current shard | Finish the shard if safe, then address user |
-| P0 request | Micro-commit if green or rollback if red; switch immediately |
+| Input | Action |
+|-------|--------|
+| Stop, cancel, P0, or explicit switch-now request | Reach the nearest safe state without delaying for shard completion; checkpoint or report partial state and switch immediately. |
+| Scope/priority clarification | Acknowledge it promptly, preserve completed work, and change course at the next safe boundary. |
+| Non-blocking addition | Record it, finish only the smallest safe unit already in flight, then re-evaluate the plan. |
 
 ---
 
 ## QOL CHANGES
 
-QOL fixes are allowed when they are <10 lines, already-open files, behavior-preserving, and <=5% of effort. Separate commit when practical. When in doubt, log a P2 item instead.
+QOL changes are allowed only when they directly support the current requirement, remain behavior-preserving, and do not expand the validation boundary. Trace them to the task and keep them in a separate diff or commit when practical. Otherwise defer them with evidence; arbitrary line-count or effort percentages are not authorization for extra scope.
 
 ---
 
 ## END-OF-SESSION REMINDER (terminal constraints decay — this restatement is deliberate)
 
-Before you stop: `trw_build_check` recorded after any code/test change → `trw_learn` for non-obvious discoveries → `trw_deliver` (gate: passing build check, OR labeled acceptable-failure recorded via `allow_unverified=true` + concrete reason, OR explicit config override — no fourth path). Unpersisted progress is invisible to every future session.
+Before you stop: record applicable project-native validation with `trw_build_check` after the last change → `trw_learn` for non-obvious reusable discoveries → `trw_deliver` under the three-path gate in the EXECUTION MODEL SUMMARY. Unpersisted material progress is invisible to every future session.
 
 </trw-framework>

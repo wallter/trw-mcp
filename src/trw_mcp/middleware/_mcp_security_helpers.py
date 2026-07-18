@@ -285,15 +285,16 @@ def first_party_tool_scope(
     The signed allowlist intentionally moves slowly; the live in-process
     TRW server can grow new first-party tools faster than that file is
     re-signed.  For the trusted default server only, bridge that drift from
-    ``TOOL_PRESETS["all"]`` so advertisements and direct calls stay aligned
-    with the configured first-party surface while non-TRW/unknown tools
-    remain denied.
+    the authoritative CORE-218 manifest's eligible public surface
+    (``eligible_tool_names()``) so advertisements and direct calls stay aligned
+    with the registered first-party surface while non-TRW/unknown tools remain
+    denied. (Superseded ``TOOL_PRESETS["all"]``; the manifest is now the SSOT.)
     """
     if server_name != default_server_name:
         return None
-    from trw_mcp.models.config._defaults import TOOL_PRESETS
+    from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
-    if tool_name not in TOOL_PRESETS["all"]:
+    if tool_name not in eligible_tool_names():
         return None
     return CapabilityScope(
         server_name=server_name,

@@ -139,3 +139,81 @@ def test_no_duplicate_field_names_across_mixins() -> None:
     assert not duplicates, (
         f"config field name(s) declared by more than one mixin (silent MRO shadowing risk): {duplicates}"
     )
+
+
+# -- PRD-CORE-218-FR05: public configuration admission budget --
+
+
+def test_prd_core_218_fr05() -> None:
+    """FR05: every public config field carries admission metadata + a budget
+    decision, or the contract fails. A new field without a full admission entry
+    is rejected with equivalent-tuning guidance; one with a full entry passes."""
+    # Imported via the _defaults facade (FR05 implementation reference).
+    from trw_mcp.models.config._defaults import (
+        ConfigAdmission,
+        FieldAdmissionReport,
+        build_field_admissions,
+        verify_field_admissions,
+    )
+    from trw_mcp.models.config._main import TRWConfig
+
+    live = tuple(TRWConfig.model_fields.keys())
+
+    # 1. The current public field surface passes with complete entries.
+    report = verify_field_admissions(live)
+    assert isinstance(report, FieldAdmissionReport)
+    assert report.ok, f"unadmitted public fields: {report.missing}"
+    assert report.missing == ()
+    # Budget decision + counts are visible on the typed report and in the text.
+    assert report.total_fields == len(live)
+    assert report.admitted_count == len(live)
+    assert report.budget_decision in {"admitted", "legacy-admitted"}
+    assert report.budget_target == 370
+    assert str(report.total_fields) in report.message
+    assert "budget" in report.message.lower()
+
+    # Every admission record for a live field is complete (no empty slot).
+    admissions = build_field_admissions()
+    required = (
+        "owner",
+        "consumer",
+        "default_rationale",
+        "interaction_analysis",
+        "deprecation_plan",
+        "docs_pointer",
+        "test_pointer",
+    )
+    for name in live:
+        record = admissions[name]
+        for slot in required:
+            assert getattr(record, slot), (name, slot)
+        assert record.budget_decision in {"admitted", "legacy-admitted", "deferred"}
+
+    # 2. A NEW public field WITHOUT admission metadata fails the build.
+    rejected = verify_field_admissions((*live, "fixture_unadmitted_field"))
+    assert not rejected.ok
+    assert "fixture_unadmitted_field" in rejected.missing
+    assert rejected.budget_decision == "rejected"
+    # Failure message names both equivalent-tuning mechanisms.
+    assert "nested policy" in rejected.message
+    assert "derived value" in rejected.message
+
+    # 3. A NEW public field WITH a complete admission entry passes.
+    accepted = verify_field_admissions(
+        (*live, "fixture_admitted_field"),
+        extra_admissions={
+            "fixture_admitted_field": ConfigAdmission(
+                field_name="fixture_admitted_field",
+                owner="fixture-owner",
+                consumer="fixture-consumer",
+                default_rationale="fixture rationale",
+                interaction_analysis="fixture interaction analysis",
+                deprecation_plan="fixture deprecation plan",
+                docs_pointer="fixture docs",
+                test_pointer="fixture test",
+                budget_decision="admitted",
+            )
+        },
+    )
+    assert accepted.ok
+    assert "fixture_admitted_field" not in accepted.missing

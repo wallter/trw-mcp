@@ -345,18 +345,24 @@ class TestFR03BatchSQLiteSync:
         """Empty updates list does nothing (no get_backend call)."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
+        marker = trw_dir / "authoritative.yaml"
+        marker.write_text("unchanged", encoding="utf-8")
 
         with patch(
             "trw_mcp.state.memory_adapter.get_backend",
         ) as mock_get:
-            _batch_sync_to_sqlite([], trw_dir)
+            result = _batch_sync_to_sqlite([], trw_dir)
 
+        assert result is None
+        assert marker.read_text(encoding="utf-8") == "unchanged"
         mock_get.assert_not_called()
 
     def test_batch_sync_get_backend_failure_handled(self, tmp_path: Path) -> None:
         """If get_backend itself fails, the entire batch is gracefully skipped."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
+        marker = trw_dir / "authoritative.yaml"
+        marker.write_text("unchanged", encoding="utf-8")
 
         updates: list[tuple[str, Path | None, dict[str, object], float, int, list[object]]] = [
             ("id-1", None, {}, 0.6, 1, []),
@@ -366,8 +372,10 @@ class TestFR03BatchSQLiteSync:
             "trw_mcp.state.memory_adapter.get_backend",
             side_effect=RuntimeError("cannot connect"),
         ):
-            # Should not raise
-            _batch_sync_to_sqlite(updates, trw_dir)
+            result = _batch_sync_to_sqlite(updates, trw_dir)
+
+        assert result is None
+        assert marker.read_text(encoding="utf-8") == "unchanged"
 
 
 # ---------------------------------------------------------------------------
@@ -431,8 +439,9 @@ class TestFR04ThreePhaseOrdering:
             patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite") as mock_batch,
             patch("trw_mcp.scoring._correlation._sync_to_sqlite") as mock_individual,
         ):
-            process_outcome(trw_dir, 0.5, "task_complete", lookup_fn=fake_lookup)
+            updated = process_outcome(trw_dir, 0.5, "task_complete", lookup_fn=fake_lookup)
 
+        assert updated == ["lr-1"]
         mock_batch.assert_called_once()
         mock_individual.assert_not_called()
 
@@ -482,11 +491,12 @@ class TestFR07QValueCorrectness:
         """Positive reward should increase Q-value from default 0.5.
 
         Note: when the lookup_fn returns entry_path=None (SQLite-only entry),
-        _write_pending_entries skips the YAML write and does NOT include the
-        ID in updated_ids (correct post-fix behavior — no false write claims).
-        The Q-value computation (Phase 1) still mutates `data` in-place and
-        the SQLite write-back (Phase 3) is the authoritative persistence path
-        for these entries.
+        _write_pending_entries skips the YAML write, but process_outcome now
+        still includes the ID in updated_ids (commit 5682b4b4f): the entry
+        received a Q/history update and is persisted through the SQLite batch
+        sync (Phase 3), so counting it avoids silently undercounting
+        SQLite-primary correlations in caller telemetry. The Q-value
+        computation (Phase 1) mutates `data` in-place regardless.
         """
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
@@ -505,8 +515,9 @@ class TestFR07QValueCorrectness:
         with patch("trw_mcp.scoring._correlation._batch_sync_to_sqlite"):
             updated = process_outcome(trw_dir, 0.8, "tests_passed", lookup_fn=fake_lookup)
 
-        # SQLite-only entry: not in updated_ids (no YAML write occurred).
-        assert "q-test-001" not in updated
+        # SQLite-only entry: the YAML write is skipped but the ID is still
+        # counted in updated_ids (SQLite batch sync is the authoritative path).
+        assert "q-test-001" in updated
         # The in-memory Q-value mutation still happened (Phase 1 always runs).
         new_q = float(str(data["q_value"]))
         assert new_q > original_q, f"Positive reward must increase Q-value; {new_q} <= {original_q}"

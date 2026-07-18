@@ -23,8 +23,7 @@ class TestCheckInstructionsCLI:
             "MockConfig",
             (),
             {
-                "effective_tool_exposure_mode": "all",
-                "tool_exposure_list": [],
+                "tool_resolution_mode": "all",
             },
         )()
 
@@ -48,8 +47,7 @@ class TestCheckInstructionsCLI:
             "MockConfig",
             (),
             {
-                "effective_tool_exposure_mode": "core",
-                "tool_exposure_list": [],
+                "tool_resolution_mode": "standard",
             },
         )()
 
@@ -70,8 +68,7 @@ class TestCheckInstructionsCLI:
             "MockConfig",
             (),
             {
-                "effective_tool_exposure_mode": "all",
-                "tool_exposure_list": [],
+                "tool_resolution_mode": "all",
             },
         )()
 
@@ -93,8 +90,7 @@ class TestCheckInstructionsCore:
             "MockConfig",
             (),
             {
-                "effective_tool_exposure_mode": "all",
-                "tool_exposure_list": [],
+                "tool_resolution_mode": "all",
             },
         )()
 
@@ -115,8 +111,7 @@ class TestCheckInstructionsCore:
             "MockConfig",
             (),
             {
-                "effective_tool_exposure_mode": "core",
-                "tool_exposure_list": [],
+                "tool_resolution_mode": "standard",
             },
         )()
 

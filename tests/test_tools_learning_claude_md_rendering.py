@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from trw_memory.models.memory import MemoryEntry
 
 from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics, set_project_root  # noqa: F401
@@ -85,8 +86,11 @@ class TestClaudeMdTemplate:
         assert "trw:start" in content
         assert "trw:end" in content
 
-    def test_custom_template_with_extra_sections(self, tmp_path: Path) -> None:
+    def test_custom_template_with_extra_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Custom templates can add static content alongside placeholders."""
+        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
+        # so pin instruction_externalize="off" to keep exercising the inline path.
+        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         trw_dir = tmp_path / _CFG.trw_dir
         templates_dir = trw_dir / _CFG.templates_dir
         templates_dir.mkdir(parents=True)
@@ -245,8 +249,11 @@ class TestCeremonyRendering:
         assert "{{shared_learnings}}" in template
         assert "{{closing_reminder}}" in template
 
-    def test_sync_includes_ceremony_sections(self, tmp_path: Path) -> None:
+    def test_sync_includes_ceremony_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """CLAUDE.md has compact protocol; ceremony details in hook only."""
+        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
+        # so pin instruction_externalize="off" to keep exercising the inline path.
+        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         tools = _get_tools()
 
         tools["trw_learn"].fn(

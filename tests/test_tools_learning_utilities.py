@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics import (
     extract_learnings_from_llm,
@@ -160,7 +162,8 @@ class TestClaudeMdCollection:
                 "q_value": 0.1,
             },
         )
-        result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
+        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+            result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
         assert any(d["id"] == "L-high" for d in result)
         assert not any(d["id"] == "L-low" for d in result)
 

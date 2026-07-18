@@ -64,7 +64,6 @@ def _run_sync(tmp_path: Path, **kwargs: object) -> dict[str, object]:
         patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
         patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         patch("trw_mcp.state.analytics.update_analytics_sync"),
-        patch("trw_mcp.state.analytics.mark_promoted"),
     ):
         return execute_claude_md_sync(**args)  # type: ignore[arg-type]
 
@@ -246,7 +245,19 @@ class TestInstructionsSync:
         (tmp_path / ".opencode").mkdir()
         (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
 
-        _run_sync(tmp_path, client="all")
+        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
+        # so pin instruction_externalize="off" to keep exercising the inline path.
+        from trw_mcp.models.config import TRWConfig
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        (trw_dir / "reflections").mkdir(exist_ok=True)
+        (trw_dir / "context").mkdir(exist_ok=True)
+        (trw_dir / "patterns").mkdir(exist_ok=True)
+        config = TRWConfig(trw_dir=str(trw_dir), instruction_externalize="off")
+
+        _run_sync(tmp_path, client="all", config=config)
 
         claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
         agents_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")

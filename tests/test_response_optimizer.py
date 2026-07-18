@@ -425,7 +425,7 @@ def test_config_response_format_env_override(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.unit
 def test_client_profile_response_format_defaults() -> None:
-    """All 5 profiles have correct response_format defaults."""
+    """Active profiles have correct response_format defaults."""
     from trw_mcp.models.config._profiles import resolve_client_profile
 
     assert resolve_client_profile("claude-code").response_format == "yaml"
@@ -433,4 +433,62 @@ def test_client_profile_response_format_defaults() -> None:
     assert resolve_client_profile("cursor-ide").response_format == "json"
     assert resolve_client_profile("cursor-cli").response_format == "json"
     assert resolve_client_profile("codex").response_format == "yaml"
-    assert resolve_client_profile("aider").response_format == "yaml"
+    assert resolve_client_profile("antigravity-cli").response_format == "yaml"
+
+
+@dataclass
+class FakeStructuredToolResult:
+    """ToolResult stub carrying both text content and structured_content."""
+
+    content: list[Any]
+    structured_content: Any = None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_middleware_compacts_structured_content() -> None:
+    """structured_content gets the same null/empty stripping as text blocks.
+
+    Clients that prefer structuredContent over the text block (Claude Code)
+    would otherwise receive the raw dict and bypass the optimizer entirely.
+    """
+    payload = {
+        "success": True,
+        "score": 0.123456,
+        "meta": None,
+        "tags": [],
+        "nested": {"origin_layer": None, "value": 3},
+    }
+    result = FakeStructuredToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structured_content=dict(payload),
+    )
+    middleware = ResponseOptimizerMiddleware()
+
+    async def call_next(_ctx: Any) -> Any:
+        return result
+
+    ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_status"))
+    out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+    assert out.structured_content == {
+        "success": True,
+        "score": 0.12,
+        "nested": {"value": 3},
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_middleware_leaves_non_dict_structured_content() -> None:
+    """Non-dict structured_content (lists, None) passes through untouched."""
+    result = FakeStructuredToolResult(content=[], structured_content=[1, None, 2])
+    middleware = ResponseOptimizerMiddleware()
+
+    async def call_next(_ctx: Any) -> Any:
+        return result
+
+    ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_status"))
+    out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+    assert out.structured_content == [1, None, 2]

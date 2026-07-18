@@ -289,9 +289,17 @@ def test_batch_sync_2000_rows_real_sqlite_under_1s(
     _batch_sync_to_sqlite(updates, tmp_path / ".trw")
     elapsed = time.monotonic() - start
 
-    assert elapsed < 1.0, (
+    # Under pytest-xdist the box runs N workers concurrently and this wall-time
+    # SLO measures ~1.1-1.2s from pure CPU contention (it passes serially at
+    # well under 1s; the regression signature being guarded is 91s). Keep the
+    # strict cap for serial runs, allow contention headroom in parallel ones.
+    import os
+
+    cap_seconds = 2.5 if os.environ.get("PYTEST_XDIST_WORKER") else 1.0
+
+    assert elapsed < cap_seconds, (
         f"FR02 wall-time regression on REAL SQLite: 2000-row batch sync took "
-        f"{elapsed * 1000:.1f}ms (cap 1000ms). Pre-fix this was 91s with one "
+        f"{elapsed * 1000:.1f}ms (cap {cap_seconds * 1000:.0f}ms). Pre-fix this was 91s with one "
         f"implicit COMMIT per row. A >1s value here suggests the chunked-"
         f"transaction wrapper has been bypassed (each update() is committing "
         f"on its own again)."

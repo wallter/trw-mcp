@@ -51,6 +51,17 @@ class TestSearchPatternsExceptionHandling:
         names = [str(m.get("name", "")) for m in matches]
         assert "good" in names
 
+    def test_cyclic_pattern_symlink_does_not_hide_valid_peer(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        patterns_dir = trw_dir / "patterns"
+        patterns_dir.mkdir(parents=True)
+        (patterns_dir / "loop.yaml").symlink_to(patterns_dir / "loop.yaml")
+        (patterns_dir / "safe.yaml").write_text("name: safe\ndescription: available\n", encoding="utf-8")
+
+        matches = search_patterns(patterns_dir, query_tokens=[], reader=FileStateReader(base_dir=trw_dir))
+
+        assert [match["name"] for match in matches] == ["safe"]
+
 
 class TestCollectContextConventions:
     """Cover collect_context with conventions.yaml present."""
@@ -96,6 +107,60 @@ class TestCollectContextConventions:
         (trw_dir / "context").mkdir(parents=True)
         result = collect_context(trw_dir, "context", reader)
         assert result == {}
+
+    @pytest.mark.parametrize(
+        ("corrupt_name", "valid_name", "valid_key"),
+        [
+            ("architecture.yaml", "conventions.yaml", "conventions"),
+            ("conventions.yaml", "architecture.yaml", "architecture"),
+        ],
+    )
+    def test_corrupt_optional_context_does_not_hide_valid_peer(
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+        writer: FileStateWriter,
+        corrupt_name: str,
+        valid_name: str,
+        valid_key: str,
+    ) -> None:
+        trw_dir = tmp_path / ".trw"
+        context_dir = trw_dir / "context"
+        context_dir.mkdir(parents=True)
+        (context_dir / corrupt_name).write_text("{invalid", encoding="utf-8")
+        writer.write_yaml(context_dir / valid_name, {"value": "available"})
+
+        result = collect_context(trw_dir, "context", reader)
+
+        assert result == {valid_key: {"value": "available"}}
+
+    def test_external_context_symlink_does_not_hide_valid_peer(
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+    ) -> None:
+        trw_dir = tmp_path / ".trw"
+        context_dir = trw_dir / "context"
+        context_dir.mkdir(parents=True)
+        external = tmp_path / "outside-secret.yaml"
+        writer.write_yaml(external, {"secret": "TOP-SECRET"})
+        (context_dir / "architecture.yaml").symlink_to(external)
+        writer.write_yaml(context_dir / "conventions.yaml", {"value": "available"})
+
+        result = collect_context(trw_dir, "context", FileStateReader(base_dir=trw_dir))
+
+        assert result == {"conventions": {"value": "available"}}
+
+    def test_cyclic_context_symlink_does_not_hide_valid_peer(self, tmp_path: Path) -> None:
+        trw_dir = tmp_path / ".trw"
+        context_dir = trw_dir / "context"
+        context_dir.mkdir(parents=True)
+        (context_dir / "architecture.yaml").symlink_to(context_dir / "architecture.yaml")
+        (context_dir / "conventions.yaml").write_text("value: available\n", encoding="utf-8")
+
+        result = collect_context(trw_dir, "context", FileStateReader(base_dir=trw_dir))
+
+        assert result == {"conventions": {"value": "available"}}
 
 
 class TestSearchPatternsNonExistentDir:

@@ -29,37 +29,35 @@ class TestValidateManualFindings:
         assert result == []
 
     def test_invalid_severity_normalized_via_normalize_severity(self) -> None:
-        """Finding that fails ReviewFinding validation gets severity normalized."""
-        finding: dict[str, str] = {"severity": "high"}
+        """A complete finding using the supported high alias is normalized."""
+        finding = {"category": "security", "severity": "high", "description": "Bug"}
         result = validate_manual_findings([finding])
         assert len(result) == 1
         assert result[0]["severity"] == "critical"
 
     def test_invalid_severity_medium_normalized_to_warning(self) -> None:
-        finding: dict[str, str] = {"severity": "medium"}
+        finding = {"category": "style", "severity": "medium", "description": "Issue"}
         result = validate_manual_findings([finding])
         assert result[0]["severity"] == "warning"
 
     def test_invalid_severity_error_normalized_to_critical(self) -> None:
-        finding: dict[str, str] = {"severity": "error"}
+        finding = {"category": "correctness", "severity": "error", "description": "Failure"}
         result = validate_manual_findings([finding])
         assert result[0]["severity"] == "critical"
 
-    def test_invalid_severity_unknown_normalized_to_info(self) -> None:
-        finding: dict[str, str] = {"severity": "bogus"}
+    def test_incomplete_finding_is_rejected(self) -> None:
+        finding: dict[str, str] = {"severity": "high"}
         result = validate_manual_findings([finding])
-        assert result[0]["severity"] == "info"
+        assert result == []
 
-    def test_valid_finding_with_unknown_severity_normalized_to_info(self) -> None:
-        """A finding that passes ReviewFinding but has non-canonical severity gets info."""
+    def test_finding_with_unknown_severity_is_rejected(self) -> None:
         finding = {
             "category": "style",
             "severity": "unknown-level",
             "description": "Something",
         }
         result = validate_manual_findings([finding])
-        assert len(result) == 1
-        assert result[0]["severity"] == "info"
+        assert result == []
 
     def test_multiple_findings_all_validated(self) -> None:
         findings = [
@@ -80,12 +78,17 @@ class TestValidateManualFindings:
         result = validate_manual_findings([finding])
         assert result[0]["file_path"] == "app/db.py"
 
-    def test_findings_missing_severity_key_uses_info_default(self) -> None:
-        """Finding with no severity key falls back to 'info' via get default."""
+    def test_findings_missing_severity_key_are_rejected(self) -> None:
         finding: dict[str, str] = {}
         result = validate_manual_findings([finding])
-        assert len(result) == 1
-        assert result[0]["severity"] == "info"
+        assert result == []
+
+    def test_blank_category_or_description_is_rejected(self) -> None:
+        findings = [
+            {"category": " ", "severity": "info", "description": "Issue"},
+            {"category": "style", "severity": "info", "description": "  "},
+        ]
+        assert validate_manual_findings(findings) == []
 
     def test_returns_list_type(self) -> None:
         result = validate_manual_findings([])

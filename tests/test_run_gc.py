@@ -137,6 +137,99 @@ def test_sweep_marks_stale_active_abandoned(tmp_path: Path) -> None:
     assert "run_auto_abandoned" in events_content
 
 
+def test_sweep_does_not_clobber_concurrent_terminal_transition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import _run_gc
+
+    now = 1_700_000_000.0
+    runs_root = tmp_path / "runs"
+    run_dir = _make_run(
+        runs_root,
+        "task-a",
+        "r1",
+        events_age_hours=72,
+        run_yaml_age_hours=72,
+        now=now,
+    )
+    original_load = _run_gc._load_run_yaml
+
+    def _complete_before_final_read(path: Path):  # type: ignore[no-untyped-def]
+        data = original_load(path)
+        assert data is not None
+        data["status"] = "complete"
+        _run_gc._dump_run_yaml_atomic(path, data)
+        return original_load(path)
+
+    monkeypatch.setattr(_run_gc, "_load_run_yaml", _complete_before_final_read)
+
+    report = _run_gc.sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+
+    assert report.runs_abandoned == 0
+    assert _read_status(run_dir) == "complete"
+    events = run_dir / "meta" / "events.jsonl"
+    assert not events.exists() or "run_auto_abandoned" not in events.read_text(encoding="utf-8")
+
+
+def test_sweep_rechecks_activity_before_abandon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import _run_gc
+
+    now = 1_700_000_000.0
+    runs_root = tmp_path / "runs"
+    run_dir = _make_run(
+        runs_root,
+        "task-a",
+        "r1",
+        events_age_hours=72,
+        run_yaml_age_hours=72,
+        now=now,
+    )
+    original_load = _run_gc._load_run_yaml
+
+    def _refresh_before_final_read(path: Path):  # type: ignore[no-untyped-def]
+        heartbeat = run_dir / "meta" / "heartbeat"
+        heartbeat.write_text("", encoding="utf-8")
+        _set_mtime(heartbeat, now)
+        return original_load(path)
+
+    monkeypatch.setattr(_run_gc, "_load_run_yaml", _refresh_before_final_read)
+
+    report = _run_gc.sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+
+    assert report.runs_abandoned == 0
+    assert _read_status(run_dir) == "active"
+    events = run_dir / "meta" / "events.jsonl"
+    assert not events.exists() or "run_auto_abandoned" not in events.read_text(encoding="utf-8")
+
+
+def test_dry_run_uses_authoritative_final_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import _run_gc
+
+    now = 1_700_000_000.0
+    runs_root = tmp_path / "runs"
+    run_dir = _make_run(
+        runs_root,
+        "task-a",
+        "r1",
+        events_age_hours=72,
+        run_yaml_age_hours=72,
+        now=now,
+    )
+    original_load = _run_gc._load_run_yaml
+
+    def _complete_before_final_read(path: Path):  # type: ignore[no-untyped-def]
+        data = original_load(path)
+        assert data is not None
+        data["status"] = "complete"
+        _run_gc._dump_run_yaml_atomic(path, data)
+        return original_load(path)
+
+    monkeypatch.setattr(_run_gc, "_load_run_yaml", _complete_before_final_read)
+
+    report = _run_gc.sweep_stale_runs(runs_root, 48, 12, [], dry_run=True, _now=now)
+
+    assert report.runs_abandoned == 0
+    assert _read_status(run_dir) == "complete"
+
+
 def test_sweep_preserves_pinned_run_regardless_of_age(tmp_path: Path) -> None:
     from trw_mcp.state._run_gc import sweep_stale_runs
 
@@ -258,6 +351,79 @@ def test_sweep_skips_malformed_run_yaml(tmp_path: Path) -> None:
     assert report.runs_skipped_malformed >= 1
     assert report.runs_abandoned == 1
     assert _read_status(good_run) == "abandoned"
+
+
+def test_sweep_aggregates_terminal_skips_into_summary(tmp_path: Path) -> None:
+    """Terminal runs bump the counter but emit NO per-run debug line.
+
+    Production feedback sub_psVs_nUWnLJGvOs3: the old per-skipped-run
+    ``sweep_skipped_terminal`` debug logging streamed one stderr line per
+    historical run before the MCP handshake. The counts now live only in the
+    single ``boot_gc_complete`` summary.
+    """
+    from trw_mcp.state._run_gc import sweep_stale_runs
+
+    runs_root = tmp_path / "runs"
+    now = time.time()
+    for i, status in enumerate(("complete", "failed", "delivered")):
+        _make_run(
+            runs_root,
+            "task-a",
+            f"r-{status}-{i}",
+            status=status,
+            events_age_hours=100.0,
+            now=now,
+        )
+
+    with capture_logs() as captured:
+        report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+
+    per_skip = [e for e in captured if e.get("event") == "sweep_skipped_terminal"]
+    assert per_skip == [], "per-run terminal skip logging must be aggregated, not emitted per run"
+
+    complete = [e for e in captured if e.get("event") == "boot_gc_complete"]
+    assert len(complete) == 1, "exactly one summary line expected"
+    assert complete[0]["runs_skipped_terminal"] == 3
+    assert report.runs_skipped_terminal == 3
+
+
+def test_sweep_aggregates_scan_malformed_skips_into_summary(tmp_path: Path) -> None:
+    """A malformed run.yaml found during the scan is counted, not logged per-run."""
+    from trw_mcp.state._run_gc import sweep_stale_runs
+
+    runs_root = tmp_path / "runs"
+    now = time.time()
+
+    bad_run = runs_root / "task-a" / "r-bad"
+    (bad_run / "meta").mkdir(parents=True)
+    (bad_run / "meta" / "run.yaml").write_text("this: is: not: valid: yaml: [unclosed\n", encoding="utf-8")
+
+    with capture_logs() as captured:
+        report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+
+    scan_malformed = [e for e in captured if e.get("event") == "sweep_skipped_malformed"]
+    assert scan_malformed == [], "scan-time malformed skips must be aggregated into the summary"
+
+    complete = [e for e in captured if e.get("event") == "boot_gc_complete"]
+    assert len(complete) == 1
+    assert complete[0]["runs_skipped_malformed"] >= 1
+    assert report.runs_skipped_malformed >= 1
+
+
+def test_sweep_still_logs_actual_abandon_action(tmp_path: Path) -> None:
+    """Aggregating skips must NOT suppress per-run logging of real actions."""
+    from trw_mcp.state._run_gc import sweep_stale_runs
+
+    runs_root = tmp_path / "runs"
+    now = time.time()
+    _make_run(runs_root, "task-a", "r1", events_age_hours=72.0, run_yaml_age_hours=72.0, now=now)
+
+    with capture_logs() as captured:
+        report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+
+    assert report.runs_abandoned == 1
+    abandon_events = [e for e in captured if e.get("event") == "run_auto_abandoned"]
+    assert abandon_events, "actual abandon actions must still be logged per-run"
 
 
 def test_sweep_idempotent(tmp_path: Path) -> None:

@@ -49,27 +49,31 @@ If the user is unavailable and the evidence is strong enough, proceed with expli
 
 4. **Read generated PRD**: Read the generated PRD file to confirm it was created successfully.
 
-5. **Validate**: Call `trw_prd_validate(prd_path)` to get the initial quality score.
+5. **Validate**: Call full `trw_prd_validate(prd_path)` and report `total_score`, `quality_tier`, `valid`, and
+   `validation_partial`.
 
-6. **Report creation**: Output PRD ID, file path, quality score. Then:
+6. **Report creation**: Output PRD ID, file path, and the validation result fields. Then:
    > "Created {PRD-ID}. Proceeding to groom → review → execution plan..."
 
 - Default category is CORE. If the feature is clearly a bug fix, use FIX; if infrastructure, use INFRA; if quality, use QUAL.
 
-## Phase 2: Continue with /trw-prd-ready pipeline
+## Phase 2: Run the readiness pipeline inline
 
-After creation, **automatically proceed** with the full pipeline by following the `/trw-prd-ready` skill workflow for the newly created PRD ID. Do NOT stop after creation — the whole point is that the user gets a sprint-ready PRD with an execution plan from a single command.
+The Copilot package does not expose a separate `trw-prd-ready` skill. Continue in this thread through groom, independent
+review, bounded refinement, and execution planning. Readiness requires a full result with `validation_partial: false`,
+`valid: true`, and risk-scaled `quality_tier: approved`; use `total_score` only to report progress. Stop and report
+blockers rather than proceeding when that predicate is not met.
 
-Pipeline phases (the `/trw-prd-ready` skill defines the full gates and constraints):
-- **GROOM** — research and iteratively draft until quality score ≥ 0.85
+Pipeline phases:
+- **GROOM** — research and iteratively draft until the readiness predicate passes
 - **REVIEW** — 5-dimension quality review yielding READY / NEEDS WORK / BLOCK verdict
 - **Refinement loop** — if NEEDS WORK, re-groom with targeted findings (max 2 loops)
 - **EXEC PLAN** — decompose FRs into micro-tasks with file paths, tests, and verification commands
 
 ## Also triggers when...
 
-This skill (or `/trw-prd-ready`) should be suggested when a user:
+This skill should be suggested when a user:
 - Asks for a new feature ("add X", "we need Y", "build Z")
 - Describes a requirement without using skill invocations
 - Says "create a PRD for..."
-- Asks to "groom", "review", or "plan" a PRD (use `/trw-prd-ready {PRD-ID}` for existing PRDs)
+- Asks to groom, review, or plan an existing PRD; run Phase 2 against that PRD without creating a duplicate

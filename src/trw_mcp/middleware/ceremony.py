@@ -112,7 +112,33 @@ def reset_state() -> None:
     _known_sessions.clear()
 
 
-def _touch_heartbeat_safe() -> None:
+def _annotate_operation_backed_claim(tool_name: str, result: object) -> None:
+    """Validate any operation-backed claim in a tool result against the owner registry.
+
+    PRD-CORE-215 FR03 production consumption point: a tool that returns an
+    operation handle must be a registered operation owner (delivery -> the
+    PRD-CORE-208 journal). When a payload declares operation-backed behavior the
+    middleware stamps the registry's verdict (``valid``/``unowned_claim``) into
+    the structured result so an unowned handle claim is visible, never silently
+    trusted. Fail-open — it never blocks execution or touches a non-claim result.
+    """
+    try:
+        payload = getattr(result, "structured_content", None)
+        if not isinstance(payload, dict):
+            return
+        from trw_mcp.tools._operation_owner_adapter import (
+            declares_operation_backed,
+            validate_operation_backed_claim,
+        )
+
+        if not declares_operation_backed(payload):
+            return
+        payload["operation_backed_claim"] = validate_operation_backed_claim(tool_name, payload)
+    except Exception:  # justified: fail-open -- claim annotation must never block a tool call
+        logger.debug("operation_backed_claim_annotation_failed", exc_info=True)
+
+
+def _touch_heartbeat_safe(session_id: str) -> None:
     """Touch the heartbeat file for the active run (PRD-QUAL-050-FR01).
 
     Deferred import avoids circular dependency between middleware and state.
@@ -121,7 +147,7 @@ def _touch_heartbeat_safe() -> None:
     try:
         from trw_mcp.state._paths import touch_heartbeat
 
-        touch_heartbeat()
+        touch_heartbeat(session_id=session_id)
     except Exception:  # justified: fail-open -- heartbeat must never block tool execution
         logger.warning("heartbeat_middleware_failed", exc_info=True)
 
@@ -272,7 +298,7 @@ class CeremonyMiddleware(Middleware):
                     tool=tool_name,
                     outcome="unsuccessful_session_start",
                 )
-            _touch_heartbeat_safe()
+            _touch_heartbeat_safe(session_id)
             return ceremony_result
 
         # Post-compaction gate (PRD-CORE-098-FR06): only block trw_* tools
@@ -303,7 +329,10 @@ class CeremonyMiddleware(Middleware):
         result: ToolResult = await call_next(context)
 
         # Post-tool heartbeat: signal session liveness (PRD-QUAL-050-FR01)
-        _touch_heartbeat_safe()
+        _touch_heartbeat_safe(session_id)
+
+        # FR03: validate any operation-backed claim against the owner registry.
+        _annotate_operation_backed_claim(tool_name, result)
 
         # If session is NOT active (non-trw tool), prepend warning
         if not is_session_active(session_id):

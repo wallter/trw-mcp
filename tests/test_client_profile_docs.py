@@ -84,7 +84,8 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.write_targets.instruction_path == ".codex/INSTRUCTIONS.md"
     assert profile.context_window_tokens == 32_000
     assert profile.instruction_max_lines == 200
-    assert profile.default_model_tier == "local-small"
+    assert profile.default_model_tier == "balanced"
+    assert profile.nudge_enabled is True
     assert _format_ceremony_weights(profile.ceremony_weights) == "30/30/5/20/15/0"
     assert profile.scoring_weights == light_profile.scoring_weights
     assert profile.mandatory_phases == ["implement", "deliver"]
@@ -95,7 +96,6 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.skills_enabled is False
     assert profile.mcp_instructions_enabled is False
     assert profile.learning_recall_enabled is True
-    assert profile.tool_exposure_mode == "standard"
 
 
 @pytest.mark.unit
@@ -148,6 +148,106 @@ def test_opencode_docs_managed_artifacts_match_current_contract() -> None:
 
 
 @pytest.mark.unit
+def test_execution_profile_axes_and_adapter_matrix_are_provider_neutral() -> None:
+    section = _extract_section(_read_client_profiles_doc(), "## Provider-Neutral Execution Profile Axes")
+
+    for capability in ("frontier", "balanced", "local-large", "local-small"):
+        assert capability in section
+    for effort in ("inherit", "minimal", "low", "medium", "high", "xhigh", "max"):
+        assert effort in section
+    for field in ("recommended_effort", "effort_source", "effort_adapter_status"):
+        assert field in section
+    for legacy, canonical in (
+        ("cloud-opus", "frontier"),
+        ("cloud-sonnet", "balanced"),
+        ("local-30b", "local-large"),
+        ("local-8b", "local-small"),
+    ):
+        assert f"| `{legacy}` | `{canonical}` |" in section
+    for status in ("inherited", "advisory", "mapped", "clamped", "unsupported"):
+        assert f"`{status}`" in section
+    assert "`MINIMAL` | `low` | `task_complexity`" in section
+    assert "`STANDARD` | `medium` | `task_complexity`" in section
+    assert "`COMPREHENSIVE` | `high` | `task_complexity`" in section
+    assert "never auto-selects `xhigh` or `max`" in section
+    assert "provisional input key `reasoning_effort`" in section
+    assert "Status also exposes `model_tier` as a compatibility" in section
+    assert "not emit an `applied_effort` claim" in section
+    assert "Codex" in section
+    assert "Claude Code" in section
+    assert "No effort adapter" in section
+    assert "Actual/observed harness application" in section
+    assert "Ultra/ultracode" in section
+
+
+@pytest.mark.unit
+def test_default_capability_and_effort_posture_matches_runtime_profiles() -> None:
+    section = _extract_section(_read_client_profiles_doc(), "### Default Capability and Effort Posture")
+
+    expected_adapters = {
+        "claude-code": "`claude-code-safe-2026-07-10`",
+        "codex": "`codex-safe-2026-07-10`",
+    }
+    for client_id in (
+        "claude-code",
+        "codex",
+        "cursor-ide",
+        "cursor-cli",
+        "copilot",
+        "antigravity-cli",
+        "opencode",
+    ):
+        profile = resolve_client_profile(client_id)
+        matching_rows = [
+            row
+            for row in _extract_markdown_table_rows(section, "### Default Capability and Effort Posture")
+            if row[0] == f"`{client_id}`"
+        ]
+        assert len(matching_rows) == 1
+        row = matching_rows[0]
+        assert row[1] == f"`{profile.default_model_tier}`"
+        assert row[2] == expected_adapters.get(client_id, "none")
+
+
+@pytest.mark.unit
+def test_codex_docs_distinguish_cli_effort_from_gpt56_api_effort() -> None:
+    section = _extract_section(_read_client_profiles_doc(), "## Codex Support Surface")
+
+    assert "`gpt-5.6-sol`" in section
+    assert "`gpt-5.6-terra`" in section
+    assert "`gpt-5.6-luna`" in section
+    assert "`local-large` and `local-small` remain local capability classes" in section
+    assert "Codex CLI `model_reasoning_effort`" in section
+    assert "`minimal|low|medium|high`" in section
+    assert "Responses API uses `none|low|medium|high|xhigh|max`" in section
+    assert "does not currently ship a direct Responses API effort adapter" in section
+    assert "does not alter TRW ceremony depth" in section
+
+
+@pytest.mark.unit
+def test_hook_contract_is_optional_trust_gated_and_fail_soft() -> None:
+    doc = _read_client_profiles_doc()
+
+    assert "Hooks are optional accelerators, not correctness dependencies" in doc
+    assert "disable, omit, skip, or require explicit trust" in doc
+    assert "tools, middleware, and protected instructions" in doc
+    assert "never asks a user to bypass" in doc
+
+
+@pytest.mark.unit
+def test_nudge_pool_weights_are_explained_as_routing_not_frequency() -> None:
+    section = _extract_section(_read_client_profiles_doc(), "### Nudge Pool Weights")
+
+    assert "relative selection chances" in section
+    assert "do **not** control how often" in section
+    assert "Density and cooldown settings" in section
+    assert "`workflow`" in section and "`learnings`" in section
+    assert "`ceremony`" in section and "`context`" in section
+    assert "`60/30/0/10`" in section
+    assert "tunable routing defaults" in section
+
+
+@pytest.mark.unit
 def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
     """CLIENT-PROFILES Codex section documents the profile contract and runtime notes."""
     profile = resolve_client_profile("codex")
@@ -158,16 +258,17 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
     assert config_rows == {
         "Mode": f"`{profile.ceremony_mode}`",
         "Context": _format_context_window_tokens(profile.context_window_tokens),
+        "Default model tier": f"`{profile.default_model_tier}`",
         "Ceremony weights": f"`{_format_ceremony_weights(profile.ceremony_weights)}`",
         "Write target": "`AGENTS.md`",
         "Instructions path": f"`{profile.write_targets.instruction_path}`",
+        "Nudges": "Enabled; standard messenger, default density, `60/30/0/10` pool weights",
         "Hooks": "Disabled",
         "Framework ref": "Disabled",
         "Delegation": "Disabled",
         "Skills": "Disabled",
         "Learning recall": "Enabled",
         "MCP instructions": "Disabled",
-        "Tool exposure": f"`{profile.tool_exposure_mode}`",
     }
     assert "Agent teams" not in config_rows
     assert "current Codex runtime surfaces" in codex_section

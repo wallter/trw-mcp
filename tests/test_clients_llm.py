@@ -76,6 +76,14 @@ class TestLLMClientAvailability:
         assert client.ask_sync("test prompt") is None
         assert client.ask_sync("test prompt", system="sys") is None
 
+    def test_ask_sync_supports_local_ollama_model(self) -> None:
+        """Sync callers honor the same local-model availability as ask()."""
+        client = _make_unavailable_client()
+        client._model = "ollama/qwen2.5-coder"
+        client.ask = AsyncMock(return_value="local response")  # type: ignore[method-assign]
+
+        assert client.ask_sync("test prompt") == "local response"
+
     @pytest.mark.asyncio
     async def test_ask_returns_none_when_unavailable(self) -> None:
         """ask() always returns None when SDK is not installed."""

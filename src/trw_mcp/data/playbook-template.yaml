@@ -180,7 +180,7 @@ playbook-sections:
     1. Re-read assigned FRs -- verify every requirement is implemented, not just the easy ones
     2. Check integration -- new functions are imported and called from existing code
     3. Review your diff for DRY (no duplicated logic), KISS (minimum viable), SOLID (single responsibility)
-    4. Run project-native validation, then record it with `trw_build_check(scope="full")`
+    4. Run project-native validation, then record only its observed result with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`
     5. Write a completion checkpoint: which FRs implemented, test count, integration points touched
 
     ### Test expectations

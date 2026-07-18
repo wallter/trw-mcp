@@ -27,8 +27,6 @@ from typing import Any
 import pytest
 import yaml
 
-from trw_mcp.agents.tier_resolver import resolve_launch_throttle_policy
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TARGET_AGENTS: tuple[str, ...] = (
@@ -170,20 +168,3 @@ def test_enforcement_branch_rejects_zero_or_negative(tmp_path: Path) -> None:
     # The production test asserts `value > 0`; this fixture proves the
     # branch would fail as intended if an agent ever shipped `0`.
     assert not (fm["max_tokens"] > 0)
-
-
-def test_dense_helper_launch_policy_is_client_agnostic() -> None:
-    """PRD-QUAL-087 FR03: helper launch policy is portable, not client-specific."""
-    policy = resolve_launch_throttle_policy(9)
-
-    assert policy.stagger_seconds > 0
-    assert policy.max_concurrent_launches == 4
-    assert policy.backoff_multiplier > 1.0
-    assert policy.max_backoff_seconds >= policy.stagger_seconds
-    assert "large dense launch" in policy.rationale
-
-
-def test_launch_policy_rejects_non_positive_helper_count() -> None:
-    """PRD-QUAL-087 FR03: malformed launch requests fail closed."""
-    with pytest.raises(ValueError, match="helper_count must be positive"):
-        resolve_launch_throttle_policy(0)

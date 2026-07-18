@@ -122,29 +122,52 @@ class TestBackfillEmbeddings:
             mock_embedder.embed.assert_not_called()
 
     def test_embed_returns_none_counts_as_failed(self, trw_dir: Path) -> None:
-        """When embed returns None, increments failed (lines 770-772)."""
+        """When embed returns None, increments failed (lines 770-772).
+
+        ``existing_vector_ids`` is stubbed empty so the entry is treated as
+        un-embedded and reaches the backfill embed path. Since embeddings_enabled
+        now defaults to True (commit f4ca661c9), ``store_learning`` embeds the
+        entry synchronously and the idempotency skip (commit f57fc6615) would
+        otherwise short it out before the failed++ branch under test.
+        """
         store_learning(trw_dir, "L-fn1", "Fail none", "Detail")
 
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = None
 
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
+        backend = get_backend(trw_dir)
+
+        with (
+            patch(
+                "trw_mcp.state._memory_connection.get_embedder",
+                return_value=mock_embedder,
+            ),
+            patch.object(backend, "existing_vector_ids", return_value=set()),
         ):
             result = backfill_embeddings(trw_dir)
             assert result["failed"] == 1
 
     def test_exception_counts_as_failed(self, trw_dir: Path) -> None:
-        """When embedding raises, increments failed (lines 776-777)."""
+        """When embedding raises, increments failed (lines 776-777).
+
+        ``existing_vector_ids`` is stubbed empty for the same reason as
+        :meth:`test_embed_returns_none_counts_as_failed`: store-time embedding
+        (embeddings_enabled default True) plus the backfill idempotency skip
+        would otherwise bypass the exception failed++ branch under test.
+        """
         store_learning(trw_dir, "L-fe1", "Fail exception", "Detail")
 
         mock_embedder = MagicMock()
         mock_embedder.embed.side_effect = RuntimeError("embed error")
 
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
+        backend = get_backend(trw_dir)
+
+        with (
+            patch(
+                "trw_mcp.state._memory_connection.get_embedder",
+                return_value=mock_embedder,
+            ),
+            patch.object(backend, "existing_vector_ids", return_value=set()),
         ):
             result = backfill_embeddings(trw_dir)
             assert result["failed"] == 1

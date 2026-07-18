@@ -139,9 +139,7 @@ class TestGenAiToolSpan:
         """No error_type -> no error.type attr, no ERROR status."""
         from trw_mcp.state.otel_wrapper import emit_tool_span
 
-        tracer = _run_with_recording_tracer(
-            emit_tool_span, "t", 1.0, {"agent_id": "a"}, config=_cfg()
-        )
+        tracer = _run_with_recording_tracer(emit_tool_span, "t", 1.0, {"agent_id": "a"}, config=_cfg())
         _, span = tracer.spans[0]
         assert "error.type" not in span.attributes
         assert span.status is None
@@ -197,9 +195,7 @@ class TestLegacyByteIdentity:
         # which _resolve_semconv treats as unknown -> legacy (FR09).
         cfg = MagicMock(otel_enabled=True)
         del cfg.otel_semconv  # force AttributeError path -> getattr default
-        tracer = _run_with_recording_tracer(
-            emit_tool_span, "t", 1.0, {"agent_id": "a"}, config=cfg
-        )
+        tracer = _run_with_recording_tracer(emit_tool_span, "t", 1.0, {"agent_id": "a"}, config=cfg)
         name, _ = tracer.spans[0]
         assert name == "tool.t"
 
@@ -258,14 +254,40 @@ class TestAgentAndWorkflowSpans:
         assert span.attributes["gen_ai.operation.name"] == "invoke_workflow"
         assert span.attributes["gen_ai.workflow.name"] == "rca_pipeline"
 
+    @pytest.mark.parametrize(
+        ("emitter_name", "attributes"),
+        [
+            ("emit_agent_span", {"agent_id": "asst_1"}),
+            ("emit_workflow_span", {"workflow_name": "rca_pipeline"}),
+        ],
+    )
+    def test_invocation_error_sets_type_and_status(
+        self,
+        emitter_name: str,
+        attributes: dict[str, object],
+    ) -> None:
+        """FR06: both invocation span kinds record the error and ERROR status."""
+        from opentelemetry.trace import StatusCode
+
+        from trw_mcp.state import otel_wrapper
+
+        emitter = getattr(otel_wrapper, emitter_name)
+        tracer = _run_with_recording_tracer(
+            emitter,
+            attributes,
+            config=_cfg(),
+            error_type="TimeoutError",
+        )
+        _, span = tracer.spans[0]
+        assert span.attributes["error.type"] == "TimeoutError"
+        assert span.status == StatusCode.ERROR
+
     def test_agent_span_noop_in_legacy_mode(self) -> None:
         """Agent/workflow spans only emit in gen_ai mode."""
         from trw_mcp.state.otel_wrapper import emit_agent_span, emit_workflow_span
 
         for fn in (emit_agent_span, emit_workflow_span):
-            tracer = _run_with_recording_tracer(
-                fn, {"agent_id": "a"}, config=_cfg(otel_semconv="legacy")
-            )
+            tracer = _run_with_recording_tracer(fn, {"agent_id": "a"}, config=_cfg(otel_semconv="legacy"))
             assert tracer.spans == []
 
 
@@ -405,9 +427,7 @@ class TestFailOpenAndUnknown:
         """NFR04: a config error is swallowed silently."""
         from trw_mcp.state.otel_wrapper import emit_tool_span
 
-        with patch(
-            "trw_mcp.models.config.get_config", side_effect=RuntimeError("boom")
-        ):
+        with patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("boom")):
             emit_tool_span("t", 1.0)  # must not raise
 
 

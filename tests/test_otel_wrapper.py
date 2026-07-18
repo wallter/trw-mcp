@@ -22,6 +22,7 @@ class TestEmitToolSpan:
             mock_cfg.return_value = MagicMock(otel_enabled=False)
             # Should not raise
             emit_tool_span("test_tool", 42.0, {"key": "val"})
+            assert mock_cfg.call_count == 1
 
     def test_noop_when_otel_not_installed(self) -> None:
         """When opentelemetry is not installed, logs debug and returns."""
@@ -51,6 +52,7 @@ class TestEmitToolSpan:
                 mock_cfg.return_value = MagicMock(otel_enabled=True)
                 # Should not raise even though opentelemetry is missing
                 emit_tool_span("test_tool", 10.0)
+                assert mock_cfg.call_count == 1
         finally:
             # Restore modules
             sys.modules.update(saved_modules)
@@ -102,3 +104,4 @@ class TestEmitToolSpan:
             mock_cfg.side_effect = RuntimeError("config boom")
             # Should NOT raise
             emit_tool_span("test_tool", 1.0)
+            assert mock_cfg.call_count == 1

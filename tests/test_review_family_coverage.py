@@ -136,6 +136,23 @@ class TestSingleFamilyCaveat:
         assert result["review_family_coverage"] == "single_family"
         assert "provider_returned_empty" in result["single_family_caveat"]
 
+    def test_provider_placeholder_finding_degrades_to_limited_fallback(self, run_dir: Path) -> None:
+        """A non-empty provider payload is not realized evidence unless it validates."""
+        config = _make_config(cross_model_enabled=True, cross_model_provider="gpt-4o")
+        with (
+            patch(f"{_HELPERS}._get_git_diff", return_value="diff content"),
+            patch(f"{_HELPERS}._invoke_cross_model_review", return_value=[{}]),
+        ):
+            result = handle_cross_model_mode(config, run_dir, "rev-invalid", "2026-03-01T00:00:00Z")
+
+        assert result["cross_model_skipped"] is True
+        assert result["review_family_coverage"] == "single_family"
+        assert result["auto_analysis_limited"] is True
+        assert result["substantive"] is False
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["cross_model_findings"] == []
+        assert artifact["substantive"] is False
+
     def test_cross_family_no_caveat(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=True, cross_model_provider="gpt-4o")
         findings = [{"category": "c", "severity": "info", "description": "x"}]
@@ -177,7 +194,13 @@ class TestFallbackNoRaise:
             "reviewer_roles_run": ["security"],
             "reviewer_errors": [],
             "findings": [
-                {"reviewer_role": "security", "confidence": 95, "severity": "critical", "description": "x"},
+                {
+                    "reviewer_role": "security",
+                    "confidence": 95,
+                    "category": "security",
+                    "severity": "critical",
+                    "description": "x",
+                },
             ],
             "auto_analysis_limited": False,
             "limited_reason": "",
@@ -191,6 +214,12 @@ class TestFallbackNoRaise:
         # Verdict computed from the same-family critical finding.
         assert result["verdict"] == "block"
         assert result["review_family_coverage"] == "single_family"
+        assert result["auto_analysis_limited"] is False
+        assert result["limited_reason"] == ""
+        assert result["substantive"] is True
+        artifact = FileStateReader().read_yaml(run_dir / "meta" / "review.yaml")
+        assert artifact["auto_analysis_limited"] is False
+        assert artifact["substantive"] is True
 
     def test_honeypots_present_flag(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False, cross_model_provider="gpt-4o")
@@ -286,8 +315,20 @@ class TestSameFamilyFindingsCount:
             "reviewer_roles_run": ["security", "correctness"],
             "reviewer_errors": [],
             "findings": [
-                {"reviewer_role": "security", "confidence": 95, "severity": "critical", "description": "a"},
-                {"reviewer_role": "correctness", "confidence": 80, "severity": "warning", "description": "b"},
+                {
+                    "reviewer_role": "security",
+                    "confidence": 95,
+                    "category": "security",
+                    "severity": "critical",
+                    "description": "a",
+                },
+                {
+                    "reviewer_role": "correctness",
+                    "confidence": 80,
+                    "category": "correctness",
+                    "severity": "warning",
+                    "description": "b",
+                },
             ],
             "auto_analysis_limited": False,
             "limited_reason": "",

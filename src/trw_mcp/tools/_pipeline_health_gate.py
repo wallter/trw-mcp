@@ -51,7 +51,7 @@ _LOCALHOST_HOSTS: tuple[str, ...] = ("localhost", "127.0.0.1", "0.0.0.0", "::1",
 def _is_localhost(url: str) -> bool:
     """True when *url*'s host is a loopback / non-routable local address."""
     lowered = url.strip().lower()
-    # Strip scheme if present so bare "localhost:8100" also matches.
+    # Strip scheme if present so bare "localhost:5002" also matches.
     if "://" in lowered:
         lowered = lowered.split("://", 1)[1]
     host = lowered.split("/", 1)[0]

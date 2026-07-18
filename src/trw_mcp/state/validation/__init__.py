@@ -161,6 +161,9 @@ from trw_mcp.state.validation.prd_quality import (
     map_grade as map_grade,
 )
 from trw_mcp.state.validation.prd_quality import (
+    refresh_dynamic_prd_validation as refresh_dynamic_prd_validation,
+)
+from trw_mcp.state.validation.prd_quality import (
     score_content_density as score_content_density,
 )
 from trw_mcp.state.validation.prd_quality import (
@@ -183,6 +186,9 @@ from trw_mcp.state.validation.prd_quality import (
 from trw_mcp.state.validation.prd_quality import (
     validate_prd_quality_v2 as validate_prd_quality_v2,
 )
+from trw_mcp.state.validation.prd_quality import (
+    validate_verification_mappings as validate_verification_mappings,
+)
 from trw_mcp.state.validation.risk_profiles import (
     RISK_PROFILES as RISK_PROFILES,
 )
@@ -203,47 +209,21 @@ __all__ = [
     "PHASE_INPUT_CRITERIA",
     "PHASE_STATUS_MAPPING",
     "RISK_PROFILES",
-    "_BUILD_STALENESS_SECS",
-    "_CHECKBOX_RE",
-    "_EXIT_CRITERIA_RE",
-    "_EXPECTED_SECTION_NAMES",
-    "_GRADE_MAP",
-    "_HEADING_RE",
-    "_HIGH_WEIGHT_SECTIONS",
-    "_INTEGRATION_CHECKLIST",
-    "_PLACEHOLDER_RE",
-    "_REFLECTION_EVENTS",
-    "_STATUS_ORDER",
-    "_SYNC_EVENTS",
-    "_TERMINAL_STATUSES",
     "ContractValidator",
     "FileContractValidator",
     "RiskProfile",
-    "_best_effort_build_check",
-    "_best_effort_dry_check",
-    "_best_effort_integration_check",
-    "_best_effort_migration_check",
-    "_best_effort_orphan_check",
-    "_best_effort_semantic_check",
-    "_build_phase_result",
-    "_check_build_status",
-    "_check_prd_enforcement",
-    "_coerce_v1_failures",
-    "_events_contain",
-    "_is_substantive_line",
-    "_is_validate_pass",
-    "_parse_section_content",
-    "_read_events",
     "auto_progress_prds",
     "check_integration",
     "check_phase_exit",
     "check_phase_input",
     "classify_quality_tier",
     "derive_risk_level",
+    "extract_wiring_warnings",
     "generate_improvement_suggestions",
     "get_risk_scaled_config",
     "map_grade",
     "parse_exit_criteria",
+    "refresh_dynamic_prd_validation",
     "score_content_density",
     "score_implementation_readiness",
     "score_section_density",
@@ -251,5 +231,6 @@ __all__ = [
     "score_traceability_v2",
     "validate_prd_quality",
     "validate_prd_quality_v2",
+    "validate_verification_mappings",
     "validate_wave_contracts",
 ]

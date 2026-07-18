@@ -22,6 +22,9 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResult,
 )
+from trw_mcp.state.validation._verification_mappings import (
+    validate_verification_mappings as validate_verification_mappings,
+)
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -410,12 +413,16 @@ def _check_status_drift(
     fm_status_str = str(fm_status).lower()
 
     # Strip frontmatter block before searching for prose status
-    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
+    from trw_mcp.state.prd_utils import _FRONTMATTER_RE, _quick_reference_block_span
 
     fm_match = _FRONTMATTER_RE.match(content)
     body = content[fm_match.end() :] if fm_match else content
 
-    match = _PROSE_STATUS_RE.search(body)
+    span = _quick_reference_block_span(body)
+    if span is None:
+        return warnings
+    block = body[slice(*span)]
+    match = _PROSE_STATUS_RE.search(block)
     if match is None:
         # No Quick Reference prose block -- skip gracefully (NFR02)
         return warnings

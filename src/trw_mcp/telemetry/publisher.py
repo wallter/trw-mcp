@@ -24,10 +24,36 @@ from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, strip_pii
+from trw_mcp.telemetry.retention import rotate_and_compress
 
 logger = structlog.get_logger(__name__)
 
 _HASH_FILE = ".publish_hashes.json"
+
+# PRD-CORE-181-FR04 rotation threshold lives on TRWConfig
+# (``telemetry_log_max_bytes``), which honors the ``TRW_TELEMETRY_LOG_MAX_BYTES``
+# env override and ``.trw/config.yaml`` via BaseSettings precedence.
+_PIPELINE_LOG_RELATIVE = ("logs", "pipeline-events.jsonl")
+
+
+def rotate_pipeline_telemetry_log(trw_dir: Path, *, max_bytes: int | None = None) -> dict[str, object]:
+    """FR04 wiring: opportunistically rotate/compress the telemetry pipeline log.
+
+    Size-gated cheap fast path — when the active ``logs/pipeline-events.jsonl``
+    is under ``max_bytes`` nothing is read or rewritten. Over threshold, the
+    single atomic ``rotate_and_compress`` policy seals the active file into a new
+    numbered segment (never compressing the writer file in place) and compresses
+    closed, unreferenced segments. Fail-open: any error degrades to a no-op.
+    """
+    limit = get_config().telemetry_log_max_bytes if max_bytes is None else max_bytes
+    log_path = trw_dir.joinpath(*_PIPELINE_LOG_RELATIVE)
+    try:
+        if not log_path.exists() or log_path.stat().st_size <= limit:
+            return {"rotated": False, "reason": "under_threshold"}
+        return rotate_and_compress(log_path, max_bytes=limit, min_age_seconds=0.0)
+    except Exception:  # justified: maintenance rotation is fail-open, never blocks publish
+        logger.debug("telemetry_log_rotation_failed", path=str(log_path), exc_info=True)
+        return {"rotated": False, "reason": "error"}
 
 
 class _LearningPayload(TypedDict):
@@ -137,6 +163,10 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     Fail-open: never raises exceptions.
     """
     cfg = get_config()
+    # PRD-CORE-181-FR04: fold telemetry-log rotation into this maintenance step
+    # (runs as deliver-step D08 on every trw_deliver). It is a local, network-
+    # independent side task, so it runs BEFORE the offline early-returns below.
+    rotate_pipeline_telemetry_log(resolve_trw_dir())
     urls = cfg.effective_platform_urls
     # PRD-SEC-004-FR05: learning-CONTENT publishing (full summary + detail) is
     # gated by its OWN consent flag, learning_sharing_enabled — NOT by the

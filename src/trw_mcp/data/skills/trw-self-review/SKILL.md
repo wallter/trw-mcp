@@ -1,184 +1,96 @@
 ---
 name: trw-self-review
 description: >-
-  Run trw-self-review as a mandatory pre-audit step to identify 60%+ of potential issues early. Trigger this skill to verify assertions, validate wiring, complete the NFR mini-checklist, and assess test quality before requesting a formal adversarial audit.
+  Run a focused pre-audit review of modified functionality and tests. Verify requirement evidence, wiring, applicable NFRs, test quality, and changed-slice simplicity before requesting an independent audit.
 user-invocable: true
 argument-hint: "[PRD-ID]"
 ---
 
-# Pre-Audit Self-Review Skill (PRD-QUAL-056-FR05)
+# Pre-Audit Self-Review
 
-Use when: you just finished an implementation and want to catch 60%+ of audit findings before requesting the adversarial audit.
+Use when: checking changed behavior and tests before the required independent review.
 
-Run this checklist BEFORE requesting formal adversarial audit (`/trw-audit`). This catches 60%+ of typical audit findings at zero adversarial cost.
+Use after implementation and before an independent audit. This pass reduces obvious rework; it never substitutes for the required independent/substantive review.
 
-## Why This Exists
+## 1. Establish the review slice
 
-Analysis of 55 audit-fix commits found the same categories of findings recur: test names mismatched with PRD FRs, functions defined but never wired, mocks used for testable dependencies, traceability matrix entries stale after fix cycles. A structured pre-audit self-review catches these patterns before the auditor runs.
+1. Resolve the optional PRD using `prds_relative_path` from `.trw/config.yaml`; otherwise use the active requirements/plan.
+2. Identify the exact baseline, changed files, surrounding consumers, tests, migrations/config/docs, and ownership boundaries.
+3. List each applicable requirement and its required verification method: test, analysis, inspection, or demonstration.
 
-## Path Discovery
+Do not execute an assertion command copied from an artifact unless it is trusted project-owned configuration or has explicit operator approval and runs under the normal sandbox.
 
-Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate the PRD.
+## 2. Verify requirements and integration
 
-## Workflow
+For every requirement:
 
-### Step 1: Resolve PRD
+- cite the implementation and evidence that proves the behavior, not merely that a symbol/file exists;
+- trace new modules, flags, fields, events, APIs, and CLI options to a real production consumer or an explicitly declared future seam;
+- follow data across boundaries and confirm producer/consumer schemas, defaults, errors, and compatibility agree;
+- check migrations, rollback, feature gating, and degraded behavior when applicable;
+- mark missing, partial, conflicting, or stale evidence explicitly.
 
-- If `$ARGUMENTS` contains a PRD ID, resolve to file path
-- Read the full PRD
-- Extract all FRs with their assertions and acceptance criteria
+### Safety-property reachability
 
-### Step 2: Assertion Verification
+For redaction, sanitization, validation, authorization, privacy, or egress controls, enumerate every source-to-sink path. Confirm every path crosses the control and that production code consumes the controlled output. A correct but bypassed/unconsumed gate is blocking. Exercise each independently injected channel with adversarial input.
 
-For each FR that has machine-verifiable assertions (`grep_present`, `grep_absent`, `glob_exists`, `command_succeeds`):
+## 3. Apply only relevant NFR checks
 
-1. Run each assertion command via Bash or Grep
-2. Record PASS / FAIL for each
-3. If any assertion FAILS, note the specific mismatch
+Classify each row as `PASS`, `FAIL`, or `N/A` with rationale:
 
-```bash
-# Example assertion verification:
-grep -q 'def _score_file_path_coverage' trw-mcp/src/trw_mcp/state/validation/_prd_scoring.py && echo 'PASS' || echo 'FAIL'
-```
+- input validation and authorization at trust boundaries;
+- failure handling, retries/timeouts, idempotency, and cleanup;
+- secrets/PII handling and safe observability;
+- performance, concurrency, and resource bounds;
+- compatibility, migration, rollback, and configuration resolution;
+- accessibility, documentation, or operator behavior when the change exposes those surfaces.
 
-### Step 3: Wiring Check
+Use repository/PRD-configured gates and language-native conventions. Do not impose Python, CLI, detector, logging-library, live-service, or coverage requirements on unrelated work.
 
-For each new file created during implementation:
+## 4. Review tests as production code
 
-1. Grep the codebase for imports of that file from production (non-test) modules
-2. A file that is not imported from any production module is likely unwired
-3. Exclude `__init__.py` re-exports — they count as wiring
+Confirm that tests:
 
-```bash
-# Example: check if new module is imported anywhere in production code
-grep -r "from trw_mcp.scoring._io_boundary import" trw-mcp/src/ --include="*.py" | grep -v test
-```
+- map to acceptance behavior, including negative/edge and boundary cases;
+- exercise stable public/integration seams where risk warrants it;
+- fail for the defect or missing behavior they claim to catch;
+- avoid mocks when a safe real boundary is practical, and label simulations honestly;
+- are deterministic, isolated, readable, and free of duplicated fixtures/helpers, dead scaffolding, stale snapshots, and assertion-free existence checks;
+- preserve intentional characterization/compatibility cases even when implementation looks redundant.
 
-### Step 3b: Property-Reachability (Consumption) Check — safety-relevant properties only
+Coverage is supporting evidence, not requirement coverage. Apply a percentage only when project config or an accepted requirement defines it.
 
-Wiring (Step 3) proves a module is *imported*. This step proves an asserted
-*safety property* is actually *exercised on the path that reaches the sink*. It
-exists because of the "Potemkin gate" defect (operator report
-`sub_zAfRqZYYq2KtF72d`): a fail-closed redaction gate was 100%-tested in
-isolation, but its **output was consumed by no production code** while an
-unguarded upstream object was the only content reaching the LLM prompt and the
-user-facing artifact. Every test passed; the central safety property was false
-by construction. Unit and contract tests cannot catch this — only data-flow can.
+## 5. Simplify and validate
 
-Apply this step to any FR/NFR asserting a **redaction, sanitization, input
-validation, access-control, or egress-filtering** property.
+Review the modified functionality, surrounding files, and tests together. Remove only proven dead code, unused files/functions/components, duplicate logic, stale test scaffolding, and unnecessary complexity within owned scope. Trace usages before deletion and preserve behavior.
 
-1. **Enumerate the sinks.** List every place protected content can leave the
-   system: LLM prompts, user-facing artifacts/responses, persisted stores,
-   logs, network egress.
-2. **Trace each sink back to ALL its sources** (not just the obvious one). For
-   each source→sink path, confirm it crosses the gate. A path that reaches a
-   sink without crossing the gate is a FAIL even if the gate itself is perfect.
-3. **Confirm the gate's output is consumed.** Grep for who reads the gate's
-   return value in production. **Gate output consumed by nothing in production
-   code = automatic FAIL** (a Potemkin gate), regardless of test coverage.
-4. **Adversarial fixture in EVERY injected channel.** If the feature has
-   multiple injected input channels (e.g. a gated content stream *and* an
-   injected summary object), each must have a planted-bad-input fixture that
-   proves it is gated. A fixture that lives only in the gated channel hides the
-   exact defect above.
+Run the narrowest project-native checks that prove the changed slice, then broaden according to risk. Record only observed outcomes with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`; the reporter does not run checks.
 
-```bash
-# Who actually consumes the gate's output in production? (empty = Potemkin gate)
-grep -rn "redact_content\|redacted_output" trw-mcp/src/ --include="*.py" | grep -v test
-# Does any OTHER object reach the same sink without crossing the gate?
-grep -rn "prompt =\|llm_input\|render_artifact" trw-mcp/src/ --include="*.py" | grep -v test
-```
-
-Report each safety property as `WIRED` (gate output consumed on every
-source→sink path) or `POTEMKIN` (gate correct but bypassed/unconsumed). Any
-`POTEMKIN` is a blocking finding — fix before requesting the adversarial audit.
-
-### Step 4: NFR Mini-Checklist
-
-Check the 5 highest-frequency NFR findings from historical audits:
-
-1. **Input validation**: New endpoints/entry points have input validation
-2. **Error handling**: Non-critical failures wrapped (no bare `except:` without justification comment)
-3. **Structured logging**: Significant operations have `structlog` calls with outcome field
-4. **Type annotations**: No `# type: ignore` without justification comment on same line
-5. **No stale TODOs**: No `TODO` or `FIXME` markers in committed production code
-
-For each item, grep the modified files and report PASS/FAIL.
-
-### Step 5: Test Quality Spot-Check
-
-For each FR, verify:
-
-1. **Test name matches**: Test function name matches the PRD traceability matrix entry
-2. **Non-trivial data**: Test seeds actual data (not empty strings/dicts/lists)
-3. **Response body checked**: Test asserts on actual values (not just `assert result is not None`)
-4. **Spec-anchored**: Test docstring references the FR it validates
-
-### Step 5b: FPI Gate Check (added 2026-04-18 per ledger lesson)
-
-The 11 Framework Process Improvements from
-[`DISTILLERY-DEFECT-LEDGER-2026-04-18.md`](../../../docs/research/agentic-hpo/DISTILLERY-DEFECT-LEDGER-2026-04-18.md)
-are the catch-net for the class of defect that unit tests silently pass
-through. BEFORE requesting `/trw-audit`, walk these rows for every PRD
-in the sprint — any unchecked row is grounds for the auditor to refuse
-promotion to `status: implemented`.
-
-| # | Check | How to verify |
-|---|---|---|
-| 1 | Real-data integration test for every cross-module FR | Acceptance test hits a real artifact (live git repo, real SQLite db) — not a synthetic fixture |
-| 2 | CLI `--format json` parses | `python -m <cli> --format json \| python -c "import json,sys; json.loads(sys.stdin.read())"` returns 0 |
-| 3 | Detector FPR ceiling in an NFR | `grep -n "false_positive\|FPR" <PRD>.md` returns a numeric ceiling |
-| 4 | Pipeline adapter contract codified | Stage-N-output → Stage-N+1-input field contract is a first-class FR on BOTH stages |
-| 5 | Stderr/stdout discipline | `structlog.configure(...PrintLoggerFactory(file=sys.stderr))` at CLI import time |
-| 6 | Run-on-monorepo sampled | CLI exercised against THIS repo, a human sampled 5+ output records |
-| 7 | `functionality_level` + `stubs[]` frontmatter | `trw_prd_validate` passes with zero `aaref_*` failures |
-| 8 | Dispatcher reachability test | Every declared detector/extractor family has an explicit wiring test |
-| 9 | Config-resolution E2E test | Full chain source → CLI → orchestrator → request has an integration test |
-| 10 | CLI live-path smoke test | `TRW_<PRD>_LIVE=1` env-gated smoke test exists and passes |
-| 11 | Env-file cwd behaviour doc'd OR upward-search implemented | CLAUDE.md has an `env_file` gotcha OR `_resolve_env_file` helper present |
-
-Record the result table in the self-review report (Step 6). If 3+ rows fail, fix before requesting the adversarial audit.
-
-### Step 6: Report
-
-Output a structured report:
+## 6. Report
 
 ```markdown
-## Pre-Audit Self-Review: {PRD-ID}
+## Pre-Audit Self-Review: <scope>
 
-### Assertion Verification: {passed}/{total} PASS
-| FR | Assertion | Result |
+### Requirement evidence
+| Requirement | Method | Evidence | Result |
+|---|---|---|---|
+
+### Integration and safety reachability
+- <surface/path>: WIRED | DECLARED SEAM | BLOCKING GAP
+
+### Applicable NFRs
+| NFR | PASS/FAIL/N/A | Evidence or rationale |
 |---|---|---|
-| FR01 | grep_present "def foo" in src/bar.py | PASS |
-| FR02 | grep_absent "TODO" in src/baz.py | FAIL — found on line 42 |
 
-### Wiring Check: {issues_count} issues
-- {file} is not imported from any production module
+### Test quality and simplification
+- retained/removed/fixed: <why and evidence>
 
-### Property-Reachability: {wired_count}/{total} safety properties WIRED
-- {property}: WIRED — gate output consumed on every source→sink path
-- {property}: POTEMKIN — gate correct but bypassed by {unguarded source} (BLOCKING)
-- (omit this section entirely when no redaction/sanitization/validation/egress FR is in scope)
-
-### NFR Mini-Checklist: {pass_count}/5
-- [x] Input validation
-- [x] Error handling
-- [ ] Structured logging — missing in src/new_module.py
-- [x] Type annotations
-- [x] No stale TODOs
-
-### Test Quality: {pass_count}/{total}
-- FR01: test name matches, non-trivial data, body checked
-- FR02: test name MISMATCH — expected test_fr02_happy, found test_feature_two
+### Validation
+- command: <exact command>
+- observed result: <counts/status>
 
 ### Recommendation
-{READY FOR AUDIT | FIX {N} ISSUES FIRST}
+READY FOR INDEPENDENT AUDIT | FIX <blocking items> FIRST
 ```
 
-## Constraints
-
-- This is a SELF-review — it runs the same checks the auditor will run
-- Do NOT skip assertions — the auditor WILL catch what you miss
-- Log results so the auditor can cross-reference them
-- If >3 assertions fail, fix them before requesting audit
+Fix blocking findings within the owned slice, rerun affected evidence, and report residual risk. Do not turn routine review outcomes into learnings; call `trw_learn` only for a non-obvious reusable discovery.

@@ -9,7 +9,10 @@ Handles:
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
+from contextlib import ExitStack
 from pathlib import Path
 
 import structlog
@@ -17,6 +20,15 @@ import structlog
 from ._utils import _result_action_key
 
 logger = structlog.get_logger(__name__)
+
+_SUPPORTS_PINNED_CONTEXT_CLEANUP = (
+    bool(getattr(os, "O_DIRECTORY", 0))
+    and bool(getattr(os, "O_NOFOLLOW", 0))
+    and os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and os.listdir in os.supports_fd
+)
 
 # Files in .trw/context/ that are always preserved during cleanup.
 _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
@@ -53,7 +65,7 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "prd-new": "trw-prd-new",
         "prd-review": "trw-prd-review",
         "project-health": "trw-project-health",
-        "review-pr": "trw-review-pr",
+        "review-pr": None,
         "security-check": "trw-security-check",
         "simplify": "trw-simplify",
         "sprint-finish": "trw-sprint-finish",
@@ -128,6 +140,9 @@ def _write_manifest(
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
     content_hashes = _compute_content_hashes(target_dir, bundled)
+    # FIX B: also record codex agent/skill hashes so the next update can do a
+    # content-aware refresh (unmodified → refresh, user-edited → preserve).
+    content_hashes.update(_codex_manifest_hashes(target_dir))
     manifest = {
         "version": 2,
         "skills": bundled["skills"],
@@ -186,25 +201,52 @@ def _cleanup_context_transients(
         dry_run: When ``True``, report what would be removed without deleting.
     """
     context_dir = target_dir / ".trw" / "context"
-    if not context_dir.is_dir():
+    if not _SUPPORTS_PINNED_CONTEXT_CLEANUP:
+        result.setdefault("warnings", []).append(
+            f"Skipped context cleanup because this platform cannot safely pin {context_dir}"
+        )
         return
 
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     cleaned: list[str] = []
-    for path in sorted(context_dir.iterdir()):
-        # Skip symlinks first -- is_file() returns True for symlinks to files
-        if path.is_symlink():
-            continue
-        if not path.is_file():
-            continue
-        if path.name in _CONTEXT_ALLOWLIST:
-            continue
-        if dry_run:
-            result["cleaned"].append(f"would remove: {path}")
-        else:
+    with ExitStack() as opened_dirs:
+        try:
+            root_fd = os.open(target_dir, directory_flags)
+            opened_dirs.callback(os.close, root_fd)
+            trw_fd = os.open(".trw", directory_flags, dir_fd=root_fd)
+            opened_dirs.callback(os.close, trw_fd)
+            context_fd = os.open("context", directory_flags, dir_fd=trw_fd)
+            opened_dirs.callback(os.close, context_fd)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            result.setdefault("warnings", []).append(f"Skipped unsafe context cleanup for {context_dir}: {exc}")
+            return
+
+        try:
+            entry_names = sorted(os.listdir(context_fd))
+        except OSError as exc:
+            result.setdefault("warnings", []).append(f"Skipped unreadable context cleanup for {context_dir}: {exc}")
+            return
+
+        for name in entry_names:
+            if name in _CONTEXT_ALLOWLIST:
+                continue
             try:
-                path.unlink()
+                entry_stat = os.stat(name, dir_fd=context_fd, follow_symlinks=False)
+            except OSError as exc:
+                result["errors"].append(f"Failed to inspect {context_dir / name}: {exc}")
+                continue
+            if not stat.S_ISREG(entry_stat.st_mode):
+                continue
+            path = context_dir / name
+            if dry_run:
+                result["cleaned"].append(f"would remove: {path}")
+                continue
+            try:
+                os.unlink(name, dir_fd=context_fd)
                 result["cleaned"].append(str(path))
-                cleaned.append(path.name)
+                cleaned.append(name)
             except OSError as exc:
                 result["errors"].append(f"Failed to remove {path}: {exc}")
 
@@ -220,6 +262,15 @@ def _cleanup_context_transients(
 # Predecessor migration
 # ---------------------------------------------------------------------------
 
+
+# Per-client stale cleanup + codex content hashes (FIX A/B) extracted to
+# _version_migration_clients (350-eLOC gate). Re-exported for back-compat.
+from trw_mcp.bootstrap._version_migration_clients import (
+    _codex_manifest_hashes as _codex_manifest_hashes,
+)
+from trw_mcp.bootstrap._version_migration_clients import (
+    _remove_stale_client_artifacts as _remove_stale_client_artifacts,
+)
 
 # Predecessor-migration helpers extracted to _version_migration_predecessors
 # (PRD-DIST-243 batch 17). Re-exported here for back-compat with callers
@@ -245,6 +296,7 @@ def _remove_stale_set(
     is_dir_artifact: bool,
     log_event: str,
     valid_prefixes: tuple[str, ...] | None = ("trw-",),
+    dry_run: bool = False,
 ) -> None:
     """Remove a set of stale artifacts from *target_dir*.
 
@@ -262,6 +314,7 @@ def _remove_stale_set(
         log_event: structlog event name on removal failure.
         valid_prefixes: Tuple of allowed prefixes for stale removal.
             ``None`` disables prefix filtering entirely.
+        dry_run: When ``True``, report ``would remove:<path>`` without deleting.
     """
     if not target_dir.is_dir():
         return
@@ -273,6 +326,9 @@ def _remove_stale_set(
         stale = target_dir / name
         exists = stale.is_dir() if is_dir_artifact else stale.is_file()
         if not exists:
+            continue
+        if dry_run:
+            result["updated"].append(f"would remove:{stale}")
             continue
         try:
             if is_dir_artifact:
@@ -288,6 +344,7 @@ def _remove_stale_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     data_dir: Path | None = None,
+    dry_run: bool = False,
 ) -> None:
     """Remove hooks/skills/agents that no longer exist in bundled data.
 
@@ -298,6 +355,10 @@ def _remove_stale_artifacts(
 
     On the first update after manifest support is added, no stale cleanup
     is performed (the manifest is written for future updates).
+
+    When *dry_run* is ``True`` the pending removals are reported
+    (``would remove:<path>``) and NO files are deleted or written — including
+    the manifest, which must stay untouched in preview mode.
     """
     from ._template_updater import _get_bundled_names
 
@@ -311,8 +372,10 @@ def _remove_stale_artifacts(
     bundled_opencode_skills = set(bundled.get("opencode_skills", []))
 
     if prev_manifest is None:
-        # First run with manifest support -- write manifest, skip cleanup
-        _write_manifest(target_dir, result, data_dir)
+        # First run with manifest support -- write manifest, skip cleanup.
+        # In dry-run mode leave the manifest unwritten (report nothing to remove).
+        if not dry_run:
+            _write_manifest(target_dir, result, data_dir)
         return
 
     def _manifest_set(key: str) -> set[str]:
@@ -341,6 +404,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=True,
         log_event="stale_skill_removal_failed",
+        dry_run=dry_run,
     )
     _remove_stale_set(
         stale_names=prev_agents - bundled_agents,
@@ -350,6 +414,7 @@ def _remove_stale_artifacts(
         is_dir_artifact=False,
         log_event="stale_agent_removal_failed",
         valid_prefixes=("trw-", "reviewer-"),
+        dry_run=dry_run,
     )
     _remove_stale_set(
         stale_names=prev_hooks - bundled_hooks,
@@ -359,6 +424,7 @@ def _remove_stale_artifacts(
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
         valid_prefixes=None,
+        dry_run=dry_run,
     )
     _remove_stale_set(
         stale_names=prev_opencode_commands - bundled_opencode_commands,
@@ -367,6 +433,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_opencode_command_removal_failed",
+        dry_run=dry_run,
     )
     _remove_stale_set(
         stale_names=prev_opencode_agents - bundled_opencode_agents,
@@ -375,6 +442,7 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_opencode_agent_removal_failed",
+        dry_run=dry_run,
     )
     _remove_stale_set(
         stale_names=prev_opencode_skills - bundled_opencode_skills,
@@ -383,10 +451,12 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=True,
         log_event="stale_opencode_skill_removal_failed",
+        dry_run=dry_run,
     )
 
-    # Write updated manifest
-    _write_manifest(target_dir, result, data_dir)
+    # Write updated manifest (never on a dry-run preview).
+    if not dry_run:
+        _write_manifest(target_dir, result, data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +469,8 @@ def _cleanup_stale_artifacts(
     result: dict[str, list[str]],
     data_dir: Path | None,
     dry_run: bool,
+    *,
+    cleanup_context: bool = True,
 ) -> None:
     """Remove stale and transient artifacts after a framework update.
 
@@ -422,9 +494,18 @@ def _cleanup_stale_artifacts(
     # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
     _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
 
-    # Remove stale hooks/skills/agents no longer in bundled data
-    if not dry_run:
-        _remove_stale_artifacts(target_dir, result, data_dir)
+    # Remove stale hooks/skills/agents no longer in bundled data. dry_run is
+    # threaded down so --dry-run REPORTS the pending removals ("would remove:
+    # <path>") instead of silently skipping the whole pass — otherwise the
+    # preview under-reports what a real run would delete.
+    _remove_stale_artifacts(target_dir, result, data_dir, dry_run=dry_run)
 
-    # Clean transient artifacts from .trw/context/
-    _cleanup_context_transients(target_dir, result, dry_run=dry_run)
+    # FIX A: sweep codex/cursor/copilot mirror dirs for dropped bundled
+    # artifacts (trw- prefixed names no longer in the current bundle). Runs the
+    # same dry_run-aware "would remove:" reporting as the .claude/.opencode pass.
+    _remove_stale_client_artifacts(target_dir, result, dry_run=dry_run)
+
+    # Context cleanup can run post-transaction so a failed update never
+    # deletes live session state that rollback deliberately does not snapshot.
+    if cleanup_context:
+        _cleanup_context_transients(target_dir, result, dry_run=dry_run)

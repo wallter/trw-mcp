@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 
 
@@ -70,7 +72,8 @@ class TestRenderContextSection:
             "source_layout": "src/trw_mcp/",
             "data_flow": "MCP Tools -> State -> .trw/",
         }
-        result = render_architecture(arch_data)
+        with pytest.warns(DeprecationWarning):
+            result = render_architecture(arch_data)
         assert "### Architecture" in result
         assert "source_layout" in result
         assert "src/trw_mcp/" in result
@@ -78,7 +81,8 @@ class TestRenderContextSection:
     def test_empty_dict_returns_empty_string(self) -> None:
         from trw_mcp.state.claude_md import render_architecture
 
-        result = render_architecture({})
+        with pytest.warns(DeprecationWarning):
+            result = render_architecture({})
         assert result == ""
 
     def test_skip_keys_excluded(self) -> None:
@@ -89,7 +93,8 @@ class TestRenderContextSection:
             "notes": "should be excluded",
             "test_patterns": "also excluded",
         }
-        result = render_conventions(conv_data)
+        with pytest.warns(DeprecationWarning):
+            result = render_conventions(conv_data)
         assert "notes" not in result
         assert "test_patterns" not in result
         assert "git_format" in result
@@ -102,7 +107,8 @@ class TestRenderContextSection:
             "empty_val": "",
             "none_val": None,
         }
-        result = render_architecture(arch_data)
+        with pytest.warns(DeprecationWarning):
+            result = render_architecture(arch_data)
         assert "empty_val" not in result
         assert "none_val" not in result
 
@@ -118,7 +124,8 @@ class TestRenderCategorizedLearnings:
             {"summary": "Gotcha about pydantic", "tags": ["gotcha"]},
             {"summary": "General insight", "tags": ["misc"]},
         ]
-        result = render_categorized_learnings(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_categorized_learnings(high_impact)
         assert "Architecture" in result
         assert "Gotchas" in result
         assert "Key Learnings" in result
@@ -126,7 +133,8 @@ class TestRenderCategorizedLearnings:
     def test_empty_returns_empty_string(self) -> None:
         from trw_mcp.state.claude_md import render_categorized_learnings
 
-        result = render_categorized_learnings([])
+        with pytest.warns(DeprecationWarning):
+            result = render_categorized_learnings([])
         assert result == ""
 
     def test_respects_learning_cap(self) -> None:
@@ -135,7 +143,8 @@ class TestRenderCategorizedLearnings:
         high_impact: list[dict[str, object]] = [
             {"summary": f"Learning {i}", "tags": ["architecture"]} for i in range(CLAUDEMD_LEARNING_CAP + 5)
         ]
-        result = render_categorized_learnings(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_categorized_learnings(high_impact)
         # Should not include learnings beyond cap
         assert f"Learning {CLAUDEMD_LEARNING_CAP + 1}" not in result
 
@@ -150,7 +159,8 @@ class TestRenderPatterns:
             {"name": "Wave Pattern", "description": "Use waves for parallelism"},
             {"name": "Shard Pattern", "description": "Decompose by category"},
         ]
-        result = render_patterns(patterns)
+        with pytest.warns(DeprecationWarning):
+            result = render_patterns(patterns)
         assert "### Discovered Patterns" in result
         assert "Wave Pattern" in result
         assert "Shard Pattern" in result
@@ -158,7 +168,8 @@ class TestRenderPatterns:
     def test_empty_returns_empty_string(self) -> None:
         from trw_mcp.state.claude_md import render_patterns
 
-        result = render_patterns([])
+        with pytest.warns(DeprecationWarning):
+            result = render_patterns([])
         assert result == ""
 
     def test_respects_pattern_cap(self) -> None:
@@ -167,7 +178,8 @@ class TestRenderPatterns:
         patterns: list[dict[str, object]] = [
             {"name": f"Pattern {i}", "description": f"Desc {i}"} for i in range(CLAUDEMD_PATTERN_CAP + 3)
         ]
-        result = render_patterns(patterns)
+        with pytest.warns(DeprecationWarning):
+            result = render_patterns(patterns)
         assert f"Pattern {CLAUDEMD_PATTERN_CAP + 1}" not in result
 
 
@@ -184,7 +196,8 @@ class TestRenderAdherence:
                 "detail": "Extended detail not used for behavioral-mandate.",
             }
         ]
-        result = render_adherence(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence(high_impact)
         assert "Framework Adherence" in result
         assert "Always call trw_session_start" in result
 
@@ -202,7 +215,8 @@ class TestRenderAdherence:
                 ),
             }
         ]
-        result = render_adherence(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence(high_impact)
         assert "Framework Adherence" in result
         # At least one adherence directive should be captured
         assert len(result) > 50
@@ -224,7 +238,8 @@ class TestRenderAdherence:
                 "detail": "",
             },
         ]
-        result = render_adherence(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence(high_impact)
         # Both share same 60-char prefix → second should be deduped
         occurrences = result.count("must call trw_session_start")
         assert occurrences == 1
@@ -232,7 +247,8 @@ class TestRenderAdherence:
     def test_empty_high_impact_returns_empty(self) -> None:
         from trw_mcp.state.claude_md import render_adherence
 
-        result = render_adherence([])
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence([])
         assert result == ""
 
     def test_no_matching_tags_returns_empty(self) -> None:
@@ -241,7 +257,8 @@ class TestRenderAdherence:
         high_impact: list[dict[str, object]] = [
             {"summary": "Some learning", "tags": ["architecture"], "detail": "Details."},
         ]
-        result = render_adherence(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence(high_impact)
         assert result == ""
 
 
@@ -261,7 +278,8 @@ class TestRenderAdherenceMaxEntriesCap:
             for i in range(_ADHERENCE_MAX_ENTRIES + 5)
         ]
 
-        result = render_adherence(high_impact)
+        with pytest.warns(DeprecationWarning):
+            result = render_adherence(high_impact)
         assert "Framework Adherence" in result
         # Should have at most _ADHERENCE_MAX_ENTRIES bullet points
         bullet_count = result.count("\n- ")

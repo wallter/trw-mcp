@@ -1,7 +1,7 @@
 """Device authorization flow for TRW CLI (RFC 8628).
 
 Provides ``device_auth_login``, ``device_auth_logout``, ``device_auth_status``,
-and ``select_organization`` using ONLY Python stdlib (no requests/httpx).
+using ONLY Python stdlib (no requests/httpx).
 
 Matches the installer UI patterns from ``install-trw.template.py``.
 """
@@ -29,9 +29,6 @@ from trw_mcp.models.config._credentials import (
 # re-exported here so existing callers/tests keep importing from ``auth``.
 from ._auth_config import (
     _read_config_lines as _read_config_lines,
-)
-from ._auth_config import (
-    _save_api_key as _save_api_key,
 )
 from ._auth_config import (
     _save_config_field as _save_config_field,
@@ -274,77 +271,6 @@ def _poll_for_token(
 # ── Organization selector ─────────────────────────────────────────────
 
 
-def select_organization(
-    orgs: list[dict[str, object]],
-    interactive: bool = True,
-) -> dict[str, object] | None:
-    """Select an organization from *orgs*.
-
-    - If 1 org, auto-select and print confirmation.
-    - If multiple, show numbered selector (installer style).
-    - Reads from /dev/tty for piped-input compatibility.
-
-    Returns the selected org dict or None on failure.
-    """
-    if not orgs:
-        if interactive:
-            print(f"\n  {YELLOW}No organizations found{NC}")
-        return None
-
-    if len(orgs) == 1:
-        org = orgs[0]
-        name = org.get("name") or org.get("slug") or "default"
-        if interactive:
-            print(f"  {GREEN}\u2713{NC} Organization: {BOLD}{name}{NC}")
-        return org
-
-    # Multiple orgs: numbered selector
-    if not interactive:
-        # Non-interactive: pick first
-        return orgs[0]
-
-    print()
-    print(f"  {BOLD}Select organization:{NC}")
-    print()
-    for i, org in enumerate(orgs):
-        name = org.get("name") or org.get("slug") or f"org-{i + 1}"
-        marker = f"{BOLD}\u276f{NC}" if i == 0 else " "
-        print(f"    {marker} {i + 1}. {name}")
-    print()
-
-    tty = _open_tty()
-    if tty is None:
-        return orgs[0]
-
-    try:
-        sys.stdout.write("  Choice [1]: ")
-        sys.stdout.flush()
-        raw = tty.readline().strip()
-    finally:
-        tty.close()
-
-    if not raw:
-        return orgs[0]
-
-    try:
-        choice = int(raw) - 1
-        if 0 <= choice < len(orgs):
-            selected = orgs[choice]
-            name = selected.get("name") or selected.get("slug") or f"org-{choice + 1}"
-            print(f"  {GREEN}\u2713{NC} Organization: {BOLD}{name}{NC}")
-            return selected
-    except ValueError:
-        pass
-
-    # Invalid input: default to first
-    return orgs[0]
-
-
-# ── Config helpers ────────────────────────────────────────────────────
-# Extracted to ``_auth_config.py`` (PRD-SEC-005) to keep this module under the
-# 350-effective-LOC gate; re-exported here for back-compat with callers/tests.
-
-
 def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     """Check authentication status from config file.
 
@@ -400,12 +326,13 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
     if result is None:
         return 1
 
-    # If orgs returned, let user pick
-    orgs = result.get("organizations")
-    if isinstance(orgs, list) and orgs:
-        selected = select_organization(orgs, interactive=True)
-        if selected:
-            print(f"  {DIM}Organization ID: {selected.get('id', 'unknown')}{NC}")
+    # Report the organization the key was ACTUALLY issued for. The key's
+    # org_id is fixed server-side at /auth/device/approve time — an interactive
+    # picker here was a no-op that could display an org the key is NOT scoped
+    # to (removed 2026-07-11; the browser approve page is where org is chosen).
+    org_name_display = str(result.get("org_name", ""))
+    if org_name_display:
+        print(f"  {GREEN}\u2713{NC} Organization: {BOLD}{org_name_display}{NC}")
 
     # Save API key + metadata. The bearer credential goes to the ignored,
     # 0600 credentials.yaml (PRD-SEC-005-FR01) \u2014 never to the git-tracked

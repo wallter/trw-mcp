@@ -1,9 +1,7 @@
 """Tests for PRD-QUAL-058: Nudge Telemetry Event Emission (FR04, FR05).
 
 Covers:
-- FR04: log_nudge_event emits nudge_shown events to session events JSONL
-- FR04: nudge_shown event schema matches PRD specification
-- FR04: log_nudge_event is called from append_ceremony_nudge when a learning is selected
+- FR04: the live nudge state path emits schema-valid nudge_shown events
 - FR05: trw_deliver_complete event includes nudge_summary from CeremonyState
 """
 
@@ -39,105 +37,6 @@ def _read_events_jsonl(path: Path) -> list[dict[str, object]]:
         if line.strip():
             events.append(json.loads(line))
     return events
-
-
-# ===========================================================================
-# FR04: log_nudge_event emits nudge_shown events
-# ===========================================================================
-
-
-class TestLogNudgeEvent:
-    """FR04: log_nudge_event writes structured nudge_shown events."""
-
-    def test_nudge_shown_event_emitted(self, tmp_path: Path) -> None:
-        """log_nudge_event writes a nudge_shown event to events.jsonl."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        events_path = tmp_path / "events.jsonl"
-        log_nudge_event(
-            events_path,
-            learning_id="L-abc123",
-            phase="IMPLEMENT",
-            is_fallback=False,
-        )
-
-        events = _read_events_jsonl(events_path)
-        assert len(events) == 1
-        evt = events[0]
-        assert evt["event"] == "nudge_shown"
-        assert evt["learning_id"] == "L-abc123"
-        assert evt["phase"] == "IMPLEMENT"
-        assert "ts" in evt
-
-    def test_nudge_shown_event_schema(self, tmp_path: Path) -> None:
-        """nudge_shown event includes data field with learning_id, phase, turn, surface_type."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        events_path = tmp_path / "events.jsonl"
-        log_nudge_event(
-            events_path,
-            learning_id="L-def456",
-            phase="VALIDATE",
-            is_fallback=True,
-            turn=7,
-            surface_type="nudge",
-        )
-
-        events = _read_events_jsonl(events_path)
-        assert len(events) == 1
-        evt = events[0]
-        data = evt.get("data")
-        assert isinstance(data, dict)
-        assert data["learning_id"] == "L-def456"
-        assert data["phase"] == "VALIDATE"
-        assert data["turn"] == 7
-        assert data["surface_type"] == "nudge"
-
-    def test_nudge_event_fallback_field(self, tmp_path: Path) -> None:
-        """nudge_shown event includes fallback indicator."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        events_path = tmp_path / "events.jsonl"
-        log_nudge_event(
-            events_path,
-            learning_id="L-xyz",
-            phase="DELIVER",
-            is_fallback=True,
-        )
-
-        events = _read_events_jsonl(events_path)
-        assert events[0]["fallback"] is True
-
-    def test_nudge_event_multiple_emissions(self, tmp_path: Path) -> None:
-        """Multiple nudge_shown events append to the same JSONL file."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        events_path = tmp_path / "events.jsonl"
-        for i in range(3):
-            log_nudge_event(
-                events_path,
-                learning_id=f"L-{i:03d}",
-                phase="IMPLEMENT",
-                is_fallback=False,
-            )
-
-        events = _read_events_jsonl(events_path)
-        assert len(events) == 3
-        assert all(e["event"] == "nudge_shown" for e in events)
-
-    def test_nudge_event_failopen(self, tmp_path: Path) -> None:
-        """log_nudge_event does not raise when path is unwritable."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        # Path to a directory that doesn't exist and can't be created
-        bad_path = tmp_path / "nonexistent" / "deep" / "path" / "events.jsonl"
-        # Should not raise
-        log_nudge_event(
-            bad_path,
-            learning_id="L-fail",
-            phase="IMPLEMENT",
-            is_fallback=False,
-        )
 
 
 # ===========================================================================
@@ -325,6 +224,7 @@ class TestStructlogNudgeTelemetry:
             "summary": "test learning summary for fr06",
             "nudge_line": "fr06 nudge line",
             "impact": 0.8,
+            "score": 0.9,
         }
 
         import trw_mcp.state.ceremony_nudge as cn
@@ -432,6 +332,7 @@ class TestStructlogNudgeTelemetry:
             "id": "L-dedup-x",
             "summary": "already shown in validate phase",
             "nudge_line": "skip me",
+            "score": 0.9,
         }
 
         from trw_mcp.state import memory_adapter
@@ -460,3 +361,37 @@ class TestStructlogNudgeTelemetry:
         assert evt["learning_id"] == "L-dedup-x"
         for field_name in ("reason", "pool", "learning_id", "client_id"):
             assert field_name in evt
+
+    def test_nudge_skipped_density_suppressed_reason(self) -> None:
+        """FR07: low-density extended cooldown is distinguishable in telemetry."""
+        from unittest.mock import patch
+
+        import structlog
+
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.models.config._client_profile import NudgePoolWeights
+        from trw_mcp.state._nudge_rules import _select_nudge_pool
+
+        state = CeremonyState(tool_call_counter=1, pool_cooldown_until={"workflow": 100})
+        weights = NudgePoolWeights(workflow=100, learnings=0, ceremony=0, context=0)
+        with (
+            patch("trw_mcp.models.config.get_config", return_value=TRWConfig(nudge_density="low")),
+            structlog.testing.capture_logs() as captured,
+        ):
+            assert _select_nudge_pool(state, weights) is None
+        assert any(
+            event.get("event") == "nudge_skipped" and event.get("reason") == "density_suppressed" for event in captured
+        )
+
+    def test_nudge_skipped_budget_exhausted_reason(self) -> None:
+        """FR07: omitted/truncated content records a bounded budget reason."""
+        import structlog
+
+        from trw_mcp.state._nudge_messages import _assemble_nudge
+
+        with structlog.testing.capture_logs() as captured:
+            rendered = _assemble_nudge("status", "X" * 500, next_then="next", budget=60)
+        assert len(rendered) <= 60
+        assert any(
+            event.get("event") == "nudge_skipped" and event.get("reason") == "budget_exhausted" for event in captured
+        )

@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # compatibility with callers that still import from this module.
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
 from trw_mcp.tools._learnings_collector import LearningSummary
+from trw_mcp.tools._sidecar_substrate import tier_required_action
 
 _SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
@@ -272,9 +273,7 @@ def compute_before_edit_hint(
         "stale_sha",
         "ok",
     ] = "tier_required"
-    distill_action: str | None = (
-        "Acquire team/pro/enterprise tier to enable trw-distill sidecar consumption (see https://trwframework.com/tier)"
-    )
+    distill_action: str | None = tier_required_action()
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
 

@@ -273,7 +273,7 @@ When the user says any of these, use the corresponding TRW tool:
 | "checkpoint", "save progress", "mark milestone" | `trw_checkpoint(message="...")` |
 | "I learned that X", "gotcha: X", "remember X" | `trw_learn(summary="X", detail="...")` |
 | "deliver", "finish up", "wrap up" | `trw_deliver()` |
-| "check", "verify", "did tests pass" | `trw_build_check(scope="full")` |
+| "check", "verify", "did tests pass" | `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")` |
 | "review", "audit", "look over the changes" | `trw_review()` |
 | "plan", "break down", "organize this task" | `trw_init(task_name="...")` |
 
@@ -281,7 +281,7 @@ When the user says any of these, use the corresponding TRW tool:
 
 After completing a non-trivial task, run the verification pass:
 
-1. `trw_build_check(scope="full")` — record the project-native validation evidence you already ran.
+1. `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")` — record the project-native validation evidence you already ran.
 2. `trw_review()` — score the diff against quality dimensions.
 3. If PRD-scoped, run `/trw-audit` for spec compliance.
 

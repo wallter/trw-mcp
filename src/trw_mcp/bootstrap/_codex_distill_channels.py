@@ -22,18 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from ruamel.yaml import YAML
 
 from trw_mcp.bootstrap._codex_hooks import codex_hooks_review_warning
-from trw_mcp.bootstrap._file_ops import read_json_object
-from trw_mcp.channels._manifest_loader import (
-    ManifestValidationError,
-    auto_recreate_empty,
-    load,
-    write,
-)
-from trw_mcp.channels._manifest_models import ChannelEntry
-from trw_mcp.channels._provenance import now_utc_iso8601
+from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
+from trw_mcp.bootstrap._file_ops import _new_result, read_json_object
+from trw_mcp.channels._manifest_loader import ManifestValidationError
 
 log = structlog.get_logger(__name__)
 
@@ -181,44 +174,12 @@ def bootstrap_codex_channel_manifest(repo_root: Path) -> dict[str, object]:
     Returns:
         Dict with ``status`` and ``count`` of entries added.
     """
-    yaml = YAML(typ="safe")
-    raw: Any = yaml.load(_MANIFEST_DATA.read_text(encoding="utf-8")) or {}
-    raw_channels: list[dict[str, Any]] = raw.get("channels", [])
-
-    # Validate all entries first (all-or-nothing)
-    validated: list[ChannelEntry] = []
-    for entry_dict in raw_channels:
-        try:
-            validated.append(ChannelEntry.model_validate(entry_dict))
-        except Exception as exc:
-            raise ManifestValidationError(f"codex manifest entry validation failed: {exc}") from exc
-
-    # Load or recreate target manifest
-    manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        manifest = load(manifest_path)
-    except Exception:
-        auto_recreate_empty(manifest_path)
-        manifest = load(manifest_path)
-
-    # Merge: add new entries, preserve existing
-    existing_ids = {e.id for e in manifest.channels}
-    added = 0
-    for entry in validated:
-        if entry.id not in existing_ids:
-            manifest.channels.append(entry)
-            existing_ids.add(entry.id)
-            added += 1
-
-    manifest.generated_at = now_utc_iso8601()
-    write(manifest, manifest_path)
+    added, total = merge_distill_channel_manifest(repo_root, _MANIFEST_DATA, "codex")
 
     log.debug(
         "codex_manifest_bootstrapped",
         added=added,
-        total=len(manifest.channels),
+        total=total,
         outcome="ok",
     )
     return {"status": "ok", "count": added}
@@ -256,13 +217,8 @@ def install_codex_distill_channels(
             "Pass a project repository root, not Path.home()."
         )
 
-    result: dict[str, list[str]] = {
-        "created": [],
-        "updated": [],
-        "preserved": [],
-        "errors": [],
-        "warnings": [],
-    }
+    result = _new_result()
+    result["warnings"] = []
 
     # 1. Install PostToolUse telemetry hook script
     try:

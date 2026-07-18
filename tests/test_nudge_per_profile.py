@@ -1,14 +1,14 @@
 """PRD-CORE-146 Wave 2C FR10/FR11 — parameterized per-profile nudge suite.
 
-Covers all 8 built-in client profiles (claude-code, opencode, cursor-ide,
-cursor-cli, codex, copilot, gemini, aider). Exercises:
+Covers all built-in client profiles (claude-code, opencode, cursor-ide,
+cursor-cli, codex, copilot, antigravity-cli). Exercises:
 
 FR10: per-profile surface-flag wiring — nudge_enabled, effective_nudge_messenger,
 effective_nudge_density, nudge_budget_chars. Also verifies nudge-eligible
 profiles actually emit ``nudge_shown`` INFO events and that the dedup
 invariant holds across two sequential calls.
 
-FR11: negative tests — nudge-off profiles (opencode, codex, aider) must NOT
+FR11: negative tests — nudge-off profiles (opencode) must NOT
 emit ``nudge_shown`` structlog INFO events nor nudge_shown rows in
 ``.trw/context/session-events.jsonl``.
 
@@ -33,8 +33,7 @@ _ALL_PROFILES: tuple[str, ...] = (
     "cursor-cli",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
+    "antigravity-cli",
 )
 
 _EXPECTED_NUDGE_ENABLED: dict[str, bool] = {
@@ -42,13 +41,12 @@ _EXPECTED_NUDGE_ENABLED: dict[str, bool] = {
     "opencode": False,
     "cursor-ide": True,
     "cursor-cli": True,
-    "codex": False,
+    "codex": True,
     "copilot": True,
-    "gemini": True,
-    "aider": False,
+    "antigravity-cli": True,
 }
 
-_FULL_MODE_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if enabled)
+_NUDGE_ON_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if enabled)
 _NUDGE_OFF_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if not enabled)
 
 
@@ -64,9 +62,7 @@ def _write_profile_config(trw_dir: Path, profile_id: str, extra: str = "") -> No
 
 @pytest.mark.parametrize("profile_id", _ALL_PROFILES)
 def test_profile_nudge_enabled_matches_expected(profile_id: str) -> None:
-    """FR10: each profile's ``nudge_enabled`` default matches the CLIENT-PROFILES
-    surface-flag table — full-mode clients on, light-mode clients off.
-    """
+    """FR10: each profile's ``nudge_enabled`` default matches CLIENT-PROFILES."""
     from trw_mcp.models.config._profiles import resolve_client_profile
 
     profile = resolve_client_profile(profile_id)
@@ -99,12 +95,12 @@ def test_profile_messenger_resolves_to_standard(profile_id: str, tmp_path: Path)
     assert config.effective_nudge_density is None
 
 
-# --- FR10.3: full-mode profiles emit nudge_shown events -----------------------
+# --- FR10.3: representative enabled profiles emit nudge_shown events -----------------------
 
 
-@pytest.mark.parametrize("profile_id", ["claude-code", "cursor-ide", "gemini"])
+@pytest.mark.parametrize("profile_id", _NUDGE_ON_PROFILES)
 def test_append_ceremony_status_emits_when_enabled(profile_id: str, tmp_path: Path) -> None:
-    """FR10: when a full-mode profile is active and a learning candidate is
+    """FR10: when a nudge-enabled profile is active and a learning candidate is
     available, ``append_ceremony_status`` emits a ``nudge_shown`` INFO event.
 
     Drives the ``learning_injection`` messenger branch (line 504 in
@@ -140,7 +136,7 @@ def test_append_ceremony_status_emits_when_enabled(profile_id: str, tmp_path: Pa
 # --- FR10.4: per-profile nudge budget enforcement -----------------------------
 
 
-@pytest.mark.parametrize("profile_id", _FULL_MODE_PROFILES)
+@pytest.mark.parametrize("profile_id", _NUDGE_ON_PROFILES)
 def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
     """FR10: ``compute_nudge`` must never return a string longer than
     ``nudge_budget_chars`` for the active profile. Mocks the pool-message
@@ -174,7 +170,7 @@ def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
 # --- FR10.5: idempotent / dedup invariant across two calls --------------------
 
 
-@pytest.mark.parametrize("profile_id", _FULL_MODE_PROFILES)
+@pytest.mark.parametrize("profile_id", _NUDGE_ON_PROFILES)
 def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp_path: Path) -> None:
     """FR10: two sequential ``append_ceremony_status`` calls with the same
     learning candidate must honour the phase-dedup invariant — the second
@@ -314,7 +310,7 @@ def test_nudge_off_profile_emits_no_nudge_shown_info(profile_id: str, tmp_path: 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
     # Only pin target_platforms — do NOT set nudge_enabled override. The
-    # profile default (False for opencode/codex/aider) must win.
+    # profile default (False for opencode) must win.
     _write_profile_config(trw_dir, profile_id)
 
     with (

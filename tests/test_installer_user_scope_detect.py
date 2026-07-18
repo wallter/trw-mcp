@@ -47,35 +47,6 @@ def _home(tmp_path: Path) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# Detection
-# --------------------------------------------------------------------------- #
-
-
-def test_detect_user_scope_finds_claude(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    (_home(tmp_path) / ".claude").mkdir(parents=True)
-    assert installer._detect_user_scope() is True
-
-
-def test_detect_user_scope_finds_codex(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    (_home(tmp_path) / ".codex").mkdir(parents=True)
-    assert installer._detect_user_scope() is True
-
-
-def test_detect_user_scope_finds_xdg_config(  # type: ignore[no-untyped-def]
-    installer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    xdg = tmp_path / "xdg-config"
-    (xdg / "someharness").mkdir(parents=True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-    assert installer._detect_user_scope() is True
-
-
-def test_detect_user_scope_bare_box_false(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    """An empty home with no harness markers -> no user scope warranted."""
-    assert installer._detect_user_scope() is False
-
-
-# --------------------------------------------------------------------------- #
 # Provisioning
 # --------------------------------------------------------------------------- #
 

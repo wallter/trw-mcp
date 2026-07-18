@@ -19,6 +19,10 @@ Manage TRW's learning memory. Three modes:
 - **Retire**: `/trw-learn resolve L-id` or `/trw-learn obsolete L-id` — mark a learning as fixed or outdated
 - **Reflect**: `/trw-learn` (no args) — review session for discoveries, refine or retire stale entries
 
+**Update invariant:** `trw_learn_update` replaces `summary` and `detail`; it never appends them. Before either field is
+updated, re-read the current entry and pass the complete replacement with all still-valid detail and provenance. Never
+pass a refinement or reason fragment expecting append semantics.
+
 ## Quality Gate — Record Only If
 
 Before recording, verify the learning meets at least one of these criteria:
@@ -40,7 +44,7 @@ Adding no new learnings is perfectly fine — an empty reflection means existing
    - `--detail "..."` — extended context (default: generated from summary)
 
 2. **Check existing memory**: Call `trw_recall` with keywords from the summary.
-   - If a similar learning exists and this new one refines it, call `trw_learn_update(learning_id, detail=..., summary=...)` to improve the existing entry instead of creating a duplicate.
+   - If a similar learning exists and this new one refines it, merge the refinement into the full current summary/detail, then call `trw_learn_update(learning_id, detail=..., summary=...)` instead of creating a duplicate.
    - If a near-duplicate exists with no new information, tell the user and skip.
    - If no match, proceed to record.
 
@@ -66,7 +70,7 @@ When `$ARGUMENTS` starts with `resolve` or `obsolete`:
 2. **Verify**: Call `trw_recall` to find the learning and confirm it exists and is currently active.
 
 3. **Update**: Call `trw_learn_update(learning_id, status="resolved")` or `trw_learn_update(learning_id, status="obsolete")`.
-   - If a reason was provided, also update the detail to append the reason.
+   - If a reason was provided, append it locally to the fetched detail, then pass the full reconstructed detail as the replacement.
 
 4. **Confirm**: Report the change — learning ID, old status, new status, and reason.
 
@@ -74,27 +78,14 @@ If the user doesn't provide a specific ID but describes the learning (e.g., `/tr
 
 ## Workflow — Reflect (no arguments)
 
-When `$ARGUMENTS` is empty, reflect on the current session:
-
-1. **Recall existing memory**: Call `trw_recall('*', min_impact=0.5)` to load current learnings.
-
-2. **Review session context**: Think about what happened this session:
-   - What errors or unexpected behaviors were encountered?
-   - What patterns or approaches worked well?
-   - What gotchas were discovered? Were any existing gotchas resolved?
-
-3. **Compare against existing learnings**: For each potential discovery:
-   - Does it already exist? Could the existing entry be refined with `trw_learn_update`?
-   - Is any existing learning now stale, resolved, or obsolete?
-   - Is it genuinely high-value (meets the quality gate)?
-
-4. **Take action** — any combination of:
-   - **Record new** if genuine discoveries were found
-   - **Refine existing** with `trw_learn_update(id, detail=..., summary=...)` if an entry could be improved
-   - **Retire stale** with `trw_learn_update(id, status="resolved")` if an issue has been fixed
-   - **Report no action** if memory is current — "Memory is up to date."
-
-5. **Summarize**: Report what was done — new recorded, existing refined, stale retired, or no changes.
+1. Review actual session errors, surprises, successful patterns, and resolved gotchas before querying memory.
+2. Form one candidate durable discovery at a time. Use targeted `trw_recall(query="<candidate keywords>")` to detect overlap; avoid blanket wildcard recall, which adds noise and updates access telemetry.
+3. Choose one action:
+   - record a genuinely new reusable discovery;
+   - update an existing entry while preserving any still-valid detail (the `detail` field is replaced, not appended automatically);
+   - mark a fixed issue `resolved` or superseded knowledge `obsolete`, with evidence;
+   - take no action when the session produced no durable knowledge.
+4. Report the learning IDs and evidence for changes. Routine session status belongs in checkpoints/reports, not memory.
 
 ## Examples
 
@@ -104,12 +95,11 @@ When `$ARGUMENTS` is empty, reflect on the current session:
 /trw-learn resolve L-abc12345 "Fixed in commit df6ec89"
 /trw-learn obsolete L-def67890 "Superseded by new update mechanism"
 /trw-learn resolve "the stop hook race condition"
-/learn
 ```
 
 ## Notes
 
-- `trw_instructions_sync` refreshes the client instruction file (client instruction file (for example AGENTS.md, CLAUDE.md, GEMINI.md, or .codex/INSTRUCTIONS.md)); learnings surface via `trw_session_start()` recall, not by promotion into the instruction file
+- Learnings surface through `trw_session_start` and `trw_recall`; instruction sync does not promote them into client files
 - Resolved/obsolete learnings are excluded from recall results
 - The learning memory is shared across all sessions — every entry costs attention
 - Prefer retiring stale learnings over letting them accumulate noise

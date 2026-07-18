@@ -32,6 +32,19 @@ from typing import Protocol, cast
 import structlog
 import yaml
 
+# PRD-CORE-215 FR04: re-export the ceremony-tool execution inventory public
+# surface (facade). Kept as a plain grouped import + ``__all__`` membership so
+# the file stays under the 350 effective-LOC gate; construction helpers
+# (CeremonyToolSpec, build_ceremony_tool_manifest, DuplicateCeremonyToolError)
+# live in ``_ceremony_tool_manifest`` and are imported from there directly.
+from trw_mcp.telemetry._ceremony_tool_manifest import (
+    CeremonyExecutionClass,
+    RequestIdentityPolicy,
+    UnknownCeremonyToolError,
+    ceremony_tool_disposition,
+    ceremony_tool_names,
+    ceremony_tool_spec,
+)
 from trw_mcp.telemetry._tool_call_emit import ToolCallEmitContext, emit_tool_call_event
 from trw_mcp.telemetry.constants import EventType, Status
 from trw_mcp.telemetry.event_base import ToolCallEvent
@@ -463,7 +476,13 @@ def wrap_tool(
 
 
 __all__ = [
+    "CeremonyExecutionClass",
+    "RequestIdentityPolicy",
+    "UnknownCeremonyToolError",
     "build_tool_call_event",
+    "ceremony_tool_disposition",
+    "ceremony_tool_names",
+    "ceremony_tool_spec",
     "clear_pricing_cache",
     "wrap_tool",
 ]

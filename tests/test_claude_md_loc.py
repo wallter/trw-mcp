@@ -80,12 +80,20 @@ def test_client_profiles_doc_no_stale_count() -> None:
 
 
 def test_profile_count_matches_registry() -> None:
-    """FR12: CLAUDE.md mentions the actual built-in profile count."""
+    """FR12: a prose-bearing CLAUDE.md states the registry count.
+
+    Pointer-only client instruction files deliberately carry no duplicated
+    framework prose. Their imported instruction surface owns the dynamic
+    guidance, so forcing a count into the pointer defeats the LOC/de-dup goal.
+    """
     if not _PROFILES_DIR.is_dir():
         pytest.skip(f"profile registry not found at {_PROFILES_DIR}")
     count = sum(1 for p in _PROFILES_DIR.iterdir() if p.suffix == ".yaml")
     assert count > 0, "no profiles discovered"
     content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
+    if "@.trw/INSTRUCTIONS.md" in content:
+        assert "built-in profiles" not in content, "pointer-only CLAUDE.md must not duplicate profile-count prose"
+        return
 
     spelled = {
         1: "One",

@@ -10,7 +10,12 @@ Usage:
     python3 install-trw.py --upgrade          # Upgrade existing installation
     python3 install-trw.py --script --ai      # Non-interactive with AI extras
     python3 install-trw.py --name myproj      # Set project name
-    curl ... | python3 -                      # Headless mode (auto-detected)
+    curl -fsSL <url> -o install-trw.py && python3 install-trw.py   # Remote fetch
+
+Piped execution (``curl ... | python3 -``) is NOT supported: the embedded
+wheels are read back from this file on disk, which does not exist when the
+source arrives on stdin. Download to a file first (as above) — the served
+bootstrap at https://trwframework.com/install.sh already does this.
 
 Re-run with a newer version of this script to upgrade.
 """
@@ -20,6 +25,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import json
 import importlib.metadata as importlib_metadata
 import os
 import random
@@ -82,7 +88,7 @@ _TIPS = [
     "Use explicit file ownership for multi-file work \u2014 portable coordination wins",
     "Run /trw-project-health to check your installation's vitals",
     "Use trw_checkpoint() before large operations to save progress",
-    "Run trw_build_check() before trw_deliver(); label acceptable failures explicitly",
+    "Run trw_build_check() before trw_deliver(); overrides for acceptable failures require a structured record",
     "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
     "Export learnings anytime: trw-mcp export . learnings --format csv",
     "Your learnings auto-decay \u2014 high-impact ones persist longest",
@@ -97,8 +103,6 @@ _SUPPORTED_IDES = [
     "opencode",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
     "antigravity-cli",
 ]
 
@@ -107,6 +111,18 @@ _SUPPORTED_IDES = [
 # load so an upgrade never fails because of a renamed client profile.
 _LEGACY_IDE_ALIASES: dict[str, str] = {
     "cursor": "cursor-ide",  # split into cursor-ide / cursor-cli in v0.44
+}
+
+# Retired identifiers — profiles removed from active support (operator decision
+# 2026-07-11). Selecting one is an actionable error, not an unknown-id error;
+# prior configs carrying them are dropped with a notice, never a crash.
+_RETIRED_IDES: dict[str, str] = {
+    "gemini": (
+        "the Gemini CLI profile was retired after Google deprecated Gemini CLI "
+        "in favor of Antigravity CLI — use --ide antigravity-cli; existing "
+        ".gemini/ files can be cleaned with 'trw-mcp uninstall'"
+    ),
+    "aider": "the aider profile was retired (it never generated client artifacts)",
 }
 
 _IDE_META: dict[str, dict[str, str]] = {
@@ -133,14 +149,6 @@ _IDE_META: dict[str, dict[str, str]] = {
     "copilot": {
         "label": "GitHub Copilot",
         "summary": "GitHub-native instructions, hooks, and agent surfaces.",
-    },
-    "gemini": {
-        "label": "Gemini CLI",
-        "summary": "Gemini-native instructions, MCP config, and subagents.",
-    },
-    "aider": {
-        "label": "Aider",
-        "summary": "Minimal instruction-first profile for terminal workflows.",
     },
     "antigravity-cli": {
         "label": "Antigravity CLI",
@@ -356,32 +364,6 @@ def prompt_input(prompt_text: str, default: str = "") -> str:
     return answer
 
 
-def prompt_choice(label: str, options: list[str], default: int = 0) -> int:
-    """Prompt user to select from numbered options. Returns index."""
-    print(f"    {label}")
-    for i, opt in enumerate(options):
-        marker = f"{BOLD}>{NC}" if i == default else " "
-        print(f"    {marker} {i + 1}. {opt}")
-    tty = _open_tty()
-    if tty is None:
-        return default
-    try:
-        sys.stdout.write(f"    Choice [{default + 1}]: ")
-        sys.stdout.flush()
-        raw = tty.readline().strip()
-    finally:
-        tty.close()
-    if not raw:
-        return default
-    try:
-        choice = int(raw) - 1
-        if 0 <= choice < len(options):
-            return choice
-    except ValueError:
-        pass
-    return default
-
-
 def _unique(values: list[str]) -> list[str]:
     """Return *values* with duplicates removed while preserving order."""
     return list(dict.fromkeys(values))
@@ -424,6 +406,13 @@ def _normalize_ide_targets(ides: list[str], *, strict: bool = True) -> list[str]
         ide = _LEGACY_IDE_ALIASES.get(ide, ide)
         if ide == "all":
             return _SUPPORTED_IDES.copy()
+        if ide in _RETIRED_IDES:
+            if strict:
+                raise ValueError(f"--ide {ide}: {_RETIRED_IDES[ide]}")
+            # Prior config carries a retired id: drop it so the upgrade
+            # proceeds; the notice prints once via _load_prior_config's caller.
+            print(f"{YELLOW}[TRW]{NC} Note: {_RETIRED_IDES[ide]}", file=sys.stderr)
+            continue
         if ide in _SUPPORTED_IDES:
             normalized.append(ide)
         else:
@@ -486,8 +475,14 @@ def _read_single_key(tty: TextIO) -> str | None:
     except ImportError:
         return None
 
-    fd = tty.fileno()
-    old = termios.tcgetattr(fd)
+    try:
+        fd = tty.fileno()
+        old = termios.tcgetattr(fd)
+    except (termios.error, OSError, ValueError):
+        # /dev/tty opened but is not a real terminal (some sandboxes/CI);
+        # mirror the Windows branch's resilience and let the caller fall
+        # back to the numbered-selection prompt.
+        return None
     try:
         tty_mod.setraw(fd)
         ch = tty.read(1)
@@ -568,11 +563,14 @@ def _parse_simple_yaml(text: str) -> dict[str, str]:
         key, _, value = line.partition(":")
         key = key.strip()
         value = value.strip()
-        # Strip inline comments
+        # Strip inline comments (also after a closing quote: `key: "v"  # c`)
         for quote in ('"', "'"):
-            if value.startswith(quote) and value.endswith(quote) and len(value) > 1:
-                value = value[1:-1]
-                break
+            if value.startswith(quote):
+                end = value.find(quote, 1)
+                trailing = value[end + 1 :].lstrip() if end > 0 else None
+                if trailing is not None and (not trailing or trailing.startswith("#")):
+                    value = value[1:end]
+                    break
         else:
             # Unquoted — strip trailing inline comment
             if " #" in value:
@@ -608,14 +606,23 @@ def _read_credentials_key(credentials_path: Path) -> str:
 def _resolve_prior_api_key(target_dir: Path, flat: dict[str, str]) -> str:
     """Resolve the platform API key by SEC-005 precedence (highest wins).
 
-    Precedence (PRD-SEC-005-FR03): ``TRW_PLATFORM_API_KEY`` env >
-    ``.trw/credentials.yaml`` > ``.trw/config.yaml`` (deprecated fallback).
+    Precedence (PRD-SEC-005-FR03 + PRD-INFRA-129 FR05): ``TRW_API_KEY`` env >
+    ``TRW_PLATFORM_API_KEY`` env > ``.trw/credentials.yaml`` >
+    ``.trw/config.yaml`` (deprecated fallback).
 
-    Before SEC-005 the installer read config.yaml ONLY, so prior-key detection
-    and ``--with-proprietary`` auto-derivation silently broke on migrated
-    installs (the key now lives in the ignored credentials.yaml). *flat* is the
-    already-parsed config.yaml mapping so config.yaml is not re-read.
+    ``TRW_API_KEY`` is consulted FIRST because ``scripts/install.sh`` reads the
+    key from ``credentials.yaml`` and exports it ONLY under that name; before
+    PRD-INFRA-129 the installer checked ``TRW_PLATFORM_API_KEY`` alone, so a
+    user with a valid, just-used key hit a raw argparse error
+    (sub_x2O2h3CYyzKZWLu2#c). ``TRW_PLATFORM_API_KEY`` remains accepted for the
+    trw-mcp runtime config resolver's name (NFR08 — no source removed).
+
+    *flat* is the already-parsed config.yaml mapping so config.yaml is not
+    re-read.
     """
+    trw_api_key = os.environ.get("TRW_API_KEY", "").strip()
+    if trw_api_key:
+        return trw_api_key
     env_key = os.environ.get("TRW_PLATFORM_API_KEY", "").strip()
     if env_key:
         return env_key
@@ -750,8 +757,20 @@ def sanitize_project_name(name: str) -> str:
 
 
 def validate_api_key(key: str) -> bool:
-    """Check *key* matches ``trw_`` or ``trw_dk_`` prefix, alphanumeric+underscore, max 128."""
-    return len(key) <= 128 and bool(re.match(r"^trw_(dk_)?[a-zA-Z0-9_]+$", key))
+    """Check *key* matches ``trw_`` or ``trw_dk_`` prefix, base64url body, max 128.
+
+    The body is ``secrets.token_urlsafe(32)`` (backend auth), which is base64url
+    and therefore includes ``-`` and ``_`` alongside letters and digits. An
+    earlier ``[a-zA-Z0-9_]`` character class falsely rejected every device key
+    (``trw_dk_...`` with a hyphen in the token) — the ``-`` is now accepted.
+
+    Uses ``re.fullmatch`` (NOT ``re.match(... "$")``): a trailing ``$`` matches
+    just before a final newline, so ``re.match`` accepted ``"trw_abc\\n"`` — a
+    pasted key carrying a stray newline (Codex LOW / P2-2). ``fullmatch`` anchors
+    the WHOLE string and the char class excludes whitespace, so leading/trailing/
+    embedded newlines, spaces, tabs, and CRLF terminators are all rejected.
+    """
+    return len(key) <= 128 and bool(re.fullmatch(r"trw_(dk_)?[A-Za-z0-9_-]+", key))
 
 
 # ── Python discovery ─────────────────────────────────────────────────
@@ -775,9 +794,25 @@ def _extract_wheel_data(marker: str) -> bytes:
     Wheels are embedded as comment lines after marker comments at the
     end of the file (e.g. MEMORY_WHEEL_DATA, WHEEL_DATA). Each marker
     is followed by comment-prefixed base64 lines.
+
+    NOTE: build_installer.py's ``_validate_py_installer`` re-implements this
+    parse deliberately — this file must stay import-free/standalone, and the
+    build-time validator proving the embed format round-trips must not share
+    code with the thing it validates. Change the embed format in BOTH places.
     """
     script_path = Path(sys.argv[0]).resolve() if sys.argv[0] != "-" else Path(__file__).resolve()
-    text = script_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        text = script_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        # Piped execution (curl ... | python3 -) leaves no on-disk source to
+        # re-read (__file__ is '<stdin>'), so the embedded wheels are
+        # unreachable. Fail with instructions instead of a raw traceback.
+        raise RuntimeError(
+            "cannot re-read the installer source to extract the embedded "
+            f"wheels ({exc}). Piped execution (curl ... | python3 -) is not "
+            "supported — download to a file first: "
+            "curl -fsSL <url> -o install-trw.py && python3 install-trw.py"
+        ) from exc
 
     collecting = False
     b64_chunks: list[str] = []
@@ -810,8 +845,6 @@ def _verify_checksum(data: bytes, expected_sha256: str, label: str) -> None:
     """
     if not expected_sha256 or expected_sha256.startswith("{{"):
         return
-    import hashlib
-
     actual = hashlib.sha256(data).hexdigest()
     if actual != expected_sha256:
         raise RuntimeError(f"Checksum mismatch for {label}: expected {expected_sha256[:16]}..., got {actual[:16]}...")
@@ -848,7 +881,7 @@ def _pip_target_from_cmd(cmd: list[str]) -> str:
 
 
 def _build_pip_runtime_env(target_dir: str = "") -> dict[str, str]:
-    """Build env that keeps pip cache/temp writes inside the tmpfs target."""
+    """Build env that keeps installer subprocess writes inside the tmpfs target."""
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if not target_dir:
@@ -856,19 +889,28 @@ def _build_pip_runtime_env(target_dir: str = "") -> dict[str, str]:
 
     target_path = Path(target_dir)
     cache_root = target_path / ".cache"
+    data_root = target_path / ".local" / "share"
     pip_cache_dir = cache_root / "pip"
     tmp_dir = target_path / ".tmp"
     pip_cache_dir.mkdir(parents=True, exist_ok=True)
+    data_root.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     env["PIP_NO_CACHE_DIR"] = "1"
     env["PIP_CACHE_DIR"] = str(pip_cache_dir)
     env["XDG_CACHE_HOME"] = str(cache_root)
+    # Runtime imports in the MCP preflight can initialize dependency metadata
+    # caches (for example FastMCP's version cache). Keep those XDG data writes
+    # on the same tmpfs as the installed packages instead of leaking to HOME.
+    env["XDG_DATA_HOME"] = str(data_root)
     env["TMPDIR"] = str(tmp_dir)
     # uv backend parity: keep uv's cache inside the target tmpfs too (uv ignores
     # the PIP_* vars). Harmless when the pip backend is used.
     env["UV_CACHE_DIR"] = str(cache_root / "uv")
     env["UV_NO_CACHE"] = "1"
     return env
+
+
+_LAST_RUN_QUIET_STDERR = ""
 
 
 def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
@@ -879,20 +921,29 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
 
     ``KeyboardInterrupt`` is intentionally not caught — it propagates to
     the caller so the user can abort the entire installer with Ctrl-C.
+
+    The last ~2000 chars of stderr are stashed in ``_LAST_RUN_QUIET_STDERR``
+    so ``pip_install``'s final failure message can show the REAL error
+    instead of guessing PEP 668 for every failure mode.
     """
+    global _LAST_RUN_QUIET_STDERR
     try:
         env = _build_pip_runtime_env(_pip_target_from_cmd(cmd))
-        return (
-            subprocess.run(
-                cmd,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=timeout,
-            ).returncode
-            == 0
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        _LAST_RUN_QUIET_STDERR = (getattr(proc, "stderr", "") or "")[-2000:]
+        return proc.returncode == 0
+    except FileNotFoundError as exc:
+        _LAST_RUN_QUIET_STDERR = str(exc)
+        return False
+    except subprocess.TimeoutExpired:
+        _LAST_RUN_QUIET_STDERR = f"command timed out after {timeout}s: {cmd[0]}"
         return False
 
 
@@ -969,10 +1020,22 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     are written to that directory instead of site-packages.  This is used
     to redirect writes to a tmpfs mount (PRD-INFRA-058).
 
-    Tries: normal -> --user -> --break-system-packages. The --user /
-    --break-system-packages escalations are pip-only (PEP 668 system Pythons);
-    the uv backend installs into --target directly and needs neither.
+    Tries: normal -> --user -> [break-system, opt-in] -> dedicated venv. The
+    --user / --break-system-packages escalations are pip-only (PEP 668 system
+    Pythons); the uv backend installs into --target directly and needs neither.
+    On a PEP 668 Python where system mutation is declined, the final rung is a
+    dedicated importable venv (_ensure_fallback_venv) — NOT pipx, because
+    downstream steps must ``import trw_mcp`` in the same interpreter.
     """
+    # If an earlier package already fell back to a dedicated venv (PEP 668),
+    # route THIS install into the same venv so a single interpreter owns the
+    # whole stack downstream. (--pip-target has its own isolation; never here.)
+    if _FALLBACK_VENV_PYTHON and not target_dir:
+        if _run_quiet(build_install_cmd(_FALLBACK_VENV_PYTHON, ui, [package])):
+            return True
+        ui.step_warn(f"Failed to install {label} into fallback venv {_fallback_venv_dir()}")
+        return False
+
     kind = resolve_install_backend(python, ui)[0]
     # 2026-04-21: keep pip's resolver fetching external deps (structlog,
     # pydantic, ...) from PyPI; only force --no-deps for a bundled wheel whose
@@ -996,21 +1059,44 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     # PRD-SEC-006-FR03: --break-system-packages mutates a system Python's
     # site-packages and can corrupt OS-managed packages. It is NEVER applied
     # silently — only when the operator opted in via --allow-system-python (or
-    # an interactive confirmation, resolved into _ALLOW_SYSTEM_PYTHON). When not
-    # allowed, fail with an actionable recommendation (venv / pipx).
-    if _allow_system_python(ui):
-        if _run_quiet(base + ["--break-system-packages"]):
-            ui.step_warn(f"Installed {label} with --break-system-packages (--allow-system-python)")
+    # an interactive confirmation, resolved into _ALLOW_SYSTEM_PYTHON).
+    if _allow_system_python(ui) and _run_quiet(base + ["--break-system-packages"]):
+        ui.step_warn(f"Installed {label} with --break-system-packages (--allow-system-python)")
+        return True
+
+    # Final rung: a dedicated, importable venv. Reached on a PEP 668 system
+    # Python when the operator declined --break-system-packages (or it failed).
+    # This is the third-stage-bootstrap analogue of the shell bootstraps' pipx
+    # rung — but a real venv rather than pipx, because the installer's downstream
+    # steps (force-pin, import verification, MCP preflight, client config) must
+    # import trw_mcp/trw_memory from the SAME interpreter, which pipx's isolated
+    # console-script-only install cannot provide. (--pip-target is its own
+    # isolation and is never rerouted to the venv.)
+    if not target_dir:
+        venv_python = _ensure_fallback_venv(python, ui)
+        if venv_python and _run_quiet(build_install_cmd(venv_python, ui, [package])):
+            ui.step_warn(
+                f"Installed {label} into an isolated venv "
+                f"({_fallback_venv_dir()}) — PEP 668 system Python left untouched"
+            )
             return True
-    else:
+
+    stderr_tail = _LAST_RUN_QUIET_STDERR.strip()
+    if "externally-managed-environment" in stderr_tail or not stderr_tail:
         ui.step_fail(
-            f"Refusing to install {label} with --break-system-packages on a "
-            "PEP 668-managed system Python."
+            f"Could not install {label}: this Python is externally managed (PEP 668) "
+            "and the isolated-venv fallback did not succeed."
         )
-        ui.step_warn("Use an isolated environment instead, e.g.:")
-        ui.step_warn("  python3 -m venv .venv && . .venv/bin/activate   (then re-run)")
-        ui.step_warn("  pipx install trw-mcp                            (CLI-only)")
-        ui.step_warn("Or pass --allow-system-python to override (not recommended).")
+    else:
+        # The failure was NOT the PEP 668 case — show the actual pip error
+        # instead of misdiagnosing (e.g. broken proxy, disk full, bad spec).
+        ui.step_fail(f"Could not install {label} — last pip error:")
+        for line in stderr_tail.splitlines()[-5:]:
+            ui.step_warn(f"  {line.strip()[:160]}")
+    ui.step_warn("Use an isolated environment instead, e.g.:")
+    ui.step_warn("  python3 -m venv .venv && . .venv/bin/activate   (then re-run)")
+    ui.step_warn("  pipx install trw-mcp                            (CLI-only)")
+    ui.step_warn("Or pass --allow-system-python to override (not recommended).")
 
     return False
 
@@ -1080,6 +1166,76 @@ def _allow_system_python(ui: UI) -> bool:
     # Non-interactive without explicit opt-in: deny.
     _ALLOW_SYSTEM_PYTHON = False
     return False
+
+
+# ── PEP 668 dedicated-venv fallback (importable install) ─────────────
+#
+# When the target Python is externally managed (PEP 668) and the operator has
+# NOT opted into --break-system-packages, both plain and --user pip refuse. The
+# shell bootstraps fall back to pipx here, but pipx is INSUFFICIENT for THIS
+# installer: pipx exposes only the `trw-mcp` console script from a hidden
+# isolated venv, whereas every downstream step needs trw_mcp AND trw_memory to
+# be IMPORTABLE in the SAME interpreter — the bundled-wheel force-pin,
+# _verify_package_imports, the MCP preflight probe, and the emitted client MCP
+# config's `python -m trw_mcp.server` fallback all resolve against `$PYTHON`.
+# So we create/reuse a DEDICATED venv (a venv created from a PEP 668 Python is
+# itself NOT externally managed, so pip works normally inside it), install into
+# it, and rebind the interpreter for all subsequent phases.
+#
+# Knob: TRW_FALLBACK_VENV overrides the default ~/.trw/venv location.
+_FALLBACK_VENV_PYTHON: str | None = None
+
+
+def _fallback_venv_dir() -> Path:
+    """Return the dedicated fallback-venv directory (TRW_FALLBACK_VENV knob)."""
+    override = os.environ.get("TRW_FALLBACK_VENV", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".trw" / "venv"
+
+
+def _fallback_venv_interpreter(venv_dir: Path) -> Path:
+    """Return the interpreter path inside *venv_dir* (POSIX/Windows layout)."""
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _ensure_fallback_venv(source_python: str, ui: UI) -> str | None:
+    """Create/reuse a dedicated venv and return its interpreter, or None.
+
+    Idempotent: the resolved interpreter is cached in the module-global
+    ``_FALLBACK_VENV_PYTHON`` so a second package install reuses the same venv.
+    Creation uses *source_python*'s ``-m venv``. On success the cached install
+    backend (``_INSTALL_BACKEND``) is RESET so subsequent ``build_install_cmd``
+    calls re-resolve for the venv interpreter instead of the abandoned system
+    Python (the backend is cached on first resolution, keyed on the first
+    interpreter seen).
+    """
+    global _FALLBACK_VENV_PYTHON, _INSTALL_BACKEND
+    if _FALLBACK_VENV_PYTHON:
+        return _FALLBACK_VENV_PYTHON
+    venv_dir = _fallback_venv_dir()
+    venv_python = _fallback_venv_interpreter(venv_dir)
+    if not venv_python.is_file():
+        ui.step_warn(f"Creating an isolated venv at {venv_dir} (PEP 668 fallback)...")
+        try:
+            venv_dir.parent.mkdir(parents=True, exist_ok=True)
+            rc = subprocess.run(  # noqa: S603 -- installer creates its own venv
+                [source_python, "-m", "venv", str(venv_dir)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=180,
+            ).returncode
+        except (OSError, subprocess.TimeoutExpired):
+            rc = 1
+        if rc != 0 or not venv_python.is_file():
+            ui.step_warn(f"Could not create fallback venv at {venv_dir}")
+            return None
+    _FALLBACK_VENV_PYTHON = str(venv_python)
+    # Invalidate the cached backend so the venv interpreter is re-resolved.
+    _INSTALL_BACKEND = None
+    return _FALLBACK_VENV_PYTHON
 
 
 def _python_has_pip(python: str) -> bool:
@@ -1240,6 +1396,13 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    except BaseException:
+        # Ctrl-C (KeyboardInterrupt) or SystemExit mid-stream: never orphan
+        # the child — subprocess.run() reaps on interrupt, Popen does not.
+        proc.kill()
+        proc.wait()
+        ui.stop_spinner(False, "", f"{fallback_msg} interrupted")
+        raise
     finally:
         watchdog.cancel()
 
@@ -1407,7 +1570,6 @@ def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
 
     Uses only stdlib — no external dependencies.
     """
-    import json
     import urllib.error
     import urllib.request
 
@@ -1423,10 +1585,7 @@ def _check_backend_health(url: str, timeout: float = 5.0) -> dict[str, object]:
         return {"url": url, "reachable": False, "status": "unreachable"}
 
 
-def _check_all_backends(
-    target_dir: Path,
-    prior_config: dict[str, object],
-) -> list[dict[str, object]]:
+def _check_all_backends(target_dir: Path) -> list[dict[str, object]]:
     """Check connectivity to all configured platform backends.
 
     Reads platform_urls from config.yaml (simple line parsing) and probes
@@ -1469,14 +1628,25 @@ def _check_all_backends(
         return [_check_backend_health(urls[0])]
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import TimeoutError as _FuturesTimeout
 
     with ThreadPoolExecutor(max_workers=min(len(urls), 4)) as pool:
         futures = {pool.submit(_check_backend_health, url): url for url in urls}
-        for future in as_completed(futures, timeout=10):
-            try:
-                results.append(future.result())
-            except Exception:
-                results.append({"url": futures[future], "reachable": False, "status": "error"})
+        try:
+            for future in as_completed(futures, timeout=10):
+                try:
+                    results.append(future.result())
+                except Exception:
+                    results.append({"url": futures[future], "reachable": False, "status": "error"})
+        except _FuturesTimeout:
+            # More queued probes than the 10s pool ceiling allows (each probe
+            # is individually bounded at 5s, but only 4 run at once). Report
+            # the stragglers as timeouts instead of crashing what is by now a
+            # fully-successful install.
+            for future, url in futures.items():
+                if not future.done():
+                    future.cancel()
+                    results.append({"url": url, "reachable": False, "status": "timeout"})
 
     # Preserve original URL ordering
     url_order = {url: i for i, url in enumerate(urls)}
@@ -1548,31 +1718,52 @@ def _terminate_process(pid: int) -> bool:
         return False
 
 
+def _pid_command_matches_trw(pid: int) -> bool:
+    """Best-effort check that *pid*'s command line looks like a trw-mcp server.
+
+    Guards the legacy shared-server cleanup against PID reuse: if the OS
+    recycled the PID for an unrelated process, we must not SIGTERM it. On
+    POSIX, ``ps -p PID -o args=`` is portable (Linux + macOS). When the
+    command line cannot be read (Windows, ``ps`` missing), err on the side
+    of NOT killing — the stale PID file is removed either way.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "args="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        ).stdout.lower()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "trw-mcp" in out or "trw_mcp" in out
+
+
 def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
     """Restart MCP server(s) after install/upgrade.
 
     Cross-platform approach:
-      - HTTP mode: kill the background process via PID file; it will be
-        auto-started on the next tool call via ``ensure_http_server()``.
-      - All modes: write a version sentinel so the server detects the
-        upgrade on the next tool call and advises ``/mcp``.
+      - Kill any leftover background HTTP server from removed shared-server
+        installs via its PID file (one-time cleanup; the shared HTTP server
+        no longer exists — trw-mcp is stdio-only).
+      - Write a version sentinel so the server detects the upgrade on the
+        next tool call and advises ``/mcp``.
     """
-    import json
 
     trw_dir = target_dir / ".trw"
     pid_path = trw_dir / "mcp-server.pid"
 
-    # HTTP mode: kill the background server process
+    # Legacy shared-server cleanup: kill any leftover background process
     if pid_path.is_file():
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if _is_process_alive(pid):
+            if _is_process_alive(pid) and _pid_command_matches_trw(pid):
                 if _terminate_process(pid):
                     ui.step_ok("MCP server stopped (will auto-start on next use)")
-                pid_path.unlink(missing_ok=True)
-            else:
-                # Already dead — clean up stale PID
-                pid_path.unlink(missing_ok=True)
+            # Dead, unidentifiable, or PID reused by another process: never
+            # signal — just drop the stale file.
+            pid_path.unlink(missing_ok=True)
         except (ValueError, OSError):
             pid_path.unlink(missing_ok=True)
 
@@ -1598,25 +1789,24 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
     and `.trw/frameworks/VERSION.yaml` drift apart.
     """
     version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
-    existing: dict[str, str] = {}
     try:
-        if version_path.is_file():
-            existing = _parse_simple_yaml(version_path.read_text(encoding="utf-8"))
         version_path.parent.mkdir(parents=True, exist_ok=True)
         # Fallbacks derive from the DEPLOYED framework bodies when possible —
         # a hardcoded fallback inevitably goes stale (it shipped "v25_TRW" /
         # "v2.0.0" long after v26/v3.x were current).
-        framework_version = existing.get("framework_version") or _deployed_doc_version(
+        framework_version = _deployed_doc_version(
             target_dir / ".trw" / "frameworks" / "FRAMEWORK.md",
-            r"(v\d+_TRW)",
-            "v26_TRW",
+            r"(v\d+(?:\.\d+)*_TRW)",
+            None,
         )
-        aaref_version = existing.get("aaref_version") or _deployed_doc_version(
+        aaref_version = _deployed_doc_version(
             target_dir / ".trw" / "frameworks" / "AARE-F-FRAMEWORK.md",
             r"\*\*Version\*\*:\s*(\d+\.\d+\.\d+)",
-            "v3.1.0",
+            None,
             prefix="v",
         )
+        if framework_version is None or aaref_version is None:
+            return
         version_path.write_text(
             "\n".join(
                 [
@@ -1633,7 +1823,7 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
         pass  # Best-effort; the sentinel remains the runtime restart signal.
 
 
-def _deployed_doc_version(doc_path: Path, pattern: str, fallback: str, prefix: str = "") -> str:
+def _deployed_doc_version(doc_path: Path, pattern: str, fallback: str | None, prefix: str = "") -> str | None:
     """Extract a version label from a deployed framework doc header (best-effort)."""
     try:
         if doc_path.is_file():
@@ -1663,6 +1853,137 @@ def _resolve_framework_version() -> str:
         return importlib_metadata.version("trw-mcp")
     except Exception:  # justified: metadata lookup is best-effort, never block emit
         return TRW_VERSION
+
+
+# ── PRD-INFRA-150: downgrade guard ───────────────────────────────────
+# Default decision labels emitted on the install log surface (NFR03). Kept as
+# module constants (no magic strings) so the wording is DRY across the guard,
+# the log formatter, and the tests asserting them.
+_GUARD_DECISION_KEPT = "kept-installed (newer)"
+_GUARD_DECISION_UPGRADE = "installed-bundled (upgrade)"
+_GUARD_DECISION_EQUAL = "installed-bundled (equal)"
+_GUARD_DECISION_FRESH = "installed-bundled (fresh)"
+
+
+_PEP440_LITE = re.compile(
+    r"^v?(?P<release>\d+(?:\.\d+)*)"
+    r"(?:[._-]?(?P<pre_l>a|alpha|b|beta|rc|c)(?P<pre_n>\d*))?"
+    r"(?:[._-]?post(?P<post>\d*))?"
+    r"(?:[._-]?dev(?P<dev>\d*))?$"
+)
+_PRE_ORDER = {"a": 0, "alpha": 0, "b": 1, "beta": 1, "rc": 2, "c": 2}
+
+
+def _version_key_fallback(version: str) -> tuple[object, ...]:
+    """PEP-440-lite sort key used when ``packaging`` is unavailable.
+
+    Covers the shapes trw releases actually use — ``X.Y.Z`` plus optional
+    ``aN``/``bN``/``rcN``, ``.postN``, ``.devN`` — with PEP 440 ordering
+    (dev < pre < release < post) and trailing-zero equality (``1.0 ==
+    1.0.0``). Raises ``ValueError`` on anything else so callers keep their
+    existing fail-open policy.
+    """
+    m = _PEP440_LITE.match(version.strip().lower())
+    if m is None:
+        raise ValueError(f"unparsable version: {version!r}")
+    release = [int(x) for x in m.group("release").split(".")]
+    while len(release) > 1 and release[-1] == 0:
+        release.pop()
+    pre_l, pre_n = m.group("pre_l"), m.group("pre_n")
+    post, dev = m.group("post"), m.group("dev")
+    if pre_l:
+        pre = (0, _PRE_ORDER[pre_l], int(pre_n or 0))
+    elif dev is not None and post is None:
+        # packaging's NegativeInfinity trick: 1.0.dev1 < 1.0a1 < 1.0
+        pre = (-1, 0, 0)
+    else:
+        pre = (1, 0, 0)
+    post_key = (1, int(post or 0)) if post is not None else (0, 0)
+    dev_key = (0, int(dev or 0)) if dev is not None else (1, 0)
+    return (tuple(release), pre, post_key, dev_key)
+
+
+def _compare_versions(a: str, b: str) -> int:
+    """Compare two versions with PEP 440 semantics (PRD-INFRA-150 FR04).
+
+    Returns 1 if ``a > b``, -1 if ``a < b``, 0 if equal. Uses
+    ``packaging.version.Version`` so ``0.55.10 > 0.55.9`` (NOT lexicographic).
+    Raises ``ValueError`` (``InvalidVersion`` is a subclass) when either
+    operand is unparsable — callers decide the fail-open policy.
+
+    ``packaging`` is a third-party import that a bare system python3 often
+    lacks. Losing it must NOT silently disable the downgrade guard (the
+    callers' broad ``except`` would mislabel every decision as "fresh"), so
+    a stdlib PEP-440-lite key takes over when the import fails.
+    """
+    try:
+        from packaging.version import Version
+    except ModuleNotFoundError:
+        ka, kb = _version_key_fallback(a), _version_key_fallback(b)
+        return (ka > kb) - (ka < kb)
+
+    va, vb = Version(a), Version(b)
+    if va > vb:
+        return 1
+    if va < vb:
+        return -1
+    return 0
+
+
+def downgrade_guard_decision(installed: str | None, bundled: str) -> tuple[bool, str]:
+    """Return ``(skip_force_install, decision_label)`` for one package (FR04).
+
+    The label is one of the ``_GUARD_DECISION_*`` constants and feeds the single
+    structured decision log line emitted per package (NFR03).
+    """
+    if installed is None:
+        return False, _GUARD_DECISION_FRESH
+    try:
+        cmp = _compare_versions(installed, bundled)
+    except Exception:  # justified: unparsable installed metadata -> treat as fresh
+        return False, _GUARD_DECISION_FRESH
+    if cmp > 0:
+        return True, _GUARD_DECISION_KEPT
+    if cmp == 0:
+        return False, _GUARD_DECISION_EQUAL
+    return False, _GUARD_DECISION_UPGRADE
+
+
+def format_guard_log_line(package: str, installed: str | None, bundled: str, decision: str) -> str:
+    """Format the single structured decision log line for *package* (NFR03)."""
+    shown = installed if installed is not None else "(absent)"
+    return f"{package} installed={shown} bundled={bundled} decision={decision}"
+
+
+def _probe_installed_version(python: str, package: str) -> str | None:
+    """Return the version of *package* installed in the *python* interpreter.
+
+    Probes the TARGET interpreter via ``importlib.metadata`` in a subprocess so
+    it reflects what the install will actually mutate (not the installer's own
+    environment). Returns None when the package is absent or the probe errors —
+    the guard treats both as "not newer" and proceeds (NFR02 fail-open).
+    """
+    try:
+        result = subprocess.run(
+            [
+                python,
+                "-B",
+                "-c",
+                (
+                    "import importlib.metadata as m;"
+                    f"print(m.version({package!r}))"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    version = (getattr(result, "stdout", "") or "").strip()
+    return version or None
 
 
 def _anonymize_installation_id(raw_id: str) -> str:
@@ -1721,7 +2042,6 @@ def _post_telemetry_event(
     ``{"events": [event]}``. Returns True on a 2xx. Fire-and-forget: any
     network error returns False rather than raising (PRD-INFRA-142 NFR02).
     """
-    import json
     import urllib.error
     import urllib.request
 
@@ -1959,87 +2279,49 @@ def _detect_installed_clis() -> list[str]:
         detected.append("codex")
     if shutil.which("github-copilot") or shutil.which("copilot"):
         detected.append("copilot")
-    if shutil.which("gemini"):
-        detected.append("gemini")
-    if shutil.which("aider"):
-        detected.append("aider")
+    if shutil.which("agy") or shutil.which("antigravity"):
+        detected.append("antigravity-cli")
     return _unique(detected)
 
 
 def _detect_project_ides(project_dir: str) -> list[str]:
     """Detect which IDE configs exist in the project."""
-    import os as _os
-
     detected = []
-    if _os.path.isdir(_os.path.join(project_dir, ".claude")):
+    if os.path.isdir(os.path.join(project_dir, ".claude")):
         detected.append("claude-code")
-    cursor_dir = _os.path.join(project_dir, ".cursor")
-    if _os.path.isfile(_os.path.join(cursor_dir, "cli.json")):
+    cursor_dir = os.path.join(project_dir, ".cursor")
+    if os.path.isfile(os.path.join(cursor_dir, "cli.json")):
         detected.append("cursor-cli")
-    if _os.path.isdir(cursor_dir):
+    if os.path.isdir(cursor_dir):
         detected.append("cursor-ide")
-    if _os.path.isdir(_os.path.join(project_dir, ".opencode")) or _os.path.isfile(
-        _os.path.join(project_dir, "opencode.json")
+    if os.path.isdir(os.path.join(project_dir, ".opencode")) or os.path.isfile(
+        os.path.join(project_dir, "opencode.json")
     ):
         detected.append("opencode")
-    if _os.path.isdir(_os.path.join(project_dir, ".codex")) or _os.path.isfile(
-        _os.path.join(project_dir, ".codex", "config.toml")
+    if os.path.isdir(os.path.join(project_dir, ".codex")) or os.path.isfile(
+        os.path.join(project_dir, ".codex", "config.toml")
     ):
         detected.append("codex")
-    github_agents_dir = _os.path.join(project_dir, ".github", "agents")
-    has_copilot_agents = _os.path.isdir(github_agents_dir) and any(
-        name.endswith(".agent.md") for name in _os.listdir(github_agents_dir)
-    )
-    if _os.path.isfile(_os.path.join(project_dir, ".github", "copilot-instructions.md")) or has_copilot_agents:
+    github_agents_dir = os.path.join(project_dir, ".github", "agents")
+    try:
+        has_copilot_agents = os.path.isdir(github_agents_dir) and any(
+            name.endswith(".agent.md") for name in os.listdir(github_agents_dir)
+        )
+    except OSError:
+        # Permission-denied .github/agents must degrade to "not detected",
+        # never crash client detection.
+        has_copilot_agents = False
+    if os.path.isfile(os.path.join(project_dir, ".github", "copilot-instructions.md")) or has_copilot_agents:
         detected.append("copilot")
-    if _os.path.isdir(_os.path.join(project_dir, ".gemini")) or _os.path.isfile(
-        _os.path.join(project_dir, "GEMINI.md")
-    ):
-        detected.append("gemini")
-    if _os.path.isfile(_os.path.join(project_dir, ".aider.conf.yml")):
-        detected.append("aider")
+    # gemini/aider detection removed with the profiles' retirement (2026-07-11):
+    # a leftover .gemini/ or .aider.conf.yml must not auto-select a retired id.
     return _unique(detected)
 
 
-# ── User-scope (machine-local) tier detection + provisioning (PRD-CORE-185 FR09) ──
-
-
-def _user_scope_markers() -> list[Path]:
-    """Common home / XDG / agent-harness paths that hint a user-scope is sensible.
-
-    Probing these (``~/.claude``, ``~/.codex``, ``~/.config/*``, ``~/.trw``, the
-    XDG base dirs) is a purely-local, non-destructive heuristic: if an agent
-    harness already lives in the user's home, a machine-local user-space memory
-    tier is warranted. No network, no project data.
-    """
-    import os as _os
-
-    home = Path.home()
-    markers: list[Path] = [home / ".claude", home / ".codex", home / ".trw"]
-    xdg_config = _os.environ.get("XDG_CONFIG_HOME") or str(home / ".config")
-    xdg_data = _os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
-    markers.append(Path(xdg_config))
-    markers.append(Path(xdg_data))
-    return markers
-
-
-def _detect_user_scope() -> bool:
-    """Return True if a machine-local user-scope tier is warranted (FR09).
-
-    Heuristic + non-destructive: True when ``~/.claude`` / ``~/.codex`` /
-    ``~/.trw`` exists, or an XDG config/data dir has any contents (an agent
-    harness or prior TRW setup lives in home). On a bare box returns False so
-    the installer stays project-only with zero config.
-    """
-    for marker in _user_scope_markers():
-        try:
-            if marker.is_dir() and marker.name in (".claude", ".codex", ".trw"):
-                return True
-            if marker.is_dir() and any(marker.iterdir()):
-                return True
-        except OSError:
-            continue
-    return False
+# ── User-scope (machine-local) tier provisioning (PRD-SEC-006-FR06) ──
+# The PRD-CORE-185 FR09 auto-detect heuristic (_detect_user_scope /
+# _user_scope_markers) was removed: provisioning is consent-only now, so
+# detection had no production caller.
 
 
 def _resolve_user_tier_consent(
@@ -2289,6 +2571,31 @@ def phase_prompt_features(
     return bool(install_ai), bool(install_sqlitevec)
 
 
+def _verify_package_imports(python: str, validated_target: str, ui: UI) -> dict[str, str]:
+    """Verify trw_memory + trw_mcp import after install; exit on failure.
+
+    Extracted (PRD-INFRA-150) so the downgrade-guard early-return path (both
+    packages already newer-installed) reuses the same verification the normal
+    install path runs — DRY, and proves the kept install is importable. Returns
+    the resolved runtime ``env`` so callers (the MCP preflight) reuse it.
+    """
+    env = _build_pip_runtime_env(validated_target)
+    if validated_target:
+        current_path = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{validated_target}:{current_path}" if current_path else validated_target
+    for mod in ("trw_memory", "trw_mcp"):
+        rc = subprocess.run(
+            [python, "-B", "-c", f"import {mod}"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        if rc != 0:
+            ui.step_fail(f"{mod} not importable after install")
+            sys.exit(1)
+    return env
+
+
 def phase_install_packages(
     ui: UI,
     step: int,
@@ -2298,8 +2605,16 @@ def phase_install_packages(
     mcp_whl: Path,
     pip_target: str = "",
     offline: bool = False,
-) -> None:
+) -> str:
     """Phase 3: Install base packages (order: memory -> mcp).
+
+    Returns the EFFECTIVE interpreter to use for every subsequent phase. This is
+    normally *python*, but on a PEP 668 system Python that declined system
+    mutation the install falls back to a dedicated venv (see pip_install /
+    _ensure_fallback_venv) and this returns that venv's interpreter instead — so
+    the caller rebinds ``python`` and downstream phases (extras, project setup,
+    the emitted client MCP config) all target the venv where trw_mcp is
+    importable.
 
     When *pip_target* is set, passes ``--target`` to pip so all packages
     are written to that directory (e.g. a tmpfs mount) instead of
@@ -2318,6 +2633,36 @@ def phase_install_packages(
     if offline:
         ui.step_warn("Offline mode: installing from embedded wheels only (--no-index)")
 
+    # PRD-INFRA-150 FR03/FR04: downgrade guard. Probe the TARGET interpreter for
+    # the already-installed versions and decide, per package, whether the bundled
+    # wheel should be force-installed. We only SKIP force-install when the
+    # installed version is strictly NEWER than the bundled one (a downgrade).
+    # For the bundled-newer / equal / fresh / probe-error cases the decision is
+    # "install bundled", keeping behavior byte-identical to before (NFR04).
+    # TRW_VERSION is the bundled version for both wheels (built in lockstep).
+    bundled_version = TRW_VERSION
+    installed_mcp = _probe_installed_version(python, "trw-mcp")
+    installed_memory = _probe_installed_version(python, "trw-memory")
+    skip_mcp, mcp_decision = downgrade_guard_decision(installed_mcp, bundled_version)
+    skip_memory, memory_decision = downgrade_guard_decision(installed_memory, bundled_version)
+    ui.info(format_guard_log_line("trw-mcp", installed_mcp, bundled_version, mcp_decision))
+    ui.info(format_guard_log_line("trw-memory", installed_memory, bundled_version, memory_decision))
+
+    # Build the combined wheel list, excluding any package whose installed
+    # version is strictly newer (the downgrade case). When nothing is skipped,
+    # this is the exact [memory, mcp] list as before (NFR04 byte-identical).
+    combined_wheels: list[str] = []
+    if not skip_memory:
+        combined_wheels.append(str(memory_whl))
+    if not skip_mcp:
+        combined_wheels.append(str(mcp_whl))
+    if not combined_wheels:
+        # Both newer-installed: nothing to force-install. Verify imports and exit
+        # the install step without mutating the newer site-packages (RISK-006).
+        ui.info("Downgrade guard: keeping newer installed trw-mcp + trw-memory; nothing to install")
+        _verify_package_imports(python, validated_target, ui)
+        return python
+
     # 2026-04-21 L-8heG v2: install BOTH bundled wheels in one pip invocation
     # with --find-links pointing at the wheel directory. This lets pip's
     # resolver:
@@ -2333,14 +2678,21 @@ def phase_install_packages(
     combined_cmd = build_install_cmd(
         python,
         ui,
-        [str(memory_whl), str(mcp_whl)],
+        combined_wheels,
         target_dir=validated_target,
         find_links=str(wheel_dir),
         no_index=offline,
     )
 
     ui.start_spinner(f"Installing trw-memory + trw-mcp v{TRW_VERSION}...")
-    result = subprocess.run(combined_cmd, capture_output=True, text=True, timeout=300)
+    install_env = _build_pip_runtime_env(validated_target)
+    result = subprocess.run(
+        combined_cmd,
+        env=install_env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
     if result.returncode != 0:
         # Fall back to the sequential path so PEP 668 / environment-specific
         # failures still get the --user and --break-system-packages escalation.
@@ -2349,19 +2701,31 @@ def phase_install_packages(
             "",
             f"combined install failed (rc={result.returncode}), trying sequential",
         )
-        if not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
+        if not skip_memory and not pip_install(
+            python, str(memory_whl), "trw-memory", ui, target_dir=validated_target
+        ):
             ui.error("pip install failed for trw-memory")
             ui.error("Try a clean environment or force the uv backend:")
             ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
             ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
-        if not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
+        if not skip_mcp and not pip_install(
+            python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target
+        ):
             ui.error("pip install failed for trw-mcp")
             ui.error("Try a clean environment or force the uv backend:")
             ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
             ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
     ui.stop_spinner(True, f"Installed trw-memory + trw-mcp v{TRW_VERSION}")
+
+    # If the sequential fallback landed in a dedicated venv (PEP 668 system
+    # Python, system mutation declined), rebind to that interpreter so the
+    # force-pin, import verification, and every downstream phase target the venv
+    # where trw_mcp/trw_memory are actually importable.
+    effective_python = _FALLBACK_VENV_PYTHON or python
+    if _FALLBACK_VENV_PYTHON:
+        ui.info(f"Using isolated venv interpreter for the rest of setup: {effective_python}")
 
     # Force-reinstall trw-memory from bundled wheel (defeats PyPI downgrade).
     # Rationale: trw-mcp's install triggers pip's dep resolver which reaches
@@ -2372,55 +2736,49 @@ def phase_install_packages(
     # pip --target has a quirk: even with --force-reinstall, it doesn't
     # overwrite existing directories (it just warns and skips). So we
     # manually delete the package dirs first, then reinstall.
-    if validated_target:
-        target_path = Path(validated_target)
-        import shutil
-        for pattern in ("trw_memory", "trw_memory-*.dist-info"):
-            for p in target_path.glob(pattern):
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-    cmd = build_install_cmd(
-        python,
-        ui,
-        [str(memory_whl)],
-        target_dir=validated_target,
-        no_deps=True,
-        no_cache=True,
-        no_index=True,
-    )
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        ui.step_warn(f"trw-memory pin failed: {result.stderr[:200]}")
+    # PRD-INFRA-150 FR03: skip the force-pin entirely when a strictly-newer
+    # trw-memory is already installed — re-pinning would downgrade it. This is a
+    # no-op for the bundled-newer / equal / fresh cases (NFR04 byte-identical).
+    if skip_memory:
+        ui.info("Downgrade guard: keeping newer installed trw-memory; skip bundled-wheel pin")
     else:
-        ui.info(f"Pinned trw-memory to bundled wheel ({memory_whl.name})")
+        if validated_target:
+            target_path = Path(validated_target)
+            for pattern in ("trw_memory", "trw_memory-*.dist-info"):
+                for p in target_path.glob(pattern):
+                    if p.is_dir():
+                        shutil.rmtree(p, ignore_errors=True)
+        cmd = build_install_cmd(
+            effective_python,
+            ui,
+            [str(memory_whl)],
+            target_dir=validated_target,
+            no_deps=True,
+            no_cache=True,
+            no_index=True,
+        )
+        result = subprocess.run(
+            cmd,
+            env=install_env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            ui.step_warn(f"trw-memory pin failed: {result.stderr[:200]}")
+        else:
+            ui.info(f"Pinned trw-memory to bundled wheel ({memory_whl.name})")
 
     # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
     if validated_target:
-        wrapper = Path(validated_target) / "bin" / "trw-mcp"
-        wrapper.parent.mkdir(parents=True, exist_ok=True)
-        wrapper.write_text(
-            f"#!/bin/bash\n"
-            f"export PYTHONPATH={validated_target}:$PYTHONPATH\n"
-            f'exec {python} -B -c "from trw_mcp.server import main; main()" "$@"\n'
+        _write_pythonpath_wrapper(
+            Path(validated_target) / "bin", "trw-mcp", python, "trw_mcp.server", validated_target, ui
         )
-        wrapper.chmod(0o755)
-        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {validated_target}")
 
-    # Verify imports (set PYTHONPATH for --pip-target case)
-    env = _build_pip_runtime_env(validated_target)
-    if validated_target:
-        current_path = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{validated_target}:{current_path}" if current_path else validated_target
-    for mod in ("trw_memory", "trw_mcp"):
-        rc = subprocess.run(
-            [python, "-B", "-c", f"import {mod}"],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
-        if rc != 0:
-            ui.step_fail(f"{mod} not importable after install")
-            sys.exit(1)
+    # Verify imports (set PYTHONPATH for --pip-target case). Uses the effective
+    # interpreter so a PEP 668 venv fallback verifies the venv, not the abandoned
+    # system Python.
+    env = _verify_package_imports(effective_python, validated_target, ui)
 
     # Post-install apparatus self-check (2026-04-21, iter-18-replication
     # regression): verify the trw-mcp binary exists AND responds to a MCP
@@ -2448,7 +2806,10 @@ def phase_install_packages(
                 '{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'
             )
             probe = subprocess.run(
-                [str(wrapper), "--transport", "stdio", "serve"],
+                # stdio is the only transport (HTTP removed 2026-07-10,
+                # a0673d9765); pass no --transport so the probe works with
+                # both current and older trw-mcp CLIs.
+                [str(wrapper), "serve"],
                 input=mcp_probe_input,
                 capture_output=True,
                 text=True,
@@ -2477,6 +2838,8 @@ def phase_install_packages(
             sys.exit(1)
         ui.info("MCP preflight: trw-mcp binary serves tools/list successfully")
 
+    return effective_python
+
 
 def phase_install_extras(
     ui: UI,
@@ -2486,10 +2849,18 @@ def phase_install_extras(
     install_ai: bool,
     install_sqlitevec: bool,
     pip_target: str = "",
+    offline: bool = False,
 ) -> list[str]:
     """Install optional extras as a single step. Returns feature names."""
     ui.step_header(step, total, "Installing extras")
     features: list[str] = []
+    if offline:
+        # PRD-SEC-006-FR09: only trw-mcp + trw-memory wheels are embedded.
+        # Extras resolve from PyPI, which --offline forbids — skip loudly
+        # rather than let pip walk its network escalation ladder.
+        ui.step_warn("Offline mode: extras require PyPI — skipping AI/vector extras")
+        ui.step_warn("Re-run without --offline (or pre-stage a wheelhouse) to add them later")
+        return features
     validated_target = validate_pip_target(pip_target)
 
     if install_ai:
@@ -2598,6 +2969,19 @@ PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
     "trw-swarm",
 )
 
+# PRD-INFRA-129 FR04 / NFR06 / NFR09: on a non-zero proprietary ``pip install``
+# the installer surfaces a TAIL of the captured stderr on the console (the FULL
+# stderr always goes to a per-package log under ``.trw/logs/``). This is the
+# console-readability knob — a named, documented constant so the surfaced volume
+# is tunable without code archaeology (no magic literal). Operator feedback
+# (sub_fs8ZjGHhYUQTy_x1) suggested a ~1000-char tail; the full log is unbounded.
+PROPRIETARY_PIP_STDERR_TAIL_CHARS: int = 1000
+
+# PRD-INFRA-129 FR04 / NFR09: timeout (seconds) for the proprietary
+# ``pip install`` subprocess. Named so it is overridable without editing the
+# call site; mirrors the historical ``_run_quiet(cmd, timeout=180)`` default.
+PROPRIETARY_PIP_INSTALL_TIMEOUT_SECONDS: int = 180
+
 # Proprietary packages that ship a console-script entry point. Maps the
 # distribution name -> (console-script name, ``module.callable`` target).
 # Under a ``--target`` install (pip or uv) the backend-generated bin script
@@ -2612,6 +2996,33 @@ PROPRIETARY_CONSOLE_SCRIPTS: tuple[tuple[str, str, str], ...] = (
     ("trw-loop", "trw-loop", "trw_loop.cli"),
     ("trw-swarm", "trw-swarm", "trw_swarm.cli"),
 )
+
+
+def _write_pythonpath_wrapper(
+    bin_dir: Path,
+    script_name: str,
+    python: str,
+    module_target: str,
+    pythonpath_dir: str,
+    ui: "UI",
+) -> Path:
+    """Write ``<bin_dir>/<script_name>`` as a PYTHONPATH bash wrapper (FR04).
+
+    Shared by phase_install_packages (``bin/trw-mcp``) and
+    _write_proprietary_console_wrappers (proprietary CLIs): a ``--target``
+    install has no importable site-packages on sys.path, so the console
+    script must export PYTHONPATH before exec-ing the module's ``main()``.
+    """
+    wrapper = bin_dir / script_name
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text(
+        f"#!/bin/bash\n"
+        f"export PYTHONPATH={pythonpath_dir}:$PYTHONPATH\n"
+        f'exec {python} -B -c "from {module_target} import main; main()" "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    ui.info(f"PYTHONPATH wrapper: {wrapper} -> {pythonpath_dir}")
+    return wrapper
 
 
 def _write_proprietary_console_wrappers(
@@ -2638,17 +3049,51 @@ def _write_proprietary_console_wrappers(
     for package, script_name, module_target in PROPRIETARY_CONSOLE_SCRIPTS:
         if package not in installed_names:
             continue
-        wrapper = bin_dir / script_name
-        wrapper.parent.mkdir(parents=True, exist_ok=True)
-        wrapper.write_text(
-            f"#!/bin/bash\n"
-            f"export PYTHONPATH={target_dir}:$PYTHONPATH\n"
-            f'exec {python} -B -c "from {module_target} import main; main()" "$@"\n'
+        written.append(
+            _write_pythonpath_wrapper(bin_dir, script_name, python, module_target, target_dir, ui)
         )
-        wrapper.chmod(0o755)
-        written.append(wrapper)
-        ui.info(f"PYTHONPATH wrapper: {wrapper} -> {target_dir}")
     return written
+
+
+def _call_backend_json_with_retry(
+    req: Any,
+    timeout: int,
+    denied_label: str,
+    failure_label: str,
+) -> dict[str, Any]:
+    """Call a backend endpoint with up-to-3 exponential-backoff retries (1/2/4s).
+
+    Shared skeleton for the proprietary-license and entitlement calls:
+    4xx = permanent denial (reason surfaced, NO retry); 5xx / network /
+    decode errors retry; exhausted retries raise RuntimeError. Secrets never
+    appear in raised messages (PRD-INFRA-129 NFR04). Callers validate the
+    payload AFTER return — a malformed success response must raise without
+    burning retries, exactly as both inlined originals behaved.
+    """
+    import urllib.error
+    import urllib.request
+
+    delays = (1.0, 2.0, 4.0)
+    last_err: Exception | None = None
+    for attempt, delay in enumerate(delays):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — trusted backend
+                return cast("dict[str, Any]", json.loads(resp.read().decode()))
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                reason = f"http {exc.code}"
+                try:
+                    detail = json.loads(exc.read().decode())
+                    reason = str(detail.get("error") or detail.get("reason") or reason)
+                except (json.JSONDecodeError, OSError):
+                    pass
+                raise RuntimeError(f"{denied_label} ({exc.code}): {reason}") from None
+            last_err = exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_err = exc
+        if attempt < len(delays) - 1:
+            time.sleep(delay)
+    raise RuntimeError(f"{failure_label} after retries: {type(last_err).__name__}")
 
 
 def _fetch_proprietary_license(
@@ -2663,8 +3108,6 @@ def _fetch_proprietary_license(
     plaintext license_key. The returned value lives only in the caller's
     memory; do not persist it to disk (NFR01).
     """
-    import json
-    import urllib.error
     import urllib.request
 
     req = urllib.request.Request(
@@ -2675,37 +3118,37 @@ def _fetch_proprietary_license(
         },
         method="GET",
     )
-    delays = (1.0, 2.0, 4.0)
-    last_err: Exception | None = None
-    for attempt, delay in enumerate(delays):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-                payload = json.loads(resp.read().decode())
-            license_key = payload.get("license_key")
-            if not isinstance(license_key, str) or not license_key:
-                raise RuntimeError("malformed auto-license response")
-            return license_key
-        except urllib.error.HTTPError as exc:
-            if 400 <= exc.code < 500:
-                reason = f"http {exc.code}"
-                try:
-                    detail = json.loads(exc.read().decode())
-                    reason = str(
-                        detail.get("error") or detail.get("reason") or reason
-                    )
-                except (json.JSONDecodeError, OSError):
-                    pass
-                raise RuntimeError(
-                    f"auto-license denied ({exc.code}): {reason}"
-                ) from None
-            last_err = exc
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            last_err = exc
-        if attempt < len(delays) - 1:
-            time.sleep(delay)
-    raise RuntimeError(
-        f"auto-license network failure after retries: {type(last_err).__name__}"
+    payload = _call_backend_json_with_retry(
+        req, timeout, "auto-license denied", "auto-license network failure"
     )
+    license_key = payload.get("license_key")
+    if not isinstance(license_key, str) or not license_key:
+        raise RuntimeError("malformed auto-license response")
+    return license_key
+
+
+# PRD-INFRA-129 FR05/FR06: actionable hint shown when no platform key resolves
+# from ANY of the four canonical sources, AND in the entitlement denial path.
+# A plain platform key is NEVER sent directly to POST /proprietary/entitlement
+# (which requires scope=proprietary:install and returns 403 wrong-scope for a
+# platform key) — it is always exchanged for a proprietary-scoped license via
+# GET /me/proprietary-license first (sub_x2O2h3CYyzKZWLu2#c).
+_PROPRIETARY_PRECONDITION_ERROR: str = (
+    "--with-proprietary needs a proprietary license OR a platform key to "
+    "auto-derive one. No platform key was found in any of the four sources "
+    "(in precedence order):\n"
+    "  1. TRW_API_KEY env var (exported by install.sh)\n"
+    "  2. TRW_PLATFORM_API_KEY env var\n"
+    "  3. .trw/credentials.yaml (platform_api_key)\n"
+    "  4. .trw/config.yaml (platform_api_key, deprecated)\n"
+    "A configured platform_api_key triggers AUTO-DERIVATION of a fresh "
+    "proprietary:install-scoped license (GET /me/proprietary-license), which "
+    "is then used as the credential for POST /proprietary/entitlement — the "
+    "platform key is never sent directly to the entitlement endpoint. "
+    "Authenticate first (run install-trw.py without --with-proprietary), or "
+    "pass --license-key=<key> / TRW_LICENSE_KEY explicitly. "
+    "See proprietary-distribution.md §8."
+)
 
 
 def _resolve_proprietary_license(
@@ -2715,6 +3158,7 @@ def _resolve_proprietary_license(
     backend_url: str,
     prior_config: dict[str, object],
     ui: "UI",
+    target_dir: "Path | None" = None,
 ) -> tuple[str, bool]:
     """Resolve the effective license key + with_proprietary flag.
 
@@ -2724,27 +3168,44 @@ def _resolve_proprietary_license(
     Behavior:
     - ``with_proprietary=False`` or explicit license already supplied:
       pass through unchanged.
-    - Auto-derive (with_proprietary + empty license + configured
-      ``platform_api_key``): fetch from the backend; on RuntimeError
+    - Auto-derive (with_proprietary + empty license + a resolvable platform
+      key): exchange the platform key for a fresh proprietary:install-scoped
+      license via the backend (the platform key is NEVER sent directly to the
+      entitlement endpoint, PRD-INFRA-129 FR06); on RuntimeError
       (network/auth/scope), warn via ``ui`` and downgrade
       ``with_proprietary=False`` so the public install can still proceed
       (PRD-126 FR05 + PRD-129 NFR02).
-    - Auto-derive requested but no configured ``platform_api_key``:
-      raise ``ValueError`` so the caller can surface a usage error.
+    - Auto-derive requested but no resolvable platform key:
+      raise ``ValueError`` carrying an actionable hint enumerating every
+      consulted source (PRD-INFRA-129 FR05/FR06) — never a raw argparse dump.
+
+    PRD-INFRA-129 FR05: when *target_dir* is provided the platform key is
+    resolved through ``_resolve_prior_api_key`` (env > credentials.yaml >
+    config.yaml) so the precondition consults the SAME locations the rest of
+    the install flow uses. When *target_dir* is None the resolver falls back to
+    the already-resolved ``prior_config['api_key']`` (NFR08 backward compat).
     """
     auto_derive = with_proprietary and not explicit_license_key
     if not auto_derive:
         return explicit_license_key, with_proprietary
 
-    raw = prior_config.get("api_key", "") if prior_config else ""
-    platform_api_key = raw.strip() if isinstance(raw, str) else ""
-    if not platform_api_key:
-        raise ValueError(
-            "--with-proprietary requires --license-key=<key>, "
-            "TRW_LICENSE_KEY env var, or a configured platform_api_key "
-            "in .trw/config.yaml (run install-trw.py without "
-            "--with-proprietary first to authenticate)"
+    platform_api_key = ""
+    if target_dir is not None:
+        # FR05: resolve via the canonical precedence (env > credentials.yaml
+        # > config.yaml). config.yaml's flat map is already parsed into
+        # prior_config['api_key'] by _load_prior_config; pass it as the
+        # config.yaml-tier fallback so it is honoured without re-reading.
+        raw_cfg = prior_config.get("api_key", "") if prior_config else ""
+        cfg_fallback = raw_cfg.strip() if isinstance(raw_cfg, str) else ""
+        platform_api_key = _resolve_prior_api_key(
+            target_dir, {"platform_api_key": cfg_fallback}
         )
+    else:
+        raw = prior_config.get("api_key", "") if prior_config else ""
+        platform_api_key = raw.strip() if isinstance(raw, str) else ""
+
+    if not platform_api_key:
+        raise ValueError(_PROPRIETARY_PRECONDITION_ERROR)
     try:
         return _fetch_proprietary_license(backend_url, platform_api_key), True
     except RuntimeError as exc:
@@ -2754,8 +3215,10 @@ def _resolve_proprietary_license(
         if "denied" in detail:
             hint = (
                 " This is a permanent denial (org plan, key scope, or unknown "
-                "key) — see proprietary-distribution.md §8, fix the cause, then "
-                "re-run."
+                "key). A platform key auto-derives a proprietary:install-scoped "
+                "license; a 403 wrong-scope means the derive step did not run or "
+                "the org plan lacks entitlement — see proprietary-distribution.md "
+                "§8, fix the cause, then re-run."
             )
         else:
             hint = " Re-run with --with-proprietary once the backend is reachable."
@@ -2779,8 +3242,6 @@ def _post_proprietary_entitlement(
     permanent failure (4xx, malformed response, exhausted retries). License
     key never appears in raised messages (NFR04).
     """
-    import json
-    import urllib.error
     import urllib.request
 
     body = json.dumps(
@@ -2792,41 +3253,12 @@ def _post_proprietary_entitlement(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    delays = (1.0, 2.0, 4.0)
-    last_err: Exception | None = None
-    for attempt, delay in enumerate(delays):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 \u2014 trusted backend
-                payload_bytes = resp.read()
-            payload = json.loads(payload_bytes.decode())
-            if not all(k in payload for k in ("url", "sha256", "version")):
-                raise RuntimeError(
-                    f"malformed entitlement response: keys={sorted(payload)}"
-                )
-            return payload
-        except urllib.error.HTTPError as exc:
-            if 400 <= exc.code < 500:
-                # Permanent denial \u2014 surface reason without retry
-                reason = f"http {exc.code}"
-                try:
-                    detail_bytes = exc.read()
-                    detail = json.loads(detail_bytes.decode())
-                    reason = str(
-                        detail.get("error") or detail.get("reason") or reason
-                    )
-                except (json.JSONDecodeError, OSError):
-                    pass
-                raise RuntimeError(
-                    f"entitlement denied ({exc.code}): {reason}"
-                ) from None
-            last_err = exc
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            last_err = exc
-        if attempt < len(delays) - 1:
-            time.sleep(delay)
-    raise RuntimeError(
-        f"entitlement network failure after retries: {type(last_err).__name__}"
+    payload = _call_backend_json_with_retry(
+        req, timeout, "entitlement denied", "entitlement network failure"
     )
+    if not all(k in payload for k in ("url", "sha256", "version")):
+        raise RuntimeError(f"malformed entitlement response: keys={sorted(payload)}")
+    return payload
 
 
 def _download_proprietary_wheel(
@@ -2862,7 +3294,12 @@ def _download_proprietary_wheel(
 
 
 def _install_proprietary_wheel(
-    python: str, wheel_path: Path, package: str, target_dir: str, ui: UI
+    python: str,
+    wheel_path: Path,
+    package: str,
+    target_dir: str,
+    ui: UI,
+    log_root: Path | None = None,
 ) -> bool:
     """Install one proprietary wheel using the L-82faa67c rmtree pattern.
 
@@ -2890,7 +3327,58 @@ def _install_proprietary_wheel(
         upgrade=False,
         quiet=False,
     )
-    return _run_quiet(cmd, timeout=180)
+    # PRD-INFRA-129 FR04: capture stderr (instead of routing to DEVNULL via
+    # _run_quiet) so a non-zero exit leaves a self-service diagnostic trail.
+    # The success path stays quiet (no warn, no log) — only failures surface.
+    try:
+        env = _build_pip_runtime_env(_pip_target_from_cmd(cmd))
+        result = subprocess.run(  # noqa: S603 -- installer runs its own pip
+            cmd,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=PROPRIETARY_PIP_INSTALL_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        _surface_proprietary_pip_failure(package, str(exc), target_dir, ui, log_root=log_root)
+        return False
+    if result.returncode == 0:
+        return True
+    _surface_proprietary_pip_failure(package, result.stderr or "", target_dir, ui, log_root=log_root)
+    return False
+
+
+def _surface_proprietary_pip_failure(
+    package: str, stderr: str, target_dir: str, ui: UI, log_root: Path | None = None
+) -> None:
+    """PRD-INFRA-129 FR04: warn with a stderr tail + write the full log.
+
+    Emits a ``ui.warn`` carrying up to ``PROPRIETARY_PIP_STDERR_TAIL_CHARS`` of
+    the captured stderr and writes the FULL stderr to
+    ``<target_dir>/.trw/logs/install-pip-fail-<package>.log`` so an operator can
+    diagnose a packaging break without reverse-engineering the installer
+    (NFR06). The proprietary pip command installs from a local ``--find-links``
+    wheel dir and never receives a license/API key in argv, so the captured
+    stderr carries no plaintext secret (NFR07).
+    """
+    # Prefer the PROJECT root (log_root) — the pip --target dir / cwd
+    # fallbacks predate project_dir threading and split records across trees.
+    logs_root = log_root or (Path(target_dir) if target_dir else Path.cwd())
+    log_path = logs_root / ".trw" / "logs" / f"install-pip-fail-{package}.log"
+    log_written = ""
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(stderr, encoding="utf-8")
+        log_written = str(log_path)
+    except OSError:
+        log_written = ""
+    tail = stderr[-PROPRIETARY_PIP_STDERR_TAIL_CHARS:] if stderr else ""
+    where = f" — full log: {log_written}" if log_written else ""
+    ui.warn(
+        f"pip install failed for {package}{where}\n"
+        f"  pip stderr (last {PROPRIETARY_PIP_STDERR_TAIL_CHARS} chars):\n{tail}"
+    )
 
 
 def phase_install_proprietary(
@@ -2903,9 +3391,16 @@ def phase_install_proprietary(
     backend_url: str,
     target_dir: str = "",
     auto_confirm: bool = False,
+    project_dir: Path | None = None,
 ) -> list[str]:
     """Install proprietary packages. Returns list of `<pkg> <version>` strings
     for packages that installed successfully.
+
+    ``target_dir`` is the pip ``--target`` directory (usually empty);
+    ``project_dir`` is the resolved project root — the ``.trw/`` tree where
+    the completion event and failure logs belong. Without it, both fall back
+    to cwd, which splits an install's records across two ``.trw/`` trees
+    whenever the installer runs from outside the project.
 
     Per PRD-INFRA-126 FR05, failure of any per-package step does NOT roll
     back the public install \u2014 the function logs the failure, counts it,
@@ -2965,7 +3460,9 @@ def phase_install_proprietary(
         for package, wheel, resolved_version, wheel_sha256 in downloaded:
             try:
                 ui.start_spinner(f"Installing {package}...")
-                if _install_proprietary_wheel(python, wheel, package, target_dir, ui):
+                if _install_proprietary_wheel(
+                    python, wheel, package, target_dir, ui, log_root=project_dir
+                ):
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
                     installed_meta.append(
@@ -2983,12 +3480,20 @@ def phase_install_proprietary(
                 failed_packages.append(package)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-    # PRD-INFRA-130 FR04: emit one structured event per phase invocation.
-    # ``target_dir`` here is the pip target directory string; when empty we
-    # fall back to the current working directory (matching how the public
-    # install phases resolve their write root).
-    events_root = Path(target_dir) if target_dir else Path.cwd()
+    # PRD-INFRA-130 FR04: emit one structured event per phase invocation,
+    # rooted at the PROJECT directory when known (never the pip --target dir).
+    events_root = project_dir or (Path(target_dir) if target_dir else Path.cwd())
     _emit_install_completed_event(events_root, installed_meta, failed_packages)
+    if failed_packages:
+        # Truthfulness: recap partial failure on the step surface (stderr in
+        # script/quiet modes) — mid-stream warnings alone are easy to miss.
+        # Exit stays 0 by design: proprietary failure never rolls back the
+        # public install (PRD-INFRA-126 FR05).
+        ui.step_fail(
+            f"Proprietary: {len(installed)}/{len(installed) + len(failed_packages)} "
+            f"packages installed — failed: {', '.join(failed_packages)} "
+            "(public install unaffected; logs in .trw/logs/)"
+        )
     # Re-write target-dir console scripts as PYTHONPATH wrappers so the bare
     # trw-distill/trw-loop/trw-swarm commands resolve their module under
     # --target (mirrors the bin/trw-mcp wrapper). No-op for non-target installs.
@@ -3056,7 +3561,6 @@ def write_proprietary_marker(
     """
     if not installed:
         return None
-    import json
 
     mapping: dict[str, str] = {}
     for entry in installed:
@@ -3398,7 +3902,7 @@ def _prompt_api_key(ui: UI) -> str:
             return raw
         remaining = max_attempts - attempt - 1
         if remaining > 0:
-            ui.step_warn("Invalid format (must start with trw_, alphanumeric only). Try again:")
+            ui.step_warn("Invalid format (must start with trw_ or trw_dk_, then base64url chars: letters, digits, _ or -). Try again:")
         else:
             ui.step_warn("Invalid format -- skipping API key")
     return ""
@@ -3449,6 +3953,13 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
         print()
         print(f"    {GREEN}{verification_uri_complete}{NC}")
         print()
+        # RFC 8628 UX: always show the user code so a headless/SSH user can
+        # enter it manually at verification_uri, and anyone can confirm the
+        # browser shows the SAME code before approving.
+        print(f"    Code: {BOLD}{user_code}{NC}")
+        if verification_uri and verification_uri != verification_uri_complete:
+            print(f"    {DIM}(no browser? visit {verification_uri} and enter the code){NC}")
+        print()
 
         def _open_bg() -> None:
             try:
@@ -3487,6 +3998,12 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return cast("dict[str, Any]", _json.loads(resp.read().decode("utf-8")))
         except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                # Transient server error (e.g. mid-deploy 502/503): back off
+                # and keep polling within the device-code deadline instead of
+                # silently abandoning the whole device-auth flow.
+                poll_interval = min(poll_interval * 2, 30)
+                continue
             err_code = ""
             try:
                 err_body = _json.loads(exc.read().decode("utf-8"))
@@ -3509,55 +4026,6 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
     return None
 
 
-# ── Per-client instruction file generation ────────────────────────────
-
-
-def _generate_per_client_instructions(
-    ui: UI,
-    target_dir: Path,
-    ide_selection: str,
-    is_update: bool,
-    python: str,
-    pip_target: str = "",
-) -> None:
-    """Generate per-client instruction files for selected IDEs.
-
-    Calls the TRW bootstrap functions to generate INSTRUCTIONS.md files
-    optimized for each selected IDE's model family (qwen, gpt, claude).
-
-    FR01, FR02, FR03: Split AGENTS.md into per-client instruction files
-    FR06, FR07: Wire per-client instruction generation into installer
-    """
-    import subprocess
-
-    trw_cmd = find_trw_cmd(python, pip_target=pip_target) + ["update-project", str(target_dir)]
-
-    if ide_selection == "all":
-        # Generate for all supported IDEs
-        trw_cmd.extend(["--ide", "all"])
-    else:
-        trw_cmd.extend(["--ide", ide_selection])
-
-    try:
-        result = subprocess.run(
-            trw_cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode == 0:
-            if is_update:
-                ui.step_ok("Per-client instruction files updated")
-            else:
-                ui.step_ok("Per-client instruction files generated")
-        else:
-            ui.step_warn("Instruction file generation encountered warnings")
-    except subprocess.TimeoutExpired:
-        ui.step_warn("Instruction file generation timed out (may still be running)")
-    except Exception as exc:
-        ui.step_warn(f"Failed to generate per-client instruction files: {exc}")
-
-
 # ── Main ─────────────────────────────────────────────────────────────
 
 
@@ -3573,7 +4041,7 @@ def main() -> None:
             "Examples:\n"
             "  python3 install-trw.py                       # Interactive\n"
             "  python3 install-trw.py --ai --telemetry      # With extras\n"
-            "  python3 install-trw.py --ide cursor-ide,codex,gemini\n"
+            "  python3 install-trw.py --ide cursor-ide,codex,antigravity-cli\n"
             "  python3 install-trw.py --script --no-ai      # Headless\n"
             "  python3 install-trw.py --upgrade             # Upgrade only\n"
             "  python3 install-trw.py --script --no-telemetry  # Headless, telemetry off\n"
@@ -3591,6 +4059,9 @@ def main() -> None:
             "         Without them, an --offline install on a clean env will fail.\n\n"
             "Security:\n"
             "  - Pass the API key via the TRW_API_KEY env var (kept out of argv).\n"
+            "  - --skip-auth is what the served install.sh bootstrap passes (the\n"
+            "    key arrives via TRW_API_KEY); in --script mode it is implicit\n"
+            "    since prompts never run.\n"
             "  - --break-system-packages is never silent; opt in with\n"
             "    --allow-system-python (prefer a venv/pipx instead).\n"
             "  - trw-mcp + trw-memory are source-available under BSL-1.1:\n"
@@ -3664,7 +4135,7 @@ def main() -> None:
     parser.add_argument(
         "--ide",
         default=None,
-        help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,gemini (prompted in interactive mode)",
+        help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,antigravity-cli (prompted in interactive mode)",
     )
     # ── Proprietary package install (PRD-INFRA-126) ──────────────────
     parser.add_argument(
@@ -3729,6 +4200,14 @@ def main() -> None:
     backend_url = args.backend_url or os.environ.get(
         "TRW_BACKEND_URL", "https://api.trwframework.com/v1"
     )
+    if args.offline and with_proprietary:
+        # The offline contract is "no network access"; the proprietary path is
+        # entitlement POST + wheel download. Fail fast rather than silently
+        # violating whichever flag the operator cared about.
+        parser.error(
+            "--offline cannot be combined with --with-proprietary: the "
+            "entitlement endpoint and wheel downloads require network access"
+        )
 
     # PRD-SEC-006-FR04: prefer the API key from the TRW_API_KEY environment
     # variable over --api-key. install.sh passes the key via env so it never
@@ -3791,9 +4270,13 @@ def main() -> None:
             backend_url=backend_url,
             prior_config=prior_config,
             ui=ui,
+            target_dir=target_dir,
         )
     except ValueError as exc:
-        parser.error(str(exc))
+        # PRD-INFRA-129 FR05/FR06: surface the actionable hint, NOT a raw
+        # argparse usage dump (parser.error prints usage + exits 2).
+        ui.error(str(exc))
+        sys.exit(2)
 
     if interactive:
         draw_divider("Preflight")
@@ -3847,9 +4330,12 @@ def main() -> None:
         step += 1
         memory_whl, mcp_whl = phase_extract_wheels(ui, step, total, tmpdir)
 
-        # Step 2: Install base packages
+        # Step 2: Install base packages. On a PEP 668 system Python that declined
+        # system mutation, this rebinds `python` to a dedicated fallback venv so
+        # every later phase (extras, project setup, emitted client MCP config)
+        # targets the interpreter where trw_mcp is importable.
         step += 1
-        phase_install_packages(
+        python = phase_install_packages(
             ui,
             step,
             total,
@@ -3858,7 +4344,7 @@ def main() -> None:
             mcp_whl,
             pip_target=args.pip_target,
             offline=args.offline,
-        )
+        ) or python
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
@@ -3872,6 +4358,7 @@ def main() -> None:
                 install_ai,
                 install_vec,
                 pip_target=args.pip_target,
+                offline=args.offline,
             )
 
         # Step 4 (conditional): Install proprietary packages (PRD-INFRA-126)
@@ -3888,6 +4375,7 @@ def main() -> None:
                 backend_url,
                 target_dir=args.pip_target,
                 auto_confirm=not interactive,
+                project_dir=target_dir,
             )
             write_proprietary_marker(target_dir, proprietary_installed)
             features.extend(proprietary_installed)
@@ -3943,7 +4431,7 @@ def main() -> None:
         ):
             if interactive:
                 ui.start_spinner("Checking backend connectivity...")
-            backend_results = _check_all_backends(target_dir, prior_config)
+            backend_results = _check_all_backends(target_dir)
             if interactive:
                 ui.stop_spinner(True, "Backend connectivity checked")
 
@@ -3980,7 +4468,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # main()'s finally already cleaned the temp dir; exit like a shell
+        # SIGINT (130) with a clean line instead of a raw traceback.
+        print(f"\n{YELLOW}[TRW]{NC} Installation aborted by user.", file=sys.stderr)
+        sys.exit(130)
 
 # ── Embedded wheel data (do not edit below this line) ────────────────
 # __MEMORY_WHEEL_DATA__

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._ceremony_helpers_support import config, trw_dir, write_installed_version  # noqa: F401
+from tests._ceremony_helpers_support import write_installed_version
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
@@ -27,6 +27,10 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
                 return_value={"enabled": False},
+            ),
+            patch(
+                "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
+                return_value={"runs_closed": [], "count": 0, "errors": []},
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -164,6 +168,34 @@ class TestRunAutoMaintenance:
 
         assert "embeddings_backfill" not in result
         assert result["embeddings_backfill_deferred"]["reason"] == "session_start_hot_path"
+
+    def test_wal_checkpoint_success_is_reported(self, trw_dir: Path, config: TRWConfig) -> None:
+        with (
+            patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
+            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={"enabled": False}),
+            patch(
+                "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",
+                return_value={"checkpointed": True, "pages": 4},
+            ),
+        ):
+            result = run_auto_maintenance(trw_dir, config)
+
+        assert result["wal_checkpoint"] == {"checkpointed": True, "pages": 4}
+
+    def test_wal_checkpoint_failure_is_isolated(self, trw_dir: Path, config: TRWConfig) -> None:
+        with (
+            patch(
+                "trw_mcp.state.auto_upgrade.check_for_update",
+                return_value={"available": True, "advisory": "upgrade available"},
+            ),
+            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={"enabled": False}),
+            patch("trw_mcp.state.memory_adapter.maybe_checkpoint_wal", side_effect=OSError("busy")),
+            patch("trw_mcp.tools._ceremony_helpers.logger") as logger,
+        ):
+            result = run_auto_maintenance(trw_dir, config)
+
+        assert result["update_advisory"] == "upgrade available"
+        logger.warning.assert_any_call("maintenance_wal_checkpoint_failed", exc_info=True)
 
     def test_version_sentinel_mismatch_injects_advisory(
         self,

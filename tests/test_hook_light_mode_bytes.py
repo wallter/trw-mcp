@@ -18,6 +18,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 HOOK = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks" / "phase-cycle-stop.sh"
+SESSION_HOOK = HOOK.with_name("session-start.sh")
+POLICY_GATED_HOOKS = (SESSION_HOOK, HOOK.with_name("post-compact.sh"), HOOK.with_name("post-tool-event.sh"))
 
 
 def _run_hook(env_overrides: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
@@ -26,6 +28,32 @@ def _run_hook(env_overrides: dict[str, str], cwd: Path) -> subprocess.CompletedP
     return subprocess.run(
         ["/bin/sh", str(HOOK)],
         input=b"",
+        env=env,
+        cwd=str(cwd),
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def _run_session_hook(cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)}
+    return subprocess.run(
+        ["/bin/sh", str(SESSION_HOOK)],
+        input=b'{"source":"startup"}',
+        env=env,
+        cwd=str(cwd),
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def _run_named_hook(hook: Path, cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)}
+    return subprocess.run(
+        ["/bin/sh", str(hook)],
+        input=b'{"source":"startup","tool_name":"Write","tool_input":{"file_path":"x.py"}}',
         env=env,
         cwd=str(cwd),
         capture_output=True,
@@ -72,3 +100,74 @@ def test_hook_env_file_sourced_propagates_hooks_enabled(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0
     assert proc.stdout == b"", f"expected silence after sourcing hook-env.sh, got {proc.stdout!r}"
+
+
+@pytest.mark.parametrize("hook", POLICY_GATED_HOOKS, ids=lambda path: path.name)
+def test_generated_policy_disables_each_shipped_runtime_hook(hook: Path, tmp_path: Path) -> None:
+    """FR05: every shipped runtime hook exits before output or side effects."""
+    runtime = tmp_path / ".trw" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "hook-env.sh").write_text("export HOOKS_ENABLED=false\n", encoding="utf-8")
+
+    proc = _run_named_hook(hook, tmp_path)
+
+    assert proc.returncode == 0
+    assert proc.stdout == b""
+    assert not list((tmp_path / ".trw").rglob("events.jsonl"))
+
+
+def test_init_installed_hooks_honor_generated_policy(tmp_path: Path) -> None:
+    """FR05 default path: init-installed hook copies are silent and side-effect free."""
+    from trw_mcp.bootstrap._init_project import _install_hooks
+
+    (tmp_path / ".claude" / "hooks").mkdir(parents=True)
+    result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
+    _install_hooks(tmp_path, True, result)
+    assert result["errors"] == []
+
+    runtime = tmp_path / ".trw" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "hook-env.sh").write_text("export HOOKS_ENABLED=false\n", encoding="utf-8")
+    for source_hook in (*POLICY_GATED_HOOKS, HOOK):
+        installed = tmp_path / ".claude" / "hooks" / source_hook.name
+        proc = _run_named_hook(installed, tmp_path)
+        assert proc.returncode == 0, installed.name
+        assert proc.stdout == b"", installed.name
+    assert not list((tmp_path / ".trw").rglob("events.jsonl"))
+
+
+def test_light_profile_stdout_is_less_than_half_of_full_profile(tmp_path: Path) -> None:
+    """FR09 measures the shipped hook with real generated-policy semantics."""
+    runtime = tmp_path / ".trw" / "runtime"
+    runtime.mkdir(parents=True)
+    env_file = runtime / "hook-env.sh"
+
+    env_file.write_text("export HOOKS_ENABLED=true\nexport NUDGE_ENABLED=true\n", encoding="utf-8")
+    full = _run_session_hook(tmp_path)
+    assert full.returncode == 0
+    assert len(full.stdout) > 0, "full profile fixture must exercise observable hook output"
+
+    env_file.write_text("export HOOKS_ENABLED=false\nexport NUDGE_ENABLED=false\n", encoding="utf-8")
+    light = _run_session_hook(tmp_path)
+    assert light.returncode == 0
+    assert len(light.stdout) < len(full.stdout) * 0.5
+
+
+def test_disabled_hook_is_silent_while_protected_instructions_keep_gate(tmp_path: Path) -> None:
+    """QUAL-113 FR05: optional hook absence cannot remove lifecycle truth."""
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
+
+    proc = _run_hook({"HOOKS_ENABLED": "false", "CLAUDE_PROJECT_DIR": str(tmp_path)}, tmp_path)
+    protected = render_deliver_gate_statement()
+
+    assert proc.returncode == 0
+    assert proc.stdout == b""
+    assert "Call `trw_session_start()` first." in protected
+    assert "Do NOT call `trw_deliver` unless" in protected
+
+
+def test_default_hook_assets_never_recommend_bypassing_host_trust() -> None:
+    hook_root = HOOK.parent
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in hook_root.glob("*.sh"))
+
+    assert "dangerously-bypass-hook-trust" not in combined

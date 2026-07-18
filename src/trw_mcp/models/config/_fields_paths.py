@@ -1,11 +1,10 @@
-"""Directory structure, project source paths, platform, and MCP transport fields.
+"""Directory structure, project source paths, and platform fields.
 
-Covers sections 13, 27, 37, 38, 40 of the original _main_fields.py:
+Covers sections 13, 27, 37, 38 of the original _main_fields.py:
   - Directory structure & paths
   - Project source paths
   - Platform & update channel
   - Knowledge topology (CORE-021)
-  - MCP transport
 """
 
 from __future__ import annotations
@@ -65,51 +64,19 @@ class _PathsFields:
     deliver_graph_backfill_enabled: bool = True
     deliver_graph_backfill_deadline_seconds: float = Field(default=2.0, ge=0.0)
 
-    # -- MCP transport --
+    # -- Version drift check --
 
-    mcp_transport: str = "stdio"
-    mcp_host: str = "127.0.0.1"
-    mcp_port: int = 8100
-    mcp_startup_wait_seconds: int = Field(
-        default=120,
-        ge=1,
+    version_check_interval_seconds: float = Field(
+        default=300.0,
+        ge=0.0,
         description=(
-            "Seconds a stdio proxy waits for the shared HTTP MCP server to bind its port. "
-            "Large workspaces can spend 30s+ in boot-time stale-run cleanup before Uvicorn listens."
+            "Interval (seconds) between cached booted-vs-installed trw-mcp version-drift "
+            "checks on the tool-call middleware path (PRD-CORE-215-FR02). The narrow comparator "
+            "(booted trw_mcp.__version__ vs importlib.metadata.version('trw-mcp')) is recomputed "
+            "lazily at most once per interval, so it never adds measurable hot-path latency. On "
+            "drift a non-blocking advisory is attached to the tool result once per drift value per "
+            "session; 0 rechecks on every call."
         ),
-    )
-    mcp_proxy_handshake_timeout_seconds: float = Field(
-        default=8.0,
-        ge=0.1,
-        description=(
-            "Total seconds a foreground stdio proxy may spend on remote HTTP MCP initialize/tools/resources/"
-            "prompts discovery before retrying. The default keeps three attempts plus backoff below common 30s "
-            "client reconnect windows."
-        ),
-    )
-    mcp_proxy_request_timeout_seconds: float = Field(
-        default=60.0,
-        ge=0.5,
-        description=(
-            "Per-tool-call read timeout (seconds) for the foreground stdio proxy's forwarded MCP requests to the "
-            "shared HTTP server. Bounds the session-level wait so a restarted/replaced backend fails fast with a "
-            "REQUEST_TIMEOUT McpError instead of hanging the agent indefinitely (PRD-FIX-106). Tune higher for "
-            "workspaces with legitimately long tool calls."
-        ),
-    )
-    mcp_http_rate_limit_enabled: bool = Field(
-        default=True,
-        description="Enable local HTTP MCP token-bucket request limiting for loopback transports.",
-    )
-    mcp_http_rate_limit_capacity: int = Field(
-        default=120,
-        ge=1,
-        description="Maximum burst size for local HTTP MCP token-bucket request limiting.",
-    )
-    mcp_http_rate_limit_refill_per_second: float = Field(
-        default=20.0,
-        ge=0.1,
-        description="Token refill rate per second for local HTTP MCP request limiting.",
     )
 
     # -- Pin isolation & stale-run lifecycle (PRD-CORE-141 FR13) --
@@ -140,6 +107,17 @@ class _PathsFields:
     cleanup_on_boot: bool = Field(
         default=True,
         description="When True, the MCP server runs the stale-pin + stale-run sweep on startup.",
+    )
+    boot_gc_deferred: bool = Field(
+        default=True,
+        description=(
+            "When True, the boot-time stale-run + stale-pin sweep runs in a daemon "
+            "background thread ('trw-boot-gc') instead of synchronously before the MCP "
+            "initialize handshake, so large repos do not stall client connect (production "
+            "feedback sub_psVs_nUWnLJGvOs3). Set False to force the legacy synchronous "
+            "pre-transport sweep for deterministic startup ordering. Independent of "
+            "cleanup_on_boot, which gates whether the sweep runs at all."
+        ),
     )
     checkpoint_suggest_hours: int = Field(
         default=4,

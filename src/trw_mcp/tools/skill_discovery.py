@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import structlog
@@ -17,6 +17,7 @@ from trw_mcp.models.skill_manifest import (
     SkillValidationMode,
     validate_skill_markdown,
 )
+from trw_mcp.tools._skill_lifecycle import SkillLifecycleState, is_advertisable
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +57,7 @@ def discover_meta_skills(
     include_private: bool = False,
     active_cap: int | None = None,
     session_id: str = "",
+    lifecycle_states: Mapping[str, SkillLifecycleState] | None = None,
 ) -> SkillDiscoveryResult:
     """Return ranked eligible skills from SKILL.md paths without executing them.
 
@@ -69,6 +71,11 @@ def discover_meta_skills(
       true, one append-only ``SkillSurfaceEvent`` is written per RETURNED
       candidate (after the cap). When the flag is false (default), zero events
       are written and the returned tuple is byte-for-byte identical to today.
+
+    PRD-CORE-218-FR07: ``lifecycle_states`` maps a skill name to its lifecycle
+    state. When supplied, skills whose state is NOT advertisable (retired,
+    removed, or hidden) are withheld — discovery stops advertising a skill on its
+    way out. ``None`` (default) preserves the prior behavior exactly.
     """
 
     candidates: list[SkillDiscoveryCandidate] = []
@@ -89,6 +96,12 @@ def discover_meta_skills(
             continue
         if not _eligible(validation.manifest, include_private=include_private):
             continue
+
+        # FR07: a retired/removed/hidden skill is no longer advertised by discovery.
+        if lifecycle_states is not None:
+            state = lifecycle_states.get(validation.manifest.name)
+            if state is not None and not is_advertisable(state):
+                continue
 
         candidates.append(_candidate(skill_path, validation.manifest, query_terms))
 
@@ -141,6 +154,23 @@ def _maybe_log_surface_events(
         logger.debug("skill_surface_tracking_skipped", exc_info=True)
 
 
+def _load_lifecycle_states() -> Mapping[str, SkillLifecycleState]:
+    """Load persisted lifecycle states for the advertising filter (FR07 wiring).
+
+    The store loader is itself fail-open (missing/corrupt -> empty + WARN), but
+    this wrapper adds a final belt-and-suspenders guard so an unexpected import
+    or resolution error still degrades to "advertise everything" rather than
+    breaking discovery. An empty map is a no-op filter in ``discover_meta_skills``.
+    """
+    try:
+        from trw_mcp.state.skill_lifecycle_store import load_lifecycle_states
+
+        return load_lifecycle_states()
+    except Exception:  # trw:intentional fail-open: lifecycle load must not block discovery
+        logger.warning("skill_lifecycle_states_load_skipped", exc_info=True)
+        return {}
+
+
 def register_skill_discovery_tools(server: FastMCP) -> None:
     """Register read-only skill discovery MCP tools."""
 
@@ -176,6 +206,7 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
             mode=mode,
             include_private=include_private,
             active_cap=active_cap,
+            lifecycle_states=_load_lifecycle_states(),
         ).model_dump(mode="json")
 
 
@@ -208,7 +239,11 @@ def _candidate(path: Path, manifest: SkillManifest, query_terms: frozenset[str])
     if manifest.name.lower() in query_terms:
         score += 2.0
 
-    reasons = ["eligible for meta-discovery"]
+    # "eligible for meta-discovery" is implied by list membership (a candidate
+    # only exists here because ``_eligible`` already passed), so it carries zero
+    # per-candidate signal — omit it and surface only the genuine query-match
+    # reason when present.
+    reasons: list[str] = []
     if matched_terms:
         reasons.append(f"query matched: {', '.join(matched_terms)}")
 

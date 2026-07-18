@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
+from tests._tools_learning_shared import (
+    _CFG,
+    _entries_dir,
+    _get_tools,
+    set_project_root,  # noqa: F401 -- autouse fixture disables dedup (f4ca661c9 flipped embeddings_enabled default True)
+)
 from trw_mcp.state.persistence import FileStateReader
 
 
@@ -14,18 +19,18 @@ class TestToolDocstrings:
     def test_trw_learn_docstring_includes_quality_gate_and_tiers(self) -> None:
         tools = _get_tools()
         doc = tools["trw_learn"].fn.__doc__ or ""
-        normalized_doc = " ".join(doc.split())
 
-        assert "Only record learnings that:" in doc
-        assert "prevent repeated mistakes" in doc
+        # Quality-gate guidance present (phrasing condensed to satisfy the
+        # PRD-CORE-125 200-word tool-description gate; the intent -- record only
+        # behavior-changing learnings, routine observations degrade recall -- is
+        # unchanged).
+        assert "Record only learnings that" in doc
         assert "Routine observations" in doc
+        assert "degrade recall quality" in doc
+        # Field tiers still documented.
         assert "Required:" in doc
         assert "Recommended:" in doc
         assert "Advanced (auto-detected if omitted):" in doc
-        assert (
-            "Most learnings need only summary and detail. Adding tags and impact "
-            "improves recall precision. All other fields are auto-detected."
-        ) in normalized_doc
 
     def test_trw_instructions_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()

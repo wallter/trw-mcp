@@ -205,7 +205,6 @@ class TestFullSyncNoEmptySectionHeaders:
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
         ):
             from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 
@@ -259,7 +258,6 @@ class TestFullSyncNoUnreplacedMarkers:
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
         ):
             from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 
@@ -292,7 +290,7 @@ class TestFullSyncNoUnreplacedMarkers:
         target = tmp_path / "CLAUDE.md"
         target.write_text("# Test\n", encoding="utf-8")
 
-        config = TRWConfig(trw_dir=str(trw_dir))
+        config = TRWConfig(trw_dir=str(trw_dir), instruction_externalize="off")
         memory_cfg = MemoryConfig(storage_backend="yaml", storage_path=str(tmp_path / ".memory"))
         reader = FileStateReader()
         llm = MagicMock()
@@ -318,7 +316,6 @@ class TestFullSyncNoUnreplacedMarkers:
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.claude_md._static_sections.MemoryConfig", return_value=memory_cfg),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
         ):
             from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 
@@ -501,13 +498,7 @@ class TestMergeTrwSectionNeverGluesMarker:
     """
 
     def _section_no_leading_newline(self) -> str:
-        return (
-            f"{TRW_AUTO_COMMENT}\n"
-            f"{TRW_MARKER_START}\n"
-            "\n"
-            "TRW body.\n"
-            f"{TRW_MARKER_END}\n"
-        )
+        return f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\nTRW body.\n{TRW_MARKER_END}\n"
 
     def test_append_path_no_glue(self, tmp_path: Path) -> None:
         target = tmp_path / "AGENTS.md"

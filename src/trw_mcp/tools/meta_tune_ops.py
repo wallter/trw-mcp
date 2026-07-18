@@ -8,7 +8,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from trw_mcp.meta_tune.dispatch import promote_candidate
+from trw_mcp.meta_tune.promote import promote_candidate
 from trw_mcp.meta_tune.rollback import rollback_proposal
 from trw_mcp.meta_tune.surface_registry import classify_path
 
@@ -54,7 +54,7 @@ def register_meta_tune_tools(server: FastMCP) -> None:
         promotion_session_id: str | None = None,
         state_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Promote a meta-tune candidate through the SAFE-001 dispatch path.
+        """Promote a meta-tune candidate through the SAFE-001 promotion path.
 
         Use when an operator (or proposer agent) has produced a candidate
         prompt/config update and wants to run it through sandbox + reviewer

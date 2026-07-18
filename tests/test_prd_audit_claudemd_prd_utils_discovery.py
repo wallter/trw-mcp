@@ -145,6 +145,60 @@ class TestNextPrdSequence:
         result = next_prd_sequence(prds_dir, "CORE")
         assert result == 3
 
+    def test_suffixed_filename_owns_its_sequence(self, tmp_path: Path) -> None:
+        """PRD-QUAL-121-FR02: suffixed stems must be counted — the pre-fix parser
+        skipped them, so the allocator re-issued their identifiers (the root cause
+        of the 13 duplicate-ID pairs in the 2026-07-11 baseline census)."""
+        prds_dir = tmp_path / "prds"
+        prds_dir.mkdir()
+        (prds_dir / "PRD-CORE-002.md").write_text("---\nid: x\n---\n")
+        (prds_dir / "PRD-CORE-153-registry-hygiene.md").write_text("---\nid: x\n---\n")
+        assert next_prd_sequence(prds_dir, "CORE") == 154
+
+
+class TestFindIdentityCollisions:
+    """PRD-QUAL-121-FR02: shared collision rule for allocation."""
+
+    def test_exact_and_suffixed_and_archived_owners_conflict(self, tmp_path: Path) -> None:
+        from trw_mcp.state.prd_utils import find_identity_collisions
+
+        prds_dir = tmp_path / "prds"
+        prds_dir.mkdir()
+        archive = tmp_path / "archive" / "prds"
+        archive.mkdir(parents=True)
+        exact = prds_dir / "PRD-CORE-153.md"
+        exact.write_text("---\nprd:\n  id: PRD-CORE-153\n---\n")
+        suffixed = archive / "PRD-CORE-153-registry-hygiene.md"
+        suffixed.write_text("---\nprd:\n  id: PRD-CORE-153\n---\n")
+
+        conflicts = find_identity_collisions(prds_dir, "PRD-CORE-153")
+        assert str(exact) in conflicts and str(suffixed) in conflicts
+
+    def test_frontmatter_claimed_id_conflicts_despite_foreign_filename(self, tmp_path: Path) -> None:
+        """Re-audit finding 1 (2026-07-11): the fixture must NOT match the old
+        PRD-*.md glob, or the test cannot detect a revert of the *.md widening."""
+        from trw_mcp.state.prd_utils import find_identity_collisions
+
+        prds_dir = tmp_path / "prds"
+        prds_dir.mkdir()
+        # Genuinely foreign-named: no PRD- prefix at all.
+        renamed = prds_dir / "registry-hygiene-notes.md"
+        renamed.write_text("---\nprd:\n  id: PRD-CORE-153\n  title: Renamed\n---\n")
+        assert find_identity_collisions(prds_dir, "PRD-CORE-153") == [str(renamed)]
+        # And the PRD-prefixed variant still conflicts (pre-fix behavior kept).
+        prefixed = prds_dir / "PRD-CORE-999.md"
+        prefixed.write_text("---\nprd:\n  id: PRD-CORE-153\n  title: Renamed2\n---\n")
+        assert str(prefixed) in find_identity_collisions(prds_dir, "PRD-CORE-153")
+
+    def test_free_id_and_prefix_lookalike_do_not_conflict(self, tmp_path: Path) -> None:
+        from trw_mcp.state.prd_utils import find_identity_collisions
+
+        prds_dir = tmp_path / "prds"
+        prds_dir.mkdir()
+        # PRD-CORE-1530 is NOT owned by PRD-CORE-153 (name-boundary rule).
+        (prds_dir / "PRD-CORE-1530.md").write_text("---\nprd:\n  id: PRD-CORE-1530\n---\n")
+        assert find_identity_collisions(prds_dir, "PRD-CORE-153") == []
+
 
 class TestDiscoverGoverningPrdsExceptionHandlers:
     """Cover prd_utils.py lines 365-366 and 376-377: exception handlers."""

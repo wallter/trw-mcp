@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import get_tools_sync
+from tests.conftest import _join_and_reset_deferred, get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
 
@@ -204,6 +204,11 @@ class TestDeliverAutoPrune:
             try:
                 analytics_mod_state.auto_prune_excess_entries = mock_prune
                 fn(skip_reflect=False, skip_index_sync=False)
+                # trw_deliver runs auto_prune on a DAEMON thread. Join it before the
+                # patch is torn down, or the thread reads the restored original and
+                # mock_prune.call_args is None. conftest's autouse join happens after
+                # the assertions, which made this test load-flaky.
+                _join_and_reset_deferred()
             finally:
                 analytics_mod_state.auto_prune_excess_entries = original
 

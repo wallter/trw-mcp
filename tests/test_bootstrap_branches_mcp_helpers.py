@@ -170,8 +170,31 @@ enabled = true
 
         assert not any("does not enable hooks" in w for w in result["warnings"])
 
+    def test_codex_legacy_generated_agent_model_pin_warns_without_rewrite(self, tmp_path: Path) -> None:
+        """Old generated pins are reported, while the user-editable file is preserved."""
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}}}), encoding="utf-8")
+        codex_dir = tmp_path / ".codex"
+        agents_dir = codex_dir / "agents"
+        agents_dir.mkdir(parents=True)
+        (codex_dir / "config.toml").write_text(
+            '[mcp_servers.trw]\ncommand = "trw-mcp"\nenabled = true\n',
+            encoding="utf-8",
+        )
+        agent_path = agents_dir / "trw-reviewer.toml"
+        original = 'name = "trw_reviewer"\nmodel = "gpt-5.4"\n'
+        agent_path.write_text(original, encoding="utf-8")
+
+        result: dict[str, list[str]] = {"warnings": []}
+        _verify_installation(tmp_path, result)
+
+        warnings = "\n".join(result["warnings"])
+        assert "trw-reviewer.toml pins legacy generated model gpt-5.4" in warnings
+        assert "Remove the model key to inherit" in warnings
+        assert agent_path.read_text(encoding="utf-8") == original
+
     def test_codex_direct_trw_http_url_warns(self, tmp_path: Path) -> None:
-        """Codex TRW MCP should use the stdio proxy so shared-HTTP mode still autostarts."""
+        """A legacy direct-HTTP Codex TRW entry should be flagged — stdio is the only transport."""
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}}}), encoding="utf-8")
         codex_dir = tmp_path / ".codex"

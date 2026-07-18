@@ -319,7 +319,7 @@ def test_novel_arg_pattern_uses_persisted_baseline_not_process_local_first_seen(
         )
     )
     second = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
-    assert "novel_arg_pattern" not in second.observe(
+    second_fired = second.observe(
         AnomalyObservation(
             ts=datetime.now(tz=timezone.utc),
             server="filesystem",
@@ -329,3 +329,5 @@ def test_novel_arg_pattern_uses_persisted_baseline_not_process_local_first_seen(
             args_hash=arg_hash,
         )
     )
+    assert "novel_arg_pattern" not in second_fired
+    assert "first_observation_after_deploy" not in second_fired

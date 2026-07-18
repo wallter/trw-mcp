@@ -197,13 +197,27 @@ def _extract_trw_block(content: str) -> str | None:
 
 
 def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.state.claude_md._instruction_carrier import (
+        InstructionFileClass,
+        classify_instruction_file,
+    )
+
     present: list[str] = []
     missing_gate: list[str] = []
+    pointers: list[str] = []  # PRD-CORE-203 FR07: single-source pointers left un-clobbered
     for rel in _INSTRUCTION_FILES:
         path = target / rel
         if not path.is_file():
             continue
         present.append(rel)
+        # PRD-CORE-203 FR07: a single-source pointer (e.g. CLAUDE.md == @AGENTS.md)
+        # correctly carries no inline TRW block — report it as un-clobbered and skip
+        # the deliver-gate assertion (the gate lives in the pointed-to file).
+        classification = classify_instruction_file(path)
+        if classification.kind is InstructionFileClass.POINTER:
+            targets = ", ".join(classification.import_targets)
+            pointers.append(f"{rel} -> {targets}" if targets else rel)
+            continue
         try:
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -221,16 +235,19 @@ def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
             "WARN",
             "no TRW instruction surface present yet (run 'trw-mcp init-project .').",
         )
+    pointer_note = (
+        f" {len(pointers)} single-source pointer(s) left un-clobbered: {'; '.join(pointers)}." if pointers else ""
+    )
     if missing_gate:
         return CheckResult(
             "instruction_surface",
             "FAIL",
-            f"deliver-gate statement absent from TRW block in: {', '.join(missing_gate)}.",
+            f"deliver-gate statement absent from TRW block in: {', '.join(missing_gate)}.{pointer_note}",
         )
     return CheckResult(
         "instruction_surface",
         "PASS",
-        f"deliver-gate statement present in {len(present)} surface(s): {', '.join(present)}.",
+        f"deliver-gate statement present in {len(present)} surface(s): {', '.join(present)}.{pointer_note}",
     )
 
 
@@ -254,6 +271,18 @@ def _check_trw_dir(target: Path, _config: TRWConfig) -> CheckResult:
         except OSError as exc:
             return CheckResult("trw_dir", "FAIL", f"{config_path} is unreadable: {exc}")
     return CheckResult("trw_dir", "PASS", f"{trw} present and readable.")
+
+
+def _check_framework_integrity(target: Path, config: TRWConfig) -> CheckResult:
+    """Verify effective version pins, deployed bodies, and deployment stamp."""
+    from trw_mcp.server._doctor_framework_integrity import check_framework_integrity
+
+    status, message = check_framework_integrity(
+        target,
+        framework_version=config.framework_version,
+        aaref_version=config.aaref_version,
+    )
+    return CheckResult("framework_integrity", cast("DoctorStatus", status), message)
 
 
 # ── FR-09: memory backend health (read-only) ─────────────────────────────────
@@ -404,6 +433,7 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("profile", "_check_profile"),
     ("instruction_surface", "_check_instruction_gate"),
     ("trw_dir", "_check_trw_dir"),
+    ("framework_integrity", "_check_framework_integrity"),
     ("memory_backend", "_check_memory_backend"),
     ("backend_connectivity", "_check_backend_connectivity"),
     ("installer_flag_advisory", "_check_installer_flag_advisory"),

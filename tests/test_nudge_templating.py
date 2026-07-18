@@ -183,6 +183,57 @@ def test_claude_code_profile_runtime_renders_claude_code() -> None:
     assert "Claude Code" in rendered
 
 
+@pytest.mark.parametrize("count", [0, 3, 5])
+def test_static_nudge_message_contract_is_bounded_and_single_step(count: int) -> None:
+    """QUAL-113 FR06: normal static nudges stay concise and avoid multi-step scripts."""
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+    from trw_mcp.state._nudge_state import CeremonyState
+
+    profile = resolve_client_profile("codex")
+    for step in ("session_start", "checkpoint", "build_check", "review", "deliver"):
+        state = CeremonyState(
+            files_modified_since_checkpoint=12,
+            learnings_this_session=3,
+            nudge_counts={step: count},
+        )
+        rendered = _select_nudge_message(step, state, available_learnings=8, profile=profile)
+        assert len(rendered) <= 280, f"{step}/{count} exceeds the normal-message ceiling"
+        assert not ("NEXT:" in rendered and "THEN:" in rendered)
+        assert "classified as" not in rendered.lower()
+
+
+def test_context_reactive_message_contract_is_bounded_and_single_step() -> None:
+    """QUAL-113 FR06: tool-result nudges provide one immediate next action."""
+    from trw_mcp.state._nudge_messages import _context_reactive_message
+    from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
+
+    contexts = [
+        NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=True),
+        NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=False),
+        NudgeContext(tool_name=ToolName.REVIEW, review_p0_count=2),
+        *(
+            NudgeContext(tool_name=tool)
+            for tool in (
+                ToolName.CHECKPOINT,
+                ToolName.LEARN,
+                ToolName.SESSION_START,
+                ToolName.DELIVER,
+                ToolName.INIT,
+                ToolName.RECALL,
+                ToolName.STATUS,
+                ToolName.PRD_CREATE,
+                ToolName.PRD_VALIDATE,
+            )
+        ),
+    ]
+    for context in contexts:
+        rendered = _context_reactive_message(context, CeremonyState(), ceremony_mode="full")
+        assert rendered is not None
+        assert len(rendered) <= 280, f"{context.tool_name} exceeds the normal-message ceiling"
+        assert not ("NEXT:" in rendered and "THEN:" in rendered)
+        assert "classified as" not in rendered.lower()
+
+
 def test_profile_none_preserves_placeholders_via_fallback() -> None:
     """FR12: profile=None falls back and still returns a usable string."""
     from trw_mcp.state._nudge_messages import _select_nudge_message
@@ -218,8 +269,7 @@ def test_all_builtin_profiles_have_non_empty_display_name() -> None:
         "cursor-cli",
         "codex",
         "copilot",
-        "gemini",
-        "aider",
+        "antigravity-cli",
     ):
         profile = resolve_client_profile(client_id)
         assert profile.display_name, f"profile '{client_id}' has empty display_name"

@@ -146,3 +146,41 @@ def test_full_validation_penalizes_missing_hardened_dod_surfaces() -> None:
     strong_result = validate_prd_quality_v2(strong)
 
     assert strong_result.total_score > weak_result.total_score
+
+
+def test_readiness_base_score_is_verification_method_neutral() -> None:
+    """PRD-QUAL-114-FR03: complete test/analysis/inspection/demonstration mappings
+    earn equal base implementation-readiness credit."""
+    from trw_mcp.state.validation._prd_scoring_readiness import score_implementation_readiness
+
+    content = "## 4. Functional Requirements\n\n### PRD-CORE-901-FR01: Behavior\nThe system shall behave.\n"
+
+    def _frontmatter(method: str) -> dict[str, object]:
+        return {
+            "category": "CORE",
+            "template_version": "3.2",
+            "status": "draft",
+            "verification": {
+                "mappings": [
+                    {
+                        "requirement_id": "PRD-CORE-901-FR01",
+                        "acceptance_criteria": ["Given X, When Y, Then Z"],
+                        "method": method,
+                        "evidence_artifact": "tests/test_x.py::test_x",
+                        "pass_condition": "observed value equals target",
+                        "automated": True,
+                    }
+                ]
+            },
+        }
+
+    scores = {
+        method: score_implementation_readiness(_frontmatter(method), content).score
+        for method in ("test", "analysis", "inspection", "demonstration")
+    }
+    # Base readiness must not vary by declared verification method.
+    assert len(set(scores.values())) == 1, f"method bias in base readiness: {scores}"
+    # The method-neutral mapping coverage is exposed as an explicit diagnostic.
+    detail = score_implementation_readiness(_frontmatter("analysis"), content).details
+    assert detail["verification_design_ratio"] == 1.0
+    assert detail["verification_design_semantics"] == "planned_method_neutral"

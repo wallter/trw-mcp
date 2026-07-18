@@ -20,9 +20,10 @@ In every row an explicit ``instruction_size_gate_mode`` in config wins.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 
 import structlog
+from typing_extensions import TypedDict
 
 logger = structlog.get_logger(__name__)
 

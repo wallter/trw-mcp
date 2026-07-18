@@ -13,10 +13,11 @@ This module is a thin orchestrator.  Implementation lives in:
 from __future__ import annotations
 
 import shutil
-import tempfile
 from pathlib import Path
 
 import structlog
+
+from ._client_integrations import run_update_integrations
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules — REQUIRED for backward compatibility.
@@ -117,7 +118,6 @@ from ._template_updater import (
     _update_copilot_artifacts as _update_copilot_artifacts,
     _update_cursor_artifacts as _update_cursor_artifacts,
     _update_framework_files as _update_framework_files,
-    _update_gemini_artifacts as _update_gemini_artifacts,
     _update_hooks as _update_hooks,
     _update_mcp_config as _update_mcp_config,
     _update_opencode_artifacts as _update_opencode_artifacts,
@@ -152,28 +152,16 @@ from ._version_migration import (
     _remove_stale_set as _remove_stale_set,
     _write_manifest as _write_manifest,
 )
+from ._version_manifest import _manifest_content_hashes as _manifest_content_hashes
+from ._update_transaction import (
+    _TRANSACTION_DIRS as _TRANSACTION_DIRS,
+    _TRANSACTION_FILES as _TRANSACTION_FILES,
+    _remove_transaction_path as _remove_transaction_path,
+    _restore_transaction_snapshot as _restore_transaction_snapshot,
+    _snapshot_transaction_paths as _snapshot_transaction_paths,
+)
 
 logger = structlog.get_logger(__name__)
-
-_TRANSACTION_DIRS: tuple[str, ...] = (
-    ".trw",
-    ".claude",
-    ".codex",
-    ".cursor",
-    ".opencode",
-    ".github",
-    ".gemini",
-    ".antigravitycli",
-)
-_TRANSACTION_FILES: tuple[str, ...] = (
-    ".mcp.json",
-    "AGENTS.md",
-    "ANTIGRAVITY.md",
-    "CLAUDE.md",
-    "FRAMEWORK.md",
-    "GEMINI.md",
-    "opencode.json",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -194,43 +182,6 @@ def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
     if dry_run:
         result["warnings"].append("DRY RUN — no files will be modified.")
     return result
-
-
-def _remove_transaction_path(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.is_dir():
-        shutil.rmtree(path)
-
-
-def _snapshot_transaction_paths(target_dir: Path) -> Path:
-    snapshot_root = Path(tempfile.mkdtemp(prefix="trw-update-snapshot-"))
-    for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
-        src = target_dir / rel
-        if not src.exists() and not src.is_symlink():
-            continue
-        dest = snapshot_root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir() and not src.is_symlink():
-            shutil.copytree(src, dest, symlinks=True)
-        else:
-            shutil.copy2(src, dest, follow_symlinks=False)
-    return snapshot_root
-
-
-def _restore_transaction_snapshot(target_dir: Path, snapshot_root: Path) -> None:
-    for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
-        dest = target_dir / rel
-        if dest.exists() or dest.is_symlink():
-            _remove_transaction_path(dest)
-        src = snapshot_root / rel
-        if not src.exists() and not src.is_symlink():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir() and not src.is_symlink():
-            shutil.copytree(src, dest, symlinks=True)
-        else:
-            shutil.copy2(src, dest, follow_symlinks=False)
 
 
 def _generate_behavioral_protocol_md(
@@ -271,8 +222,17 @@ def _run_core_update_phases(
     result: dict[str, list[str]],
     dry_run: bool,
     on_progress: ProgressCallback,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Execute core update phases (framework files, config, cleanup)."""
+    """Execute core update phases (framework files, config, cleanup).
+
+    PRD-FIX-068-FR05: the *prior* install/update manifest's content hashes
+    (*manifest_hashes*, read in :func:`update_project` BEFORE any files are
+    rewritten) are threaded into ``_update_framework_files`` → ``_update_agents``
+    so genuinely user-edited agents are detected on the live update path and
+    preserved (reported in ``result['modified']``) instead of being silently
+    overwritten. The NEW manifest is still written later in the post-update phase.
+    """
     if not dry_run:
         from . import _TRW_DIRS
 
@@ -281,7 +241,7 @@ def _run_core_update_phases(
 
     if on_progress:
         on_progress("Phase", "Updating framework files...")
-    _update_framework_files(target_dir, effective_data, result, dry_run, on_progress)
+    _update_framework_files(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
 
     # PRD-CORE-093 FR03: Generate behavioral_protocol.md for session-start hook
     _generate_behavioral_protocol_md(target_dir, result, dry_run)
@@ -292,7 +252,13 @@ def _run_core_update_phases(
 
     if on_progress:
         on_progress("Phase", "Cleaning stale artifacts...")
-    _cleanup_stale_artifacts(target_dir, result, effective_data, dry_run)
+    _cleanup_stale_artifacts(
+        target_dir,
+        result,
+        effective_data,
+        dry_run,
+        cleanup_context=dry_run,
+    )
 
     _check_package_version(result)
 
@@ -304,7 +270,7 @@ def _run_post_update_phases(
     result: dict[str, list[str]],
     on_progress: ProgressCallback,
     data_dir: Path | None = None,
-    prev_manifest: dict[str, object] | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Execute post-update phases (package install, verification, IDE configs)."""
     # PRD-SEC-005-FR05: migrate any tracked config.yaml key into the ignored
@@ -334,18 +300,15 @@ def _run_post_update_phases(
         on_progress("Phase", "Running auto-maintenance...")
     _run_auto_maintenance(target_dir, result, on_progress=on_progress)
 
-    manifest_hashes = prev_manifest.get("content_hashes") if isinstance(prev_manifest, dict) else None
-    if not isinstance(manifest_hashes, dict):
-        manifest_hashes = None
-
     if on_progress:
         on_progress("Phase", "Updating IDE configs...")
-    _update_opencode_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
-    _update_cursor_artifacts(target_dir, result, ide_override=ide)
-    _update_codex_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
-    _update_copilot_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
-    _update_gemini_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
-    _update_antigravity_artifacts(target_dir, result, ide_override=ide, manifest_hashes=manifest_hashes)
+    run_update_integrations(
+        target_dir,
+        ide_targets,
+        ide_override=ide,
+        result=result,
+        manifest_hashes=manifest_hashes,
+    )
 
     # Claude Code distill channels — always update (claude-code is the default client)
     if "claude-code" in ide_targets or not ide_targets:
@@ -359,19 +322,6 @@ def _run_post_update_phases(
                     result.setdefault(_key, []).extend(_items)
         except Exception as exc:  # justified: fail-open, distill channels are additive
             result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
-
-    # Gemini distill channels — update when gemini is a target (PRD-DIST-2459 FR-3).
-    if "gemini" in ide_targets:
-        try:
-            from ._gemini_distill_channels import install_gemini_distill_channels
-
-            gm_dc = install_gemini_distill_channels(target_dir)
-            for _key in ("created", "updated", "preserved", "errors"):
-                _items = gm_dc.get(_key)
-                if isinstance(_items, list):
-                    result.setdefault(_key, []).extend(_items)
-        except Exception as exc:  # justified: fail-open, distill channels are additive
-            result.setdefault("warnings", []).append(f"gemini distill channels update skipped: {exc}")
 
     # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
     # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.
@@ -464,7 +414,7 @@ def update_project(
         )
         return result
 
-    prev_manifest = _read_manifest(target_dir)
+    manifest_hashes = _manifest_content_hashes(_read_manifest(target_dir))
     snapshot_root: Path | None = None
     if not dry_run:
         try:
@@ -475,11 +425,12 @@ def update_project(
 
     effective_data = data_dir or _DATA_DIR
     try:
-        _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress)
+        _run_core_update_phases(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
 
         if not dry_run:
-            _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, prev_manifest)
+            _run_post_update_phases(target_dir, pip_install, ide, result, on_progress, effective_data, manifest_hashes)
     except Exception as exc:  # justified: fail-open — errors captured here, rolled back in finally
+        logger.exception("update_project_exception", project_root=str(target_dir))
         result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
     finally:
         if snapshot_root is not None:
@@ -490,6 +441,12 @@ def update_project(
                 except OSError as exc:
                     result["errors"].append(f"Failed to restore update snapshot: {exc}")
             shutil.rmtree(snapshot_root, ignore_errors=True)
+
+    # Context files can be written by live sessions throughout an update and
+    # are intentionally excluded from rollback snapshots. Clean transients
+    # only after the managed-file transaction commits successfully.
+    if not dry_run and not result["errors"]:
+        _cleanup_context_transients(target_dir, result, dry_run=False)
 
     result["warnings"].append(
         "Running Claude Code sessions use cached hooks/settings. "

@@ -5,8 +5,6 @@ description: >
   readiness pipeline (groom → review → execution plan) so the user gets a
   sprint-ready PRD with micro-tasks in one command.
   Use: /trw-prd-new "Add rate limiting to the API"
-user-invocable: true
-argument-hint: "[feature description]"
 ---
 
 > Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
@@ -51,9 +49,10 @@ If the user is unavailable and the evidence is strong enough, proceed with expli
 
 4. **Read generated PRD**: Read the generated PRD file to confirm it was created successfully.
 
-5. **Validate**: Call `trw_prd_validate(prd_path)` to get the initial quality score.
+5. **Validate**: Call full `trw_prd_validate(prd_path)` and report `total_score`, `quality_tier`, `valid`, and
+   `validation_partial`.
 
-6. **Report creation**: Output PRD ID, file path, quality score. Then:
+6. **Report creation**: Output PRD ID, file path, and the validation result fields. Then:
    > "Created {PRD-ID}. Proceeding to groom → review → execution plan..."
 
 - Default category is CORE. If the feature is clearly a bug fix, use FIX; if infrastructure, use INFRA; if quality, use QUAL.
@@ -63,7 +62,7 @@ If the user is unavailable and the evidence is strong enough, proceed with expli
 After creation, **automatically proceed** with the full pipeline by following the `/trw-prd-ready` skill workflow for the newly created PRD ID. Do NOT stop after creation — the whole point is that the user gets a sprint-ready PRD with an execution plan from a single command.
 
 Pipeline phases (the `/trw-prd-ready` skill defines the full gates and constraints):
-- **GROOM** — research and iteratively draft until quality score ≥ 0.85
+- **GROOM** — research and iteratively draft under `/trw-prd-ready`'s risk-scaled readiness contract
 - **REVIEW** — 5-dimension quality review yielding READY / NEEDS WORK / BLOCK verdict
 - **Refinement loop** — if NEEDS WORK, re-groom with targeted findings (max 2 loops)
 - **EXEC PLAN** — decompose FRs into micro-tasks with file paths, tests, and verification commands

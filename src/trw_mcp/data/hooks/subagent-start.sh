@@ -41,13 +41,13 @@ case "$_phase" in
     echo "  1. Re-read your assigned PRD FRs — verify EVERY requirement is implemented"
     echo "  2. Check integration — new code must be imported and called from existing code"
     echo "  3. Review your diff for DRY/KISS/SOLID quality"
-    echo "  4. Run project-native validation, then record it with trw_build_check(scope='full')"
+    echo "  4. Run project-native validation, then record observed counts/status with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)"
     echo "  5. Write a completion summary in trw_checkpoint: FRs implemented, tests, integration points"
     echo "Doing this self-review now saves the project a full rework pass later."
     ;;
   validate*)
     echo ""
-    echo "VALIDATE PHASE: Run trw_build_check(scope='full'). Verify coverage >= target. Check for P0 findings."
+    echo "VALIDATE PHASE: Run project-native checks, then record observed results with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope). Verify the configured coverage target and P0 status."
     ;;
   review*)
     echo ""

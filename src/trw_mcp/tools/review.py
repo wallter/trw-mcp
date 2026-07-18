@@ -16,11 +16,8 @@ from typing import cast
 import structlog
 from fastmcp import Context, FastMCP
 
-from trw_mcp.state._paths import (
-    TRWCallContext,
-    find_active_run,
-    resolve_pin_key,
-)
+from trw_mcp.state._call_context import build_call_context as _build_call_context
+from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools._review_helpers import (
     PRE_AUDIT_SELF_REVIEW_EVENT as PRE_AUDIT_SELF_REVIEW_EVENT,
 )
@@ -64,18 +61,6 @@ def register_review_tools(server: FastMCP) -> None:
     _register_review_tool(server)
 
 
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    """Construct a :class:`TRWCallContext` for pin-state helpers (PRD-CORE-141 FR03)."""
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
-
-
 def _register_review_tool(server: FastMCP) -> None:
     """Register the structured review tool."""
 
@@ -88,6 +73,11 @@ def _register_review_tool(server: FastMCP) -> None:
         mode: str | None = None,
         reviewer_findings: list[dict[str, object]] | None = None,
         prd_ids: list[str] | None = None,
+        reviewer_source: str | None = None,
+        reviewer_receipt_id: str | None = None,
+        reviewer_run_id: str | None = None,
+        reviewer_session_id: str | None = None,
+        review_completed: bool = False,
     ) -> dict[str, object]:
         """Compute a structured code-review verdict and persist a review.yaml artifact.
 
@@ -97,7 +87,9 @@ def _register_review_tool(server: FastMCP) -> None:
         - You want to detect spec-vs-code drift between a PRD and git diff (reconcile).
 
         Modes:
-        - manual: caller passes ``findings=[...]`` directly (backward compatible).
+        - manual: caller passes ``findings=[...]`` directly. An empty manual
+          invocation is persisted but marked non-substantive and does not
+          satisfy REVIEW readiness.
         - auto: multi-reviewer analysis with confidence filtering.
         - cross_model: route diff to an external model family.
         - reconcile: compare PRD FRs against git diff.
@@ -108,10 +100,25 @@ def _register_review_tool(server: FastMCP) -> None:
         - mode: explicit mode override; auto-detected when None.
         - reviewer_findings: pre-collected findings from subagent layer (auto).
         - prd_ids: explicit PRD IDs; reconcile mode auto-discovers when None.
+        - reviewer_source: PRD-CORE-213-FR01 provenance override — one of
+          self|subagent|cross_model|operator. When None the source is derived
+          honestly from the effective mode (manual->self, auto->subagent,
+          cross_model->cross_model). ``operator`` requires reviewer_receipt_id.
+        - reviewer_receipt_id: operator sign-off token (required when
+          reviewer_source='operator').
+        - reviewer_run_id / reviewer_session_id: OQ-001 — the reviewing agent's
+          own run/session identity. Verified against framework-recorded state
+          (run.yaml under .trw/runs + the .trw/runtime/pins.json pin store);
+          a verified distinct identity classifies the review ``independent``,
+          an unverifiable claim falls back to the delivering run's identity
+          (``asserted_independent`` at best). Never self-mintable.
+        - review_completed: explicit manual-review completion assertion. This
+          permits a fully covered zero-finding manual review to be substantive;
+          an empty invocation remains non-substantive when false.
 
         Output: dict with fields
         {verdict: "pass"|"warn"|"block", findings_count: int, categories: dict,
-         review_path: str, run_id: str, mode: str}.
+         review_path: str, run_id: str, mode: str, substantive: bool}.
 
         Example:
             trw_review(findings=[{"category":"security","severity":"high","description":"..."}])
@@ -157,6 +164,34 @@ def _register_review_tool(server: FastMCP) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         review_id = "review-" + secrets.token_hex(4)
 
+        # OQ-001: verify any caller-claimed reviewer identity against
+        # framework-recorded state (run.yaml + pin store). Verification failure
+        # is honest fallback, never an error — the block then carries the
+        # delivering run's identity and classifies asserted_independent at best.
+        verified_reviewer_identity = None
+        identity_claimed = bool((reviewer_run_id or "").strip() or (reviewer_session_id or "").strip())
+        if identity_claimed:
+            from trw_mcp.state._paths import resolve_trw_dir
+            from trw_mcp.tools._review_provenance import (
+                read_run_identity,
+                resolve_verified_reviewer_identity,
+            )
+
+            trw_dir = resolve_trw_dir()
+            verified_reviewer_identity = resolve_verified_reviewer_identity(
+                reviewer_run_id,
+                reviewer_session_id,
+                read_run_identity(resolved_run),
+                runs_root=trw_dir / "runs",
+                pins_path=trw_dir / "runtime" / "pins.json",
+            )
+            if verified_reviewer_identity is None:
+                logger.warning(
+                    "reviewer_identity_unverified",
+                    claimed_run_id=reviewer_run_id or "",
+                    claimed_session_id=reviewer_session_id or "",
+                )
+
         response: dict[str, object]
         if effective_mode == "manual":
             response = cast(
@@ -167,6 +202,10 @@ def _register_review_tool(server: FastMCP) -> None:
                     review_id,
                     ts,
                     prd_ids,
+                    reviewer_source=reviewer_source,
+                    reviewer_receipt_id=reviewer_receipt_id,
+                    review_completed=review_completed,
+                    verified_reviewer_identity=verified_reviewer_identity,
                 ),
             )
         elif effective_mode == "reconcile":
@@ -189,6 +228,7 @@ def _register_review_tool(server: FastMCP) -> None:
                     review_id,
                     ts,
                     prd_ids,
+                    verified_reviewer_identity=verified_reviewer_identity,
                 ),
             )
         else:
@@ -202,8 +242,21 @@ def _register_review_tool(server: FastMCP) -> None:
                     ts,
                     reviewer_findings,
                     prd_ids,
+                    verified_reviewer_identity=verified_reviewer_identity,
                 ),
             )
+
+        # OQ-001 honesty: tell the caller whether a claimed identity verified.
+        if identity_claimed:
+            response["reviewer_identity_verified"] = verified_reviewer_identity is not None
+
+        # A spec-reconciliation report is useful evidence, but it is not a
+        # code-quality review. Manual/auto handlers stamp their own substantive
+        # status; other actual review modes remain substantive by default.
+        if effective_mode == "reconcile":
+            response["substantive"] = False
+            response["non_substantive_reason"] = "spec reconciliation is not a code-quality review"
+        substantive = bool(response.get("substantive", True))
 
         _review_verdict = str(response.get("verdict", ""))
         _review_score = response.get("total_score", response.get("score", None))
@@ -246,7 +299,7 @@ def _register_review_tool(server: FastMCP) -> None:
             elif verdict == "clean":
                 verdict = "pass"
 
-            mark_review(trw_dir, verdict=verdict, p0_count=p0_count)
+            mark_review(trw_dir, verdict=verdict, p0_count=p0_count, substantive=substantive)
             append_ceremony_status(response, trw_dir)
         except Exception:  # justified: fail-open, status decoration must not block review
             logger.debug("review_ceremony_status_skipped", exc_info=True)  # justified: fail-open

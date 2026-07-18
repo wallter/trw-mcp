@@ -73,7 +73,10 @@ def _write_gate_run(
         encoding="utf-8",
     )
     if with_review:
-        (meta / "review.yaml").write_text("verdict: pass\ncritical_count: 0\n", encoding="utf-8")
+        (meta / "review.yaml").write_text(
+            "substantive: true\nverdict: pass\ncritical_count: 0\n",
+            encoding="utf-8",
+        )
     # a single file_modified so the run is non-trivial but below the R-01 threshold
     (meta / "events.jsonl").write_text(
         json.dumps({"ts": "2026-06-11T00:00:00Z", "event": "session_start"})
@@ -222,12 +225,18 @@ def _deliver(tmp_path: Path, run_dir: Path, *, mode: str, **kwargs: Any) -> dict
 
 
 def _write_deliver_run(tmp_path: Path, complexity_class: str) -> Path:
-    """STANDARD run with a passing build event + no review.yaml."""
-    run_dir = tmp_path / "docs" / "task" / "runs" / "20260611T000000Z-deliver"
+    """STANDARD run with a passing build event + no review.yaml.
+
+    The run lives under the configured ``runs_root`` (``.trw/runs``) with a
+    ``run_id`` equal to the directory name so it satisfies the deliver-path
+    run-identity gate (a spoofed/relocated run_path is rejected before gating).
+    """
+    run_id = "20260611T000000Z-deliver"
+    run_dir = tmp_path / ".trw" / "runs" / "task" / run_id
     meta = run_dir / "meta"
     meta.mkdir(parents=True)
     (meta / "run.yaml").write_text(
-        f"run_id: deliver\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: {complexity_class}\n",
+        f"run_id: {run_id}\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: {complexity_class}\n",
         encoding="utf-8",
     )
     (meta / "events.jsonl").write_text(

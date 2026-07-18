@@ -1,5 +1,12 @@
 """TRW Pydantic models — public re-exports for kept model sub-modules."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from trw_mcp.models.task_profile import resolve_task_profile as resolve_task_profile
+
 # config
 # typed_dicts — canonical home for all TypedDicts (types.py re-exports from here)
 from trw_mcp.models import typed_dicts
@@ -36,14 +43,19 @@ from trw_mcp.models.requirements import (
     PRDDates,
     PRDEvidence,
     PRDFrontmatter,
+    PRDLifecycleStatus,
     PRDMetrics,
     PRDQualityGates,
+    PRDQualityTier,
     PRDTraceability,
+    PRDVerification,
     Requirement,
     RiskLevel,
     TraceabilityResult,
     ValidationFailure,
     ValidationResult,
+    VerificationMapping,
+    VerificationMethod,
 )
 
 # run
@@ -60,7 +72,6 @@ from trw_mcp.models.run import (
     WaveEntry,
     WaveManifest,
 )
-from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.task_profile_types import TaskProfile, TaskProfileOverrides
 from trw_mcp.models.typed_dicts import (
     AutoProgressStepResult,
@@ -135,9 +146,12 @@ __all__ = [
     "PRDDates",
     "PRDEvidence",
     "PRDFrontmatter",
+    "PRDLifecycleStatus",
     "PRDMetrics",
     "PRDQualityGates",
+    "PRDQualityTier",
     "PRDTraceability",
+    "PRDVerification",
     "Pattern",
     "PatternIndex",
     "Phase",
@@ -174,8 +188,19 @@ __all__ = [
     "ValidationFailure",
     "ValidationFailureDict",
     "ValidationResult",
+    "VerificationMapping",
+    "VerificationMethod",
     "WaveEntry",
     "WaveManifest",
     "resolve_task_profile",
     "typed_dicts",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily expose the task-profile resolver without cycling through scoring."""
+    if name == "resolve_task_profile":
+        from trw_mcp.models.task_profile import resolve_task_profile
+
+        return resolve_task_profile
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

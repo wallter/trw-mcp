@@ -451,7 +451,6 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
             patch(
                 "trw_mcp.state.claude_md._sync.generate_review_md",
                 return_value={
@@ -480,7 +479,6 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
             patch("trw_mcp.state.claude_md._sync.generate_review_md", side_effect=RuntimeError("boom")),
         ):
             result = execute_claude_md_sync(**args)  # type: ignore[arg-type]
@@ -504,7 +502,6 @@ class TestReviewMdIntegration:
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
-            patch("trw_mcp.state.analytics.mark_promoted"),
             patch(
                 "trw_mcp.state.claude_md._sync.generate_review_md",
                 return_value={

@@ -3,7 +3,6 @@
 Covers:
 - Access vs creation ratio tracking
 - REVIEW gate advisory reflection quality wiring
-- Analytics model field completeness
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.learning import Analytics
 from trw_mcp.state.analytics import compute_reflection_quality
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -57,39 +55,6 @@ def _write_learning(
         f"created: '2026-02-01'\n",
         encoding="utf-8",
     )
-
-
-# --- Analytics Model ---
-
-
-class TestAnalyticsModel:
-    """Analytics Pydantic model field completeness."""
-
-    def test_default_fields(self) -> None:
-        a = Analytics()
-        assert a.sessions_tracked == 0
-        assert a.reflections_completed == 0
-        assert a.success_rate == 0.0
-        assert a.q_learning_activations == 0
-        assert a.total_outcomes == 0
-        assert a.successful_outcomes == 0
-
-    def test_all_fields_serializable(self) -> None:
-        a = Analytics(
-            sessions_tracked=5,
-            total_learnings=10,
-            reflections_completed=3,
-            success_rate=0.75,
-            q_learning_activations=2,
-            total_outcomes=8,
-            successful_outcomes=6,
-            high_impact_learnings=4,
-            claude_md_syncs=2,
-        )
-        d = a.model_dump()
-        assert d["reflections_completed"] == 3
-        assert d["q_learning_activations"] == 2
-        assert d["success_rate"] == 0.75
 
 
 # --- Learning Effectiveness (Access Ratio) ---

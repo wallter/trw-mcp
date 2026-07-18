@@ -1,14 +1,12 @@
 """Tests for nudge deduplication logic (PRD-CORE-103 Sprint 83 Task 4).
 
 Tests cover:
-- select_nudge_learning in _nudge_rules.py
-- Nudge dedup wiring in _session_recall_helpers.py (append_ceremony_nudge)
-- Event logging for nudge_shown events
+- nudge-history eligibility and reset behavior
+- live phase-crossing and contextual-selector dedup behavior
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,106 +31,12 @@ def _setup_trw_dir(tmp_path: Path) -> Path:
     return trw_dir
 
 
-def _make_candidate(lid: str, impact: float = 0.8) -> dict[str, object]:
-    """Create a minimal learning candidate dict."""
-    return {"id": lid, "summary": f"Learning {lid}", "impact": impact}
-
-
 # ---------------------------------------------------------------------------
-# select_nudge_learning — same-phase suppression
+# Nudge-history eligibility
 # ---------------------------------------------------------------------------
 
 
-class TestSelectNudgeLearning:
-    def test_same_phase_suppressed(self) -> None:
-        """show L-a3Fq in IMPLEMENT, verify it's filtered out on second nudge in IMPLEMENT."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-
-        state = CeremonyState(phase="implement")
-        state.nudge_history["L-a3Fq"] = NudgeHistoryEntry(
-            phases_shown=["implement"],
-            turn_first_shown=1,
-            last_shown_turn=1,
-        )
-
-        candidates = [_make_candidate("L-a3Fq"), _make_candidate("L-other")]
-        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
-
-        # L-a3Fq should be suppressed, L-other returned instead
-        assert selected is not None
-        assert str(selected.get("id", "")) == "L-other"
-        assert is_fallback is False
-
-    def test_cross_phase_allowed(self) -> None:
-        """show L-a3Fq in IMPLEMENT, verify it's eligible in VALIDATE."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-
-        state = CeremonyState(phase="validate")
-        state.nudge_history["L-a3Fq"] = NudgeHistoryEntry(
-            phases_shown=["implement"],
-            turn_first_shown=1,
-            last_shown_turn=1,
-        )
-
-        candidates = [_make_candidate("L-a3Fq")]
-        selected, is_fallback = select_nudge_learning(state, candidates, "validate")
-
-        assert selected is not None
-        assert str(selected.get("id", "")) == "L-a3Fq"
-        assert is_fallback is False
-
-    def test_fallback_least_recently_shown(self) -> None:
-        """All candidates already shown -> fallback to oldest (least recently shown)."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-
-        state = CeremonyState(phase="implement")
-        # L-old was shown at turn 1, L-new at turn 10
-        state.nudge_history["L-old"] = NudgeHistoryEntry(
-            phases_shown=["implement"],
-            turn_first_shown=1,
-            last_shown_turn=1,
-        )
-        state.nudge_history["L-new"] = NudgeHistoryEntry(
-            phases_shown=["implement"],
-            turn_first_shown=10,
-            last_shown_turn=10,
-        )
-
-        candidates = [_make_candidate("L-new"), _make_candidate("L-old")]
-        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
-
-        # Should fall back to L-old (last_shown_turn=1, the oldest)
-        assert selected is not None
-        assert str(selected.get("id", "")) == "L-old"
-        assert is_fallback is True
-
-    def test_fallback_flag_in_surface_event(self) -> None:
-        """Fallback flag is True when all candidates are already shown."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-
-        state = CeremonyState(phase="implement")
-        state.nudge_history["L-only"] = NudgeHistoryEntry(
-            phases_shown=["implement"],
-            turn_first_shown=5,
-            last_shown_turn=5,
-        )
-
-        candidates = [_make_candidate("L-only")]
-        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
-
-        assert selected is not None
-        assert is_fallback is True
-
-    def test_empty_candidates_returns_none(self) -> None:
-        """Empty candidate list returns (None, False)."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-
-        state = CeremonyState(phase="implement")
-        selected, is_fallback = select_nudge_learning(state, [], "implement")
-
-        assert selected is None
-        assert is_fallback is False
-
+class TestNudgeEligibility:
     def test_is_nudge_eligible_empty_history(self) -> None:
         """Empty nudge history means everything is eligible."""
         state = CeremonyState()
@@ -172,8 +76,7 @@ class TestSelectNudgeLearning:
 
 class TestFailOpen:
     def test_failopen_on_corrupt_state(self, tmp_path: Path) -> None:
-        """Corrupt ceremony state file -> nudge still works (fail-open)."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
+        """Corrupt ceremony state file yields an eligible default state."""
 
         trw_dir = _setup_trw_dir(tmp_path)
 
@@ -184,102 +87,7 @@ class TestFailOpen:
         # read_ceremony_state should return defaults (fail-open)
         state = read_ceremony_state(trw_dir)
         assert state.nudge_history == {}
-
-        # select_nudge_learning should work fine with default state
-        candidates = [_make_candidate("L-a3Fq")]
-        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
-
-        assert selected is not None
-        assert str(selected.get("id", "")) == "L-a3Fq"
-        assert is_fallback is False
-
-
-# ---------------------------------------------------------------------------
-# Event logging — nudge_shown to events.jsonl
-# ---------------------------------------------------------------------------
-
-
-class TestNudgeEventLogging:
-    def test_nudge_logs_learning_id_to_events_jsonl(self, tmp_path: Path) -> None:
-        """Verify events.jsonl gets a nudge_shown event with learning_id."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        trw_dir = _setup_trw_dir(tmp_path)
-        # Create a session-events path
-        events_path = trw_dir / "context" / "session-events.jsonl"
-
-        log_nudge_event(
-            events_path=events_path,
-            learning_id="L-a3Fq",
-            phase="implement",
-            is_fallback=False,
-        )
-
-        # Verify the event was written
-        assert events_path.exists()
-        lines = events_path.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) == 1
-        event = json.loads(lines[0])
-        assert event["event"] == "nudge_shown"
-        assert event["learning_id"] == "L-a3Fq"
-        assert event["phase"] == "implement"
-        assert event["fallback"] is False
-        assert "ts" in event  # timestamp present
-
-    def test_nudge_event_with_fallback_flag(self, tmp_path: Path) -> None:
-        """Verify fallback flag is correctly logged."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        trw_dir = _setup_trw_dir(tmp_path)
-        events_path = trw_dir / "context" / "session-events.jsonl"
-
-        log_nudge_event(
-            events_path=events_path,
-            learning_id="L-old",
-            phase="validate",
-            is_fallback=True,
-        )
-
-        lines = events_path.read_text(encoding="utf-8").strip().splitlines()
-        event = json.loads(lines[0])
-        assert event["fallback"] is True
-
-    def test_nudge_event_failopen_on_write_error(self, tmp_path: Path) -> None:
-        """log_nudge_event fails open if the events path is not writable."""
-        from trw_mcp.tools._legacy_ceremony_nudge import log_nudge_event
-
-        # Use a non-existent directory that will fail on write
-        bad_path = tmp_path / "nonexistent" / "deep" / "events.jsonl"
-
-        # Should not raise
-        log_nudge_event(
-            events_path=bad_path,
-            learning_id="L-a3Fq",
-            phase="implement",
-            is_fallback=False,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Integration: append_ceremony_nudge with nudge learning dedup
-# ---------------------------------------------------------------------------
-
-
-class TestAppendCeremonyNudgeDedup:
-    def test_compat_wrapper_still_adds_ceremony_status(self, tmp_path: Path) -> None:
-        """append_ceremony_nudge remains a backwards-compatible status wrapper."""
-        trw_dir = _setup_trw_dir(tmp_path)
-        state = CeremonyState(session_started=True, phase="implement")
-        write_ceremony_state(trw_dir, state)
-
-        from trw_mcp.tools._legacy_ceremony_nudge import append_ceremony_nudge
-
-        response: dict[str, object] = {"status": "ok"}
-
-        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
-            result = append_ceremony_nudge(response.copy(), trw_dir=trw_dir)
-
-        assert "ceremony_status" in result
+        assert is_nudge_eligible(state, "L-a3Fq", "implement") is True
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +128,8 @@ class TestPhaseCrossingDedupRegression:
         write_ceremony_state(trw_dir, state)
 
         candidates = [
-            {"id": "L-a", "summary": "Alpha finding", "impact": 0.8},
-            {"id": "L-b", "summary": "Beta finding", "impact": 0.7},
+            {"id": "L-a", "summary": "Alpha finding", "impact": 0.8, "score": 0.9},
+            {"id": "L-b", "summary": "Beta finding", "impact": 0.7, "score": 0.8},
         ]
 
         fake_ctx = SimpleNamespace(modified_files=["trw-mcp/src/trw_mcp/foo.py"])
@@ -399,6 +207,7 @@ class TestIter22FixEndToEnd:
             "id": "L-sphinx",
             "summary": "Sphinx domain registration gotcha",
             "impact": 0.8,
+            "score": 0.91,
             "tags": ["sphinx", "documentation"],
         }
         # Capture the tags kwarg from each recall_learnings call.
@@ -464,6 +273,7 @@ class TestIter22FixEndToEnd:
             "id": "L-9026cbce",
             "summary": "SQLite WAL corruption gotcha",
             "impact": 0.95,
+            "score": 0.93,
             "tags": ["framework", "sqlite", "wal"],
         }
         recall_call_tags: list[list[str] | None] = []

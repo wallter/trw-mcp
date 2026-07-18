@@ -7,7 +7,6 @@ FR03: Specific exception handling for analytics loading
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -153,71 +152,6 @@ class TestAnalyticsTurnCache:
             assert result3 == (99, 999)
 
         _analytics_cache.set(None)
-
-
-# ---------------------------------------------------------------------------
-# FR02 — Absolute path resolution for Gemini MCP
-# ---------------------------------------------------------------------------
-
-
-class TestGeminiAbsolutePath:
-    """FR02: generate_gemini_mcp_config produces fully-qualified command path."""
-
-    def test_resolve_helper_uses_which_when_available(self) -> None:
-        """_resolve_trw_mcp_command returns absolute path when on PATH."""
-        import shutil
-
-        from trw_mcp.bootstrap._gemini import _resolve_trw_mcp_command
-
-        with patch.object(shutil, "which", return_value="/usr/bin/trw-mcp"):
-            cmd, args = _resolve_trw_mcp_command()
-            assert cmd == "/usr/bin/trw-mcp"
-            assert args == ["serve"]
-
-    def test_resolve_helper_falls_back_to_sys_executable(self) -> None:
-        """_resolve_trw_mcp_command falls back to sys.executable when not on PATH."""
-        import shutil
-        import sys
-
-        from trw_mcp.bootstrap._gemini import _resolve_trw_mcp_command
-
-        with patch.object(shutil, "which", return_value=None):
-            cmd, args = _resolve_trw_mcp_command()
-            assert cmd == sys.executable
-            assert args == ["-m", "trw_mcp", "serve"]
-
-    def test_config_uses_resolved_command(self, tmp_path: Path) -> None:
-        """generate_gemini_mcp_config uses the resolved command, not bare 'trw-mcp'."""
-        from trw_mcp.bootstrap._gemini import generate_gemini_mcp_config
-
-        fake_path = "/opt/bin/trw-mcp"
-        with patch(
-            "trw_mcp.bootstrap._gemini._resolve_trw_mcp_command",
-            return_value=(fake_path, ["serve"]),
-        ):
-            generate_gemini_mcp_config(tmp_path)
-            settings_path = tmp_path / ".gemini" / "settings.json"
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-
-            assert data["mcpServers"]["trw"]["command"] == fake_path
-            assert data["mcpServers"]["trw"]["args"] == ["serve"]
-
-    def test_config_fallback_uses_sys_executable(self, tmp_path: Path) -> None:
-        """When trw-mcp is not on PATH, config uses sys.executable."""
-        import sys
-
-        from trw_mcp.bootstrap._gemini import generate_gemini_mcp_config
-
-        with patch(
-            "trw_mcp.bootstrap._gemini._resolve_trw_mcp_command",
-            return_value=(sys.executable, ["-m", "trw_mcp", "serve"]),
-        ):
-            generate_gemini_mcp_config(tmp_path, force=True)
-            settings_path = tmp_path / ".gemini" / "settings.json"
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-
-            assert data["mcpServers"]["trw"]["command"] == sys.executable
-            assert data["mcpServers"]["trw"]["args"] == ["-m", "trw_mcp", "serve"]
 
 
 # ---------------------------------------------------------------------------

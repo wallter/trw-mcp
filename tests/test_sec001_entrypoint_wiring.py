@@ -73,8 +73,6 @@ class _FakeServer:
 
 
 def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, monkeypatch) -> None:
-    import trw_mcp.tools.learning as learning_mod
-
     trw_dir = tmp_path / ".trw"
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
     (trw_dir / "memory").mkdir()
@@ -94,7 +92,9 @@ def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, m
     )
 
     assert result["status"] == "recorded"
-    backend = learning_mod.get_backend(trw_dir)
+    from trw_mcp.state.memory_adapter import get_backend
+
+    backend = get_backend(trw_dir)
     entry = backend.get(result["learning_id"])
     assert entry is not None
     assert entry.metadata["provenance_session_id"] == "mcp-session-456"

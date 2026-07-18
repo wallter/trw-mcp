@@ -15,8 +15,7 @@ envelope ``risk-report-sidecar/v0``.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,13 +25,7 @@ from trw_mcp.tools._learnings_collector import (
     build_file_queries,
     collect_learnings,
 )
-from trw_mcp.tools._sidecar_substrate import (
-    DEFAULT_CACHE_DIR_REL,
-    check_tier_for_feature,
-    load_sidecar_with_sha_check,
-    resolve_git_sha,
-    resolve_repo_root,
-)
+from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus, resolve_current_sidecar
 from trw_mcp.tools.before_edit_hint import BeforeYouEditHintPayload
 
 _ARTIFACT_NAME_BATCH: str = "before-edit-batch"
@@ -62,16 +55,7 @@ class BeforeEditHintBatchResult(BaseModel):
 
     tier: str
     distill_batch: BeforeYouEditBatchPayload | None = None
-    distill_status: Literal[
-        "hint_available",
-        "tier_required",
-        "sidecar_missing",
-        "sidecar_malformed",
-        "schema_mismatch",
-        "stale_sha",
-        "no_repo_root",
-        "no_git_sha",
-    ] = "sidecar_missing"
+    distill_status: CurrentSidecarStatus = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
@@ -86,64 +70,34 @@ def compute_before_edit_hint_batch(
     cache_dir: str | None = None,
 ) -> BeforeEditHintBatchResult:
     """Pure-Python entry point used by the MCP tool registrar + tests."""
-    resolved_repo_root = resolve_repo_root(repo_root)
-
-    if resolved_repo_root is None:
-        return BeforeEditHintBatchResult(
-            tier="free",
-            distill_status="no_repo_root",
-            distill_action="Pass --repo or run from inside a git checkout",
-        )
-
-    gate = check_tier_for_feature(resolved_repo_root, _TIER_FEATURE)
-    if not gate.allowed:
-        return BeforeEditHintBatchResult(
-            tier=gate.tier,
-            distill_status="tier_required",
-            distill_action=(
-                "Acquire team/pro/enterprise tier to enable trw-distill "
-                "sidecar consumption (see https://trwframework.com/tier)"
-            ),
-        )
-
-    git_sha = resolve_git_sha(resolved_repo_root)
-    if git_sha is None:
-        return BeforeEditHintBatchResult(
-            tier=gate.tier,
-            distill_status="no_git_sha",
-            distill_action="Could not run `git rev-parse HEAD` — verify .git/ present",
-        )
-
-    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
-    sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME_BATCH}-{git_sha}.json"
-
-    load = load_sidecar_with_sha_check(
-        sidecar_path,
-        expected_sha=git_sha,
-        file_path_hint="<batch>",
+    sidecar = resolve_current_sidecar(
+        repo_root=repo_root,
+        cache_dir=cache_dir,
+        feature=_TIER_FEATURE,
+        artifact_name=_ARTIFACT_NAME_BATCH,
         cli_remediation=("trw-distill self-improve before-edit --repo . --files-from <changed.txt> --persist-sidecar"),
     )
-    if load.status != "ok" or load.payload is None:
+    if sidecar.status != "hint_available" or sidecar.payload is None:
         return BeforeEditHintBatchResult(
-            tier=gate.tier,
-            distill_status=load.status,  # type: ignore[arg-type]
-            distill_action=load.action,
-            distill_sidecar_path=load.sidecar_path,
-            distill_sidecar_sha=load.sidecar_sha,
+            tier=sidecar.tier,
+            distill_status=sidecar.status,
+            distill_action=sidecar.action,
+            distill_sidecar_path=sidecar.sidecar_path,
+            distill_sidecar_sha=sidecar.sidecar_sha,
         )
 
     try:
-        batch = BeforeYouEditBatchPayload.model_validate(load.payload)
+        batch = BeforeYouEditBatchPayload.model_validate(sidecar.payload)
     except Exception:
         return BeforeEditHintBatchResult(
-            tier=gate.tier,
+            tier=sidecar.tier,
             distill_status="sidecar_malformed",
             distill_action=(
                 "Batch sidecar payload does not match BeforeYouEditBatchPayload "
                 "schema; check trw-distill version compatibility"
             ),
-            distill_sidecar_path=load.sidecar_path,
-            distill_sidecar_sha=load.sidecar_sha,
+            distill_sidecar_path=sidecar.sidecar_path,
+            distill_sidecar_sha=sidecar.sidecar_sha,
         )
 
     queries: list[str] = []
@@ -152,12 +106,12 @@ def compute_before_edit_hint_batch(
     learnings = collect_learnings(queries)
 
     return BeforeEditHintBatchResult(
-        tier=gate.tier,
+        tier=sidecar.tier,
         distill_batch=batch,
         distill_status="hint_available",
         distill_action=None,
-        distill_sidecar_path=load.sidecar_path,
-        distill_sidecar_sha=load.sidecar_sha,
+        distill_sidecar_path=sidecar.sidecar_path,
+        distill_sidecar_sha=sidecar.sidecar_sha,
         learnings=learnings,
         learnings_count=len(learnings),
     )

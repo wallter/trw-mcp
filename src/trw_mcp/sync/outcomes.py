@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +61,7 @@ class PendingOutcome:
     run_dir: Path | None = None
     sync_hash: str = ""
     run_id: str = ""
+    run_yaml_hash: str = ""
     legacy_no_ids: bool = False
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -70,12 +73,12 @@ def _compute_sync_hash(run_id: str, session_metrics: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _read_run_yaml(run_yaml: Path) -> dict[str, Any] | None:
+def _read_run_yaml(run_yaml: Path, content: bytes | None = None) -> dict[str, Any] | None:
     """Parse a delivered run.yaml, returning None on any failure."""
     try:
         yaml = YAML(typ="safe")
-        with run_yaml.open("r", encoding="utf-8") as fh:
-            data = yaml.load(fh)
+        source = content.decode("utf-8") if content is not None else run_yaml.read_text(encoding="utf-8")
+        data = yaml.load(source)
         if isinstance(data, dict):
             return data
     except Exception:  # justified: per-run try/except per RISK-003
@@ -96,12 +99,65 @@ def _read_existing_marker(marker_path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _read_run_yaml_bytes(run_yaml: Path) -> bytes | None:
+    """Read a run.yaml once for hashing, filtering, and parsing."""
+    try:
+        return run_yaml.read_bytes()
+    except OSError:
+        logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)
+        return None
+
+
+def _marker_matches_run_yaml(existing: dict[str, Any] | None, *, run_id: str, run_yaml_hash: str) -> bool:
+    """Return whether a marker proves this exact run.yaml was already synced."""
+    return bool(
+        existing
+        and existing.get("run_id") == run_id
+        and existing.get("run_yaml_sha256") == run_yaml_hash
+        and existing.get("sync_hash")
+    )
+
+
+def _write_marker_payload(marker_path: Path, payload: dict[str, Any]) -> None:
+    """Atomically replace a marker so concurrent readers never see partial JSON."""
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=marker_path.parent,
+            prefix=f".{marker_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            temp_name = fh.name
+            json.dump(payload, fh, separators=(",", ":"), sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_name, marker_path)
+        temp_name = None
+    finally:
+        if temp_name is not None:
+            Path(temp_name).unlink(missing_ok=True)
+
+
+def _upgrade_marker_run_yaml_hash(marker_path: Path, existing: dict[str, Any], run_yaml_hash: str) -> None:
+    """Add the source hash to a legacy marker after its sync hash is verified."""
+    payload = dict(existing)
+    payload["run_yaml_sha256"] = run_yaml_hash
+    try:
+        _write_marker_payload(marker_path, payload)
+    except OSError:  # justified: fail-open — legacy marker remains valid but slower
+        logger.debug("synced_marker_upgrade_failed", marker=str(marker_path), exc_info=True)
+
+
 def write_synced_marker(
     run_dir: Path,
     *,
     run_id: str,
     sync_hash: str,
     target_label: str,
+    run_yaml_hash: str | None = None,
 ) -> None:
     """Write the sibling ``meta/synced.json`` marker after a successful push."""
     marker = run_dir / "meta" / _SYNCED_MARKER
@@ -112,11 +168,10 @@ def write_synced_marker(
         "sync_hash": sync_hash,
         "target_label": target_label,
     }
+    if run_yaml_hash:
+        payload["run_yaml_sha256"] = run_yaml_hash
     try:
-        marker.write_text(
-            json.dumps(payload, separators=(",", ":"), sort_keys=True),
-            encoding="utf-8",
-        )
+        _write_marker_payload(marker, payload)
     except OSError:  # justified: fail-open — marker write failure is not fatal
         logger.warning("synced_marker_write_failed", run_dir=str(run_dir), exc_info=True)
 
@@ -223,6 +278,7 @@ def _build_outcome_payload(
     session_metrics: dict[str, Any],
     legacy_no_ids: bool,
     trw_dir: Path | None = None,
+    recall_outcomes: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Construct an OutcomeSync-shaped dict from one run's session_metrics."""
     exposure = session_metrics.get("learning_exposure") or {}
@@ -259,7 +315,8 @@ def _build_outcome_payload(
     # / normalized_reward / source / run_dir keys are untouched. Only learnings the
     # backend can attribute (those exposed this run, when ids are known) are kept;
     # falls back to all aggregated learnings for legacy/no-ids runs.
-    recall_outcomes = _aggregate_recall_outcomes(trw_dir)
+    if recall_outcomes is None:
+        recall_outcomes = _aggregate_recall_outcomes(trw_dir)
     if recall_outcomes:
         if learning_ids:
             scoped = {lid: recall_outcomes[lid] for lid in learning_ids if lid in recall_outcomes}
@@ -294,7 +351,8 @@ def load_pending_outcomes(
 
     PRD-CORE-144 FR05: real OutcomeSync per delivered run.
     PRD-CORE-144 FR06: runs without ``learning_exposure.ids`` still sync
-      with ``learning_ids=[]`` and a structured ``legacy_run_pushed`` log.
+      with ``learning_ids=[]`` and a structured
+      ``legacy_run_sync_no_learning_ids`` log.
 
     ``since_line`` is accepted for signature compatibility with the old
     line-based dedup but is ignored — idempotency is now enforced by the
@@ -310,38 +368,63 @@ def load_pending_outcomes(
 
     pending: list[PendingOutcome] = []
     ordinal = 0
+    recall_outcomes: dict[str, dict[str, object]] | None = None
     for run_dir, run_yaml in iter_run_dirs(runs_root):
         try:
-            run_data = _read_run_yaml(run_yaml)
+            run_id = run_dir.name
+            marker = run_dir / "meta" / _SYNCED_MARKER
+            existing = _read_existing_marker(marker)
+            run_yaml_content = _read_run_yaml_bytes(run_yaml)
+            if run_yaml_content is None:
+                continue
+            run_yaml_hash = hashlib.sha256(run_yaml_content).hexdigest()
+            if _marker_matches_run_yaml(existing, run_id=run_id, run_yaml_hash=run_yaml_hash):
+                continue
+
+            # Most historical/abandoned runs have no outcome metrics. A byte
+            # absence check is a safe negative filter (quoted and nested keys
+            # still contain this token) and avoids constructing a YAML parser
+            # for those large documents.
+            if b"session_metrics" not in run_yaml_content:
+                continue
+
+            run_data = _read_run_yaml(run_yaml, run_yaml_content)
             if run_data is None:
                 continue
             metrics = _extract_session_metrics(run_data)
             if metrics is None:
                 continue  # abandoned / never-delivered run
 
-            run_id = run_dir.name
             exposure = metrics.get("learning_exposure") or {}
             legacy_no_ids = not (
                 isinstance(exposure, dict) and isinstance(exposure.get("ids"), list) and exposure["ids"]
             )
 
             sync_hash = _compute_sync_hash(run_id, metrics)
-            marker = run_dir / "meta" / _SYNCED_MARKER
-            existing = _read_existing_marker(marker)
             if existing and existing.get("sync_hash") == sync_hash:
+                # One-time migration for markers written before source hashes
+                # were recorded. Re-read the source before upgrading so a
+                # concurrent run.yaml mutation cannot create a false fast hit.
+                current_content = _read_run_yaml_bytes(run_yaml)
+                if current_content is not None and hashlib.sha256(current_content).hexdigest() == run_yaml_hash:
+                    _upgrade_marker_run_yaml_hash(marker, existing, run_yaml_hash)
                 continue  # already synced with matching hash
 
+            if recall_outcomes is None:
+                recall_outcomes = _aggregate_recall_outcomes(trw_dir)
             payload = _build_outcome_payload(
                 run_id=run_id,
                 run_dir=run_dir,
                 session_metrics=metrics,
                 legacy_no_ids=legacy_no_ids,
                 trw_dir=trw_dir,
+                recall_outcomes=recall_outcomes,
             )
+            payload["idempotency_key"] = sync_hash
 
             if legacy_no_ids:
                 logger.info(
-                    "legacy_run_pushed",
+                    "legacy_run_sync_no_learning_ids",
                     run_id=run_id,
                     run_dir=str(run_dir),
                     outcome="legacy_empty_ids",
@@ -355,6 +438,7 @@ def load_pending_outcomes(
                     run_dir=run_dir,
                     sync_hash=sync_hash,
                     run_id=run_id,
+                    run_yaml_hash=run_yaml_hash,
                     legacy_no_ids=legacy_no_ids,
                 )
             )

@@ -113,9 +113,20 @@ class TestUpdateOverwritesFrameworkFiles:
         assert TRWConfig().framework_version in content
 
     def test_updates_hooks(self, initialized_repo: Path) -> None:
-        """Hook scripts are overwritten with latest versions."""
+        """A stale-but-unedited hook is overwritten with the latest version.
+
+        The manifest hash is refreshed to record the stale content as the
+        install baseline (i.e. the user did NOT edit it since install), so the
+        PRD-FIX-068-FR05 guard reports it unmodified and the newer bundled
+        content wins.
+        """
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+        from trw_mcp.bootstrap._version_migration import _write_manifest
+
         hook_path = initialized_repo / ".claude" / "hooks" / "session-start.sh"
         hook_path.write_text("old hook", encoding="utf-8")
+        # Refresh the manifest so "old hook" is the recorded baseline (unmodified).
+        _write_manifest(initialized_repo, {"updated": [], "created": [], "errors": []}, _DATA_DIR)
 
         update_project(initialized_repo)
 
@@ -123,9 +134,13 @@ class TestUpdateOverwritesFrameworkFiles:
         assert content != "old hook"
 
     def test_updates_skills(self, initialized_repo: Path) -> None:
-        """Skill files are overwritten with latest versions."""
+        """A stale-but-unedited skill file is overwritten with the latest version."""
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+        from trw_mcp.bootstrap._version_migration import _write_manifest
+
         skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
         skill_path.write_text("old skill", encoding="utf-8")
+        _write_manifest(initialized_repo, {"updated": [], "created": [], "errors": []}, _DATA_DIR)
 
         update_project(initialized_repo)
 
@@ -133,14 +148,28 @@ class TestUpdateOverwritesFrameworkFiles:
         assert content != "old skill"
 
     def test_updates_agents(self, initialized_repo: Path) -> None:
-        """Agent files are overwritten with latest versions."""
-        agent_path = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
-        agent_path.write_text("old agent", encoding="utf-8")
+        """Framework-managed (unmodified) agents are re-materialized on update.
 
-        update_project(initialized_repo)
+        A stale on-disk agent left in the raw bundled tier form
+        (``model: frontier``) is framework-recognized (not a user edit), so the
+        update path self-heals it to the resolved ``model: opus`` line instead
+        of freezing it. This proves the PRD-FIX-068-FR05 guard does NOT protect
+        framework-managed files (only genuine user edits are preserved).
+        """
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        agent_path = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        # Raw bundled form carries the unresolved capability tier token.
+        raw_bundled = (_DATA_DIR / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        assert "model: frontier" in raw_bundled
+        agent_path.write_text(raw_bundled, encoding="utf-8")
+
+        result = update_project(initialized_repo)
 
         content = agent_path.read_text(encoding="utf-8")
-        assert content != "old agent"
+        assert "model: frontier" not in content
+        assert "model: opus" in content
+        assert str(agent_path) not in result.get("modified", [])
 
 
 @pytest.mark.unit
@@ -196,6 +225,174 @@ class TestUpdateClaudeMdSmartMerge:
         assert not result["errors"]
         assert claude_md.exists()
         assert "trw_session_start" in claude_md.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+class TestUpdateResolvesAgentModelTier:
+    """sub_5ctrrLJ: update-project must resolve agent ``model:`` tiers like init.
+
+    The pre-fix update path raw-copied bundled agents, re-materializing the
+    unresolvable ``model: frontier`` token so agent spawns failed after upgrades.
+    """
+
+    def test_update_resolves_frontier_to_opus(self, initialized_repo: Path) -> None:
+        """After update, a bundled agent carries ``model: opus`` — never ``frontier``."""
+        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        # Fresh install already resolves; prove update KEEPS it resolved.
+        assert "model: opus" in agent.read_text(encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        content = agent.read_text(encoding="utf-8")
+        assert "model: opus" in content
+        assert "model: frontier" not in content
+
+    def test_update_heals_agent_left_at_raw_tier(self, initialized_repo: Path) -> None:
+        """A resolved-but-unmodified agent (raw framework form on disk) IS updated.
+
+        Simulates a project a pre-fix update left at ``model: frontier`` while the
+        manifest still records the resolved hash. The reconciled guard must treat
+        the raw framework form as unmodified (not a user edit) and heal it to
+        ``model: opus`` — the exact misclassification the fix prevents.
+        """
+        from trw_mcp.bootstrap import _DATA_DIR
+
+        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        raw_bundled = (_DATA_DIR / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        assert "model: frontier" in raw_bundled
+        # Leave the agent in the broken raw-tier state a pre-fix update produced.
+        agent.write_text(raw_bundled, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        content = agent.read_text(encoding="utf-8")
+        assert "model: opus" in content
+        assert "model: frontier" not in content
+        # Must NOT be misclassified as a user modification.
+        assert not any("trw-implementer.md" in m for m in result.get("modified", []))
+
+    def test_update_preserves_genuinely_user_edited_agent(self, initialized_repo: Path) -> None:
+        """A genuinely user-edited agent is preserved and reported, not clobbered.
+
+        Focused unit: exercises the guard directly via ``_update_framework_files``
+        with explicit manifest hashes. The end-to-end proof that the LIVE
+        ``update_project()`` path now threads these hashes (PRD-FIX-068-FR05) lives
+        in :class:`TestUpdateLivePathPreservesUserEdits`.
+        """
+        from trw_mcp.bootstrap._template_updater import _update_framework_files
+        from trw_mcp.bootstrap._version_manifest import _read_manifest
+
+        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        edited = agent.read_text(encoding="utf-8") + "\n\n<!-- user note: do not overwrite -->\n"
+        agent.write_text(edited, encoding="utf-8")
+
+        manifest = _read_manifest(initialized_repo)
+        assert isinstance(manifest, dict)
+        manifest_hashes = manifest["content_hashes"]
+        assert isinstance(manifest_hashes, dict)
+
+        from trw_mcp.bootstrap import _DATA_DIR
+
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "modified": [],
+        }
+        _update_framework_files(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=manifest_hashes)
+
+        # User edit survives untouched and is reported as modified.
+        assert agent.read_text(encoding="utf-8") == edited
+        assert any("trw-implementer.md" in m for m in result["modified"])
+
+
+@pytest.mark.unit
+class TestUpdateLivePathPreservesUserEdits:
+    """PRD-FIX-068-FR05 on the REAL update_project() path.
+
+    Before the fix, ``_run_core_update_phases`` called ``_update_framework_files``
+    with ``manifest_hashes=None`` (the manifest was only read later), so the
+    user-modification guard was dead on the live path and user-edited agents were
+    silently overwritten. These tests drive the full ``update_project()`` entry
+    point to prove the prior manifest's content hashes are now threaded through.
+    """
+
+    def test_live_path_preserves_user_edited_agent(self, initialized_repo: Path) -> None:
+        """A user-edited agent survives update_project() and is reported modified.
+
+        A sibling un-edited agent is still updated (frontier->opus resolution
+        intact), proving the guard protects only genuine user edits.
+        """
+        agents_dir = initialized_repo / ".claude" / "agents"
+        edited_agent = agents_dir / "trw-implementer.md"
+        # trw-lead is a frontier-tier sibling (resolves to model: opus like
+        # trw-implementer); left un-edited it must still update.
+        untouched_agent = agents_dir / "trw-lead.md"
+
+        # Genuine user edit — a body change no framework rendering produces.
+        original = edited_agent.read_text(encoding="utf-8")
+        edited = original + "\n\n<!-- user note: do not overwrite -->\n"
+        edited_agent.write_text(edited, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        # User edit preserved byte-for-byte and reported in result["modified"].
+        assert edited_agent.read_text(encoding="utf-8") == edited
+        assert any("trw-implementer.md" in m for m in result.get("modified", []))
+
+        # The un-edited frontier sibling still resolves to the client model.
+        untouched = untouched_agent.read_text(encoding="utf-8")
+        assert "model: opus" in untouched
+        assert "model: frontier" not in untouched
+        assert not any("trw-lead.md" in m for m in result.get("modified", []))
+
+    def test_live_path_first_run_without_manifest_preserves_edit_and_heals_raw(self, initialized_repo: Path) -> None:
+        """No prior manifest: a genuine user edit is PRESERVED; a raw-tier file HEALS.
+
+        Simulates the first update on a project installed before manifest support
+        existed (``_read_manifest`` returns None → ``manifest_hashes`` is None).
+        The reconciled guard (P1-7 round-2 audit) must still distinguish a genuine
+        user edit (matches no framework rendering → preserved, FR05's unconditional
+        AC) from a raw ``model: frontier`` file a pre-fix update left behind
+        (matches the raw framework rendering → self-heals to ``model: opus``).
+        """
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+        from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE, _read_manifest
+
+        manifest_path = initialized_repo / ".trw" / _MANIFEST_FILE
+        if manifest_path.exists():
+            manifest_path.unlink()
+        assert _read_manifest(initialized_repo) is None
+
+        agents_dir = initialized_repo / ".claude" / "agents"
+
+        # Agent A: genuine user edit — a body change no framework rendering produces.
+        edited_agent = agents_dir / "trw-implementer.md"
+        edited = edited_agent.read_text(encoding="utf-8") + "\n\n<!-- user note: keep me -->\n"
+        edited_agent.write_text(edited, encoding="utf-8")
+
+        # Agent B: raw framework tier a pre-fix update produced (frontier sibling).
+        raw_agent = agents_dir / "trw-lead.md"
+        raw_bundled = (_DATA_DIR / "agents" / "trw-lead.md").read_text(encoding="utf-8")
+        assert "model: frontier" in raw_bundled
+        raw_agent.write_text(raw_bundled, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        # Genuine edit preserved byte-for-byte + reported even without a manifest.
+        assert edited_agent.read_text(encoding="utf-8") == edited
+        assert any("trw-implementer.md" in m for m in result.get("modified", []))
+
+        # Raw-tier framework file still heals to the resolved client model.
+        healed = raw_agent.read_text(encoding="utf-8")
+        assert "model: opus" in healed
+        assert "model: frontier" not in healed
+        assert not any("trw-lead.md" in m for m in result.get("modified", []))
 
 
 class TestUpdateCreatesNewArtifacts:
@@ -291,3 +488,252 @@ class TestRootFrameworkMd:
         root_fw = initialized_repo / "FRAMEWORK.md"
         cached_fw = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
         assert root_fw.read_text(encoding="utf-8") == cached_fw.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+class TestUpdatePreservesUserEditedHooksAndSkills:
+    """Codex HIGH round-2 audit: PRD-FIX-068-FR05 covers hooks + skills, not only agents.
+
+    The manifest already records hook/skill content hashes (``_compute_content_hashes``),
+    but the pre-fix ``_update_hooks`` / ``_update_skills`` raw-copied unconditionally,
+    clobbering user-edited hooks/skills. The guard is now threaded through both.
+    """
+
+    def test_live_path_preserves_user_edited_hook(self, initialized_repo: Path) -> None:
+        """A user-edited hook survives update_project() and is reported modified."""
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        edited = hook.read_text(encoding="utf-8") + "\n# user custom line — keep me\n"
+        hook.write_text(edited, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        assert hook.read_text(encoding="utf-8") == edited
+        assert any("session-start.sh" in m for m in result.get("modified", []))
+
+    def test_live_path_preserves_user_edited_skill(self, initialized_repo: Path) -> None:
+        """A user-edited skill SKILL.md survives update_project() and is reported."""
+        skill = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
+        edited = skill.read_text(encoding="utf-8") + "\n<!-- user note: keep me -->\n"
+        skill.write_text(edited, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        assert skill.read_text(encoding="utf-8") == edited
+        assert any("trw-deliver" in m and "SKILL.md" in m for m in result.get("modified", []))
+
+    def test_unedited_hook_still_updates(self, initialized_repo: Path) -> None:
+        """An un-edited hook (on-disk hash matches manifest) is still updated.
+
+        Focused: the recorded manifest hash matches the (stale) on-disk content,
+        so the guard reports NOT-modified and the newer bundled content overwrites.
+        """
+        import hashlib
+
+        from trw_mcp.bootstrap._template_updater import _update_hooks
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        stale = "#!/bin/bash\n# stale bundled version\n"
+        hook.write_text(stale, encoding="utf-8")
+        stale_hash = hashlib.sha256(stale.encode("utf-8")).hexdigest()
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
+        _update_hooks(
+            initialized_repo,
+            _DATA_DIR,
+            result,
+            dry_run=False,
+            manifest_hashes={"session-start.sh": stale_hash},
+        )
+
+        assert hook.read_text(encoding="utf-8") != stale
+        assert not any("session-start.sh" in m for m in result["modified"])
+
+    def test_unedited_skill_still_updates(self, initialized_repo: Path) -> None:
+        """An un-edited skill SKILL.md (hash matches manifest) is still updated."""
+        import hashlib
+
+        from trw_mcp.bootstrap._template_updater import _update_skills
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        skill = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
+        stale = "# stale skill body\n"
+        skill.write_text(stale, encoding="utf-8")
+        stale_hash = hashlib.sha256(stale.encode("utf-8")).hexdigest()
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
+        _update_skills(
+            initialized_repo,
+            _DATA_DIR,
+            result,
+            dry_run=False,
+            manifest_hashes={"trw-deliver/SKILL.md": stale_hash},
+        )
+
+        assert skill.read_text(encoding="utf-8") != stale
+        assert not any("trw-deliver/SKILL.md" in m for m in result["modified"])
+
+
+@pytest.mark.unit
+class TestUpdatePreservesUserEditsWithoutManifest:
+    """Round-3 audit: hooks/skills had NO framework baseline, so a missing/corrupt/
+    pre-hash manifest (``manifest_hashes is None``) silently clobbered user edits.
+
+    Only agents carried a framework-content baseline (``_framework_agent_hashes``).
+    The fix derives a bundled-content baseline for hooks/skills too and threads it
+    through ``_guarded_copy_update`` so preservation is decidable without a manifest
+    and fails toward preservation on divergence.
+    """
+
+    def test_corrupt_manifest_preserves_user_edited_hook(self, initialized_repo: Path) -> None:
+        """A user-edited hook survives update_project() even with a corrupt manifest.
+
+        The corrupt manifest degrades ``_read_manifest`` → None, so the live path
+        passes ``manifest_hashes=None``; the framework-content baseline must still
+        recognize the divergence and preserve + report the edit.
+        """
+        from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE
+
+        (initialized_repo / ".trw" / _MANIFEST_FILE).write_text("{ unclosed: [1, 2", encoding="utf-8")
+
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        edited = hook.read_text(encoding="utf-8") + "\n# user custom line — keep me\n"
+        hook.write_text(edited, encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+        assert hook.read_text(encoding="utf-8") == edited
+        assert any("session-start.sh" in m for m in result.get("modified", []))
+
+    def test_no_manifest_preserves_user_edited_hook_unit(self, initialized_repo: Path) -> None:
+        """Focused: ``_update_hooks`` with ``manifest_hashes=None`` preserves a diverged hook."""
+        from trw_mcp.bootstrap._template_updater import _update_hooks
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        edited = (_DATA_DIR / "hooks" / "session-start.sh").read_text(encoding="utf-8") + "\n# diverged\n"
+        hook.write_text(edited, encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
+        _update_hooks(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=None)
+
+        assert hook.read_text(encoding="utf-8") == edited
+        assert any("session-start.sh" in m for m in result["modified"])
+
+    def test_no_manifest_pristine_hook_still_updates(self, initialized_repo: Path) -> None:
+        """A hook matching the shipped bundle is framework-managed, so it still updates.
+
+        Guards against the fix over-preserving: fail-toward-preservation must only
+        trigger on genuine divergence, not on a pristine framework file.
+        """
+        from trw_mcp.bootstrap._template_updater import _update_hooks
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        shipped = (_DATA_DIR / "hooks" / "session-start.sh").read_text(encoding="utf-8")
+        hook.write_text(shipped, encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
+        _update_hooks(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=None)
+
+        assert not any("session-start.sh" in m for m in result["modified"])
+        assert any("session-start.sh" in u for u in result["updated"])
+
+
+@pytest.mark.unit
+class TestReadManifestCorruptDegrades:
+    """P2-3 round-2 audit: a malformed managed-artifacts.yaml must not crash update."""
+
+    def test_read_manifest_malformed_yaml_returns_none(self, initialized_repo: Path) -> None:
+        """_read_manifest degrades to None on StateError (malformed YAML), not raises."""
+        from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE, _read_manifest
+
+        manifest_path = initialized_repo / ".trw" / _MANIFEST_FILE
+        # Unbalanced flow mapping — a hard YAML parse error → FileStateReader raises StateError.
+        manifest_path.write_text("{ unclosed: [1, 2, 3", encoding="utf-8")
+
+        assert _read_manifest(initialized_repo) is None
+
+    def test_update_project_survives_corrupt_manifest(self, initialized_repo: Path) -> None:
+        """update_project() completes without errors when the manifest is corrupt."""
+        from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE
+
+        manifest_path = initialized_repo / ".trw" / _MANIFEST_FILE
+        manifest_path.write_text("{ unclosed: [1, 2, 3", encoding="utf-8")
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+
+@pytest.mark.unit
+class TestLivePathExistingAgentRelabel:
+    """P2-4 round-2 audit: an existing agent on the live path is 'updated', not 'created'."""
+
+    def test_existing_agent_reported_updated_not_created(self, initialized_repo: Path) -> None:
+        """A pre-existing agent is reclassified from created→updated on live update.
+
+        Exercises the relabel block in ``_apply_agent_update`` (``_install_one_agent``
+        always records 'created'; an existing dest is semantically an update).
+        """
+        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        assert agent.exists()
+
+        result = update_project(initialized_repo)
+        assert not result["errors"]
+
+        assert str(agent) in result["updated"]
+        assert str(agent) not in result["created"]
+
+
+class TestCompactCanonUpdateOrdering:
+    """PRD-CORE-207 FR07/NFR03: ordered compact-generation update + legacy compat."""
+
+    def _registry(self):
+        from trw_mcp.canons.registry import bundled_manifest_bytes, clear_cache, load_registry
+
+        clear_cache()
+        return load_registry(bundled_manifest_bytes())
+
+    def test_compact_canon_update_orders_artifacts_before_instruction_pointer(self) -> None:
+        """FR07: every body/stamp write precedes the single terminal pointer flip."""
+        from trw_mcp.canons.registry import compact_generation_write_plan
+
+        registry = self._registry()
+        plan = compact_generation_write_plan(registry, stamp_path=".trw/frameworks/VERSION.yaml")
+
+        kinds = [kind for kind, _path in plan]
+        # Exactly one instruction-pointer step, and it is last (fail-safe ordering).
+        assert kinds.count("instruction_pointer") == 1
+        assert kinds[-1] == "instruction_pointer"
+        pointer_idx = kinds.index("instruction_pointer")
+        # Every body / inventory / stamp write happens strictly before the flip.
+        for i, kind in enumerate(kinds):
+            if kind in {"body", "inventory", "stamp"}:
+                assert i < pointer_idx
+        # Both compact cores and both references are written before the pointer moves.
+        body_paths = {path for kind, path in plan if kind == "body"}
+        for compiled in registry.compiled_canons:
+            assert compiled.compact_core in body_paths
+            assert compiled.reference in body_paths
+            assert compiled.combined in body_paths  # legacy body still written
+
+    def test_legacy_combined_canon_paths_remain_compatible(self) -> None:
+        """NFR03: legacy combined paths stay declared outputs with a >=2 release window."""
+        from trw_mcp.canons.registry import (
+            COMBINED_COMPATIBILITY_MIN_RELEASES,
+            legacy_combined_paths,
+        )
+
+        registry = self._registry()
+        legacy = legacy_combined_paths(registry)
+        # The legacy combined filenames survive the migration (not removed).
+        assert any(p.endswith("data/framework.md") for p in legacy)
+        assert any(p.endswith("data/aaref.md") for p in legacy)
+        # Each legacy combined path is still a manifest-declared artifact source.
+        sources = {a.authoring_source for a in registry.artifacts}
+        for path in legacy:
+            assert path in sources
+        # The compatibility window is at least two minor releases (documented horizon).
+        assert COMBINED_COMPATIBILITY_MIN_RELEASES >= 2

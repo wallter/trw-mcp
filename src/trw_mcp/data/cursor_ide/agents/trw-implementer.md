@@ -27,7 +27,7 @@ with tests, following the TRW framework's quality standards.
 
 ## Quality standards
 
-- Coverage target: >= 90% for new code.
+- Meet the project-configured coverage gate; if none exists, report measured coverage without inventing a percentage.
 - No `pass` stubs where logic should be.
 - No hardcoded values that belong in config.
 - DRY: extract shared helpers; do not copy-paste logic.

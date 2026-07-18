@@ -21,11 +21,12 @@ import os
 import platform
 import re
 import sys
-from typing import Any, TypedDict
+from typing import Any
 
 import structlog
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
+from typing_extensions import TypedDict
 
 logger = structlog.get_logger(__name__)
 

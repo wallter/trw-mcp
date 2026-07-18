@@ -13,12 +13,19 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter as perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import structlog
 
+from trw_mcp.sync._client_cycle import (
+    _is_company_entry as _is_company_entry,
+    _offload_sync_work as _offload_sync_work,
+    _target_report_status as _target_report_status,
+    _write_synced_markers as _write_synced_markers,
+    run_one_cycle as _run_one_cycle_impl,
+)
 from trw_mcp.sync._client_push import (
     _push_to_target as _push_to_target_impl,
     fanout_push as _fanout_push_impl,
@@ -36,7 +43,7 @@ from trw_mcp.sync._client_runtime import (
 from trw_mcp.sync.cache import IntelligenceCache
 from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
-from trw_mcp.sync.outcomes import PendingOutcome, load_pending_outcomes, write_synced_marker
+from trw_mcp.sync.outcomes import load_pending_outcomes as load_pending_outcomes
 from trw_mcp.sync.pull import SyncPuller
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -52,30 +59,6 @@ _PATHOLOGICAL_LOCAL_WORK_MS = 10_000.0
 _SYNC_FAILURE_BACKOFF_CAP_SECONDS = 3_600.0
 
 
-def _is_company_entry(item: dict[str, Any], company_source: str) -> bool:
-    """True when a pulled learning is a company-tier row (PRD-INFRA-139 P1-B).
-
-    Company rows are tagged ``source=company_sync`` in their metadata so the
-    client can page them on the independent company cursor instead of folding
-    their disjoint per-company sync_seq into the org pull cursor.
-    """
-    meta = item.get("metadata")
-    return isinstance(meta, dict) and meta.get("source") == company_source
-
-
-def _target_report_status(report: dict[str, object]) -> str:
-    """Return the normalized health status for one sync target report."""
-
-    raw_status = report.get("status")
-    if raw_status in {"success", "partial_error", "error"}:
-        return str(raw_status)
-    if report.get("error") is not None:
-        return "error"
-    raw_failed = report.get("failed", 0)
-    failed = int(raw_failed) if isinstance(raw_failed, (int, float)) else 0
-    return "partial_error" if failed > 0 else "success"
-
-
 def _failure_backoff_delay_seconds(base_interval_seconds: float, consecutive_failures: int) -> float:
     """Compute bounded exponential backoff for background sync failure churn."""
 
@@ -84,46 +67,6 @@ def _failure_backoff_delay_seconds(base_interval_seconds: float, consecutive_fai
     multiplier = 2 ** min(failure_count, 4)
     cap = max(base_interval, _SYNC_FAILURE_BACKOFF_CAP_SECONDS)
     return float(min(base_interval * multiplier, cap))
-
-
-async def _offload_sync_work(label: str, func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Run blocking sync-local work off the FastMCP event loop.
-
-    Backend sync is a background task in the shared MCP server process. Local
-    SQLite/file/YAML scans can take seconds in this monorepo; running them on
-    the event loop starves foreground MCP requests. Keep network I/O async, but
-    move synchronous local preparation/bookkeeping to a worker thread.
-    """
-
-    started = perf_counter()
-    try:
-        return await asyncio.to_thread(func, *args, **kwargs)
-    finally:
-        elapsed_ms = (perf_counter() - started) * 1000
-        if elapsed_ms >= _SLOW_LOCAL_WORK_LOG_MS:
-            slow = elapsed_ms >= _PATHOLOGICAL_LOCAL_WORK_MS
-            log = logger.warning if slow else logger.info
-            log(
-                "sync_local_work_offloaded",
-                label=label,
-                duration_ms=round(elapsed_ms, 2),
-                slow=slow,
-                slow_threshold_ms=int(_PATHOLOGICAL_LOCAL_WORK_MS),
-            )
-
-
-def _write_synced_markers(pending_outcomes: list[PendingOutcome], target_label: str) -> None:
-    """Write synced markers for successfully pushed outcome payloads."""
-
-    for item in pending_outcomes:
-        if item.run_dir is None or not item.sync_hash:
-            continue
-        write_synced_marker(
-            item.run_dir,
-            run_id=item.run_id,
-            sync_hash=item.sync_hash,
-            target_label=target_label,
-        )
 
 
 @dataclass(frozen=True)
@@ -167,10 +110,6 @@ class BackendSyncClient:
     """
 
     def __init__(self, config: TRWConfig, trw_dir: Path) -> None:
-        try:
-            asyncio.get_event_loop()
-        except RuntimeError:
-            asyncio.set_event_loop(asyncio.new_event_loop())
         self._config = config
         self._trw_dir = trw_dir
         self._client_id = resolve_sync_client_id()
@@ -268,194 +207,13 @@ class BackendSyncClient:
 
     async def _run_one_cycle(self, force: bool = False) -> None:
         """Execute one push+pull sync cycle, fanning out pushes to every target."""
-        if not self._targets:
-            logger.debug(
-                "sync_cycle_skipped",
-                reason="no_targets",
-                client_id=self._client_id,
-            )
-            return
-
-        if not force and not self._coordinator.should_sync(sync_interval=self._scheduled_interval_seconds):
-            logger.debug("sync_cycle_skipped", reason="too_recent", client_id=self._client_id)
-            return
-
-        with self._coordinator.acquire_sync_lock() as acquired:
-            if not acquired:
-                return
-
-            # PRD-SEC-004-FR05: learning CONTENT push is gated on
-            # learning_sharing_enabled. When sharing is off (the default) skip
-            # even loading dirty entries — the content must never enter the push
-            # pipeline (no local work, no off-machine POST). The pull/intel path
-            # below is unaffected; only egress of local content is suppressed.
-            if self._learning_sharing_enabled:
-                dirty = await _offload_sync_work("get_dirty_entries", self._get_dirty_entries)
-                if dirty:
-                    logger.info("sync_push_started", dirty_count=len(dirty), client_id=self._client_id)
-                else:
-                    logger.debug("sync_push_skipped", reason="no_dirty_entries", client_id=self._client_id)
-            else:
-                dirty = []
-                logger.debug("sync_push_skipped", reason="learning_sharing_disabled", client_id=self._client_id)
-
-            # PRD-SEC-004-FR01: session-outcome push is anonymous usage telemetry,
-            # gated on platform_telemetry_enabled. When off, skip loading the
-            # pending-outcome queue so no usage metrics egress.
-            if self._platform_telemetry_enabled:
-                pending_outcomes = await _offload_sync_work(
-                    "load_pending_outcomes",
-                    load_pending_outcomes,
-                    self._trw_dir,
-                    since_line=self._coordinator.get_last_outcome_line(),
-                )
-            else:
-                pending_outcomes = []
-                logger.debug(
-                    "sync_outcome_push_skipped",
-                    reason="platform_telemetry_disabled",
-                    client_id=self._client_id,
-                )
-
-            report, push_result, any_target_succeeded = await self._fanout_push(
-                dirty=dirty,
-                outcomes=[item.payload for item in pending_outcomes],
-            )
-            logger.info(
-                "sync_cycle_report",
-                client_id=self._client_id,
-                targets=len(self._targets),
-                successful=sum(1 for r in report.values() if _target_report_status(r) == "success"),
-                partial_error=sum(1 for r in report.values() if _target_report_status(r) == "partial_error"),
-                failed=sum(1 for r in report.values() if _target_report_status(r) == "error"),
-                unhealthy=sum(1 for r in report.values() if _target_report_status(r) != "success"),
-                report=report,
-            )
-
-            push_failed = not any_target_succeeded and (bool(dirty) or bool(pending_outcomes))
-            push_seq = 0
-            if dirty and any_target_succeeded and push_result.failed == 0:
-                push_seq = max((entry.sync_seq for entry in dirty), default=0)
-                await _offload_sync_work(
-                    "mark_synced",
-                    self._mark_synced,
-                    dirty[: push_result.pushed + push_result.skipped],
-                )
-            if push_failed:
-                # Preserve legacy single-target failure message format when possible.
-                if dirty and len(self._targets) == 1:
-                    primary_label = self._targets[0].label
-                    raw_failed = report.get(primary_label, {}).get("failed", len(dirty))
-                    failed_count = int(raw_failed) if isinstance(raw_failed, (int, float)) else len(dirty)
-                    if failed_count == 0:
-                        failed_count = len(dirty)
-                    # Legacy behaviour reported the backend-side failure count as entry count.
-                    self._coordinator.record_sync_failure(f"push failed: {failed_count} entries")
-                else:
-                    self._coordinator.record_sync_failure(f"all {len(self._targets)} targets failed")
-            if pending_outcomes and any_target_succeeded:
-                self._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
-                # PRD-CORE-144 FR05: stamp sibling synced.json markers so the
-                # next pusher pass skips already-synced runs.
-                successful_labels = ",".join(
-                    lbl for lbl, rep in report.items() if _target_report_status(rep) == "success"
-                )
-                await _offload_sync_work(
-                    "write_synced_markers",
-                    _write_synced_markers,
-                    pending_outcomes,
-                    successful_labels or "unknown",
-                )
-
-            pulled = 0
-            merged = 0
-            pull_seq = self._coordinator.get_last_pull_seq()
-            raw_company_pull_seq = self._coordinator.get_last_company_pull_seq()
-            company_pull_seq = int(raw_company_pull_seq) if isinstance(raw_company_pull_seq, (int, float)) else 0
-            pull_result = await self._puller.pull_intel_state(
-                etag=self._cache.etag if self._config.intel_cache_enabled else None,
-                since_seq=pull_seq,
-                model_family=getattr(self._config, "model_family", ""),
-                trw_version=getattr(self._config, "framework_version", ""),
-                client_id=self._client_id,
-                since_company_seq=company_pull_seq,
-            )
-            if pull_result is None:
-                self._reset_poll_schedule()
-                self._coordinator.record_sync_failure("pull failed")
-                self._apply_failure_backoff(reason="pull failed")
-                return
-
-            if pull_result.not_modified:
-                self._restore_poll_schedule()
-                if push_failed:
-                    self._coordinator.record_pull_success(pull_seq=pull_seq)
-                    self._apply_failure_backoff(reason="push failed")
-                else:
-                    self._coordinator.record_sync_success(
-                        pushed=push_result.pushed,
-                        pulled=0,
-                        push_seq=push_seq,
-                        pull_seq=pull_seq,
-                        pull_completed=True,
-                    )
-                return
-
-            if self._config.intel_cache_enabled and pull_result.state is not None:
-                self._cache.update(pull_result.state, etag=pull_result.etag)
-            team_learning_count = len(pull_result.team_learnings or [])
-            if self._config.team_sync_enabled:
-                merged = self._puller.merge_team_learnings(pull_result.team_learnings)
-            pulled = team_learning_count
-
-            # PRD-INFRA-139 P1-B: company-tier rows ride in team_learnings but page
-            # on their OWN per-company cursor (disjoint from the org sync_seq).
-            # Folding their sync_seq into the org pull cursor corrupted it (a large
-            # org cursor then permanently hid every small-seq company row). Advance
-            # the org cursor ONLY on the org's own rows; advance the company cursor
-            # from the server's advertised company high-water mark separately.
-            from trw_mcp.sync.pull import _COMPANY_SYNC_SOURCE
-
-            next_pull_seq = max(
-                [
-                    pull_seq,
-                    *[
-                        int(item.get("sync_seq", 0))
-                        for item in (pull_result.team_learnings or [])
-                        if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
-                    ],
-                ]
-            )
-            next_company_pull_seq = max(company_pull_seq, pull_result.next_company_seq)
-            self._coordinator.record_company_pull_seq(next_company_pull_seq)
-            self._apply_sync_hints(pull_result.sync_hints)
-            logger.info(
-                "sync_cycle_completed",
-                client_id=self._client_id,
-                pushed=push_result.pushed,
-                pull_seq=next_pull_seq,
-                pulled=pulled,
-                merged=merged,
-                next_delay_seconds=self._next_sleep_seconds,
-                immediate_repoll=self._next_cycle_force,
-            )
-            if push_failed:
-                self._coordinator.record_pull_success(pull_seq=next_pull_seq)
-                self._apply_failure_backoff(reason="push failed")
-            else:
-                self._coordinator.record_sync_success(
-                    pushed=push_result.pushed,
-                    pulled=pulled,
-                    push_seq=push_seq,
-                    pull_seq=next_pull_seq,
-                    pull_completed=True,
-                )
+        await _run_one_cycle_impl(self, force=force)
 
     async def _fanout_push(
         self,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
-    ) -> tuple[dict[str, dict[str, object]], PushResult, bool]:
+    ) -> tuple[dict[str, dict[str, object]], PushResult]:
         """PRD-FIX-087 FR03: async — awaits the package-level fanout_push helper."""
         return await _fanout_push_impl(
             client_id=self._client_id,

@@ -9,7 +9,8 @@ Three responsibilities:
   enforce expiry. Returns ``(record, None)`` on accept or ``(None, error)`` on
   reject (FR01/FR02/FR05).
 - ``write_override_ledger`` — append a structured YAML entry under
-  ``.trw/overrides/YYYY-MM-DD-<run-id>-<epoch>-<uuid>.yaml`` (FR03). Fail-open (NFR02).
+  ``.trw/overrides/YYYY-MM-DD-<run-id>-<epoch>-<uuid>.yaml`` (FR03). A hard-gate
+  override is accepted only after this durable write succeeds (NFR02).
 - ``ledger_run_id`` — derive a filesystem-safe run id from the run path.
 
 Record-reuse posture (codex cross-model review): an ``AcceptableFailureRecord``
@@ -161,8 +162,8 @@ def apply_structured_override(
     - ``(True, None)`` when the reason is a structurally valid, unexpired record.
       Sets ``results['acceptable_failure_record']`` (the parsed dict) and echoes
       the structured record into ``results['truthfulness_gate_bypassed']`` (FR04),
-      and appends the override ledger entry (FR03, fail-open).
-    - ``(False, error)`` when parsing/expiry fails. Sets
+      and appends the override ledger entry (FR03).
+    - ``(False, error)`` when parsing/expiry or ledger persistence fails. Sets
       ``results['acceptable_failure_error']`` (FR05). Caller must block delivery.
     """
     record, error = parse_acceptable_failure(unverified_reason)
@@ -171,18 +172,29 @@ def apply_structured_override(
         logger.warning("acceptable_failure_override_rejected", gate_type=gate_type, reason=error)
         return False, error
 
-    record_dict = record.model_dump()
-    results["acceptable_failure_record"] = record_dict
-    # FR04: truthfulness_gate_bypassed now echoes the structured record (compact
-    # JSON) rather than an opaque free-text string.
-    results["truthfulness_gate_bypassed"] = json.dumps(record_dict)
-    write_override_ledger(
+    persisted, persistence_error = write_override_ledger(
         trw_dir,
         ledger_run_id(resolved_run),
         record,
         gate_type=gate_type,
         run_path=str(resolved_run) if resolved_run else "",
     )
+    if not persisted:
+        results["acceptable_failure_error"] = persistence_error
+        logger.warning(
+            "acceptable_failure_override_rejected",
+            gate_type=gate_type,
+            reason=persistence_error,
+            owner=record.owner,
+            run=str(resolved_run),
+        )
+        return False, persistence_error
+
+    record_dict = record.model_dump()
+    results["acceptable_failure_record"] = record_dict
+    # FR04: truthfulness_gate_bypassed now echoes the structured record (compact
+    # JSON) rather than an opaque free-text string.
+    results["truthfulness_gate_bypassed"] = json.dumps(record_dict)
     logger.warning(
         "acceptable_failure_override_accepted",
         gate_type=gate_type,
@@ -200,8 +212,8 @@ def write_override_ledger(
     *,
     gate_type: str,
     run_path: str,
-) -> None:
-    """Append a structured override ledger entry (FR03). Fail-open (NFR02).
+) -> tuple[bool, str | None]:
+    """Append a structured override ledger entry (FR03).
 
     Writes ``.trw/overrides/YYYY-MM-DD-<run-id>-<epoch>-<uuid>.yaml`` with the
     four schema fields, the bypassed gate type, the run path + run id, and a UTC
@@ -211,7 +223,10 @@ def write_override_ledger(
     the PRD-CORE-191-FR03 audit trail keeps every record. The ``run_id`` field is
     also written into the body so the record's run binding is readable without
     parsing the filename (codex cross-model review — record-reuse auditability).
-    Any I/O error is logged at WARNING and swallowed — delivery is never blocked.
+    Returns ``(True, None)`` only after the atomic write completes. Any I/O
+    failure is logged and returned as ``(False, error)`` so the caller can keep
+    the hard delivery gate closed; an exception record that was never durably
+    recorded is not an accepted exception (NFR02).
     """
     try:
         now = datetime.now(timezone.utc)
@@ -234,5 +249,13 @@ def write_override_ledger(
         }
         FileStateWriter().write_yaml(ledger_path, data)
         logger.info("acceptable_failure_ledger_written", path=str(ledger_path), gate_type=gate_type)
-    except Exception:  # justified: fail-open (NFR02) — ledger write must not block delivery
-        logger.warning("acceptable_failure_ledger_write_failed", gate_type=gate_type, exc_info=True)
+        return True, None
+    except Exception as exc:  # justified: persistence boundary reports a controlled gate error
+        error = f"acceptable-failure ledger persistence failed: {exc}"
+        logger.warning(
+            "acceptable_failure_ledger_write_failed",
+            gate_type=gate_type,
+            error=error,
+            exc_info=True,
+        )
+        return False, error

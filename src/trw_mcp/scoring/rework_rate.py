@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import TypedDict
 
 import structlog
+from typing_extensions import TypedDict
 
 logger = structlog.get_logger(__name__)
 

@@ -276,7 +276,15 @@ def analysis_artifact_dict(result: NudgeAnalysis) -> dict[str, object]:
 
 
 def analysis_summary(result: NudgeAnalysis) -> dict[str, object]:
-    """Compact summary suitable for embedding in a tool response (deliver)."""
+    """Compact summary suitable for embedding in a tool response (deliver).
+
+    When no nudge fired this session (``applicable=False`` — common for short or
+    non-interactive sessions) every other field is a zero/empty default that
+    conveys nothing beyond the boolean, so the summary collapses to
+    ``{"applicable": False}`` to keep the deliver response lean.
+    """
+    if not result.applicable:
+        return {"applicable": False}
     return {
         "applicable": result.applicable,
         "total_nudges": result.total_nudges,

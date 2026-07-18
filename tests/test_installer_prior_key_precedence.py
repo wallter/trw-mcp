@@ -48,9 +48,7 @@ def _seed(target: Path, *, config_key: str | None = None, creds_key: str | None 
         body += f'platform_api_key: "{config_key}"\n'
     (trw / "config.yaml").write_text(body, encoding="utf-8")
     if creds_key is not None:
-        (trw / "credentials.yaml").write_text(
-            f'platform_api_key: "{creds_key}"\n', encoding="utf-8"
-        )
+        (trw / "credentials.yaml").write_text(f'platform_api_key: "{creds_key}"\n', encoding="utf-8")
 
 
 def test_credentials_yaml_takes_precedence_over_config(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
@@ -118,9 +116,7 @@ def test_resolved_key_drives_proprietary_auto_derive(installer, tmp_path: Path) 
     assert captured["key"] == "trw_dk_creds_for_license"
 
 
-def test_proprietary_derive_raises_when_no_key_on_migrated_install(
-    installer, tmp_path: Path
-) -> None:  # type: ignore[no-untyped-def]
+def test_proprietary_derive_raises_when_no_key_on_migrated_install(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     """No key in any store → auto-derive raises the usage ValueError."""
     _seed(tmp_path, config_key="")
     prior = installer._load_prior_config(tmp_path)

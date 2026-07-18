@@ -336,23 +336,6 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
         result.setdefault("warnings", []).append(f"copilot distill channels skipped: {exc}")
 
 
-def _install_gemini_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
-    """Install Gemini CLI-specific bootstrap artifacts."""
-    from ._gemini import (
-        generate_gemini_agents,
-        generate_gemini_instructions,
-        generate_gemini_mcp_config,
-    )
-
-    installers = (
-        ("GEMINI.md", generate_gemini_instructions),
-        ("gemini MCP config", generate_gemini_mcp_config),
-        ("gemini agents", generate_gemini_agents),
-    )
-    for label, installer in installers:
-        _run_copilot_installer(result, label, installer, target_dir, force=force)
-
-
 def _install_antigravity_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
     """Install Antigravity CLI-specific bootstrap artifacts."""
     from ._antigravity_cli import (

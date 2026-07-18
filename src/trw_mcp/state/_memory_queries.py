@@ -272,7 +272,9 @@ def _search_entries(
     """
 
     # Keyword path is always available as the graceful-degradation fallback
-    # (no embedder, no vector hits, BM25 absent, or any hybrid error).
+    # (no embedder, no vector hits, BM25 absent, or any hybrid error). It
+    # already resolves learning-ID tokens via direct primary-key lookup +
+    # union (see ``_keyword_search``), so the fallback needs no extra handling.
     def _keyword_fallback() -> list[MemoryEntry]:
         return _keyword_search(
             backend,
@@ -283,6 +285,27 @@ def _search_entries(
             min_impact=min_impact,
             namespace=namespace,
         )
+
+    # FIX-055 parity for the hybrid path: learning-ID tokens (``L-xxxx``) must
+    # resolve via direct primary-key lookup and UNION into the ranked results,
+    # independent of whether the embeddings-on hybrid ranker or the keyword
+    # fallback runs. The hybrid delegation (eb1f0e92c) ranks the natural-language
+    # query only, so once embeddings became the default (f4ca661c9) a mixed
+    # ``"L-xxxx keyword"`` query silently dropped the ID lookup -- the ranker has
+    # no reason to surface an entry whose text does not match the query. Direct
+    # lookups are prepended (higher priority than fuzzy hits) and deduped.
+    id_tokens = [t for t in query.split() if _LEARNING_ID_RE.match(t)]
+
+    def _union_id_lookups(ranked: list[MemoryEntry]) -> list[MemoryEntry]:
+        if not id_tokens:
+            return ranked
+        id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact)
+        merged: list[MemoryEntry] = list(id_entries)
+        for entry in ranked:
+            if entry.id not in seen_ids:
+                merged.append(entry)
+                seen_ids.add(entry.id)
+        return merged[:top_k]
 
     # Route between cold-init and skip-cold-init embedder variants based on the
     # caller's tolerance for the hot model-load latency.
@@ -363,7 +386,7 @@ def _search_entries(
             candidate_pool=candidate_pool_size,
             fused=len(ranked),
         )
-        return ranked[:top_k]
+        return _union_id_lookups(ranked[:top_k])
 
     except (OSError, ValueError, RuntimeError, ImportError, TypeError, TRWMemoryError):
         # Hardening (verifier note, 2026-06-10): the original tuple missed two

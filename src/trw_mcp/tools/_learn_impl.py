@@ -8,7 +8,6 @@ remain effective without needing to know about this module.
 from __future__ import annotations
 
 import contextlib
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -22,6 +21,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
 # Re-exported so existing test imports continue to work.
+from trw_mcp.tools._learn_anchors import resolve_learn_anchors
 from trw_mcp.tools._learn_side_effects import (
     _LEARN_INJECTION_PATTERNS as _LEARN_INJECTION_PATTERNS,
 )
@@ -299,39 +299,16 @@ def execute_learn(
     if dedup_result is not None:
         return cast("LearnResultDict", dedup_result)
 
-    # PRD-CORE-111: Generate code-grounded anchors from recently modified files
-    anchors: list[dict[str, object]] = []
-    anchor_validity = 1.0
-    try:
-        project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
-        git_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=5,
-            cwd=str(project_root),
-        )
-        if git_result.returncode == 0:
-            modified_rel = [f.strip() for f in git_result.stdout.strip().split("\n") if f.strip()]
-            if modified_rel:
-                # Resolve relative paths against project root for file reading
-                modified_abs = [str(project_root / f) for f in modified_rel]
-                from trw_mcp.state.anchor_generation import generate_anchors
-
-                raw_anchors = generate_anchors(modified_abs, {})
-                if raw_anchors:
-                    anchors = [dict(a) for a in raw_anchors]
-    except Exception:  # justified: fail-open, anchor generation is best-effort
-        logger.debug("anchor_generation_skipped", exc_info=True)
-
-    # PRD-CORE-111: Compute initial anchor validity
-    if anchors:
-        try:
-            from trw_memory.lifecycle.anchor_validation import compute_anchor_validity as _cav
-
-            anchor_validity = _cav(anchors, str(project_root))
-        except Exception:  # justified: fail-open, validity computation is best-effort
-            logger.debug("anchor_validity_computation_skipped", exc_info=True)
+    # PRD-CORE-111 FR04: code-grounded anchors from recently modified files
+    # (run events.jsonl first, git-diff fallback) + initial validity. Delegated
+    # to _learn_anchors so this module stays under the size gate.
+    project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
+    anchors, anchor_validity = resolve_learn_anchors(
+        project_root,
+        trw_dir,
+        learning_id,
+        session_id=session_id,
+    )
 
     # Store via SQLite adapter (primary path).  Preserve compatibility with
     # older injected test doubles that either take ``trw_dir`` positionally or
@@ -374,6 +351,29 @@ def execute_learn(
             "learning_id": learning_id,
             "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
             "status": "quarantined",
+            "distribution_warning": "",
+        }
+    # D8 (dual-write atomicity): the SQLite row is the source of truth. When the
+    # store fails, ``store_learning`` returns ``status="error"`` from
+    # ``_store_error_result`` instead of raising (JSON-RPC boundary contract), so
+    # a naive fall-through would still write the YAML sidecar below — producing an
+    # UNRECALLABLE YAML-with-no-DB-row. Worse, because the entry never lands in the
+    # DB, the semantic dedup check (which reads the DB) can never suppress a retry,
+    # so the same summary accumulates one orphan sidecar per attempt (the observed
+    # "one summary 92x" pathology, and the 8-hex ``L-{token_hex(4)}`` ids that
+    # appear precisely when trw_memory is unavailable — the same condition that
+    # makes the store fail). Returning here keeps the sidecar strictly downstream
+    # of a confirmed DB write, so YAML never survives a store the DB rejected.
+    if store_result_dict.get("status") == "error":
+        logger.warning(
+            "learn_store_failed_no_sidecar",
+            learning_id=learning_id,
+            error=str(store_result_dict.get("error", "")),
+        )
+        return {
+            "learning_id": learning_id,
+            "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
+            "status": "error",
             "distribution_warning": "",
         }
     _append_provenance_signed(
@@ -444,8 +444,11 @@ def execute_learn(
         "learning_id": learning_id,
         "path": str(entry_path),
         "status": str(store_result_dict.get("status", "recorded")),
-        "distribution_warning": distribution_warning,
     }
+    # Advisory only when there is something to advise — an empty
+    # distribution_warning on every call is response noise.
+    if distribution_warning:
+        result_dict["distribution_warning"] = distribution_warning
     if distribution_soft_cap_warning:
         result_dict["distribution_warning"] = distribution_soft_cap_warning
 

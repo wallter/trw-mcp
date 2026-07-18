@@ -137,6 +137,22 @@ class TestPaidTierHappyPath:
         assert r.tier == "enterprise"
         assert r.distill_status == "hint_available"
 
+    def test_beta_tester_tier_unlocks_sidecar(self, tmp_path: Path) -> None:
+        # sub_Y-f6QQ3Y_Os9b0vM: tester-program (beta) users must NOT get the
+        # paid-tier remediation — the feature is unlocked for them.
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_sidecar(cache_dir, sha, "foo.py")
+        _write_entitlement(tmp_path / ".trw", "beta")
+        r = compute_before_edit_hint(
+            file_path="foo.py",
+            repo_root=str(tmp_path),
+        )
+        assert r.tier == "beta"
+        assert r.distill_status != "tier_required"
+        assert r.distill_status == "hint_available"
+        assert r.distill_hint is not None
+
 
 class TestPaidTierGracefulFailures:
     def test_sidecar_missing(self, tmp_path: Path) -> None:

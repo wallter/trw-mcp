@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
@@ -215,7 +218,8 @@ def test_cursor_rules_mdc_cursor_ide_includes_appendix(tmp_path: Path) -> None:
     assert "trw_build_check" in content
     assert "trw_review" in content
     assert "Verification Pass" in content
-    assert 'trw_build_check(scope="full")' in content
+    assert "trw_build_check(tests_passed=<bool>" in content
+    assert 'scope="<exact command>"' in content
     assert "If the Agent Drifts" in content
     assert "Follow the TRW ceremony protocol" in content
     assert "Planning" in content
@@ -255,3 +259,23 @@ def test_cursor_rules_alias_delegates_to_mdc(tmp_path: Path) -> None:
     assert rules_file.is_file()
     assert "alias content" in rules_file.read_text(encoding="utf-8")
     assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "trw-mcp/src/trw_mcp/bootstrap/_cursor.py",
+        "trw-mcp/src/trw_mcp/bootstrap/_config_templates.py",
+        "trw-mcp/src/trw_mcp/state/claude_md/_templates.py",
+        "trw-mcp/src/trw_mcp/state/claude_md/_renderer.py",
+        "platform/src/components/marketing/TypingTerminal.tsx",
+        "platform/src/app/(marketing)/docs/tools/tools-page/data.tsx",
+        "platform/src/app/(marketing)/docs/clients/claude-code/claude-code-page/snippets.ts",
+    ],
+)
+def test_live_build_check_examples_include_required_outcome(relative_path: str) -> None:
+    text = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    examples = re.findall(r"trw_build_check\((.*?)\)", text, flags=re.DOTALL)
+    scoped_examples = [example for example in examples if "scope=" in example]
+    assert scoped_examples
+    assert all("tests_passed=" in example for example in scoped_examples)

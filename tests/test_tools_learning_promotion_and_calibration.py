@@ -122,7 +122,7 @@ class TestTrwLearnDistributionWarning:
                 detail="Very important",
                 impact=0.95,
             )
-            assert result["distribution_warning"] == ""
+            assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
 
     def test_learn_no_warning_below_threshold(self, tmp_path: Path) -> None:
         """No warning for impact < 0.7 (below distribution check threshold)."""
@@ -137,7 +137,7 @@ class TestTrwLearnDistributionWarning:
             impact=0.5,
         )
         assert result["status"] == "recorded"
-        assert result["distribution_warning"] == ""
+        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
 
     def test_learn_no_warning_when_within_cap(self, tmp_path: Path) -> None:
         """No warning when tier percentage is within cap."""
@@ -154,7 +154,7 @@ class TestTrwLearnDistributionWarning:
             impact=0.95,
         )
         assert result["status"] == "recorded"
-        assert result["distribution_warning"] == ""
+        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
 
 
 class TestBayesianCalibrationWiring:

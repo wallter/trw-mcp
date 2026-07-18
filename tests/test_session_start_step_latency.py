@@ -10,6 +10,7 @@ name is in the log line.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,32 @@ def test_session_start_step_durations_logged_with_event(
     )
     assert isinstance(payload["step_durations_ms"], dict)
     assert "total" in payload["step_durations_ms"]
+
+
+def test_finalize_and_payload_trim_are_included_in_latency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trw_mcp.tools import ceremony
+
+    real_finalize = ceremony.finalize_session_start
+    real_trim = ceremony.trim_session_start_payload
+
+    def slow_finalize(*args: Any, **kwargs: Any) -> None:
+        time.sleep(0.03)
+        real_finalize(*args, **kwargs)
+
+    def slow_trim(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(0.03)
+        return real_trim(*args, **kwargs)
+
+    monkeypatch.setattr(ceremony, "finalize_session_start", slow_finalize)
+    monkeypatch.setattr(ceremony, "trim_session_start_payload", slow_trim)
+
+    result: dict[str, Any] = _get_session_start_fn()(ctx=None, query="*", verbose=True)
+    durations = result["step_durations_ms"]
+    assert float(durations["finalize"]) >= 25.0
+    assert float(durations["total"]) >= float(durations["finalize"]) + 25.0
 
 
 def test_session_start_warm_p95_under_5_seconds(

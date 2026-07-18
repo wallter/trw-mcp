@@ -194,8 +194,9 @@ def _read_analytics(trw_dir: Path) -> tuple[Path, dict[str, object]]:
 def _locked_analytics(trw_dir: Path) -> Generator[tuple[Path, dict[str, object]], None, None]:
     """Read analytics.yaml under an advisory R-M-W lock, yielding (path, data).
 
-    The dev repo runs several MCP clients (Claude Code, Codex, opencode) against
-    one shared server, so concurrent trw_session_start / trw_learn calls would
+    The dev repo runs several MCP clients (Claude Code, Codex, opencode), each
+    spawning its own stdio trw-mcp process but all sharing one ``.trw/``
+    filesystem, so concurrent trw_session_start / trw_learn calls would
     otherwise race the read-modify-write and silently lose counter increments
     (last-write-wins drops a session/learning from the tally). Mirrors the
     lock_for_rmw guard already on update_learning_index. The caller's mutate +

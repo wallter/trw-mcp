@@ -32,10 +32,7 @@ def _check_instructions_core(target: Path) -> tuple[int, dict[str, list[str]]]:
     )
 
     config = TRWConfig()
-    exposed = resolve_exposed_tools(
-        mode=config.effective_tool_exposure_mode,
-        custom_list=config.tool_exposure_list,
-    )
+    exposed = resolve_exposed_tools(mode=config.tool_resolution_mode)
 
     files_to_check = ["AGENTS.md", "CLAUDE.md"]
     all_mismatches: dict[str, list[str]] = {}

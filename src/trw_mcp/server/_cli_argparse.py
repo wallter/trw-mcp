@@ -63,27 +63,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Force JSON log output (default: auto-detect from TTY)",
     )
     parser.add_argument(
-        "--transport",
-        choices=["stdio", "sse", "streamable-http"],
-        default=None,
-        help="MCP transport (default: from config or stdio)",
-    )
-    parser.add_argument(
-        "--host",
-        default=None,
-        help="Bind address for HTTP transport (default: from config or 127.0.0.1)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="Port for HTTP transport (default: from config or 8100)",
-    )
-    parser.add_argument(
         "--allow-unsigned",
         action="store_true",
         default=None,
         help="Allow MCP peers absent from the signed registry; emits mandatory audit events",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio"],
+        default=None,
+        help=argparse.SUPPRESS,
+        # Deprecated no-op (2026-07-11): HTTP transport was removed in
+        # a0673d9765 and stdio is the only mode, but installer scripts in the
+        # wild (install-trw.py <= 0.55.18 bundles, tool overlays) still probe
+        # with `--transport stdio serve` while installing the LATEST PyPI
+        # trw-mcp. Rejecting the flag turns every such install into a hard
+        # fail. Accept exactly "stdio"; any other value still errors.
+    )
+    parser.add_argument(
+        "--memory-db",
+        dest="memory_db",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Register an EXTERNAL trw-memory DB as a READ-ONLY source unioned into "
+            "trw_recall (PRD-CORE-202). Repeatable; union'd with config.extra_read_stores."
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -101,14 +107,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Manage platform authentication",
     )
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    _API_URL_HELP = "Override API URL (default: from config or https://api.trwframework.com)"
     login_parser = auth_sub.add_parser("login", help="Authenticate via device authorization flow")
-    login_parser.add_argument(
-        "--api-url",
-        default=None,
-        help="Override API URL (default: from config or https://api.trwframework.com)",
-    )
-    auth_sub.add_parser("logout", help="Remove stored API key")
-    auth_sub.add_parser("status", help="Show current authentication status")
+    login_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
+    logout_parser = auth_sub.add_parser("logout", help="Remove stored API key")
+    logout_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
+    status_parser = auth_sub.add_parser("status", help="Show current authentication status")
+    status_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
 
     # uninstall
     uninstall_parser = subparsers.add_parser("uninstall", help="Remove TRW files from a project")
@@ -262,9 +267,95 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Emit the StaleRunReport as JSON instead of a human summary.",
     )
 
+    # dispatch — run another coding-agent CLI headlessly for a second-opinion audit.
+    _add_dispatch_subcommand(subparsers)
+
     # Operational subcommands (build-release / channel-doctor / session-changelog
     # / tendencies / version-status / tier) live in a sibling module to keep this
     # parser builder under the 350 effective-LOC module gate (PRD-DIST-243).
     add_operational_subcommands(subparsers)
 
     return parser
+
+
+def _add_dispatch_subcommand(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register the ``dispatch`` subcommand (cross-client second-opinion audits)."""
+    dispatch_parser = subparsers.add_parser(
+        "dispatch",
+        help="Run another coding-agent CLI (claude/codex/agy/opencode) headlessly for a second opinion",
+    )
+    dispatch_parser.add_argument(
+        "--client",
+        default=None,
+        help=(
+            "Target CLI: claude | codex | agy | opencode (gemini is EOL — use agy). "
+            "Optional: defaults to dispatch.default_client (or a --role default) "
+            "from .trw/config.yaml."
+        ),
+    )
+    dispatch_parser.add_argument(
+        "--prompt",
+        default=None,
+        help="The prompt/instruction for the child agent (or use --prompt-file).",
+    )
+    dispatch_parser.add_argument(
+        "--prompt-file",
+        dest="prompt_file",
+        default=None,
+        help="Read the prompt body from a file instead of --prompt.",
+    )
+    dispatch_parser.add_argument(
+        "--role",
+        default=None,
+        choices=["code-review", "design-audit", "architectural-audit", "adversarial-audit"],
+        help="Prepend a read-only second-opinion audit role preamble to the prompt.",
+    )
+    dispatch_parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional model override for the child client.",
+    )
+    dispatch_parser.add_argument(
+        "--cwd",
+        default=None,
+        help="Working directory for the child process (default: current directory).",
+    )
+    dispatch_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help=(
+            "Hard wall-clock timeout in seconds. Defaults to "
+            "dispatch.default_timeout_s from .trw/config.yaml (600 if unset)."
+        ),
+    )
+    dispatch_parser.add_argument(
+        "--output-file",
+        dest="output_file",
+        default=None,
+        help="Write the full DispatchResult JSON to this file.",
+    )
+    dispatch_parser.add_argument(
+        "--no-isolate",
+        dest="no_isolate",
+        action="store_true",
+        help="Do NOT isolate the child from host config/hooks/MCP (default: isolate).",
+    )
+    dispatch_parser.add_argument(
+        "--allow-writes",
+        dest="allow_writes",
+        action="store_true",
+        help="Allow the child agent to write/edit (default: read-only).",
+    )
+    dispatch_parser.add_argument(
+        "--pty",
+        action="store_true",
+        help="Wrap the child in a pseudo-TTY (use if stdout comes back empty, e.g. agy bug #76).",
+    )
+    dispatch_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the full DispatchResult as JSON instead of just the answer text.",
+    )

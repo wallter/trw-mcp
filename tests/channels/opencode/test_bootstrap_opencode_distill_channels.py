@@ -8,7 +8,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+import pytest
 
 
 def _init_git(tmp_path: Path) -> None:
@@ -290,33 +292,18 @@ def test_load_managed_artifacts_returns_empty_on_parse_error(tmp_path: Path) -> 
 
 def test_manifest_validation_error_propagates(tmp_path: Path) -> None:
     """FR29: ManifestValidationError propagates from bootstrap_channel_manifest."""
-    from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
+    from trw_mcp.bootstrap import _opencode_distill_channels
     from trw_mcp.channels._manifest_loader import ManifestValidationError
 
-    bad_channels = [{"id": "bad", "missing_required": True}]
+    invalid_manifest = tmp_path / "invalid-opencode-manifest.yaml"
+    invalid_manifest.write_text("channels:\n  - id: bad\n    missing_required: true\n", encoding="utf-8")
+    target_manifest = tmp_path / ".trw" / "channels" / "manifest.yaml"
 
-    with patch(
-        "trw_mcp.bootstrap._opencode_distill_channels.load",
-    ) as mock_load:
-        manifest_mock = MagicMock()
-        manifest_mock.channels = []
-        mock_load.return_value = manifest_mock
+    with patch.object(_opencode_distill_channels, "_MANIFEST_DATA", invalid_manifest):
+        with pytest.raises(ManifestValidationError, match="opencode manifest entry validation failed"):
+            _opencode_distill_channels.bootstrap_channel_manifest(tmp_path)
 
-        raw_data = {"channels": bad_channels}
-        with patch("trw_mcp.bootstrap._opencode_distill_channels.YAML") as mock_yaml_cls:
-            mock_yaml = MagicMock()
-            mock_yaml.load.return_value = raw_data
-            mock_yaml_cls.return_value = mock_yaml
-
-            with patch(
-                "trw_mcp.channels._manifest_models.ChannelEntry.model_validate",
-                side_effect=ValueError("bad entry"),
-            ):
-                try:
-                    bootstrap_channel_manifest(tmp_path)
-                    # ManifestValidationError or Exception expected
-                except (ManifestValidationError, Exception):
-                    pass  # Correct — validation error propagated
+    assert not target_manifest.exists()
 
 
 def test_gitignore_error_is_swallowed(tmp_path: Path) -> None:

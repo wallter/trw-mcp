@@ -28,6 +28,9 @@ else:  # pragma: no cover - Python <3.11 fallback
 # Tests and external consumers import ``from trw_mcp.bootstrap._utils import X``
 # directly.  These re-exports ensure those import paths still resolve.
 # ---------------------------------------------------------------------------
+from ._config_templates import _default_config as _default_config
+from ._config_templates import _minimal_claude_md as _minimal_claude_md
+from ._config_templates import _minimal_review_md as _minimal_review_md
 from ._file_ops import ProgressCallback as ProgressCallback
 from ._file_ops import _copy_file as _copy_file
 from ._file_ops import _ensure_dir as _ensure_dir
@@ -77,65 +80,6 @@ def _trw_mcp_server_entry() -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
-def _default_config(
-    *,
-    source_package: str = "",
-    test_path: str = "",
-    runs_root: str = ".trw/runs",
-    target_platforms: list[str] | None = None,
-) -> str:
-    """Generate default ``.trw/config.yaml``.
-
-    Args:
-        source_package: If set, adds ``source_package_name`` field.
-        test_path: If set, adds ``tests_relative_path`` field.
-        runs_root: Base directory for run artifacts (relative to project root).
-        target_platforms: Platforms to sync instruction files for.
-            e.g. ``["claude-code", "opencode"]``. Defaults to ``["claude-code"]``.
-    """
-    from trw_mcp.models.config import get_config
-
-    config = get_config()
-    platforms = target_platforms or ["claude-code"]
-    lines = [
-        "# TRW Framework Configuration",
-        "# See trw://config resource for all available fields.",
-        "task_root: docs",
-        "",
-        "# Where run artifacts (events, checkpoints, reports) are stored.",
-        "# Each trw_init creates: {runs_root}/{task_name}/{run_id}/",
-        f"runs_root: {runs_root}",
-        "",
-        "debug: false",
-        "claude_md_max_lines: 500",
-        f"framework_version: {config.framework_version}",
-    ]
-    if source_package:
-        lines.append(f"source_package_name: {source_package}")
-    if test_path:
-        lines.append(f"tests_relative_path: {test_path}")
-
-    # Target platforms -- controls which instruction files are written
-    # (client instruction file, AGENTS.md, .cursorrules, etc.) during deliver/sync.
-    # Supported: claude-code, opencode, cursor, codex, copilot, gemini, aider
-    lines.append("")
-    lines.append("# Target platforms for instruction file sync")
-    lines.append("target_platforms:")
-    lines.extend(f'  - "{p}"' for p in platforms)
-
-    lines.extend(
-        [
-            "",
-            "# Platform telemetry — set platform_api_key to enable",
-            "# platform_urls:",
-            '#   - "https://api.trwframework.com"',
-            "# platform_api_key: ''",
-            "# platform_telemetry_enabled: true",
-        ]
-    )
-    return "\n".join(lines) + "\n"
-
-
 # ---------------------------------------------------------------------------
 # VERSION.yaml generation (DRY — derived from package metadata)
 # ---------------------------------------------------------------------------
@@ -155,31 +99,51 @@ def _write_version_yaml(
     - ``deployed_at``: current UTC timestamp
     """
     from trw_mcp import __version__ as pkg_version
+    from trw_mcp.canons.registry import bundled_manifest_bytes, load_registry
+    from trw_mcp.framework_integrity import repair_framework_runtime
     from trw_mcp.models.config import get_config
 
     config = get_config()
-    version_data: dict[str, object] = {
-        "framework_version": config.framework_version,
-        "aaref_version": config.aaref_version,
-        "trw_mcp_version": pkg_version,
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
-    }
     version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
+    managed_paths = (
+        target_dir / ".trw/frameworks/FRAMEWORK.md",
+        target_dir / ".trw/frameworks/AARE-F-FRAMEWORK.md",
+        version_path,
+    )
     try:
-        from trw_mcp.state.persistence import FileStateWriter
-
-        writer = FileStateWriter()
-        writer.write_yaml(version_path, version_data)
+        # Snapshot pre-existence BEFORE the repair writes, so a file that was
+        # missing (e.g. user-deleted FRAMEWORK.md) is truthfully reported as
+        # "created" on recreation, not blanket-classified by flow type.
+        preexisting = {path: path.exists() for path in managed_paths}
+        registry = load_registry(bundled_manifest_bytes())
+        compiled_artifacts: dict[Path, bytes] = {}
+        for canon in registry.compiled_canons:
+            compiled_artifacts[Path(canon.runtime_compact_core)] = (
+                _DATA_DIR / Path(canon.compact_core).name
+            ).read_bytes()
+            compiled_artifacts[Path(canon.runtime_reference)] = (_DATA_DIR / Path(canon.reference).name).read_bytes()
+        repair_framework_runtime(
+            target_dir,
+            framework_source=(_DATA_DIR / "framework.md").read_text(encoding="utf-8"),
+            aaref_source=(_DATA_DIR / "aaref.md").read_text(encoding="utf-8"),
+            framework_version=config.framework_version,
+            aaref_version=config.aaref_version,
+            trw_mcp_version=pkg_version,
+            registry_digest=registry.digest,
+            additional_artifacts=compiled_artifacts,
+        )
         logger.debug(
             "version_yaml_generated",
             path=str(version_path),
             framework=config.framework_version,
             trw_mcp=pkg_version,
         )
-        key = _result_action_key(result)
-        result[key].append(str(version_path))
-        if on_progress:
-            on_progress("Created" if key == "created" else "Updated", str(version_path))
+        fallback_key = _result_action_key(result)
+        for path in managed_paths:
+            key = fallback_key if preexisting[path] else "created"
+            result[key].append(str(path))
+            if on_progress:
+                on_progress("Created" if key == "created" else "Updated", str(path))
     except OSError as exc:  # justified: boundary, file write may fail
         logger.warning("version_yaml_write_failed", path=str(version_path), error=str(exc))
         result["errors"].append(f"Failed to write {version_path}: {exc}")
@@ -198,10 +162,17 @@ def _write_installer_metadata(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Write ``.trw/installer-meta.yaml`` with deployment metadata.
+    """Write ``.trw/installer-meta.yaml`` with historical install-time metadata.
 
-    Tracks framework version, package version, timestamp, and artifact
-    counts so audits can detect stale deployments.
+    PRD-INFRA-164 FR11 / D-26: this record is an explicit HISTORICAL install
+    snapshot, never a current runtime authority. It uses the unambiguous v2
+    install-time field names (``framework_version_at_install``,
+    ``aaref_version_at_install``, ``trw_mcp_version_at_install``, ``recorded_at``)
+    and carries ``record_kind=historical_install_snapshot``. Legacy scalar fields
+    (``framework_version``/``package_version``) are retained for one release as
+    read-only compatibility (NFR06); status/audit read them only as history and
+    never as current equality. VERSION.yaml and the live-process fingerprint
+    remain the current installed/process authorities.
     """
     from trw_mcp import __version__ as pkg_version
     from trw_mcp.models.config import get_config
@@ -216,10 +187,19 @@ def _write_installer_metadata(
     skills_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.is_dir() else 0
     agents_count = len(list(agents_dir.glob("*.md"))) if agents_dir.is_dir() else 0
 
+    recorded_at = datetime.now(timezone.utc).isoformat()
     meta = {
+        # v2 historical install-time schema (D-26): unambiguous *_at_install names.
+        "record_kind": "historical_install_snapshot",
+        "installer_meta_schema_version": 2,
+        "framework_version_at_install": config.framework_version,
+        "aaref_version_at_install": config.aaref_version,
+        "trw_mcp_version_at_install": pkg_version,
+        "recorded_at": recorded_at,
+        # Legacy fields retained one release for compatibility (NFR06) — history only.
         "framework_version": config.framework_version,
         "package_version": pkg_version,
-        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "last_updated": recorded_at,
         "installed_by": f"trw-mcp {action}",
         "hooks_count": hooks_count,
         "skills_count": skills_count,
@@ -282,7 +262,7 @@ def _verify_installation(
                 if isinstance(trw_server, dict) and "url" in trw_server and "command" not in trw_server:
                     result["warnings"].append(
                         ".codex/config.toml uses a direct TRW MCP HTTP URL; "
-                        "run update-project to restore the stdio proxy entry"
+                        "run update-project to restore the stdio entry"
                     )
             features = data.get("features", {})
             if isinstance(features, dict) and features.get("codex_hooks") is True:
@@ -290,6 +270,28 @@ def _verify_installation(
                     ".codex/config.toml uses deprecated features.codex_hooks; "
                     "run update-project to migrate to features.hooks"
                 )
+
+            agents_dir = target_dir / ".codex" / "agents"
+            for agent_name in (
+                "trw-explorer.toml",
+                "trw-implementer.toml",
+                "trw-reviewer.toml",
+                "trw-docs-researcher.toml",
+            ):
+                agent_path = agents_dir / agent_name
+                if not agent_path.exists():
+                    continue
+                try:
+                    agent_config = tomllib.loads(agent_path.read_text(encoding="utf-8"))
+                except (tomllib.TOMLDecodeError, OSError):
+                    continue
+                pinned_model = agent_config.get("model")
+                if pinned_model in {"gpt-5.4", "gpt-5.4-mini"}:
+                    result["warnings"].append(
+                        f".codex/agents/{agent_name} pins legacy generated model {pinned_model}; "
+                        "the file was preserved because agent files are user-editable. Remove the "
+                        "model key to inherit the active Codex model, or explicitly regenerate it."
+                    )
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 
@@ -342,10 +344,24 @@ SUPPORTED_IDES = [
     "opencode",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
     "antigravity-cli",
 ]
+
+# Retired client identifiers (2026-07-11). ``gemini`` — Google deprecated the
+# Gemini CLI in favor of Antigravity CLI; ``aider`` — never had a TRW client
+# adapter. Retired IDs are no longer installable (absent from SUPPORTED_IDES)
+# but are still RECOGNIZED (not "unknown"): ``--ide`` selection and target
+# resolution surface a 'retired' message with a migration hint instead of a
+# generic rejection, and existing ``.gemini/`` installs remain uninstallable
+# via ``trw-mcp uninstall`` forever (see client_profiles/catalog.py).
+_RETIRED_IDES: dict[str, str] = {
+    "gemini": (
+        "Gemini CLI was deprecated by Google; configure antigravity-cli instead "
+        "(trw-mcp update-project . --ide antigravity-cli). Existing .gemini/ files are "
+        "left untouched — run trw-mcp uninstall to remove them on demand."
+    ),
+    "aider": "aider never had a TRW client adapter.",
+}
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -392,10 +408,6 @@ def detect_ide(target_dir: Path) -> list[str]:
     has_copilot_agents = agents_dir.is_dir() and any(f.name.endswith(".agent.md") for f in agents_dir.iterdir())
     if (target_dir / ".github" / "copilot-instructions.md").is_file() or has_copilot_agents:
         detected.append("copilot")
-    if (target_dir / ".gemini").is_dir() or (target_dir / "GEMINI.md").is_file():
-        detected.append("gemini")
-    if (target_dir / ".aider.conf.yml").is_file():
-        detected.append("aider")
     if (target_dir / ".antigravitycli").is_dir() or (target_dir / "ANTIGRAVITY.md").is_file():
         detected.append("antigravity-cli")
     return detected
@@ -419,10 +431,6 @@ def detect_installed_clis() -> list[str]:
         detected.append("codex")
     if shutil.which("github-copilot") or shutil.which("copilot"):
         detected.append("copilot")
-    if shutil.which("gemini"):
-        detected.append("gemini")
-    if shutil.which("aider"):
-        detected.append("aider")
     if shutil.which("antigravity-cli"):
         detected.append("antigravity-cli")
     return detected
@@ -473,12 +481,22 @@ def resolve_ide_targets(
     if ide_override:
         if ide_override in SUPPORTED_IDES:
             return [ide_override]
-        # Unknown override — do NOT use it as a target. Fall back to detection.
-        logger.warning(
-            "ide_override_rejected",
-            ide_override=ide_override,
-            supported=SUPPORTED_IDES,
-        )
+        if ide_override in _RETIRED_IDES:
+            # Retired (not unknown): recognized but no longer installable. Surface
+            # a 'retired' message with the migration hint and fall back to
+            # detection so the retired id is dropped rather than scaffolded.
+            logger.warning(
+                "ide_override_retired",
+                ide_override=ide_override,
+                migration_hint=_RETIRED_IDES[ide_override],
+            )
+        else:
+            # Unknown override — do NOT use it as a target. Fall back to detection.
+            logger.warning(
+                "ide_override_rejected",
+                ide_override=ide_override,
+                supported=SUPPORTED_IDES,
+            )
     detected = detect_ide(target_dir)
     return detected or ["claude-code"]  # default to Claude Code
 
@@ -486,116 +504,3 @@ def resolve_ide_targets(
 # ---------------------------------------------------------------------------
 # client instruction file content generators
 # ---------------------------------------------------------------------------
-
-
-def _minimal_review_md() -> str:
-    """Generate initial ``REVIEW.md`` for Anthropic's agentic reviewer.
-
-    Returns the same template used by ``generate_review_md()`` in
-    ``state/claude_md/_sync.py`` but with no learnings injected (fresh install).
-    """
-    return """\
-# REVIEW.md — Auto-generated by TRW
-<!-- TRW:AUTO-GENERATED — manual edits will be overwritten on next trw_deliver() -->
-
-## Always check
-- New public functions without corresponding tests
-- `Any` type annotations or bare `dict` usage
-- `# type: ignore` comments without justification
-- New API endpoints without input validation
-- Functions not called from any other module (orphan detection)
-
-## TRW Learnings (auto-injected)
-<!-- No qualifying learnings (impact >= 0.7) found -->
-
-## Skip
-- docs/sprint-*/runs/** (generated sprint artifacts)
-- .trw/** (framework persistence layer)
-- **/scratch/** (agent working directories)
-"""
-
-
-def _minimal_claude_md() -> str:
-    """Generate a minimal Claude-compatible instruction file with TRW protocol."""
-    return """\
-# Project Instructions
-
-This file provides guidance to AI coding clients when working with code in this repository.
-
-## What This Is
-
-{Describe your project here}
-
-## Build & Test Commands
-
-```bash
-# Add your project's build and test commands here
-```
-
-## Project Conventions
-
-{Add project-specific conventions here}
-
-<!-- TRW AUTO-GENERATED — do not edit between markers -->
-<!-- trw:start -->
-
-TRW tools help you build effectively and preserve your work across sessions:
-- **Start**: call `trw_session_start()` to load prior learnings and recover any active run
-- **Start**: read `.trw/frameworks/FRAMEWORK.md` — it defines the methodology your tools implement
-- **Finish**: call `trw_deliver()` to persist your learnings for future sessions
-
-### Framework Reference
-
-**Read `.trw/frameworks/FRAMEWORK.md` at session start** — it defines the methodology your tools implement.
-
-The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and portable coordination protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
-
-## TRW Behavioral Protocol (Auto-Generated)
-
-- `trw_session_start()` loads your prior learnings and recovers any active run — call it first so you have full context before writing code
-- `trw_status()` shows your current phase, completed work, and next steps — call it when resuming so you pick up where you left off instead of redoing work
-- `trw_init(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work
-- `trw_checkpoint(message)` saves your implementation progress — call it after each milestone so you can resume here if context compacts, instead of re-implementing from scratch
-- `trw_learn(summary, detail)` records discoveries for all future sessions — call it when you hit errors or find gotchas so no agent repeats your mistakes
-- `trw_instructions_sync()` refreshes the client instruction file (CLAUDE.md / AGENTS.md / etc.) — call it at delivery so the next session starts with the latest protocol
-- For quick tasks without a run: `trw_recall()` gives you relevant prior learnings at the start, `trw_learn()` saves new ones for next time
-
-## TRW Ceremony Tools (Auto-Generated)
-
-### Execution Phases
-
-```
-RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
-```
-
-### Tool Lifecycle
-
-| Phase | Tool | When to Use |
-|-------|------|-------------|
-| Start | `trw_session_start` | At session start — loads learnings + run state |
-| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings |
-| Start | `trw_status` | When resuming — shows phase, progress, next steps |
-| RESEARCH | `trw_init` | New tasks — creates run directory for tracking |
-| Any | `trw_learn` | On errors/discoveries — saves for future sessions |
-| Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
-| VALIDATE | `trw_build_check` | Before delivery — records project-native validation results |
-| DELIVER | `trw_instructions_sync` | At delivery — refreshes the client instruction file |
-| DELIVER | `trw_deliver` | At task completion — persists everything in one call |
-
-### Example Flows
-
-**Quick Task** (no run needed):
-```
-trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
-```
-
-**Full Run**:
-```
-trw_session_start -> trw_init(task_name, prd_scope)
-  -> work + trw_checkpoint (periodic) + trw_learn (discoveries)
-  -> trw_build_check(scope='full')
-  -> trw_deliver()
-```
-
-<!-- trw:end -->
-"""

@@ -128,3 +128,48 @@ def test_no_active_run_gate_passes_started_session_with_passing_build(tmp_path: 
     trw_dir.mkdir()
     _write_ceremony_state(trw_dir, {"session_started": True, "build_check_result": "passed"})
     assert _check_no_active_run_build_gate(trw_dir, FileStateReader()) is None
+
+
+def test_session_cannot_inherit_global_pass_when_session_map_is_empty(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    _write_ceremony_state(
+        trw_dir,
+        {"session_started": True, "build_check_result": "passed", "session_build_results": {}},
+    )
+
+    warning = _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="new-session")
+
+    assert warning is not None
+    assert "unpinned session" in warning
+
+
+def test_existing_corrupt_ceremony_state_is_not_positive_build_evidence(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    context = trw_dir / "context"
+    context.mkdir(parents=True)
+    (context / "ceremony-state.json").write_text("{broken", encoding="utf-8")
+
+    warning = _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="new-session")
+
+    assert warning is not None
+    assert "unpinned session" in warning
+
+
+def test_unreadable_state_probe_is_not_positive_build_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    reader = FileStateReader()
+
+    def fail_probe(_path: Path) -> bool:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(reader, "exists", fail_probe)
+
+    warning = _check_no_active_run_build_gate(trw_dir, reader, session_id="new-session")
+
+    assert warning is not None
+    assert "unpinned session" in warning

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from trw_mcp.client_profiles.catalog import build_client_profile_rows, tool_preset_counts
+from trw_mcp.client_profiles.catalog import build_client_profile_rows
 
 
 def _enabled_label(value: bool) -> str:
@@ -41,7 +41,7 @@ def render_surface_matrix() -> str:
         [
             f"`{row.client_id}`",
             _enabled_label(row.nudge_enabled),
-            row.tool_exposure_mode,
+            row.tool_resolution_mode,
             _enabled_label(row.learning_recall_enabled),
             _enabled_label(row.mcp_instructions_enabled),
             _enabled_label(row.hooks_enabled),
@@ -67,12 +67,16 @@ def render_surface_matrix() -> str:
     )
 
 
-def render_tool_preset_section() -> str:
-    counts = tool_preset_counts()
-    lines = ["**Tool exposure presets** (`tool_exposure_mode`):"]
-    for name, count in counts:
-        lines.append(f"- `{name}` — {count} tools")
-    return "\n".join(lines)
+def render_tool_resolution_section() -> str:
+    """Describe the single global tool-exposure authority (PRD-CORE-218 FR04)."""
+    return (
+        "**Tool resolution** (`tool_resolution_mode`): the kernel/pack resolver "
+        "(SurfaceAuthorityMiddleware) is the sole exposure authority. `standard` "
+        "(default) exposes the 9-tool kernel plus the packs a run's `task_type` "
+        "selects; `all` is the explicit operator escape that exposes the full "
+        "eligible surface. Masked pack tools stay grantable via "
+        "`trw_request_tool_access`."
+    )
 
 
 def render_nudge_matrix() -> str:
@@ -120,7 +124,7 @@ def render_matrix_page() -> str:
             "",
             render_surface_matrix(),
             "",
-            render_tool_preset_section(),
+            render_tool_resolution_section(),
             "",
             "## Per-Profile Nudge Configuration",
             "",

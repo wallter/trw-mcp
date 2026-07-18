@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from trw_mcp.state.validation.template_variants import get_required_sections
+
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
@@ -35,21 +37,8 @@ _PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Section headings expected in an AARE-F compliant PRD
-_EXPECTED_SECTION_NAMES: list[str] = [
-    "Problem Statement",
-    "Goals & Non-Goals",
-    "User Stories",
-    "Functional Requirements",
-    "Non-Functional Requirements",
-    "Technical Approach",
-    "Test Strategy",
-    "Rollout Plan",
-    "Success Metrics",
-    "Dependencies & Risks",
-    "Open Questions",
-    "Traceability Matrix",
-]
+# Legacy feature-section surface; canonical definitions live in template_variants.
+_EXPECTED_SECTION_NAMES: list[str] = get_required_sections("CORE")
 
 # Sections with higher weight in density scoring
 _HIGH_WEIGHT_SECTIONS: dict[str, float] = {

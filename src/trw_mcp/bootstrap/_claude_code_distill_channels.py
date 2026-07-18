@@ -18,19 +18,12 @@ PRD-DIST-2405 FR41-FR43.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import structlog
-from ruamel.yaml import YAML
 
-from trw_mcp.channels._manifest_loader import (
-    ManifestValidationError,
-    auto_recreate_empty,
-    load,
-    write,
-)
-from trw_mcp.channels._manifest_models import ChannelEntry
-from trw_mcp.channels._provenance import now_utc_iso8601
+from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
+from trw_mcp.bootstrap._file_ops import _new_result
+from trw_mcp.channels._manifest_loader import ManifestValidationError
 from trw_mcp.channels.claude_code._explorer_subagent import install_cc05_subagent
 
 log = structlog.get_logger(__name__)
@@ -58,55 +51,12 @@ _HOOKS_DATA_DIR = Path(__file__).parent.parent / "data" / "claude_code" / "hooks
 
 
 def bootstrap_cc_channel_manifest(repo_root: Path) -> dict[str, object]:
-    """Load manifest-claude-code.yaml and merge five ChannelEntry records.
-
-    Merge is additive — existing entries for other clients are preserved.
-    All-or-nothing: if any entry fails validation, raises ManifestValidationError.
-
-    Args:
-        repo_root: Repository root directory.
-
-    Returns:
-        Dict with ``status`` and ``count`` of entries added.
-    """
-    yaml = YAML(typ="safe")
-    raw: Any = yaml.load(_MANIFEST_DATA.read_text(encoding="utf-8")) or {}
-    raw_channels: list[dict[str, Any]] = raw.get("channels", [])
-
-    # Validate all entries first (all-or-nothing)
-    validated: list[ChannelEntry] = []
-    for entry_dict in raw_channels:
-        try:
-            validated.append(ChannelEntry.model_validate(entry_dict))
-        except Exception as exc:
-            raise ManifestValidationError(f"claude-code manifest entry validation failed: {exc}") from exc
-
-    # Load or recreate target manifest
-    manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        manifest = load(manifest_path)
-    except Exception:
-        auto_recreate_empty(manifest_path)
-        manifest = load(manifest_path)
-
-    # Merge: add new entries, preserve existing
-    existing_ids = {e.id for e in manifest.channels}
-    added = 0
-    for entry in validated:
-        if entry.id not in existing_ids:
-            manifest.channels.append(entry)
-            existing_ids.add(entry.id)
-            added += 1
-
-    manifest.generated_at = now_utc_iso8601()
-    write(manifest, manifest_path)
-
+    """Add Claude Code channel entries while preserving other clients."""
+    added, total = merge_distill_channel_manifest(repo_root, _MANIFEST_DATA, "claude-code")
     log.debug(
         "cc_manifest_bootstrapped",
         added=added,
-        total=len(manifest.channels),
+        total=total,
         outcome="ok",
     )
     return {"status": "ok", "count": added}
@@ -177,12 +127,7 @@ def install_claude_code_distill_channels(
     Returns:
         Dict with ``created``, ``updated``, ``preserved``, ``errors`` lists.
     """
-    result: dict[str, list[str]] = {
-        "created": [],
-        "updated": [],
-        "preserved": [],
-        "errors": [],
-    }
+    result = _new_result()
 
     # 1. Install CC-05 subagent (.claude/agents/trw-distill-explorer.md)
     try:

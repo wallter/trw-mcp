@@ -11,7 +11,6 @@ import pytest
 from tests._ceremony_helpers import make_ceremony_server
 from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state.report import assemble_report
 from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 from trw_mcp.tools._review_helpers import _persist_review_artifact
 
@@ -130,10 +129,6 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
     assert session_metrics["sprint_avg_audit_cycles"] == pytest.approx(1.5)
     assert session_metrics["sprint_first_pass_compliance_rate"] == pytest.approx(0.5)
 
-    report = assemble_report(run_dir, reader, trw_dir)
-    assert report.session_metrics["audit_cycles"]["PRD-QUAL-056"] == 2
-    assert report.session_metrics["finding_categories"]["impl_gap"] == 2
-
     monkeypatch.setattr("trw_mcp.state.analytics.report.resolve_project_root", lambda: tmp_path)
     monkeypatch.setattr("trw_mcp.state.analytics.report.resolve_trw_dir", lambda: trw_dir)
     analytics = scan_all_runs()
@@ -204,7 +199,7 @@ def test_deliver_does_not_persist_dead_promotion_candidate_keys(
     )
 
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda: trw_dir)
-    monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda: run_dir)
+    monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda **_kwargs: run_dir)
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony._do_reflect",
         lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0},

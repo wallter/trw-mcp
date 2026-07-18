@@ -47,6 +47,7 @@ _DEFAULT_SAFE_SET: frozenset[str] = frozenset(
         "trw_skill_discovery",
         "trw_submit_feedback",
         "trw_mcp_security_status",
+        "trw_pipeline_health",
         # Read-only profile / probe-budget introspection (phase-agnostic)
         "trw_profile_explain",
         "trw_probe_budget_status",
@@ -68,9 +69,20 @@ _DEFAULT_SAFE_SET: frozenset[str] = frozenset(
         "trw_surface_diff",
         "trw_ordering_compare",
         "trw_cross_repo_ordering",
-        "trw_channel_stats",
         "trw_agent_work_evidence",
         "trw_validate_agent_work_evidence",
+        # Delivery-journal status projection (PRD-CORE-208 FR05) — mechanically
+        # read-only (opens the operation store mode=ro, never mutates), so it is
+        # phase-agnostic and belongs in the Safe Set.
+        "trw_delivery_status",
+        # Cross-client dispatch (Phase 3): launch + poll a second-opinion audit
+        # by another coding-agent CLI. Read-only by default and phase-agnostic
+        # (an agent may want an independent review in any phase), so kept in the
+        # Safe Set rather than gated to one phase.
+        "trw_dispatch",
+        "trw_dispatch_status",
+        # Read-only knowledge-graph traversal — phase-agnostic read.
+        "trw_graph_related",
     }
 )
 
@@ -88,7 +100,6 @@ _DEFAULT_BY_PHASE: dict[str, list[str]] = {
     "IMPLEMENT": ["trw_checkpoint", "trw_code_index_update"],
     "VALIDATE": [
         "trw_checkpoint",
-        "trw_meta_tune_propose",
         "trw_meta_tune_rollback",
     ],
     "REVIEW": [
@@ -96,15 +107,15 @@ _DEFAULT_BY_PHASE: dict[str, list[str]] = {
         "trw_review",
         "trw_prd_validate",
         "trw_prd_diff",
-        "trw_channel_render",
-        "trw_meta_tune_propose",
         "trw_meta_tune_rollback",
     ],
     "DELIVER": [
         "trw_checkpoint",
         "trw_claude_md_sync",
         "trw_instructions_sync",
-        "trw_channel_render",
+        # Capability-guarded recovery of a stale/crashed delivery operation
+        # (PRD-CORE-208 FR04) — a delivery-phase mutation, gated to DELIVER.
+        "trw_delivery_recover",
     ],
 }
 

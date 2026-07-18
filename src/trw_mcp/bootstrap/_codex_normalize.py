@@ -234,14 +234,23 @@ def _normalize_mcp_servers(raw_mcp_servers: object) -> dict[str, CodexMcpServerE
 
 
 def _normalize_fallback_files(raw_fallback_files: object) -> list[str]:
-    """Normalize project-doc fallback files and strip model-instruction paths."""
+    """Normalize true fallback files and strip primary/instruction paths.
+
+    Codex always checks ``AGENTS.override.md`` and ``AGENTS.md`` before the
+    configured fallback list. Keeping either primary name in that list is
+    redundant and obscures the actual discovery contract.
+    """
     from trw_mcp.bootstrap._codex import _codex_instruction_path
 
     fallback_files = raw_fallback_files if isinstance(raw_fallback_files, list) else []
     instruction_path = _codex_instruction_path()
     normalized_fallbacks: list[str] = []
     for value in fallback_files:
-        if not isinstance(value, str) or value == instruction_path or value in normalized_fallbacks:
+        if (
+            not isinstance(value, str)
+            or value in {"AGENTS.md", "AGENTS.override.md", instruction_path}
+            or value in normalized_fallbacks
+        ):
             continue
         normalized_fallbacks.append(value)
     return normalized_fallbacks

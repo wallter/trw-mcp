@@ -181,7 +181,7 @@ def test_intel_boost_logs_structured_summary_once_per_scoring_call() -> None:
     entries = [_make_entry("L-boosted"), _make_entry("L-normal")]
 
     with (
-        patch("trw_mcp.scoring._recall._logger.is_enabled_for", return_value=True),
+        patch("trw_mcp.scoring._recall._level_logger.isEnabledFor", return_value=True),
         patch("trw_mcp.scoring._recall._logger.debug") as mock_debug,
     ):
         rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)

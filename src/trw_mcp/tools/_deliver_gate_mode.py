@@ -8,8 +8,8 @@ dispatch that conditions a missing-build-check block on the run's
 ``task_type``. Default is ``block_coding`` (flipped from ``advisory``
 2026-06-10): coding/rca/eval runs with work events and no recorded build
 check are blocked; docs/research/planning/unknown never block. All logic
-here is pure/fail-open on unknown modes; the override path
-(``allow_unverified`` + ``unverified_reason``) always remains open at the
+here is pure/fail-open on unknown modes; the structured override path
+(``allow_unverified`` + a schema-valid ``unverified_reason``) always remains open at the
 ``trw_deliver`` call site.
 """
 
@@ -74,8 +74,8 @@ def apply_deliver_gate_mode(
             result["delivery_blocked"] = (
                 f"Delivery blocked: no passing trw_build_check for task_type={task_type} "
                 f"under deliver_gate_mode={mode}. Run project-native validation and record it "
-                "with trw_build_check(), or override with allow_unverified=true + a concrete "
-                "unverified_reason."
+                "with trw_build_check(), or override with allow_unverified=true + an unexpired "
+                "acceptable-failure record (failed_command, residual_risk, owner, expiry_iso)."
             )
             result["missing_gate"] = "build_check"
             result["blocked_task_type"] = task_type

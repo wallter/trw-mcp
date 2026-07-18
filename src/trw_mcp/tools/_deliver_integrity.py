@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 

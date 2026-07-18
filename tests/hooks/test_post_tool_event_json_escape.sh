@@ -45,6 +45,29 @@ else
   _fail=$((_fail + 1)); echo "FAIL: backslash -> $_got"
 fi
 
+_got=$(_escape "$(printf 'line1\nline2\tend\001')")
+if [ "$_got" = 'line1\nline2\tend' ]; then
+  _pass=$((_pass + 1)); echo "PASS: newline/tab escaped and C0 control stripped"
+else
+  _fail=$((_fail + 1)); echo "FAIL: control characters -> $_got"
+fi
+
+# Event types are literal values, not basic-regular-expression fragments.
+_event_probe=$(mktemp)
+printf '%s\n' '{"event":"axbbbb"}' > "$_event_probe"
+if ( . "$_lib" 2>/dev/null; ! has_event "$_event_probe" 'a.b*' ); then
+  _pass=$((_pass + 1)); echo "PASS: event lookup rejects regex-like false match"
+else
+  _fail=$((_fail + 1)); echo "FAIL: regex-like event type matched a different literal"
+fi
+printf '%s\n' '{"event":"a.b*"}' >> "$_event_probe"
+if ( . "$_lib" 2>/dev/null; has_event "$_event_probe" 'a.b*' ); then
+  _pass=$((_pass + 1)); echo "PASS: event lookup matches BRE metacharacters literally"
+else
+  _fail=$((_fail + 1)); echo "FAIL: literal BRE metacharacter event was not found"
+fi
+rm -f "$_event_probe"
+
 # ── Test 2: end-to-end — craft an active run and fire the hook with
 #          a malicious file_path, then assert events.jsonl is valid JSONL
 #          and contains exactly one event line with the escaped payload.

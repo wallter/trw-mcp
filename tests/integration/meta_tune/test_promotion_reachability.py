@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
-from trw_mcp.meta_tune import dispatch
+from trw_mcp.meta_tune import promote
 from trw_mcp.meta_tune.promotion_gate import PromotionGate, PromotionProposal
 from trw_mcp.meta_tune.sandbox import SandboxResult
 from trw_mcp.models.config import reload_config
@@ -90,10 +90,10 @@ def test_direct_dispatch_invokes_promotion_gate_and_writes_live_surface(
         calls.append(proposal.proposal_id)
         return original_evaluate(self, proposal, **kwargs)
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
     monkeypatch.setattr(PromotionGate, "evaluate", _spy_evaluate)
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-1",
@@ -127,7 +127,7 @@ def test_direct_dispatch_rejects_off_allowlist_write_before_gate_or_live_write(
         raise AssertionError("eval-gaming detector should not run after sandbox write escape")
 
     monkeypatch.setattr(
-        dispatch,
+        promote,
         "run_sandboxed",
         lambda *args, **kwargs: _sandbox_escape(
             writes_outside_tmp=["/repo/outside-allowlist.txt"],
@@ -135,9 +135,9 @@ def test_direct_dispatch_rejects_off_allowlist_write_before_gate_or_live_write(
         ),
     )
     monkeypatch.setattr(PromotionGate, "evaluate", _fail_evaluate)
-    monkeypatch.setattr(dispatch, "detect_eval_gaming", _fail_eval_gaming)
+    monkeypatch.setattr(promote, "detect_eval_gaming", _fail_eval_gaming)
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-escape",
@@ -172,7 +172,7 @@ def test_direct_dispatch_rejects_network_attempt_before_gate_or_live_write(
         raise AssertionError("eval-gaming detector should not run after sandbox network attempt")
 
     monkeypatch.setattr(
-        dispatch,
+        promote,
         "run_sandboxed",
         lambda *args, **kwargs: _sandbox_escape(
             writes_outside_tmp=[],
@@ -180,9 +180,9 @@ def test_direct_dispatch_rejects_network_attempt_before_gate_or_live_write(
         ),
     )
     monkeypatch.setattr(PromotionGate, "evaluate", _fail_evaluate)
-    monkeypatch.setattr(dispatch, "detect_eval_gaming", _fail_eval_gaming)
+    monkeypatch.setattr(promote, "detect_eval_gaming", _fail_eval_gaming)
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-network",
@@ -216,7 +216,7 @@ def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: 
         calls.append(proposal.proposal_id)
         return original_evaluate(self, proposal, **kwargs)
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
     monkeypatch.setattr(PromotionGate, "evaluate", _spy_evaluate)
 
     try:
@@ -276,8 +276,8 @@ def test_goodhart_gate_rejects_spike_once_history_exists(tmp_path: Path, monkeyp
     # lookback window is populated when the next candidate is evaluated.
     small_deltas = [0.02, 0.03, 0.025]
     for i, d in enumerate(small_deltas):
-        monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
-        res = dispatch.promote_candidate(
+        monkeypatch.setattr(promote, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
+        res = promote.promote_candidate(
             target_path=target,
             candidate_content=f"v{i + 1}\n",
             proposer_id="agent-baseline",
@@ -291,8 +291,8 @@ def test_goodhart_gate_rejects_spike_once_history_exists(tmp_path: Path, monkeyp
 
     # Now a candidate declaring a delta far above the spike ratio (10x max prior
     # ~= 0.3) must be rejected as a Goodhart spike — proving the history is loaded.
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(5.0))
-    spike = dispatch.promote_candidate(
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(5.0))
+    spike = promote.promote_candidate(
         target_path=target,
         candidate_content="v-spike\n",
         proposer_id="agent-hacker",
@@ -321,8 +321,8 @@ def test_goodhart_gate_allows_legitimate_delta_within_band_after_history(
     state_dir = tmp_path / "state"
 
     for i, d in enumerate([0.05, 0.06, 0.05]):
-        monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
-        res = dispatch.promote_candidate(
+        monkeypatch.setattr(promote, "run_sandboxed", lambda *a, _d=d, **k: _sandbox_with_delta(_d))
+        res = promote.promote_candidate(
             target_path=target,
             candidate_content=f"v{i + 1}\n",
             proposer_id="agent-baseline",
@@ -335,8 +335,8 @@ def test_goodhart_gate_allows_legitimate_delta_within_band_after_history(
         assert res.decision == "approve"
 
     # A modest improvement (well within 10x the max prior 0.06 = 0.6) approves.
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(0.1))
-    ok = dispatch.promote_candidate(
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *a, **k: _sandbox_with_delta(0.1))
+    ok = promote.promote_candidate(
         target_path=target,
         candidate_content="v-legit\n",
         proposer_id="agent-honest",
@@ -383,7 +383,7 @@ def test_load_recent_history_parses_promoted_deltas(tmp_path: Path) -> None:
             _config=full_cfg,
         )
 
-    history = dispatch._load_recent_history(audit_log, max_rows=2)
+    history = promote._load_recent_history(audit_log, max_rows=2)
     # Only promoted events, bounded to the most recent 2.
     assert [row["declared_metric_delta"] for row in history] == [0.02, 0.03]
 
@@ -398,7 +398,7 @@ def test_rejected_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: py
     state_dir = tmp_path / "state"
 
     monkeypatch.setattr(
-        dispatch,
+        promote,
         "run_sandboxed",
         lambda *args, **kwargs: _sandbox_escape(
             writes_outside_tmp=["/repo/outside-allowlist.txt"],
@@ -406,7 +406,7 @@ def test_rejected_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: py
         ),
     )
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-escape",
@@ -441,9 +441,9 @@ def test_sandbox_failed_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypat
         writes_outside_tmp=[],
         timed_out=False,
     )
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: failed)
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: failed)
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-fail",
@@ -467,9 +467,9 @@ def test_approved_dispatch_leaves_no_staging_dir(tmp_path: Path, monkeypatch: py
     target.write_text("before\n", encoding="utf-8")
     state_dir = tmp_path / "state"
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
 
-    result = dispatch.promote_candidate(
+    result = promote.promote_candidate(
         target_path=target,
         candidate_content="after\n",
         proposer_id="agent-ok",
@@ -498,7 +498,7 @@ def test_concurrent_promotes_serialize_via_target_write_lock(tmp_path: Path, mon
     target = tmp_path / "CLAUDE.md"
     target.write_text("before\n", encoding="utf-8")
 
-    monkeypatch.setattr(dispatch, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
+    monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
 
     state_dir = tmp_path / "state"
     barrier = threading.Barrier(2)
@@ -509,7 +509,7 @@ def test_concurrent_promotes_serialize_via_target_write_lock(tmp_path: Path, mon
     def _promote(content: str) -> None:
         barrier.wait()
         try:
-            res = dispatch.promote_candidate(
+            res = promote.promote_candidate(
                 target_path=target,
                 candidate_content=content,
                 proposer_id="agent-1",

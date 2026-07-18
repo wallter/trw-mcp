@@ -37,7 +37,7 @@ __all__ = [
 COMMANDS_DIR = ".opencode/commands"
 COMMAND_QUOTA_BYTES = 4096
 
-_TRUNCATION_FOOTER = "\n\n[...truncated — run trw-distill to regenerate full report]"
+_TRUNCATION_FOOTER = "\n\n[...truncated — call the referenced TRW MCP tool for the full report]"
 
 # ---------------------------------------------------------------------------
 # Command template builders
@@ -67,11 +67,13 @@ When `distill_status == "hint_available"`:
 
 When `distill_status == "sidecar_missing"`:
 - Inform the user that no sidecar is available.
-- Suggest: `trw-distill self-improve risk-report --repo . --persist-sidecar`
+- Fall back to `trw_codebase_risk_report(top_n=20)` via MCP for live
+  project-level risk intelligence.
 
 When `distill_status == "stale_sha"`:
 - Surface last-known data with a staleness notice.
-- Suggest regenerating the sidecar.
+- Call `trw_codebase_risk_report(top_n=20)` via MCP for a live project-level
+  report instead of requiring a separately installed executable.
 
 When `distill_status == "tier_required"`:
 - Note the tier gate and return any available learnings from `trw_recall`.

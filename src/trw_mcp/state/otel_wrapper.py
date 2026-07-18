@@ -19,6 +19,7 @@ An unknown ``otel_semconv`` value falls back to ``legacy`` with one warning
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import structlog
@@ -145,6 +146,41 @@ def emit_tool_span(
         logger.debug("otel_emit_failed", tool=tool_name)
 
 
+def _emit_genai_invocation_span(
+    *,
+    span_name: str,
+    failure_span: str,
+    attributes: dict[str, object] | None,
+    error_type: str | None,
+    set_attributes: Callable[[_otel_genai._Span, dict[str, object] | None], None],
+) -> None:
+    """Emit the shared gen-ai agent/workflow span lifecycle."""
+    try:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+        if not config.otel_enabled:
+            return
+        if _resolve_semconv(getattr(config, "otel_semconv", "legacy")) != "gen_ai":
+            return
+
+        try:
+            from opentelemetry import trace
+            from opentelemetry.trace import StatusCode
+        except ImportError:
+            logger.debug("otel_not_installed", msg="opentelemetry package not available")
+            return
+
+        tracer = trace.get_tracer("trw-mcp")
+        with tracer.start_as_current_span(span_name) as span:
+            set_attributes(span, attributes)
+            if error_type:
+                _otel_genai.set_error(span, error_type)
+                span.set_status(StatusCode.ERROR)
+    except Exception:  # justified: fail-open, telemetry never blocks execution
+        logger.debug("otel_emit_failed", span=failure_span)
+
+
 def emit_agent_span(
     attributes: dict[str, object] | None = None,
     *,
@@ -157,31 +193,13 @@ def emit_agent_span(
     ``provider_name``) are mapped per the FR08 table; unknown keys fall back to
     ``trw.{key}``. Fail-open (NFR04).
     """
-    try:
-        from trw_mcp.models.config import get_config
-
-        config = get_config()
-        if not config.otel_enabled:
-            return
-        if _resolve_semconv(getattr(config, "otel_semconv", "legacy")) != "gen_ai":
-            return
-
-        try:
-            from opentelemetry import trace
-            from opentelemetry.trace import StatusCode
-        except ImportError:
-            logger.debug("otel_not_installed", msg="opentelemetry package not available")
-            return
-
-        tracer = trace.get_tracer("trw-mcp")
-        with tracer.start_as_current_span(_otel_genai.SPAN_INVOKE_AGENT) as span:
-            _otel_genai.set_agent_attributes(span, attributes)
-            if error_type:
-                _otel_genai.set_error(span, error_type)
-                span.set_status(StatusCode.ERROR)
-
-    except Exception:  # justified: fail-open, telemetry never blocks execution
-        logger.debug("otel_emit_failed", span="invoke_agent")
+    _emit_genai_invocation_span(
+        span_name=_otel_genai.SPAN_INVOKE_AGENT,
+        failure_span="invoke_agent",
+        attributes=attributes,
+        error_type=error_type,
+        set_attributes=_otel_genai.set_agent_attributes,
+    )
 
 
 def emit_workflow_span(
@@ -193,28 +211,10 @@ def emit_workflow_span(
 
     No-op unless ``otel_enabled`` AND ``otel_semconv == 'gen_ai'``. Fail-open.
     """
-    try:
-        from trw_mcp.models.config import get_config
-
-        config = get_config()
-        if not config.otel_enabled:
-            return
-        if _resolve_semconv(getattr(config, "otel_semconv", "legacy")) != "gen_ai":
-            return
-
-        try:
-            from opentelemetry import trace
-            from opentelemetry.trace import StatusCode
-        except ImportError:
-            logger.debug("otel_not_installed", msg="opentelemetry package not available")
-            return
-
-        tracer = trace.get_tracer("trw-mcp")
-        with tracer.start_as_current_span(_otel_genai.SPAN_INVOKE_WORKFLOW) as span:
-            _otel_genai.set_workflow_attributes(span, attributes)
-            if error_type:
-                _otel_genai.set_error(span, error_type)
-                span.set_status(StatusCode.ERROR)
-
-    except Exception:  # justified: fail-open, telemetry never blocks execution
-        logger.debug("otel_emit_failed", span="invoke_workflow")
+    _emit_genai_invocation_span(
+        span_name=_otel_genai.SPAN_INVOKE_WORKFLOW,
+        failure_span="invoke_workflow",
+        attributes=attributes,
+        error_type=error_type,
+        set_attributes=_otel_genai.set_workflow_attributes,
+    )

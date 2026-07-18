@@ -11,12 +11,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-# Note: ToolExposureConfig.mode is typed as ``str`` rather than
-# ``Literal["all", "core", "minimal", "standard", "custom"]`` because
-# the Literal validation already happens at the input boundary
-# (_fields_tools.py).  SurfaceConfig is a resolved snapshot, not an
-# input model, so repeating the Literal constraint here would require
-# a ``cast(Any, ...)`` in _main.py to satisfy mypy.
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -29,15 +23,6 @@ class NudgeConfig(BaseModel):
     urgency_mode: Literal["adaptive", "always_low", "always_high", "off"] = "adaptive"
     budget_chars: int = Field(default=600, ge=100, le=2000)
     dedup_enabled: bool = True
-
-
-class ToolExposureConfig(BaseModel):
-    """Tool exposure surface configuration."""
-
-    model_config = ConfigDict(frozen=True)
-
-    mode: str = "all"
-    custom_list: tuple[str, ...] = ()
 
 
 class RecallConfig(BaseModel):
@@ -62,7 +47,6 @@ class SurfaceConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     nudge: NudgeConfig = Field(default_factory=NudgeConfig)
-    tool_exposure: ToolExposureConfig = Field(default_factory=ToolExposureConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
     mcp_instructions_enabled: bool = True
     hooks_enabled: bool = True

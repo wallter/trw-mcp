@@ -21,8 +21,7 @@ class TestDeliveryGateR08Wiring:
         run_path.mkdir(parents=True)
 
         mock_config = MagicMock()
-        mock_config.effective_tool_exposure_mode = "core"
-        mock_config.tool_exposure_list = []
+        mock_config.tool_resolution_mode = "standard"
 
         with patch(
             "trw_mcp.models.config.get_config",
@@ -42,7 +41,7 @@ class TestDeliveryGateR08Wiring:
         run_path.mkdir(parents=True)
 
         mock_config = MagicMock()
-        mock_config.effective_tool_exposure_mode = "all"
+        mock_config.tool_resolution_mode = "all"
 
         with patch(
             "trw_mcp.models.config.get_config",
@@ -73,8 +72,7 @@ class TestDeliveryGateFullIntegration:
         (run_path / "meta").mkdir(parents=True)
 
         mock_config = MagicMock()
-        mock_config.effective_tool_exposure_mode = "core"
-        mock_config.tool_exposure_list = []
+        mock_config.tool_resolution_mode = "standard"
 
         reader = FileStateReader()
 
@@ -100,7 +98,7 @@ class TestDeliveryGateFullIntegration:
         (run_path / "meta").mkdir(parents=True)
 
         mock_config = MagicMock()
-        mock_config.effective_tool_exposure_mode = "all"
+        mock_config.tool_resolution_mode = "all"
 
         reader = FileStateReader()
 

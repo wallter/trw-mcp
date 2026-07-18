@@ -65,6 +65,7 @@ _VALID_TYPES = {"incident", "pattern", "convention", "hypothesis", "workaround"}
 # facade -- not just the MCP tool -- cannot persist an invalid value.
 _VALID_CONFIDENCES = {"unverified", "low", "medium", "high", "verified"}
 _VALID_PROTECTION_TIERS = {"critical", "high", "normal", "low", "protected", "permanent"}
+_VALID_FEEDBACK = {"helpful", "unhelpful"}
 
 
 def update_learning(
@@ -87,6 +88,8 @@ def update_learning(
     protection_tier: str | None = None,
     tags: list[str] | None = None,
     supersedes: str | None = None,
+    assertions: list[dict[str, object]] | None = None,
+    feedback: str | None = None,
 ) -> dict[str, str]:
     """Update a learning entry in SQLite.
 
@@ -100,11 +103,16 @@ def update_learning(
     supersession branch fires ONLY on an explicit ``supersedes=`` argument, never
     on a routine field edit.
     """
+    if feedback is not None and feedback not in _VALID_FEEDBACK:
+        return {
+            "error": f"Invalid feedback '{feedback}'. Must be one of: {_VALID_FEEDBACK}",
+            "status": "invalid",
+        }
     backend, existing = _resolve_owning_backend(trw_dir, learning_id)
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, str | float | list[str] | dict[str, str]] = {}
+    fields: dict[str, object] = {}
     changes: list[str] = []
 
     if status is not None:
@@ -174,6 +182,11 @@ def update_learning(
     if tags is not None:
         fields["tags"] = tags
         changes.append("tags updated")
+    if assertions is not None:
+        from trw_memory.models.memory import Assertion
+
+        fields["assertions"] = [Assertion.model_validate(assertion, strict=False) for assertion in assertions]
+        changes.append("assertions updated")
 
     if summary is not None or detail is not None:
         new_content = summary if summary is not None else existing.content
@@ -199,11 +212,23 @@ def update_learning(
             changes.append(f"supersedes→{supersedes}")
             logger.info("supersession_window_closed", prior=supersedes, by=learning_id)
 
+    if feedback is not None:
+        # Keep the read and increment inside the backend's serialized write
+        # transaction. A bare get()+update() pair loses votes when concurrent
+        # callers read the same old counter.
+        with backend.transaction():
+            current = backend.get(learning_id)
+            if current is None:
+                return {"error": f"Learning {learning_id} not found", "status": "not_found"}
+            counter = "helpful_count" if feedback == "helpful" else "unhelpful_count"
+            fields[counter] = getattr(current, counter) + 1
+            backend.update(learning_id, **fields)
+        changes.append(f"feedback→{feedback}")
+    elif fields:
+        backend.update(learning_id, **fields)
+
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}
-
-    if fields:
-        backend.update(learning_id, **fields)
 
     logger.info("memory_update_learning", learning_id=learning_id, changes=changes)
     return {

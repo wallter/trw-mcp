@@ -128,9 +128,7 @@ class TestDownloadReleaseArtifact:
         artifact host matches the configured platform host over https
         (sweep-4 credential-egress guard)."""
         archive_bytes = _make_tar_gz_bytes({"data/f.txt": b"ok"})
-        _reset_config(
-            TRWConfig(platform_url="https://example.com", platform_api_key="secret-key")
-        )
+        _reset_config(TRWConfig(platform_url="https://example.com", platform_api_key="secret-key"))
         client = _client_for_archive(archive_bytes)
 
         with patch("httpx.Client", return_value=client):

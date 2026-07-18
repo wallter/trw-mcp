@@ -78,6 +78,7 @@ def resolve_init_profile(
         complexity_class=cclass or ComplexityClass.STANDARD,
         complexity_signals=parsed_signals,
         task_type=detection.task_type,
+        tool_resolution_mode=config.tool_resolution_mode,
     )
     return InitProfile(
         parsed_signals=parsed_signals,

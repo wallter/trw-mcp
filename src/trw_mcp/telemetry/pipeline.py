@@ -325,6 +325,19 @@ class TelemetryPipeline:
                 exits, perform one final ``flush_now()`` call.
             timeout: Maximum seconds to wait for the thread to join.
         """
+        # An explicit stop supersedes the interpreter-shutdown fallback.  In
+        # particular, test runners and embedded hosts may close their logging
+        # capture streams before Python runs atexit callbacks.  Leaving this
+        # instance registered would then repeat the drain after its lifecycle
+        # has ended and make otherwise-successful durable writes emit
+        # ``ValueError: I/O operation on closed file`` from logging.  Keep the
+        # unregister + flag transition under the queue lock so a concurrent
+        # enqueue can safely register a fresh callback after stop releases it.
+        with self._lock:
+            if self._atexit_registered:
+                atexit.unregister(self._atexit_drain)
+                self._atexit_registered = False
+
         self._shutdown.set()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=timeout)

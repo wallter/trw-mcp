@@ -74,8 +74,8 @@ def _merge_mcp_json(
     ``/path/to/repo/trw-mcp/.venv/bin/trw-mcp``) so the right interpreter is
     always used regardless of PATH ordering.
 
-    Always generates stdio format entries (PRD-CORE-070-FR04). HTTP
-    transport is handled internally by the server's auto-start + proxy.
+    Always generates stdio format entries (PRD-CORE-070-FR04) — stdio is
+    the only supported transport.
     """
     # Deferred import to avoid circular dependency with _utils.py
     from ._utils import _trw_mcp_server_entry

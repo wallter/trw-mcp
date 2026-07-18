@@ -20,9 +20,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.state._helpers import read_jsonl_tail
 from trw_mcp.state._helpers import rotate_jsonl as _rotate_jsonl

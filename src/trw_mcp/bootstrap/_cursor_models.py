@@ -7,7 +7,7 @@ compatibility with sibling bootstrap modules
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class CursorServerEntry(TypedDict, total=False):

@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import tomllib
+from ruamel.yaml import YAML
 
 from trw_mcp.bootstrap._codex import (
     codex_hooks_review_warning,
@@ -16,6 +18,18 @@ from trw_mcp.bootstrap._codex import (
     install_codex_skills,
     merge_codex_config,
 )
+
+_CODEX_SKILL_KEYS = {"name", "description", "allowed-tools", "license", "metadata"}
+
+
+def _skill_frontmatter(path: Path) -> dict[str, object]:
+    content = path.read_text(encoding="utf-8")
+    assert content.startswith("---\n"), f"missing frontmatter: {path}"
+    closing = content.find("\n---", 4)
+    assert closing != -1, f"unterminated frontmatter: {path}"
+    parsed = YAML(typ="safe").load(content[4:closing])
+    assert isinstance(parsed, dict), f"frontmatter must be a mapping: {path}"
+    return parsed
 
 
 class TestCodexBootstrap:
@@ -35,6 +49,8 @@ class TestCodexBootstrap:
         assert "trw_checkpoint" in config["mcp_servers"]["trw"]["enabled_tools"]
         assert config["model_instructions_file"] == "INSTRUCTIONS.md"
         assert ".codex/INSTRUCTIONS.md" not in config.get("project_doc_fallback_filenames", [])
+        assert "AGENTS.md" not in config.get("project_doc_fallback_filenames", [])
+        assert "AGENTS.override.md" not in config.get("project_doc_fallback_filenames", [])
         assert all(not entry["path"].endswith("/SKILL.md") for entry in config["skills"]["config"])
         assert any(entry["path"] == ".agents/skills/trw-deliver" for entry in config["skills"]["config"])
 
@@ -159,8 +175,17 @@ class TestCodexBootstrap:
         result = generate_codex_agents(tmp_path)
         assert ".codex/agents/trw-explorer.toml" in result["created"]
         assert ".codex/agents/trw-implementer.toml" in result["created"]
-        explorer = (tmp_path / ".codex" / "agents" / "trw-explorer.toml").read_text(encoding="utf-8")
-        assert 'model = "gpt-5.4-mini"' in explorer
+        agents_dir = tmp_path / ".codex" / "agents"
+        expected_effort = {
+            "trw-explorer.toml": "medium",
+            "trw-implementer.toml": "medium",
+            "trw-reviewer.toml": "high",
+            "trw-docs-researcher.toml": "medium",
+        }
+        for name, effort in expected_effort.items():
+            agent = tomllib.loads((agents_dir / name).read_text(encoding="utf-8"))
+            assert "model" not in agent, f"{name} must inherit the active Codex model"
+            assert agent["model_reasoning_effort"] == effort
 
     def test_codex_agents_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
         generate_codex_agents(tmp_path)
@@ -184,6 +209,34 @@ class TestCodexBootstrap:
         assert "disable-model-invocation:" not in content
         assert "user-invocable:" not in content
         assert "model: claude-" not in content
+
+    def test_all_packaged_and_installed_codex_skills_use_supported_frontmatter(self, tmp_path: Path) -> None:
+        """Every Codex skill uses only fields accepted by the current skill schema."""
+        packaged_root = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "codex" / "skills"
+        packaged = sorted(packaged_root.glob("*/SKILL.md"))
+        assert packaged
+
+        install_codex_skills(tmp_path)
+        installed_root = tmp_path / ".agents" / "skills"
+        installed = sorted(installed_root.glob("*/SKILL.md"))
+        assert len(installed) == len(packaged)
+
+        for path in (*packaged, *installed):
+            unsupported = set(_skill_frontmatter(path)) - _CODEX_SKILL_KEYS
+            assert not unsupported, f"{path} has unsupported Codex skill keys: {sorted(unsupported)}"
+
+    def test_repo_codex_skill_projection_matches_packaged_source(self) -> None:
+        """The monorepo `.agents` projection stays byte-identical to packaged Codex skills."""
+        repo_root = Path(__file__).resolve().parents[2]
+        installed_root = repo_root / ".agents" / "skills"
+        if not installed_root.is_dir():
+            pytest.skip("monorepo .agents projection not present")
+
+        packaged_root = repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "codex" / "skills"
+        for packaged in sorted(packaged_root.glob("*/SKILL.md")):
+            installed = installed_root / packaged.parent.name / "SKILL.md"
+            assert installed.is_file(), f"missing Codex projection: {installed}"
+            assert installed.read_bytes() == packaged.read_bytes(), f"Codex projection drift: {installed}"
 
     def test_codex_skills_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
         install_codex_skills(tmp_path)
@@ -218,6 +271,20 @@ class TestCodexBootstrap:
         assert merged["mcp_servers"]["trw"]["enabled"] is True
         assert "trw_session_start" in merged["mcp_servers"]["trw"]["enabled_tools"]
 
+    def test_codex_merge_removes_primary_instruction_names_from_fallbacks(self) -> None:
+        merged = merge_codex_config(
+            {
+                "project_doc_fallback_filenames": [
+                    "AGENTS.md",
+                    "AGENTS.override.md",
+                    "CLAUDE.md",
+                    "CLAUDE.md",
+                ]
+            }
+        )
+
+        assert merged["project_doc_fallback_filenames"] == ["CLAUDE.md"]
+
     def test_codex_merge_preserves_explicit_hook_opt_in(self) -> None:
         merged = merge_codex_config({"features": {"codex_hooks": True}})
 
@@ -243,8 +310,8 @@ class TestCodexBootstrap:
         assert config["mcp_servers"]["trw"]["args"] == ["--debug"]
         assert "url" not in config["mcp_servers"]["trw"]
 
-    def test_codex_config_replaces_direct_trw_http_url_with_stdio_proxy(self, tmp_path: Path) -> None:
-        """TRW-owned Codex MCP config keeps the stdio proxy even for shared-HTTP projects."""
+    def test_codex_config_replaces_direct_trw_http_url_with_stdio_entry(self, tmp_path: Path) -> None:
+        """A legacy direct-HTTP TRW entry is rewritten to the stdio launcher."""
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         (codex_dir / "config.toml").write_text(
@@ -346,31 +413,31 @@ class _FakeTool:
 
 
 class TestCodexEnabledToolsCompleteness:
-    """Bug fix: Codex enabled_tools must reflect the FULL tool set, not the
-    live server's post-exposure-filter state."""
+    """Bug fix: Codex enabled_tools must reflect the FULL eligible tool set, not
+    the live server's per-session masked surface (PRD-CORE-218)."""
 
-    def test_enabled_tools_complete_under_restrictive_server_filter(self, monkeypatch: object) -> None:
-        """If the live server is filtered down to a tiny subset (simulating a
-        restrictive ``tool_exposure_mode``), the Codex enabled_tools list must
-        still contain the full canonical preset."""
+    def test_enabled_tools_complete_under_masked_server_surface(self, monkeypatch: object) -> None:
+        """If the live server's list_tools is masked down to a tiny subset
+        (simulating SurfaceAuthorityMiddleware masking a session to kernel-only),
+        the Codex enabled_tools list must still contain the full eligible surface."""
         import trw_mcp.bootstrap._codex as codex
-        from trw_mcp.models.config._defaults import TOOL_PRESETS
+        from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
-        # Simulate a server whose exposure filter removed everything but the
-        # core subset.
-        async def _filtered_list_tools() -> list[_FakeTool]:
+        # Simulate a server whose per-session surface mask removed everything but
+        # a tiny subset.
+        async def _masked_list_tools() -> list[_FakeTool]:
             return [_FakeTool("trw_session_start"), _FakeTool("trw_learn")]
 
         from trw_mcp.server._app import mcp
 
-        monkeypatch.setattr(mcp, "list_tools", _filtered_list_tools)  # type: ignore[attr-defined]
+        monkeypatch.setattr(mcp, "list_tools", _masked_list_tools)  # type: ignore[attr-defined]
 
         names = codex._registered_trw_tool_names()
 
-        # Every tool in the canonical full preset must be present despite the
-        # filtered live server.
-        full_preset = {n for n in TOOL_PRESETS["all"] if n.startswith("trw_")}
-        missing = full_preset - set(names)
-        assert not missing, f"Codex enabled_tools dropped tools under a filtered server: {missing}"
+        # Every tool in the full eligible public surface must be present despite
+        # the masked live server.
+        full_surface = {n for n in eligible_tool_names() if n.startswith("trw_")}
+        missing = full_surface - set(names)
+        assert not missing, f"Codex enabled_tools dropped tools under a masked server: {missing}"
         # Sanity: privileged admin tools (e.g. trw_meta_tune_rollback) are included.
         assert "trw_meta_tune_rollback" in names

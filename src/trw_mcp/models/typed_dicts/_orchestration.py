@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 # ---------------------------------------------------------------------------
 # trw_init / trw_checkpoint local shapes
@@ -72,13 +72,20 @@ class StatusReversionLatestDict(TypedDict, total=False):
 
 
 class StatusReversionMetricsDict(TypedDict):
-    """Return shape of ``_compute_reversion_metrics()`` in orchestration.py."""
+    """Return shape of ``_compute_reversion_metrics()`` in orchestration.py.
+
+    ``_compute_reversion_metrics`` always populates all five keys, but the
+    ``trw_status`` response compacts the empty cases: ``by_trigger`` is omitted
+    when there are no reverts (empty dict) and ``latest`` is omitted when null,
+    hence both are ``NotRequired`` on the wire. ``count``/``rate``/
+    ``classification`` are always present.
+    """
 
     count: int
     rate: float
-    by_trigger: dict[str, int]
+    by_trigger: NotRequired[dict[str, int]]
     classification: str
-    latest: StatusReversionLatestDict | None
+    latest: NotRequired[StatusReversionLatestDict | None]
 
 
 class WaveShardCountsDict(TypedDict):
@@ -138,6 +145,12 @@ class TrwStatusDict(TypedDict, total=False):
     framework: str
     # PRD-CORE-184-FR05: task-type regime surfaced for observability.
     task_type: str
+    # Canonical task/model policy. ``model_tier`` is a compatibility alias.
+    capability_tier: str
+    model_tier: str
+    recommended_effort: str
+    effort_source: str
+    effort_adapter_status: str
     # PRD-CORE-184-FR04/FR06: effective task-type nudge weights + recall hint.
     nudge_pool_weights: dict[str, int]
     recall_policy: str

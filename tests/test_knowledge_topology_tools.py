@@ -80,15 +80,8 @@ class TestRecallTopicFilter:
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
-            patch("trw_mcp.tools.learning._config") as mock_config,
+            patch("trw_mcp.tools.learning.get_config", return_value=TRWConfig()),
         ):
-            mock_config.knowledge_output_dir = "knowledge"
-            mock_config.recall_max_results = 25
-            mock_config.recall_utility_lambda = 0.3
-            mock_config.context_dir = "context"
-            mock_config.patterns_dir = "patterns"
-            mock_config.recall_compact_fields = frozenset({"id", "summary", "impact", "tags", "status"})
-
             clusters_data = json.loads((trw_dir / "knowledge" / "clusters.json").read_text(encoding="utf-8"))
             allowed_ids = set(clusters_data["pydantic"])
             filtered = [entry for entry in all_entries if str(entry.get("id", "")) in allowed_ids]
@@ -250,7 +243,8 @@ class TestRecallTopicFilter:
         ):
             result = tool.fn(query="*", topic=None)
 
-        assert result["topic_filter_ignored"] is False
+        # topic not requested -> advisory fields are omitted from the response
+        assert "topic_filter_ignored" not in result
 
 
 class TestKnowledgeTopologyConfig:

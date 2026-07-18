@@ -112,6 +112,7 @@ def compute_security_status(
 def register_mcp_security_status(server: FastMCP) -> None:
     @server.tool()
     def trw_mcp_security_status() -> dict[str, Any]:
+        """Report registered servers, allowlist identity, anomalies, and quarantines."""
         from trw_mcp.server import _app as app_module
         from trw_mcp.state._paths import resolve_trw_dir
 

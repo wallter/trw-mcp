@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import Field
+
 
 class _TelemetryFields:
     """Telemetry domain mixin — mixed into _TRWConfigFields via MI."""
@@ -28,6 +30,17 @@ class _TelemetryFields:
     telemetry: bool = False
     telemetry_enabled: bool = True
     telemetry_file: str = "tool-telemetry.jsonl"
+    # PRD-CORE-181-FR04 rotation knob. Size threshold at which
+    # ``rotate_pipeline_telemetry_log`` seals the active pipeline-events.jsonl
+    # into a new compressed segment. 10 MiB (10485760) matches the per-JSONL
+    # rotation threshold used elsewhere in state/. Overridable without a code
+    # edit via the ``TRW_TELEMETRY_LOG_MAX_BYTES`` env var (BaseSettings
+    # env_prefix) or ``.trw/config.yaml``.
+    telemetry_log_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        gt=0,
+        description="Pipeline telemetry-log rotation threshold in bytes (FR04)",
+    )
     # PRD-SEC-004-FR05: separate consent for publishing learning CONTENT
     # (summary + detail) to the platform, distinct from anonymous usage
     # telemetry (platform_telemetry_enabled). Default off (privacy-forward):

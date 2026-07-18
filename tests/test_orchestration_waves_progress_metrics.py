@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import trw_mcp.tools.orchestration as orch_mod
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools._orchestration_phase import (
@@ -232,7 +231,7 @@ class TestComputeReversionMetrics:
     def test_concerning_classification(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """High reversion rate classified as 'concerning'."""
         cfg = TRWConfig(reversion_rate_concerning=0.0, reversion_rate_elevated=0.0)
-        monkeypatch.setattr(orch_mod, "_config", cfg)
+        monkeypatch.setattr("trw_mcp.tools._orchestration_phase.get_config", lambda: cfg)
 
         events: list[dict[str, object]] = [
             {"event": "phase_revert"},

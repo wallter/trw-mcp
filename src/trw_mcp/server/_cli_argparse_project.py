@@ -10,7 +10,33 @@ import argparse
 
 __all__ = ["add_project_subcommands"]
 
-_IDE_CHOICES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "gemini", "aider", "all"]
+_IDE_CHOICES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "antigravity-cli", "all"]
+
+# Retired client identifiers (2026-07-11): recognized at the CLI so ``--ide
+# gemini`` reports a 'retired' message with a migration hint instead of a
+# generic "invalid choice" (retired != unknown). Google deprecated the Gemini
+# CLI; aider never had a TRW adapter.
+_RETIRED_IDE_HINTS: dict[str, str] = {
+    "gemini": (
+        "Gemini CLI was deprecated by Google — configure antigravity-cli instead "
+        "(--ide antigravity-cli). Existing .gemini/ files are left in place; run "
+        "'trw-mcp uninstall' to remove them on demand."
+    ),
+    "aider": "aider never had a TRW client adapter.",
+}
+
+
+def _ide_choice(value: str) -> str:
+    """argparse ``type`` for ``--ide`` that distinguishes retired from unknown.
+
+    A retired id raises with a 'retired' message + migration hint (before
+    argparse's ``choices`` check fires). Any other value is returned unchanged
+    and validated against ``_IDE_CHOICES`` by argparse ("invalid choice" for a
+    genuinely unknown id).
+    """
+    if value in _RETIRED_IDE_HINTS:
+        raise argparse.ArgumentTypeError(f"'{value}' support has been retired. {_RETIRED_IDE_HINTS[value]}")
+    return value
 
 
 def add_project_subcommands(
@@ -43,6 +69,7 @@ def add_project_subcommands(
     init_parser.add_argument(
         "--ide",
         choices=_IDE_CHOICES,
+        type=_ide_choice,
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
@@ -76,6 +103,7 @@ def add_project_subcommands(
     update_parser.add_argument(
         "--ide",
         choices=_IDE_CHOICES,
+        type=_ide_choice,
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )

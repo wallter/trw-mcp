@@ -164,7 +164,7 @@ class TestWalHealthInEmbeddingsStatus:
 
         result: dict[str, object] = {"enabled": False, "available": False}
         with patch(
-            "trw_mcp.state._memory_connection._resolve_memory_db_path",
+            "trw_mcp.state._memory_wal_health._resolve_memory_db_path",
             return_value=trw_dir / "memory" / "memory.db",
         ):
             _append_wal_health(result)
@@ -182,7 +182,7 @@ class TestWalHealthInEmbeddingsStatus:
 
         result: dict[str, object] = {"enabled": False, "available": False}
         with patch(
-            "trw_mcp.state._memory_connection._resolve_memory_db_path",
+            "trw_mcp.state._memory_wal_health._resolve_memory_db_path",
             return_value=trw_dir / "memory" / "memory.db",
         ):
             _append_wal_health(result)
@@ -229,7 +229,7 @@ class TestWalCheckpointInMaintenance:
                 return_value=mock_wal_result,
             ) as mock_wal,
         ):
-            result = run_auto_maintenance(trw_dir, config, run_dir=None)
+            result = run_auto_maintenance(trw_dir, config)
 
         mock_wal.assert_called_once_with(trw_dir)
         assert result.get("wal_checkpoint") == mock_wal_result
@@ -259,7 +259,7 @@ class TestWalCheckpointInMaintenance:
             ),
         ):
             # Must not raise
-            result = run_auto_maintenance(trw_dir, config, run_dir=None)
+            result = run_auto_maintenance(trw_dir, config)
 
         # WAL checkpoint key should NOT be present (it failed)
         assert "wal_checkpoint" not in result
@@ -290,7 +290,7 @@ class TestWalCheckpointInMaintenance:
                 return_value=mock_wal_result,
             ),
         ):
-            result = run_auto_maintenance(trw_dir, config, run_dir=None)
+            result = run_auto_maintenance(trw_dir, config)
 
         # Skipped WAL checkpoint should NOT appear in maintenance dict
         assert "wal_checkpoint" not in result

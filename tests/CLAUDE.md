@@ -157,7 +157,7 @@ Until the migration, use the frozenset-based classification system.
 ## Coverage Exclusions
 
 The following are excluded from coverage and don't need test coverage:
-- `server/__main__.py`, `_proxy.py`, `_transport.py`
+- `server/__main__.py`, `_transport.py`
 - `TYPE_CHECKING` blocks
 - `def main()` functions
 - Lines with `...` (ellipsis, e.g., Protocol stubs)

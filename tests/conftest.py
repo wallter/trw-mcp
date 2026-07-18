@@ -29,6 +29,8 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
+pytest_plugins = ("tests._ceremony_helpers_support",)
+
 # Prefer monorepo sources over stale site-packages when tests run from the checkout.
 _TESTS_DIR = Path(__file__).resolve().parent
 _TRW_MCP_SRC = _TESTS_DIR.parent / "src"
@@ -114,6 +116,7 @@ _TOOL_GROUPS: dict[str, tuple[str, str]] = {
     "pipeline_health": ("trw_mcp.tools._pipeline_health_tool", "register_pipeline_health_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
+    "skill_discovery": ("trw_mcp.tools.skill_discovery", "register_skill_discovery_tools"),
 }
 
 
@@ -193,7 +196,6 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_scoring_properties.py",
         "test_bayesian_calibration.py",
         "test_clients_llm.py",
-        "test_llm_helpers.py",
         "test_middleware_ceremony.py",
         "test_middleware_context_budget.py",
         "test_middleware_compression.py",
@@ -207,13 +209,13 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_core080_template_variants.py",
         "test_response_optimizer.py",
         "test_scoring_q_preseed.py",
+        # Token-bloat W5: prd_validate payload compaction — pure functions, no I/O
+        "test_prd_validate_payload_compaction.py",
         # PRD-INFRA-145: OTel GenAI span shape — recording fake tracer, no I/O
         "test_otel_genai.py",
         # PRD-CORE-184: task-type detection + nudge weights — pure logic, no I/O
         "test_task_type_detection.py",
         "test_task_type_nudge_weights.py",
-        # PRD-FIX-106: stdio↔HTTP proxy per-call request timeout — pure logic, no I/O
-        "test_proxy_request_timeout.py",
         # Pure model/config validation — no filesystem I/O
         "test_client_profile.py",
         "test_sprint44_models.py",
@@ -303,34 +305,32 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolate_trw_user_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Redirect TRW_USER_DIR to an isolated temporary directory for the whole session.
+def _isolate_trw_user_dir_floor(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Session-wide FLOOR for ``TRW_USER_DIR`` — never let it be unset mid-run.
 
-    Prevents tests from reading or writing to the operator's real
-    ``~/.trw/`` user-tier memory store. Without this guard a cold-start
-    recall test that writes to the user tier would persist entries into
-    the developer's actual user-scope memory database.
+    The per-test ``_isolate_trw_user_dir`` below uses ``monkeypatch``, which
+    restores the env var to its PRE-TEST value at teardown. Without this floor
+    that pre-test value is *unset*, which opens a window between one test's
+    teardown and the next test's setup where ``TRW_USER_DIR`` is absent. A
+    background thread left over from the previous test (session_start /
+    deferred-deliver / embedder warmup) that calls ``get_user_backend()`` in
+    that window falls through ``resolve_user_memory_dir``'s precedence chain to
+    ``Path.home() / ".trw" / "memory"`` — the OPERATOR'S REAL user-tier store.
+    Three tests were observed binding the real ``~/.trw/memory/memory.db`` this
+    way (test_core099_provenance_wiring, test_tools_ceremony_session_start).
 
-    Session scope mirrors the ``test_recall_federation.py`` per-file pattern
-    (``monkeypatch.setenv("TRW_USER_DIR", ...)``), promoted to suite-wide so
-    every test file benefits automatically. Per-file overrides that further
-    narrow the path (as ``test_recall_federation.py`` does) remain valid
-    because the os.environ write here is overridden by a later
-    monkeypatch.setenv() in a narrower fixture scope — pytest's monkeypatch
-    isolation is function-scoped so per-test overrides take precedence.
-
-    Pairs with ``_reset_memory_backend`` (function-scoped autouse) which
-    already calls ``reset_user_backend()`` + ``reset_user_scope_cache()``
-    between tests — this fixture provides the directory boundary.
+    Writing ``os.environ`` directly (not ``monkeypatch``) is deliberate: the
+    floor must outlive every function-scoped monkeypatch undo. The per-test
+    fixture narrows the var on top of this floor, and its restore returns the
+    value to the floor rather than to unset.
     """
     import os
 
     session_user_dir = tmp_path_factory.mktemp("trw_user_dir_session")
     old = os.environ.get("TRW_USER_DIR")
+    old_xdg = os.environ.get("XDG_DATA_HOME")
     os.environ["TRW_USER_DIR"] = str(session_user_dir)
-    # Also clear XDG_DATA_HOME so platform-default path resolution does not
-    # slip through on Linux when TRW_USER_DIR is absent from getenv().
-    old_xdg = os.environ.pop("XDG_DATA_HOME", None)
+    os.environ.pop("XDG_DATA_HOME", None)
     try:
         yield
     finally:
@@ -340,6 +340,57 @@ def _isolate_trw_user_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
             os.environ["TRW_USER_DIR"] = old
         if old_xdg is not None:
             os.environ["XDG_DATA_HOME"] = old_xdg
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trw_user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Redirect TRW_USER_DIR to an isolated directory for each test.
+
+    Prevents tests from reading or writing to the operator's real
+    ``~/.trw/`` user-tier memory store. Without this guard a cold-start
+    recall test that writes to the user tier would persist entries into
+    the developer's actual user-scope memory database.
+
+    Function scope prevents user-tier learnings written by one test from
+    changing later wildcard recall and cold-start assertions in the same xdist
+    worker. Per-file overrides remain valid because they use the same
+    function-scoped monkeypatch restoration boundary. The inter-test window is
+    covered by the session-scoped ``_isolate_trw_user_dir_floor`` above.
+
+    Pairs with ``_reset_memory_backend`` (function-scoped autouse) which
+    calls ``reset_user_backend()`` + ``reset_user_scope_cache()`` between
+    tests — this fixture provides the directory boundary, that one discards the
+    backend singleton already bound to the previous directory.
+    """
+    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / ".trw-user"))
+    # Also clear XDG_DATA_HOME so platform-default path resolution does not
+    # slip through on Linux when TRW_USER_DIR is absent from getenv().
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_sys_path() -> Iterator[None]:
+    """Snapshot and restore ``sys.path`` around every test.
+
+    Several tests append to ``sys.path`` mid-test to import repo-root scripts or
+    sibling packages, and a raw ``sys.path.insert`` is never undone. That leaked
+    entry is not merely untidy: a leaked MONOREPO-ROOT entry puts the repo-root
+    ``tests`` package ahead of ``trw-mcp/tests`` on the path, and every
+    ``multiprocessing`` SPAWN child inherits the parent's ``sys.path`` verbatim —
+    so the child re-imports ``tests`` from the wrong package and dies with
+    ``ModuleNotFoundError: No module named 'tests.<submodule>'``. Restoring the
+    path per test kills that whole bug class rather than band-aiding each spawn
+    site with ``monkeypatch.syspath_prepend``.
+
+    Collection-time inserts (module-level, e.g. ``test_agent_loc.py``) run before
+    any test, so they are already inside the snapshot and survive restoration.
+    The list is restored IN PLACE (slice assignment) so any code holding a
+    reference to ``sys.path`` still observes the restored value.
+    """
+    snapshot = list(sys.path)
+    yield
+    sys.path[:] = snapshot
 
 
 @pytest.fixture(autouse=True)
@@ -483,17 +534,32 @@ def _join_and_reset_q_learning() -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
-    """Reset memory adapter singleton for test isolation.
+    """Reset the project AND user memory-adapter singletons for test isolation.
 
     Joins any running deferred-deliver thread first to prevent
     use-after-close segfaults on the SQLite backend.
+
+    ``reset_user_backend()`` is as load-bearing as ``reset_backend()``:
+    ``_user_tier._user_backend`` is a SEPARATE module-global singleton, and
+    ``_federate_user_tier`` only skips user-tier federation when
+    ``peek_user_backend()`` returns ``None`` *and* no user ``memory.db`` exists
+    on disk. Leaving the singleton bound made ``peek_user_backend()`` return a
+    backend rooted at an EARLIER test's ``TRW_USER_DIR`` (this fixture's sibling
+    ``_isolate_trw_user_dir`` re-points the env var, but not the already-built
+    object), so that stale store's entries were federated into every later
+    recall — inflating every count by up to ``recall_user_tier_cap`` (5).
+    ``reset_user_backend()`` also re-arms the memoized user-scope probe, so the
+    separate ``reset_user_scope_cache()`` call below is only needed for tests
+    that never construct a user backend at all.
     """
     from trw_mcp.state._tier_routing import reset_user_scope_cache
+    from trw_mcp.state._user_tier import reset_user_backend
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
     reset_backend()
+    reset_user_backend()
     # core185-8: the user-scope presence probe is memoized; clear it between
     # tests so a prior test that set TRW_USER_TIER_ENABLED cannot leak a stale
     # "user scope present" verdict into a later, unconfigured test.
@@ -502,6 +568,7 @@ def _reset_memory_backend() -> Iterator[None]:
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
     reset_backend()
+    reset_user_backend()
     reset_user_scope_cache()
 
 

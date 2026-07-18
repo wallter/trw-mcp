@@ -13,6 +13,7 @@ daemon-thread pattern.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
 
@@ -199,7 +200,7 @@ class TestLowCoverageAdvisoryIsOneTime:
 
         m.reset_low_coverage_advisory_guard()
 
-    def _low_coverage_run(self) -> object:
+    def _low_coverage_run(self, trw_dir: Path | None = None) -> object:
         from unittest.mock import patch
 
         from trw_mcp.tools import _ceremony_embeddings_maintenance as m
@@ -213,6 +214,7 @@ class TestLowCoverageAdvisoryIsOneTime:
             "recent_failures": 0,
         }
         maintenance: dict[str, object] = {}
+        resolved_trw_dir = trw_dir or Path("/tmp/x/.trw")
         with (
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
@@ -224,7 +226,7 @@ class TestLowCoverageAdvisoryIsOneTime:
             ),
         ):
             m.run_embeddings_maintenance(
-                __import__("pathlib").Path("/tmp/x/.trw"),
+                resolved_trw_dir,
                 cfg,
                 maintenance,  # type: ignore[arg-type]
                 defer_memory_heavy=False,
@@ -245,3 +247,10 @@ class TestLowCoverageAdvisoryIsOneTime:
             "low-coverage advisory must be one-time per process, not cry wolf"
         )
         assert "embeddings_backfill_scheduled" in second  # type: ignore[operator]
+
+    def test_advisory_guard_is_isolated_by_project(self, tmp_path: Path) -> None:
+        first_project = self._low_coverage_run(tmp_path / "one" / ".trw")
+        second_project = self._low_coverage_run(tmp_path / "two" / ".trw")
+
+        assert "embeddings_advisory" in first_project  # type: ignore[operator]
+        assert "embeddings_advisory" in second_project  # type: ignore[operator]

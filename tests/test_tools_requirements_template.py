@@ -26,7 +26,7 @@ class TestTemplateLoading:
         assert not body.startswith("---")
         assert "id: PRD-{CATEGORY}-{SEQUENCE}" not in body
 
-    def test_caching_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_repeated_loads_revalidate_and_return_equal_body(self) -> None:
         import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools.requirements import _load_template_body
 
@@ -34,7 +34,7 @@ class TestTemplateLoading:
         assert helpers._CACHED_TEMPLATE_BODY is not None
 
         body2 = _load_template_body()
-        assert body1 is body2
+        assert body1 == body2
 
     def test_contains_quality_checklist(self) -> None:
         from trw_mcp.tools.requirements import _load_template_body
@@ -66,22 +66,22 @@ class TestTemplateLoading:
         body = _load_template_body()
         assert "Phase 3: Release" in body
 
-    def test_fallback_on_missing_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_file_fails_closed(self) -> None:
         import unittest.mock
 
-        import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
         reset_template_cache()
-        with unittest.mock.patch.object(Path, "exists", return_value=False):
-            reset_template_cache()
+        try:
             from trw_mcp.tools.requirements import _load_template_body
 
-            body = _load_template_body()
-
-        assert isinstance(body, str)
-        assert "Problem Statement" in body
-        assert helpers._CACHED_TEMPLATE_VERSION is None
+            with (
+                unittest.mock.patch.object(Path, "is_file", return_value=False),
+                pytest.raises(FileNotFoundError, match="canonical AARE-F PRD template"),
+            ):
+                _load_template_body()
+        finally:
+            reset_template_cache()
 
 
 class TestTemplateVersionExtraction:
@@ -92,22 +92,26 @@ class TestTemplateVersionExtraction:
         from trw_mcp.tools.requirements import _load_template_body
 
         _load_template_body()
-        assert helpers._CACHED_TEMPLATE_VERSION == "2.3"
+        assert helpers._CACHED_TEMPLATE_VERSION == "3.2"
 
-    def test_version_none_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_version_cache_remains_empty_when_missing(self) -> None:
         import unittest.mock
 
         import trw_mcp.tools._prd_template_helpers as helpers
         from trw_mcp.tools._prd_template_helpers import reset_template_cache
 
         reset_template_cache()
-        with unittest.mock.patch.object(Path, "exists", return_value=False):
-            reset_template_cache()
+        try:
             from trw_mcp.tools.requirements import _load_template_body
 
-            _load_template_body()
-
-        assert helpers._CACHED_TEMPLATE_VERSION is None
+            with (
+                unittest.mock.patch.object(Path, "is_file", return_value=False),
+                pytest.raises(FileNotFoundError),
+            ):
+                _load_template_body()
+            assert helpers._CACHED_TEMPLATE_VERSION is None
+        finally:
+            reset_template_cache()
 
 
 class TestTemplateSubstitution:
@@ -156,21 +160,10 @@ class TestTemplateSubstitution:
         assert "{Brief context" in result or "{Clear statement" in result
 
 
-class TestInlineTemplateParity:
-    """PRD-QUAL-092 FR02: the inline fallback template carries FPI #7 fields."""
+class TestCanonicalTemplateFailure:
+    """PRD-INFRA-164 FR06: missing canon never degrades to stale inline prose."""
 
-    def test_inline_template_has_functionality_level_and_stubs(self) -> None:
-        from trw_mcp.resources.templates import _INLINE_PRD_TEMPLATE
-
-        assert "functionality_level:" in _INLINE_PRD_TEMPLATE
-        assert "stubs:" in _INLINE_PRD_TEMPLATE
-        # FPI #7 guidance comment parity with the canonical template.
-        assert "FPI #7" in _INLINE_PRD_TEMPLATE
-
-    def test_inline_fallback_body_has_functionality_level(self) -> None:
-        """When the bundled template file is absent, get_prd_template returns the
-        inline body and that body contains functionality_level: and stubs:.
-        """
+    def test_resource_fails_closed_when_bundled_template_is_missing(self) -> None:
         import unittest.mock
 
         from fastmcp import FastMCP
@@ -184,12 +177,60 @@ class TestInlineTemplateParity:
         resources = get_resources_sync(server)
         prd_resource = resources["trw://templates/prd"]
 
-        # Force the fallback path: bundled prd_template.md "missing".
-        with unittest.mock.patch.object(Path, "exists", return_value=False):
-            body = prd_resource.fn()
+        with (
+            unittest.mock.patch.object(Path, "is_file", return_value=False),
+            pytest.raises(FileNotFoundError, match="canonical AARE-F PRD template"),
+        ):
+            prd_resource.fn()
 
-        assert "functionality_level:" in body
-        assert "stubs:" in body
+    def test_creator_fails_closed_when_bundled_template_is_missing(self) -> None:
+        import unittest.mock
+
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, reset_template_cache
+
+        reset_template_cache()
+        try:
+            with (
+                unittest.mock.patch.object(Path, "is_file", return_value=False),
+                pytest.raises(FileNotFoundError, match="canonical AARE-F PRD template"),
+            ):
+                _load_template_body()
+        finally:
+            reset_template_cache()
+
+    @pytest.mark.parametrize("raw", ["not frontmatter", '---\ntemplate_version: "3.1"\n---\nbody'])
+    def test_creator_rejects_malformed_or_wrong_version_template(self, raw: str) -> None:
+        import unittest.mock
+
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, reset_template_cache
+
+        reset_template_cache()
+        try:
+            with (
+                unittest.mock.patch.object(Path, "is_file", return_value=True),
+                unittest.mock.patch.object(Path, "read_text", return_value=raw),
+                pytest.raises(ValueError, match=r"malformed or not version 3\.2"),
+            ):
+                _load_template_body()
+        finally:
+            reset_template_cache()
+
+    def test_creator_does_not_reuse_cached_template_after_source_changes(self) -> None:
+        import unittest.mock
+
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, reset_template_cache
+
+        reset_template_cache()
+        _load_template_body()
+        try:
+            with (
+                unittest.mock.patch.object(Path, "is_file", return_value=True),
+                unittest.mock.patch.object(Path, "read_text", return_value="changed invalid bytes"),
+                pytest.raises(ValueError, match=r"malformed or not version 3\.2"),
+            ):
+                _load_template_body()
+        finally:
+            reset_template_cache()
 
 
 class TestModelFields:

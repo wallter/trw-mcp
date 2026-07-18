@@ -31,6 +31,7 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.state.analytics import find_success_patterns, update_analytics
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
 
 logger = structlog.get_logger(__name__)
 
@@ -74,6 +75,7 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
             result["phase"] = str(data.get("phase", "unknown"))
             result["status"] = str(data.get("status", "unknown"))
             result["task_name"] = str(data.get("task", ""))
+            apply_task_profile_observability(cast("dict[str, object]", result), data.get("task_profile"))
             if "owner_session_id" in data:
                 sid = data["owner_session_id"]
                 result["owner_session_id"] = str(sid) if sid is not None else None
@@ -109,13 +111,14 @@ def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
             continue
         if not Path(run_path).exists():
             continue
+        # No per-entry adopt_command — it just repeats run_path; the
+        # accompanying hint states the trw_adopt_run(run_path=...) convention.
         candidates.append(
             {
                 "run_path": run_path,
                 "pin_key": pin_key,
                 "pid": entry.get("pid"),
                 "last_heartbeat_ts": entry.get("last_heartbeat_ts"),
-                "adopt_command": f'trw_adopt_run(run_path="{run_path}")',
             }
         )
     candidates.sort(key=lambda item: str(item.get("last_heartbeat_ts") or ""), reverse=True)
@@ -283,8 +286,8 @@ def _learning_reflection_message(learnings_count: int) -> str:
         return f"{learnings_count} discovery/discoveries persisted for future sessions."
     return (
         "Note: No discoveries were recorded this session. "
-        "Consider what you learned — even a one-line root cause "
-        "helps the next agent avoid re-discovery."
+        "If the work produced a non-obvious reusable insight, record it with "
+        "trw_learn; otherwise no learning is required."
     )
 
 

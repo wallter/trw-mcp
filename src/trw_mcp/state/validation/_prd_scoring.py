@@ -78,9 +78,6 @@ from trw_mcp.state.validation._prd_scoring_fr import (
 from trw_mcp.state.validation._prd_scoring_grounding import (
     compute_grounding_penalty as compute_grounding_penalty,
 )
-from trw_mcp.state.validation._prd_scoring_grounding import (
-    get_project_files as get_project_files,
-)
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
 )

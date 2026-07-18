@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import ValidationFailure
+from trw_mcp.state.validation._prd_integrity_contracts import (
+    _check_compatibility_exceptions as _check_compatibility_exceptions,
+)
+from trw_mcp.state.validation._prd_integrity_contracts import (
+    _check_frontmatter_parses as _check_frontmatter_parses,
+)
 from trw_mcp.state.validation._prd_integrity_duplicates import _check_duplicate_candidates
+from trw_mcp.state.validation._prd_integrity_lanes import (
+    ValidationLaneResult,
+    evaluate_changed_scope,
+    evaluate_full_corpus,
+)
 from trw_mcp.state.validation._prd_integrity_paths import (
     _check_repo_path_references,
     _extract_repo_path_refs,
@@ -25,6 +37,10 @@ _REEXPORTED_HELPERS = (
     _normalize_repo_path,
     _path_exists,
     _resolve_bare_filename,
+    # PRD-QUAL-121-FR05 typed validation lanes (facade re-export)
+    ValidationLaneResult,
+    evaluate_changed_scope,
+    evaluate_full_corpus,
 )
 
 BUILTIN_PRD_CATEGORIES: frozenset[str] = frozenset({"CORE", "QUAL", "INFRA", "FIX", "LOCAL", "EXPLR", "RESEARCH"})
@@ -177,20 +193,33 @@ def _check_functionality_level_matches_status(
         return failures
 
     if is_implemented_family and level != "live":
-        failures.append(
-            ValidationFailure(
-                field="status",
-                rule="aaref_implemented_requires_live",
-                message=(
-                    f"PRD at status=implemented but functionality_level={level!r}. "
-                    "Per FPI #7: status=implemented requires functionality_level=live "
-                    "AND stubs[]==[]. Downgrade status to `partial` (or `stub`) OR "
-                    "land the remaining stubs. See DISTILLERY-DEFECT-LEDGER-2026-04-18.md "
-                    "§FPI #7 for precedent."
-                ),
-                severity="error",
+        # Documented FPI #7 exception (docs/requirements-aare-f/CLAUDE.md
+        # §Functionality-Level Frontmatter, 2026-04-18): status=implemented is
+        # ALSO permitted with functionality_level=partial when an EXPLICIT
+        # implementation_scope note names the deferred paths AND stubs[]
+        # enumerates them. Prior to PRD-CORE-213 the code hard-failed every
+        # non-live combination, forcing truthful partial claims to either lie
+        # (level: live) or misstate status — the opposite of FPI #7's intent.
+        implementation_scope = str(frontmatter.get("implementation_scope", "") or "").strip()
+        stubs_enumerated = bool(frontmatter.get("stubs", []))
+        documented_partial_exception = level == "partial" and implementation_scope and stubs_enumerated
+        if not documented_partial_exception:
+            failures.append(
+                ValidationFailure(
+                    field="status",
+                    rule="aaref_implemented_requires_live",
+                    message=(
+                        f"PRD at status=implemented but functionality_level={level!r}. "
+                        "Per FPI #7: status=implemented requires functionality_level=live "
+                        "AND stubs[]==[], OR functionality_level=partial WITH an explicit "
+                        "implementation_scope naming the deferred paths AND enumerated "
+                        "stubs[]. Downgrade status, land the remaining stubs, or add the "
+                        "scope note + stub entries. See DISTILLERY-DEFECT-LEDGER-2026-04-18.md "
+                        "§FPI #7 for precedent."
+                    ),
+                    severity="error",
+                )
             )
-        )
 
     stubs = frontmatter.get("stubs", [])
     if level == "live" and stubs:
@@ -256,53 +285,11 @@ def _check_implemented_alias_functionality(frontmatter: dict[str, object]) -> li
     ]
 
 
-def _check_frontmatter_parses(content: str) -> list[ValidationFailure]:
-    """FR01 (PRD-QUAL-091): malformed frontmatter is a failure, not a silent skip.
-
-    ``parse_frontmatter`` degrades to ``{}`` on unparseable YAML, so a PRD with a
-    broken ``---`` block (duplicate keys, unclosed flow, bad alias) is
-    indistinguishable from a no-frontmatter PRD and escapes every frontmatter
-    gate. This re-parses strictly: if a ``---`` block exists but does NOT parse to
-    a mapping, emit ``aaref_frontmatter_parse``.
-
-    Returns ``[]`` when there is no frontmatter block at all (a distinct,
-    legitimate case) or when the block parses to a mapping.
-    """
-    from trw_mcp.state.prd_utils import _FRONTMATTER_RE
-
-    match = _FRONTMATTER_RE.match(content)
-    if match is None:
-        return []  # no --- block: not a malformed PRD, just frontmatter-less
-
-    from ruamel.yaml import YAML
-    from ruamel.yaml.error import YAMLError
-
-    yaml = YAML(typ="safe")
-    detail = ""
-    try:
-        data = yaml.load(match.group(1))
-    except (YAMLError, ValueError, TypeError) as exc:
-        data = None
-        detail = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
-    else:
-        if isinstance(data, dict):
-            return []
-        detail = f"frontmatter parsed to {type(data).__name__}, not a mapping"
-
-    return [
-        ValidationFailure(
-            field="frontmatter",
-            rule="aaref_frontmatter_parse",
-            message=(
-                "PRD begins with a `---` frontmatter delimiter but the enclosed "
-                "block does not parse to a YAML mapping (likely a duplicate key, "
-                "unclosed flow sequence, or undefined alias). Such a PRD silently "
-                "escapes every frontmatter gate (status, functionality_level, "
-                f"ip_tier). Fix the YAML so it parses. Detail: {detail}"
-            ),
-            severity="error",
-        )
-    ]
+# PRD-CORE-218-FR08: SurfaceDelta gate extracted to the sibling module per the
+# 350 effective-LOC gate; re-exported here so the facade contract is unchanged.
+from trw_mcp.state.validation._prd_integrity_surface_delta import (  # noqa: E402
+    _check_surface_delta as _check_surface_delta,
+)
 
 
 def _check_allowed_category(frontmatter: dict[str, object]) -> list[ValidationFailure]:
@@ -322,6 +309,43 @@ def _check_allowed_category(frontmatter: dict[str, object]) -> list[ValidationFa
     ]
 
 
+def build_path_index_partial_warning(partial_report: dict[str, object]) -> str | None:
+    """Render the LOUD grounding-degrade warning from a *partial_report*.
+
+    Returns a single ``path_index_partial:``-prefixed string when the repo
+    basename index truncated at a runaway cap (so bare-filename grounding was
+    skipped and hallucinated references could not be detected), else ``None``.
+    Callers prepend it to ``integrity_warnings`` — the channel the trw_prd_validate
+    tool serializes into its output — so a truncated index is never silent.
+    """
+    if not partial_report.get("path_index_partial"):
+        return None
+    raw_skipped = partial_report.get("path_index_skipped_refs", 0)
+    skipped = raw_skipped if isinstance(raw_skipped, int) else 0
+    return (
+        f"path_index_partial: bare-filename grounding was SKIPPED for {skipped} reference(s) — "
+        "the repo file index hit a runaway cap (path_index_max_files/path_index_max_seconds) and "
+        "is INCOMPLETE, so hallucinated bare-filename references could not be detected. Prune bulk "
+        "trees via .trw/config.yaml path_index_exclude_dirs or raise the caps so the index completes."
+    )
+
+
+# PRD-FIX-112: named integrity check groups, in execution order. The deadline
+# guard is evaluated BETWEEN groups, so the ordering here is the skip order —
+# cheap/authoritative content checks run first, the repo-grounded checks last.
+INTEGRITY_CHECK_GROUPS: tuple[str, ...] = (
+    "integrity:frontmatter_parse",
+    "integrity:allowed_category",
+    "integrity:compatibility_exceptions",
+    "integrity:surface_delta",
+    "integrity:repo_path_references",
+    "integrity:functionality_level",
+    "integrity:status_canonical",
+    "integrity:implemented_alias",
+    "integrity:duplicate_candidates",
+)
+
+
 def run_prd_integrity_checks(
     content: str,
     frontmatter: dict[str, object],
@@ -329,22 +353,57 @@ def run_prd_integrity_checks(
     project_root: Path,
     prds_relative_path: str,
     extra_roots: list[Path] | None = None,
+    partial_report: dict[str, object] | None = None,
+    deadline: float | None = None,
+    skipped: list[str] | None = None,
 ) -> tuple[list[ValidationFailure], list[str]]:
     """Return integrity failures and warnings for a PRD document.
 
     *extra_roots* are sibling repo roots checked (in addition to
     *project_root*) when resolving backtick-quoted path references, for
     multi-repo workspaces — Potemkin-Gate defect B (sub_zAfRqZYYq2KtF72d).
+
+    *partial_report* (opt-in out-param) is forwarded to
+    :func:`_check_repo_path_references`; when supplied it receives the
+    bare-filename grounding-degrade signal (``path_index_partial`` /
+    ``path_index_skipped_refs``) so callers can surface a truncated index in the
+    validation result rather than silently trusting a skipped check.
+
+    *deadline* (PRD-FIX-112) is an optional ``time.monotonic()`` timestamp. It is
+    checked BETWEEN check groups: once ``time.monotonic() > deadline`` the
+    remaining groups are SKIPPED (never raised, never silently passed) and their
+    names (see :data:`INTEGRITY_CHECK_GROUPS`) are appended to *skipped* (an
+    opt-in out-param list) so the caller can surface a visibly-partial result.
     """
     failures: list[ValidationFailure] = []
     warnings: list[str] = []
+    _skipped = skipped if skipped is not None else []
 
-    failures.extend(_check_frontmatter_parses(content))
-    failures.extend(_check_allowed_category(frontmatter))
-    failures.extend(_check_repo_path_references(content, project_root, extra_roots=extra_roots))
-    failures.extend(_check_functionality_level_matches_status(frontmatter))
-    warnings.extend(_check_status_canonical(frontmatter))
-    warnings.extend(_check_implemented_alias_functionality(frontmatter))
-    warnings.extend(_check_duplicate_candidates(content, frontmatter, project_root, prds_relative_path))
+    def _budget_ok(group: str) -> bool:
+        if deadline is not None and time.monotonic() > deadline:
+            _skipped.append(group)
+            return False
+        return True
+
+    if _budget_ok("integrity:frontmatter_parse"):
+        failures.extend(_check_frontmatter_parses(content))
+    if _budget_ok("integrity:allowed_category"):
+        failures.extend(_check_allowed_category(frontmatter))
+    if _budget_ok("integrity:compatibility_exceptions"):
+        failures.extend(_check_compatibility_exceptions(frontmatter))
+    if _budget_ok("integrity:surface_delta"):
+        failures.extend(_check_surface_delta(frontmatter))
+    if _budget_ok("integrity:repo_path_references"):
+        failures.extend(
+            _check_repo_path_references(content, project_root, extra_roots=extra_roots, partial_report=partial_report)
+        )
+    if _budget_ok("integrity:functionality_level"):
+        failures.extend(_check_functionality_level_matches_status(frontmatter))
+    if _budget_ok("integrity:status_canonical"):
+        warnings.extend(_check_status_canonical(frontmatter))
+    if _budget_ok("integrity:implemented_alias"):
+        warnings.extend(_check_implemented_alias_functionality(frontmatter))
+    if _budget_ok("integrity:duplicate_candidates"):
+        warnings.extend(_check_duplicate_candidates(content, frontmatter, project_root, prds_relative_path))
 
     return failures, warnings

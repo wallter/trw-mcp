@@ -1,141 +1,23 @@
-"""Tests for TOOL_PRESETS constants and tool exposure groups (PRD-CORE-125 FR12).
+"""PRD-CORE-218: authoritative surface manifest, minimal kernel, resolution.
 
-Verifies:
-- Preset sizes and composition
-- Group disjointness (no tool in two groups)
-- Standard preset includes core + memory
-- All preset names are valid
+The PRD-CORE-125 ``TOOL_PRESETS`` vocabulary was removed when the CORE-218
+kernel/pack resolver became the sole tool-exposure authority (enforced by
+``SurfaceAuthorityMiddleware``). These tests exercise the manifest SSOT: the
+first-party security bridge covers the eligible public surface, every registered
+tool resolves to exactly one manifest entry, the nine-tool kernel is stable and
+digest-pinned, and standard/all resolution is bounded + explainable.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from trw_mcp.models.config._defaults import (
-    TOOL_GROUP_ADMIN,
-    TOOL_GROUP_CODE_INTEL,
-    TOOL_GROUP_CORE,
-    TOOL_GROUP_EVIDENCE,
-    TOOL_GROUP_MEMORY,
-    TOOL_GROUP_OBSERVABILITY,
-    TOOL_GROUP_PHASE_CONTROL,
-    TOOL_GROUP_PROBE,
-    TOOL_GROUP_QUALITY,
-    TOOL_PRESETS,
-)
-
-# All tool groups that compose the "all" preset (round-2 transport e2e F1/F3:
-# the preset must reconcile with the registered surface).
-_ALL_PRESET_GROUPS = (
-    TOOL_GROUP_CORE,
-    TOOL_GROUP_MEMORY,
-    TOOL_GROUP_QUALITY,
-    TOOL_GROUP_OBSERVABILITY,
-    TOOL_GROUP_ADMIN,
-    TOOL_GROUP_PROBE,
-    TOOL_GROUP_PHASE_CONTROL,
-    TOOL_GROUP_CODE_INTEL,
-    TOOL_GROUP_EVIDENCE,
-)
-
-
-@pytest.mark.unit
-def test_preset_core_has_4_tools() -> None:
-    """TOOL_PRESETS['core'] contains exactly the 4 lifecycle tools."""
-    assert len(TOOL_PRESETS["core"]) == 4
-    assert set(TOOL_PRESETS["core"]) == {
-        "trw_session_start",
-        "trw_checkpoint",
-        "trw_learn",
-        "trw_deliver",
-    }
-
-
-@pytest.mark.unit
-def test_preset_minimal_has_6_tools() -> None:
-    """TOOL_PRESETS['minimal'] = core(4) + memory(2) = 6 tools."""
-    assert len(TOOL_PRESETS["minimal"]) == 6
-
-
-@pytest.mark.unit
-def test_preset_standard_includes_core_and_memory() -> None:
-    """TOOL_PRESETS['standard'] is a superset of core and memory tools."""
-    standard_set = set(TOOL_PRESETS["standard"])
-    assert set(TOOL_GROUP_CORE).issubset(standard_set)
-    assert set(TOOL_GROUP_MEMORY).issubset(standard_set)
-
-
-@pytest.mark.unit
-def test_preset_standard_includes_status_and_init() -> None:
-    """TOOL_PRESETS['standard'] includes trw_status and trw_init convenience tools."""
-    standard_set = set(TOOL_PRESETS["standard"])
-    assert "trw_status" in standard_set
-    assert "trw_init" in standard_set
-
-
-@pytest.mark.unit
-def test_preset_all_has_all_group_tools() -> None:
-    """TOOL_PRESETS['all'] is the union of all groups (incl. PRD-CORE-144 probe,
-    phase-control, code-intel, and evidence bridges)."""
-    all_groups: set[str] = set()
-    for g in _ALL_PRESET_GROUPS:
-        all_groups |= set(g)
-    assert set(TOOL_PRESETS["all"]) == all_groups
-
-
-@pytest.mark.unit
-def test_preset_all_includes_probe_group() -> None:
-    """F-12: the probe tools are surfaced in the 'all' preset (not silently lost)."""
-    assert set(TOOL_GROUP_PROBE) <= set(TOOL_PRESETS["all"])
-    assert "trw_probe" in TOOL_PRESETS["all"]
-    assert "trw_probe_budget_status" in TOOL_PRESETS["all"]
-
-
-@pytest.mark.unit
-def test_preset_all_tool_count() -> None:
-    """TOOL_PRESETS['all'] = union of all groups (groups are disjoint, so the
-    flat length equals the sum of group lengths)."""
-    expected = sum(len(g) for g in _ALL_PRESET_GROUPS)
-    assert len(TOOL_PRESETS["all"]) == expected
-
-
-@pytest.mark.unit
-def test_preset_groups_no_overlap() -> None:
-    """No tool appears in more than one group across ALL preset groups."""
-    all_tools: list[str] = []
-    for g in _ALL_PRESET_GROUPS:
-        all_tools.extend(g)
-    # If no overlap, the set size equals the list length
-    assert len(set(all_tools)) == len(all_tools), "Tool groups have overlapping entries"
-
-
-@pytest.mark.unit
-def test_all_preset_keys_are_valid() -> None:
-    """All TOOL_PRESETS keys are valid exposure mode values."""
-    valid_modes = {"core", "minimal", "standard", "all"}
-    assert set(TOOL_PRESETS.keys()) == valid_modes
-
-
-@pytest.mark.unit
-def test_presets_are_tuples() -> None:
-    """All TOOL_PRESETS values are tuples (immutable)."""
-    for name, preset in TOOL_PRESETS.items():
-        assert isinstance(preset, tuple), f"Preset '{name}' is {type(preset).__name__}, expected tuple"
-
-
-@pytest.mark.unit
-def test_all_tool_names_start_with_trw() -> None:
-    """Every tool in every group starts with 'trw_' prefix."""
-    for preset in TOOL_PRESETS.values():
-        for tool in preset:
-            assert tool.startswith("trw_"), f"Tool {tool!r} missing trw_ prefix"
-
 
 def _registered_production_tools() -> set[str]:
     """Return the full set of tool names registered on a FRESH production server.
 
-    Mirrors ``server/_tools._register_tools`` (without the exposure filter) so
-    the parity test sees every registered tool, not the post-filter subset.
+    Mirrors ``server/_tools._register_tools`` so the parity test sees every
+    registered tool regardless of the per-session surface mask.
     """
     import asyncio
 
@@ -155,6 +37,7 @@ def _registered_production_tools() -> set[str]:
     from trw_mcp.tools.code_search import register_code_search_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
+    from trw_mcp.tools.dispatch import register_dispatch_tools
     from trw_mcp.tools.entity_risk_map import register_entity_risk_map_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
@@ -164,6 +47,7 @@ def _registered_production_tools() -> set[str]:
     from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
     from trw_mcp.tools.phase_overrides import register_phase_override_tools
     from trw_mcp.tools.query_tools import register_query_tools
+    from trw_mcp.tools.replay import register_replay_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
@@ -182,6 +66,7 @@ def _registered_production_tools() -> set[str]:
         register_knowledge_tools,
         register_orchestration_tools,
         register_requirements_tools,
+        register_replay_tools,
         register_review_tools,
         register_query_tools,
         register_mcp_security_status,
@@ -202,45 +87,222 @@ def _registered_production_tools() -> set[str]:
         register_probe_tools,
         register_trw_profile_explain_tools,
         register_phase_override_tools,
+        register_dispatch_tools,
     ):
         fn(server)
     return {t.name for t in asyncio.run(server.list_tools())}
 
 
-def test_tool_preset_bridge_parity() -> None:
-    """Round-2 transport e2e F1/F3: every tool REGISTERED on the production
-    server must be reachable through the preset+allowlist first-party bridge
-    (``TOOL_PRESETS['all']``) OR named in the explicit
-    ``INTENTIONALLY_UNBRIDGED_TOOLS`` exclusion list.
-
-    This fails CI when a NEW registered tool is silently unbridged — the exact
-    drift that left ~19 of 43 tools invisible / un-callable over real transport
-    (``tool_not_in_server_capabilities``). The fix for a new tool is a DELIBERATE
-    choice: add it to a tool group OR document the exclusion — never let it drift.
-    """
-    from trw_mcp.models.config._defaults import (
-        INTENTIONALLY_UNBRIDGED_TOOLS,
-        TOOL_PRESETS,
-    )
+def test_first_party_bridge_parity_over_manifest() -> None:
+    """Every REGISTERED production tool is reachable through the first-party
+    security bridge (the CORE-218 eligible public surface) OR is an explicit
+    operator-only tool. This replaces the CORE-125 TOOL_PRESETS bridge-parity
+    test and sources both sides from the manifest SSOT (no divergent second
+    table can silently strand a tool ``tool_not_in_server_capabilities``)."""
+    from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS
+    from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
     registered = _registered_production_tools()
-    bridged = set(TOOL_PRESETS["all"])
-    excluded = set(INTENTIONALLY_UNBRIDGED_TOOLS)
+    bridged = set(eligible_tool_names())
+    operator_only = set(OPERATOR_ONLY_TOOLS)
 
-    unaccounted = registered - bridged - excluded
+    unaccounted = registered - bridged - operator_only
     assert not unaccounted, (
-        "Registered tools neither bridged via TOOL_PRESETS['all'] nor in "
-        f"INTENTIONALLY_UNBRIDGED_TOOLS: {sorted(unaccounted)}. Either add each "
-        "to a tool group in _defaults.py (so the first-party bridge reaches it) "
-        "or document the intentional exclusion."
+        "Registered tools neither in the eligible public surface (first-party "
+        f"bridge) nor operator-only: {sorted(unaccounted)}. Add each to a pack in "
+        "models/surface_packs.py or mark it OPERATOR_ONLY_TOOLS."
+    )
+    # No phantom operator-only names, and the two sets never overlap.
+    assert not (operator_only - registered), sorted(operator_only - registered)
+    assert not (bridged & operator_only), "a tool is both bridged and operator-only"
+
+
+# =====================================================================
+# PRD-CORE-218: authoritative surface manifest, minimal kernel, resolution
+# =====================================================================
+
+# Exact FR02 kernel membership — the nine tool IDs. Hardcoded here (not imported
+# from the manifest) so a silent membership drift is caught by THIS test.
+_EXPECTED_KERNEL: frozenset[str] = frozenset(
+    {
+        "trw_session_start",
+        "trw_status",
+        "trw_recall",
+        "trw_learn",
+        "trw_checkpoint",
+        "trw_deliver",
+        "trw_skill_discovery",
+        "trw_request_tool_access",
+        "trw_profile_explain",
+    }
+)
+
+
+@pytest.mark.unit
+def test_prd_core_218_fr01() -> None:
+    """FR01: every registered tool resolves to exactly one manifest entry; every
+    entry has owner/pack/lifecycle; unmanifested tools and orphan entries fail."""
+    from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS
+    from trw_mcp.server._surface_manifest_registry import (
+        MANIFEST_BY_NAME,
+        TOOL_MANIFEST,
+        SurfaceKind,
+        SurfaceManifestEntry,
+    )
+    from trw_mcp.server._tools import raw_registered_tool_names
+
+    registered = raw_registered_tool_names()
+    manifest_names = set(MANIFEST_BY_NAME)
+
+    # Bijection: exactly one manifest entry per registered tool, no orphans.
+    assert registered == manifest_names, {
+        "unmanifested": sorted(registered - manifest_names),
+        "orphans": sorted(manifest_names - registered),
+    }
+    # Exactly one entry per tool (no duplicate names in the manifest).
+    assert len(TOOL_MANIFEST) == len(manifest_names) == len(registered)
+
+    # No entry lacks an owner, pack, lifecycle, kind, or validation reference.
+    for entry in TOOL_MANIFEST:
+        assert entry.kind is SurfaceKind.TOOL
+        assert entry.owner, entry.name
+        assert entry.pack, entry.name
+        assert entry.lifecycle is not None, entry.name
+        assert entry.validation_reference, entry.name
+
+    # Manifest public-status is consistent with the operator-only SSOT.
+    non_public = {e.name for e in TOOL_MANIFEST if not e.public}
+    assert non_public == set(OPERATOR_ONLY_TOOLS)
+
+    # Negative: a registered tool absent from the manifest is detected typed.
+    fake_registered = registered | {"trw_fixture_unmanifested"}
+    assert fake_registered - manifest_names == {"trw_fixture_unmanifested"}
+
+    # Negative: a manifest entry with no registered consumer is detected typed.
+    orphan = SurfaceManifestEntry(
+        name="trw_fixture_orphan",
+        kind=SurfaceKind.TOOL,
+        owner="tools.fixture",
+        pack="feedback",
+        validation_reference="fixture",
+    )
+    fake_manifest = manifest_names | {orphan.name}
+    assert fake_manifest - registered == {"trw_fixture_orphan"}
+
+
+@pytest.mark.unit
+def test_prd_core_218_fr02() -> None:
+    """FR02: exactly nine kernel tools appear once in every profile resolution,
+    no other tool is kernel, pack tools need explicit selection, and a
+    kernel-membership mutation without a version bump fails the pinned digest."""
+    import hashlib
+
+    from trw_mcp.server._surface_manifest_registry import (
+        KERNEL_VERSION,
+        KERNEL_VERSION_DIGESTS,
+        MANIFEST_BY_NAME,
+        PACK_TOOLS,
+        kernel_digest,
+        resolve_tool_surface,
     )
 
-    # The exclusion list must not name phantom tools (drift the other way):
-    # everything excluded must actually be registered.
-    phantom_exclusions = excluded - registered
-    assert not phantom_exclusions, (
-        f"INTENTIONALLY_UNBRIDGED_TOOLS names tools not registered: {sorted(phantom_exclusions)}"
+    # Kernel is EXACTLY the nine tool IDs — as a pack and in the manifest.
+    assert set(PACK_TOOLS["kernel"]) == _EXPECTED_KERNEL
+    assert len(PACK_TOOLS["kernel"]) == 9
+    kernel_pack_members = {n for n, e in MANIFEST_BY_NAME.items() if e.pack == "kernel"}
+    assert kernel_pack_members == _EXPECTED_KERNEL  # no other tool is kernel
+
+    # The nine appear exactly once in EVERY profile resolution (real TaskType
+    # vocabulary; F2: 'audit' is not a TaskType and resolves kernel-only).
+    for task in ("coding", "research", "docs", "eval", "rca", "planning", "unknown", "unmapped-xyz"):
+        res = resolve_tool_surface(task, "standard")
+        assert res.packs[0] == "kernel"
+        for tool in _EXPECTED_KERNEL:
+            assert res.tools.count(tool) == 1, (task, tool)
+    res_all = resolve_tool_surface("coding", "all")
+    for tool in _EXPECTED_KERNEL:
+        assert res_all.tools.count(tool) == 1
+
+    # Pack tools appear ONLY through explicit selection: code_risk is not part
+    # of any standard task surface.
+    for task in ("coding", "research", "docs", "eval", "rca", "planning", "unknown"):
+        surface = set(resolve_tool_surface(task, "standard").tools)
+        assert not (set(PACK_TOOLS["code_risk"]) & surface), task
+
+    # Versioned kernel digest: current membership matches the pinned digest.
+    assert kernel_digest() == KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
+    # A membership mutation changes the digest, so the pin fails until the
+    # version is bumped and re-pinned (forces the versioned manifest diff).
+    mutated = sorted(_EXPECTED_KERNEL | {"trw_build_check"})
+    mutated_digest = hashlib.sha256("\n".join(mutated).encode("utf-8")).hexdigest()
+    assert mutated_digest != KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
+
+
+@pytest.mark.unit
+def test_prd_core_218_nfr01() -> None:
+    """NFR01: manifest + pack resolution is local, deterministic, and completes
+    within 50 ms p95 over a 30-run fixture."""
+    import time
+
+    from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
+
+    # Determinism: identical inputs yield identical resolutions.
+    assert resolve_tool_surface("coding", "standard") == resolve_tool_surface("coding", "standard")
+
+    samples: list[float] = []
+    for _ in range(30):
+        start = time.perf_counter()
+        for task in ("coding", "docs", "audit", "unknown", "unmapped-xyz"):
+            resolve_tool_surface(task, "standard")
+        resolve_tool_surface("coding", "all")
+        samples.append((time.perf_counter() - start) * 1000)
+    samples.sort()
+    p95 = samples[int(0.95 * (len(samples) - 1))]
+    assert p95 <= 50.0, f"resolution p95={p95:.3f}ms"
+
+
+@pytest.mark.unit
+def test_prd_core_218_fr04(config: object) -> None:
+    """FR04: standard is the default; unknown -> kernel only; standard applies
+    the task mapping; only explicit-all returns the full eligible set with a
+    visible recorded decision, and nothing else returns the full set."""
+    from trw_mcp.server._surface_manifest_registry import (
+        eligible_tool_names,
+        resolve_tool_surface,
     )
 
-    # A bridged tool must never also be in the exclusion list.
-    assert not (bridged & excluded), "A tool is both bridged and excluded — contradictory policy"
+    # Missing config field -> standard is the DEFAULT (never silently full).
+    assert config.tool_resolution_mode == "standard"  # type: ignore[attr-defined]
+    # Wiring: the config field is a live production input to resolution.
+    wired = config.resolve_tool_surface_for_task("coding")  # type: ignore[attr-defined]
+    assert wired.mode == "standard"
+    assert len(wired.tools) == 15
+
+    # Unknown / missing task -> kernel only (discovery is already kernel).
+    unknown = resolve_tool_surface("totally-unknown", "standard")
+    assert unknown.packs == ("kernel",)
+    assert len(unknown.tools) == 9
+    assert len(resolve_tool_surface(None, "standard").tools) == 9
+
+    # Standard -> exact task mapping over the REAL TaskType vocabulary (F2).
+    assert len(resolve_tool_surface("coding", "standard").tools) == 15
+    assert len(resolve_tool_surface("research", "standard").tools) == 15
+    assert len(resolve_tool_surface("docs", "standard").tools) == 14
+    assert len(resolve_tool_surface("eval", "standard").tools) == 11
+    assert len(resolve_tool_surface("rca", "standard").tools) == 15
+    assert len(resolve_tool_surface("planning", "standard").tools) == 12
+    # F2 tombstone: 'audit' is NOT a TaskType -> kernel-only (unmapped).
+    assert len(resolve_tool_surface("audit", "standard").tools) == 9
+
+    # Explicit all -> full eligible set WITH a visible recorded decision.
+    full = set(eligible_tool_names())
+    res_all = resolve_tool_surface("coding", "all")
+    assert set(res_all.tools) == full
+    assert res_all.mode == "all"
+    assert "explicit_all" in res_all.decision
+
+    # Nothing else returns the full set — no standard resolution equals `all`.
+    for task in ("coding", "research", "docs", "eval", "rca", "planning", "unknown", None):
+        assert set(resolve_tool_surface(task, "standard").tools) != full
+    # An unrecognized mode value degrades to standard, never silently to full.
+    assert set(resolve_tool_surface("coding", "bogus").tools) != full

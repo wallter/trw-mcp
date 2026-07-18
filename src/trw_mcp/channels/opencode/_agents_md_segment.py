@@ -78,9 +78,8 @@ T1_TOKEN_BUDGET = 800
 T1_BYTE_QUOTA = 6144  # hard byte cap (FR09 / NFR05)
 
 # Stale notice appended when sidecar SHA doesn't match HEAD (FR04)
-_STALE_NOTICE = (
-    "\n\n> **(STALE — sidecar outdated, run: trw-distill self-improve risk-report --repo . --persist-sidecar)**"
-)
+_PUBLIC_RISK_ACTION = "trw_codebase_risk_report(top_n=20) via MCP"
+_STALE_NOTICE = f"\n\n> **(STALE — cached intelligence is outdated; call `{_PUBLIC_RISK_ACTION}` for a live report.)**"
 
 # Footer line (FR02)
 _T1_FOOTER = "\nUse /trw-before-edit <path> for file-specific context."
@@ -209,7 +208,7 @@ def build_opencode_agents_md_entry(
             trigger=CleanupTrigger.TTL_EXCEEDED,
             action=CleanupAction.CLEAR_SEGMENT,
         ),
-        regenerate_cmd=("trw-distill self-improve risk-report --repo . --persist-sidecar"),
+        regenerate_cmd=f"MCP tool: {_PUBLIC_RISK_ACTION}",
         description=("opencode AGENTS.md distill segment — top-5 hotspots + top-3 conventions"),
         sidecar_schema="risk-report-sidecar/v0",
         activation_gate=None,
@@ -266,7 +265,7 @@ def install_opencode_agents_md_distill_segment(
     sidecar_data: SidecarData | None,
     sidecar_sha: str | None,
     *,
-    distill_action: str = ("trw-distill self-improve risk-report --repo . --persist-sidecar"),
+    distill_action: str = _PUBLIC_RISK_ACTION,
     stale: bool = False,
     force: bool = False,
     dry_run: bool = False,
@@ -285,7 +284,7 @@ def install_opencode_agents_md_distill_segment(
         repo_root: Repository root directory.
         sidecar_data: Parsed sidecar payload or None (renders T0 beacon).
         sidecar_sha: Git SHA of the sidecar file for TTL/state tracking.
-        distill_action: Command to show when sidecar is absent (T0 beacon).
+        distill_action: Public MCP action to show when sidecar is absent (T0 beacon).
         stale: True when the sidecar SHA doesn't match HEAD (FR04).
         force: Skip TTL and conflict checks.
         dry_run: Return would-be content without writing.

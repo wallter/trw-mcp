@@ -101,7 +101,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "trw_build_check",
         "After implementation and before delivery",
         "Catches failures before delivery \u2014 bugs found late cascade into 2x rework cost",
-        "trw_build_check(scope='full')",
+        "trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>')",
     ),
     CeremonyTool(
         "REVIEW",

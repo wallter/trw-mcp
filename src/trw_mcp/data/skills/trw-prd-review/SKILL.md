@@ -44,9 +44,8 @@ traceability over generic requests to add more prose.
 
 ## Input
 
-Pass a PRD ID or file path as the argument:
-- `/trw-prd-review PRD-CORE-020`
-- `/trw-prd-review path/to/PRD-CORE-020.md`
+The internal `/trw-prd-ready` or `/trw-prd-new` caller provides a PRD ID or file path. Treat it as the
+review target; do not prompt for or advertise direct invocation.
 
 To resolve a PRD ID to a file path, read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`).
 
@@ -57,14 +56,6 @@ The agent returns a structured review with:
 - Overall verdict: **READY** / **NEEDS WORK** / **BLOCK**
 - Specific findings with severity and recommendations
 - Suggested next actions
-
-## Execution Plan Readiness Advisory
-
-When the verdict is **READY** and this skill was invoked standalone (not as part of `/trw-prd-ready` pipeline), include an advisory note:
-
-> "This PRD is sprint-ready. Use `/trw-prd-ready {PRD-ID}` to generate an execution plan, or proceed directly to implementation."
-
-When invoked as part of the `/trw-prd-ready` pipeline, return only the structured verdict and findings — omit the advisory.
 
 ## Notes
 

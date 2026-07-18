@@ -47,21 +47,32 @@ def _two_candidate_setup(
     ``low_impact_id`` first and ``high_impact_id`` second, so pure-position RRF
     ranks the low-impact entry above the high-impact one. Only importance
     blending can flip that.
+
+    Ordering note: the recall path delegates to ``trw_memory.hybrid_search``,
+    which fuses BM25 *before* dense. With identical shared text the BM25 scores
+    tie, so BM25 preserves the ``list_entries`` order, which is
+    ``updated_at DESC``. ``MemoryEntry.updated_at`` is stamped at CONSTRUCTION
+    time (``default_factory=datetime.now``), so the entry constructed LAST is
+    the "newest" and would lead the tied BM25 ranking. We therefore construct
+    ``high_entry`` FIRST and ``low_entry`` LAST so the low-impact entry is the
+    newer one and genuinely leads BOTH rankers under pure position — otherwise
+    the symmetric-position tie would break toward the high-impact entry and the
+    pure-position path would no longer be a clean low-first baseline.
     """
-    low_entry = MemoryEntry(
-        id=low_impact_id,
-        content="recall fusion candidate token",
-        detail="d-low",
-        importance=low_impact,
-    )
     high_entry = MemoryEntry(
         id=high_impact_id,
         content="recall fusion candidate token",
         detail="d-high",
         importance=high_impact,
     )
-    backend.store(low_entry)
+    low_entry = MemoryEntry(
+        id=low_impact_id,
+        content="recall fusion candidate token",
+        detail="d-low",
+        importance=low_impact,
+    )
     backend.store(high_entry)
+    backend.store(low_entry)
     return high_entry, low_entry
 
 

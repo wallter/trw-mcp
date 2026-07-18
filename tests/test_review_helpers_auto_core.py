@@ -188,14 +188,14 @@ class TestHandleAutoMode:
             result = handle_auto_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z", None)
         assert result["review_id"] == "review-id-check"
 
-    def test_reviewer_roles_run_in_result_from_precollected(self, run_dir: Path) -> None:
-        """reviewer_roles_run comes from REVIEWER_ROLES when using pre-collected findings."""
-        from trw_mcp.tools._review_helpers import REVIEWER_ROLES
-
+    def test_empty_precollected_findings_do_not_claim_reviewer_roles(self, run_dir: Path) -> None:
+        """An empty payload has neither findings nor a typed reviewer receipt."""
         config = _make_config(confidence_threshold=0)
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", [])
-        assert result["reviewer_roles_run"] == list(REVIEWER_ROLES)
+        assert result["reviewer_roles_run"] == []
+        assert result["auto_analysis_limited"] is True
+        assert result["substantive"] is False
 
     def test_non_dict_items_in_reviewer_findings_are_skipped(self, run_dir: Path) -> None:
         """Non-dict items in reviewer_findings are gracefully skipped."""

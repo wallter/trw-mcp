@@ -24,6 +24,10 @@ skills:
     disposition: portable
     source: variant
     reason: Client-agnostic end-of-session reflection; variant drops Claude-specific approval/sub-agent tool names
+  trw-delegate:
+    disposition: portable
+    source: variant
+    reason: MCP-first read-only second-opinion dispatch is client-neutral and supports shell-less harnesses
   trw-sprint-team:
     disposition: exclude
     source: shared

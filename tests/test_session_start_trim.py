@@ -221,3 +221,55 @@ class TestFindIntentionalMarker:
 
     def test_out_of_range_line_returns_none(self) -> None:
         assert find_intentional_marker("a = 1\n", 99) is None
+
+
+class TestFoldDeferredBlocks:
+    """Compact mode folds repetitive *_deferred advisory blocks (2026-07-12)."""
+
+    def _pressure_payload(self) -> dict:  # type: ignore[type-arg]
+        block = {"reason": "writer_pressure", "writer_count": 9, "threshold": 2}
+        return {
+            "learnings": [],
+            "run": {"active_run": None},
+            "errors": [],
+            "success": True,
+            "side_effects_deferred": dict(block),
+            "auto_upgrade_check_deferred": dict(block),
+            "stale_runs_deferred": dict(block),
+            "embeddings_backfill_deferred": dict(block),
+            "wal_checkpoint_deferred": dict(block),
+            "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
+        }
+
+    def test_compact_folds_deferral_blocks(self) -> None:
+        result = trim_session_start_payload(self._pressure_payload(), verbose=False)
+
+        assert "side_effects_deferred" not in result
+        assert "wal_checkpoint_deferred" not in result
+        assert result["deferred"]["writer_pressure"] == [
+            "auto_upgrade_check",
+            "embeddings_backfill",
+            "side_effects",
+            "stale_runs",
+            "wal_checkpoint",
+        ]
+        assert result["deferred"]["session_start_compacted"] == ["auto_recall"]
+        assert result["deferred_writer_count"] == 9
+
+    def test_verbose_keeps_individual_blocks(self) -> None:
+        result = trim_session_start_payload(self._pressure_payload(), verbose=True)
+
+        assert "deferred" not in result
+        assert result["side_effects_deferred"]["reason"] == "writer_pressure"
+
+    def test_unrecognized_block_shape_is_not_folded(self) -> None:
+        payload = self._pressure_payload()
+        payload["custom_deferred"] = {"reason": "writer_pressure", "payload": {"x": 1}}
+        result = trim_session_start_payload(payload, verbose=False)
+
+        assert result["custom_deferred"] == {"reason": "writer_pressure", "payload": {"x": 1}}
+        assert "custom" not in result["deferred"]["writer_pressure"]
+
+    def test_no_deferred_blocks_no_summary_key(self) -> None:
+        result = trim_session_start_payload({"learnings": [], "run": {}, "errors": [], "success": True}, verbose=False)
+        assert "deferred" not in result

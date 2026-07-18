@@ -16,8 +16,12 @@ init_hook_timer
 # Read stdin payload
 _payload=$(cat) || exit 0
 _tool_name=""
+_allow_unverified=""
+_unverified_reason=""
 if command -v jq >/dev/null 2>&1; then
   _tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
+  _allow_unverified=$(printf '%s' "$_payload" | jq -r '.tool_input.allow_unverified // empty' 2>/dev/null) || true
+  _unverified_reason=$(printf '%s' "$_payload" | jq -r '.tool_input.unverified_reason // empty' 2>/dev/null) || true
 fi
 
 # Only gate trw_deliver calls
@@ -29,6 +33,33 @@ esac
 # Check build status
 _project_root="$(get_repo_root)" || exit 0
 _build_status="$_project_root/.trw/context/build-status.yaml"
+
+# PRD-CORE-214: CONSTITUTION §1.a Path-2 structured-override pass-through.
+# The hook checks INTENT PRESENCE only (allow_unverified=true + a non-empty
+# structured reason); record VALIDITY (schema, expiry) is adjudicated by the
+# server-side gate in _deliver_gate_dispatch.py, which is the stricter,
+# authoritative layer. Every other call keeps the fail-closed blocks below.
+# Returns 0 (caller must then exit 0) only when override intent is present;
+# appends a minimal audit line (no reason text — the server ledger is the
+# authoritative record; this line exists for advisory-path visibility).
+_override_passthrough() {
+  _blk_class="$1"
+  [ "$_allow_unverified" = "true" ] || return 1
+  _reason_stripped=$(printf '%s' "$_unverified_reason" | tr -d '[:space:]') || true
+  [ -n "$_reason_stripped" ] || return 1
+  _audit_file="$_project_root/.trw/context/deliver-override-audit.jsonl"
+  _now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+  _sid=$(printf '%s' "${TRW_SESSION_ID:-}" | tr -d '"\\') || true
+  _scope=""
+  if [ -f "$_build_status" ]; then
+    _scope=$(grep '^scope:' "$_build_status" 2>/dev/null | head -1 | sed 's/^scope:[[:space:]]*//' | tr -d '"\\' | cut -c1-120) || true
+  fi
+  printf '{"ts":"%s","session_id":"%s","build_scope":"%s","block_class":"%s"}\n' \
+    "$_now_iso" "$_sid" "$_scope" "$_blk_class" >>"$_audit_file" 2>/dev/null || true
+  printf 'DELIVER-GATE: Path-2 override intent detected (allow_unverified + structured reason); passing through — the server-side gate adjudicates the AcceptableFailureRecord.\n'
+  log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "0:override-passthrough:$_blk_class"
+  return 0
+}
 
 if [ ! -f "$_build_status" ]; then
   # PRD-FIX-077-FR03: Fallback to .trw/context/ceremony-state.json when
@@ -51,12 +82,15 @@ if [ ! -f "$_build_status" ]; then
     _state_ts=$(jq -r '.last_build_check_ts // empty' "$_state_file" 2>/dev/null || printf '')
 
     if [ "$_state_result" = "failed" ]; then
+      if _override_passthrough "fallback-failed"; then exit 0; fi
       cat >&2 <<'MSG'
 BLOCKED: Build check failed — tests did not pass.
 
 WHY: Delivering code that fails its own tests breaks the user's project.
 
-ACTION: Fix failing tests, re-run trw_build_check(scope='full').
+ACTION: Fix failures, re-run project-native validation, then record only its
+observed result with trw_build_check(tests_passed, test_count, failure_count,
+static_checks_clean, scope).
 MSG
       log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:build-failed"
       _trw_intentional_exit=1
@@ -72,10 +106,13 @@ MSG
           log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "0:state-fallback-passed"
           exit 0
         fi
+        if _override_passthrough "stale-build"; then exit 0; fi
         cat >&2 <<MSG
 BLOCKED: Build verification is stale (${_delta}s old, window ${_freshness}s).
 
-ACTION: Re-run trw_build_check(scope='full') before trw_deliver.
+ACTION: Re-run project-native validation, then record its new observed result
+with trw_build_check(tests_passed, test_count, failure_count,
+static_checks_clean, scope) before trw_deliver.
 MSG
         log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:stale-build"
         _trw_intentional_exit=1
@@ -84,6 +121,7 @@ MSG
     fi
   fi
 
+  if _override_passthrough "no-build"; then exit 0; fi
   cat >&2 <<'MSG'
 BLOCKED: No build record exists yet.
 
@@ -91,8 +129,9 @@ WHY: Delivering without verified tests risks shipping broken code to the user.
 Unverified deliveries erode trust and cause rework — the build gate exists to
 prevent exactly this.
 
-ACTION: Call trw_build_check(scope='full') first, fix any failures, then retry
-trw_deliver.
+ACTION: Run project-native validation first, then record its observed result
+with trw_build_check(tests_passed, test_count, failure_count,
+static_checks_clean, scope). Fix failures before retrying trw_deliver.
 MSG
   log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:no-build"
   _trw_intentional_exit=1
@@ -108,6 +147,12 @@ if [ "$_tests_passed" != "true" ]; then
   _timed_out=$(grep '^timed_out:' "$_build_status" 2>/dev/null | head -1 | sed 's/^timed_out:[[:space:]]*//' | tr -d "'" | tr -d '"') || true
 
   if [ "$_timed_out" = "true" ]; then
+    if _override_passthrough "timeout"; then exit 0; fi
+  else
+    if _override_passthrough "build-failed"; then exit 0; fi
+  fi
+
+  if [ "$_timed_out" = "true" ]; then
     cat >&2 <<'MSG'
 BLOCKED: Build check timed out — test results are unknown.
 
@@ -115,10 +160,11 @@ WHY: A timeout means the test suite did not finish within the allotted time.
 Tests may have passed, but we cannot confirm. Delivering unverified code risks
 shipping regressions the user will have to debug later.
 
-ACTION (pick one):
-  1. Re-run with a longer timeout: trw_build_check(scope='full', timeout_secs=600)
-  2. If you already ran tests manually via Bash and they passed, tell the user
-     the build gate timed out and ask them to approve delivery.
+ACTION: Confirm the project-native command's actual exit status, then retry the
+reporter with trw_build_check(tests_passed, test_count, failure_count,
+static_checks_clean, scope). The reporter has no timeout argument and does not
+run validation. If the reporting service remains unavailable, report that gate
+failure rather than claiming verified delivery.
 MSG
   else
     cat >&2 <<'MSG'
@@ -129,8 +175,9 @@ The build gate prevents shipping known-broken code so the user does not have
 to clean up after you.
 
 ACTION: Read the failure details in .trw/context/build-status.yaml, fix the
-failing tests, then re-run trw_build_check(scope='full'). Only call
-trw_deliver after tests pass.
+failing tests, re-run project-native validation, then record its observed result
+with trw_build_check(tests_passed, test_count, failure_count,
+static_checks_clean, scope). Only call trw_deliver after tests pass.
 MSG
   fi
   log_hook_execution "PreToolUse:deliver-gate" "$_tool_name" "2:build-failed"

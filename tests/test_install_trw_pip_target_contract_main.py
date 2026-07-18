@@ -34,7 +34,7 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
     monkeypatch.setattr(module.tempfile, "mkdtemp", lambda prefix="": str(scratch_dir))
     monkeypatch.setattr(module.shutil, "rmtree", lambda path: None)
 
-    def fake_phase_install_extras(ui, step, total, python, install_ai, install_sqlitevec, pip_target=""):
+    def fake_phase_install_extras(ui, step, total, python, install_ai, install_sqlitevec, pip_target="", offline=False):
         observed.update(
             {
                 "step": step,
@@ -43,6 +43,7 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
                 "install_ai": install_ai,
                 "install_sqlitevec": install_sqlitevec,
                 "pip_target": pip_target,
+                "offline": offline,
             }
         )
         return ["AI/LLM", "embeddings", "sqlite-vec"]
@@ -71,6 +72,7 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
         "install_ai": True,
         "install_sqlitevec": True,
         "pip_target": "/tmp/trw-pip",
+        "offline": False,
     }
 
 
@@ -179,7 +181,7 @@ def test_main_parses_multi_client_ide_argument_for_project_setup(
                     "pip_target": pip_target,
                 }
             )
-            or ["cursor-ide", "codex", "gemini"]
+            or ["cursor-ide", "codex", "copilot"]
         ),
     )
 
@@ -190,14 +192,14 @@ def test_main_parses_multi_client_ide_argument_for_project_setup(
             "install-trw.py",
             "--script",
             "--ide",
-            "cursor-ide,codex,gemini",
+            "cursor-ide,codex,copilot",
             str(project_dir),
         ],
     )
 
     module.main()
 
-    assert observed["ide"] == ["cursor-ide", "codex", "gemini"]
+    assert observed["ide"] == ["cursor-ide", "codex", "copilot"]
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
@@ -230,7 +232,7 @@ def test_upgrade_preserves_prior_identity_platform_urls_and_clients(
     monkeypatch.setattr(module, "phase_install_extras", lambda *args, **kwargs: [])
     monkeypatch.setattr(module, "phase_project_setup", lambda *args, **kwargs: [])
     monkeypatch.setattr(module, "_restart_mcp_servers", lambda target_dir, ui: None)
-    monkeypatch.setattr(module, "_check_all_backends", lambda target_dir, prior: [])
+    monkeypatch.setattr(module, "_check_all_backends", lambda target_dir: [])
     monkeypatch.setattr(module.tempfile, "mkdtemp", lambda prefix="": str(scratch_dir))
     monkeypatch.setattr(module.shutil, "rmtree", lambda path: None)
 
@@ -272,10 +274,9 @@ def test_upgrade_preserves_prior_identity_platform_urls_and_clients(
     }
 
 
-@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
-def test_upgrade_version_metadata_refreshes_version_yaml(installer_path: Path, tmp_path: Path) -> None:
-    """The standalone installer keeps VERSION.yaml aligned even when --upgrade skips project setup."""
-    module = _load_installer_module(installer_path)
+def test_upgrade_version_metadata_preserves_stamp_without_deployed_authority(tmp_path: Path) -> None:
+    """Missing deployed bodies cannot rewrite even a syntactically valid prior stamp."""
+    module = _load_installer_module(_INSTALLER_PATHS[0])
     version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
     version_path.parent.mkdir(parents=True)
     version_path.write_text(
@@ -288,8 +289,58 @@ def test_upgrade_version_metadata_refreshes_version_yaml(installer_path: Path, t
 
     module._write_version_yaml_metadata(tmp_path)
 
-    content = version_path.read_text(encoding="utf-8")
-    assert "framework_version: v25_TRW" in content
-    assert "aaref_version: v2.0.0" in content
+    assert version_path.read_text(encoding="utf-8") == (
+        "framework_version: v25_TRW\n"
+        "aaref_version: v2.0.0\n"
+        "trw_mcp_version: 0.1.0\n"
+        "deployed_at: '2026-01-01T00:00:00+00:00'\n"
+    )
+
+
+def test_upgrade_version_metadata_parses_full_framework_version(tmp_path: Path) -> None:
+    """A patch-capable body supersedes an older stamp without collapsing its version."""
+    # Test the tracked source of truth. The ignored release artifact is covered by
+    # the separate deterministic build + installer-drift gate, never trusted here.
+    module = _load_installer_module(_INSTALLER_PATHS[0])
+    frameworks = tmp_path / ".trw" / "frameworks"
+    frameworks.mkdir(parents=True)
+    (frameworks / "VERSION.yaml").write_text(
+        "framework_version: v25_TRW\naaref_version: v2.0.0\ntrw_mcp_version: 0.1.0\n",
+        encoding="utf-8",
+    )
+    (frameworks / "FRAMEWORK.md").write_text(
+        "v26.1.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n",
+        encoding="utf-8",
+    )
+    (frameworks / "AARE-F-FRAMEWORK.md").write_text(
+        "# AARE-F\n\n**Version**: 3.2.0\n",
+        encoding="utf-8",
+    )
+
+    module._write_version_yaml_metadata(tmp_path)
+
+    content = (frameworks / "VERSION.yaml").read_text(encoding="utf-8")
+    assert "framework_version: v26.1.1_TRW" in content
+    assert "aaref_version: v3.2.0" in content
     assert f"trw_mcp_version: {module.TRW_VERSION}" in content
-    assert "deployed_at: '2026-01-01T00:00:00+00:00'" not in content
+
+
+def test_upgrade_version_metadata_fails_closed_when_authorities_are_missing(tmp_path: Path) -> None:
+    module = _load_installer_module(_INSTALLER_PATHS[0])
+    version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
+
+    module._write_version_yaml_metadata(tmp_path)
+
+    assert not version_path.exists()
+
+
+def test_upgrade_version_metadata_preserves_malformed_existing_stamp(tmp_path: Path) -> None:
+    module = _load_installer_module(_INSTALLER_PATHS[0])
+    version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
+    version_path.parent.mkdir(parents=True)
+    original = "framework_version: bogus\naaref_version: nope\n"
+    version_path.write_text(original, encoding="utf-8")
+
+    module._write_version_yaml_metadata(tmp_path)
+
+    assert version_path.read_text(encoding="utf-8") == original

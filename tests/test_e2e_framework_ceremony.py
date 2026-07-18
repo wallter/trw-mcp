@@ -345,7 +345,21 @@ class TestRunLifecycle:
         # blocked without a passing build check. A *full* lifecycle includes
         # VALIDATE, so record a passing build check before delivering — the
         # honest way past the gate (vs. allow_unverified).
-        build_check_fn(tests_passed=True, test_count=1, static_checks_clean=True, scope="full")
+        build_check_fn(
+            tests_passed=True,
+            test_count=1,
+            static_checks_clean=True,
+            scope="full",
+            command_results=[
+                {"command_id": "tests", "label": "pytest", "command_class": "test", "exit_code": 0},
+                {
+                    "command_id": "static_checks",
+                    "label": "ruff+mypy",
+                    "command_class": "static",
+                    "exit_code": 0,
+                },
+            ],
+        )
 
         result = deliver_fn()
         assert result.get("success") is True or result.get("errors") == []

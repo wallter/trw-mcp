@@ -13,6 +13,7 @@ from tests._test_middleware_ceremony_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
+    _clean_state,  # noqa: F401 - importing registers the autouse fixture
 )
 from trw_mcp.middleware.ceremony import CEREMONY_WARNING, CeremonyMiddleware, is_session_active
 
@@ -23,6 +24,9 @@ class TestCeremonyMiddleware:
     @pytest.fixture
     def middleware(self) -> CeremonyMiddleware:
         return CeremonyMiddleware()
+
+    def test_clean_state_fixture_is_collected(self, request: pytest.FixtureRequest) -> None:
+        assert "_clean_state" in request.fixturenames
 
     @pytest.mark.asyncio
     async def test_no_context_passes_through(self, middleware: CeremonyMiddleware) -> None:
@@ -58,8 +62,13 @@ class TestCeremonyMiddleware:
 
     @pytest.mark.asyncio
     async def test_ceremony_tool_marks_session_active(self, middleware: CeremonyMiddleware) -> None:
-        """Calling a ceremony tool marks the session as active."""
-        result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        """Calling a ceremony tool marks the session as active.
+
+        Since commit f37b1063c the ceremony gate only activates on an explicit
+        success payload (fail-closed detection in _session_start_succeeded); a
+        successful session_start emits a JSON status payload.
+        """
+        result = FakeToolResult(content=[TextContent(type="text", text='{"status":"success","detail":"started"}')])
 
         async def call_next(_ctx: Any) -> Any:
             return result
@@ -122,8 +131,14 @@ class TestCeremonyMiddleware:
         self,
         middleware: CeremonyMiddleware,
     ) -> None:
-        """Non-exempt tool called AFTER ceremony has no warning."""
-        start_result = FakeToolResult(content=[TextContent(type="text", text="started")])
+        """Non-exempt tool called AFTER ceremony has no warning.
+
+        A successful session_start must report explicit success (commit
+        f37b1063c fail-closed detection) for the session to be marked active.
+        """
+        start_result = FakeToolResult(
+            content=[TextContent(type="text", text='{"status":"success","detail":"started"}')]
+        )
         status_result = FakeToolResult(content=[TextContent(type="text", text="status")])
 
         call_count = 0
@@ -222,7 +237,7 @@ class TestCeremonyMiddleware:
         """
         monkeypatch.setattr(
             "trw_mcp.state._paths.touch_heartbeat",
-            lambda: (_ for _ in ()).throw(RuntimeError("disk full")),
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("disk full")),
         )
 
         result = FakeToolResult(content=[TextContent(type="text", text="result")])
@@ -249,7 +264,7 @@ class TestCeremonyMiddleware:
 
         monkeypatch.setattr(
             "trw_mcp.state._paths.touch_heartbeat",
-            lambda: heartbeat_calls.append("touched"),
+            lambda **kwargs: heartbeat_calls.append(str(kwargs["session_id"])),
         )
 
         async def call_next(_ctx: Any) -> Any:
@@ -265,7 +280,7 @@ class TestCeremonyMiddleware:
 
         texts = [b.text for b in out.content if hasattr(b, "text")]
         assert "result" in texts
-        assert heartbeat_calls == ["touched"]
+        assert heartbeat_calls == ["sess-hb-success"]
 
     @pytest.mark.asyncio
     async def test_successful_session_start_touches_heartbeat(
@@ -277,7 +292,7 @@ class TestCeremonyMiddleware:
 
         monkeypatch.setattr(
             "trw_mcp.state._paths.touch_heartbeat",
-            lambda: heartbeat_calls.append("touched"),
+            lambda **kwargs: heartbeat_calls.append(str(kwargs["session_id"])),
         )
 
         async def call_next(_ctx: Any) -> Any:
@@ -295,7 +310,7 @@ class TestCeremonyMiddleware:
 
         assert is_session_active("sess-start-hb")
         assert out.content[0].text == '{"success": true}'
-        assert heartbeat_calls == ["touched"]
+        assert heartbeat_calls == ["sess-start-hb"]
 
     @pytest.mark.asyncio
     async def test_unsuccessful_session_start_does_not_activate_session(

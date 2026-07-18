@@ -18,6 +18,9 @@ Internal helpers (also re-exported for test access):
   _delivery_review_gate; PRD-CORE-192)
 """
 
+# Event-check facade imports are intentionally late to avoid a cycle.
+# ruff: noqa: E402, I001
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,10 +58,39 @@ from trw_mcp.tools._delivery_build_gates import (
 # import point (_delivery_helpers). The sibling resolves get_config /
 # _read_complexity_class through THIS facade so test monkeypatches propagate.
 from trw_mcp.tools._delivery_review_gate import (
+    _check_review_gate as _check_review_gate,
+)
+from trw_mcp.tools._delivery_review_gate import (
+    _review_artifact_is_substantive as _review_artifact_is_substantive,
+)
+from trw_mcp.tools._delivery_review_gate import (
+    _review_data_is_substantive as _review_data_is_substantive,
+)
+from trw_mcp.tools._delivery_review_gate import (
     _review_gate_mode_is_block as _review_gate_mode_is_block,
 )
 from trw_mcp.tools._delivery_review_gate import (
     _review_nudge_for_run as _review_nudge_for_run,
+)
+
+# PRD-CORE-213: acceptance-integrity gate helpers live in focused siblings.
+# Re-exported here for a single import point. Both siblings only import leaf
+# modules (persistence) at load time and defer everything else, so this facade
+# import introduces no cycle. FR-group A (review provenance):
+from trw_mcp.tools._prd_transition_gate import (
+    check_transition_coherence as check_transition_coherence,
+)
+from trw_mcp.tools._prd_transition_gate import (
+    detect_status_transitions as detect_status_transitions,
+)
+from trw_mcp.tools._prd_transition_gate import (
+    evaluate_transition_gate as evaluate_transition_gate,
+)
+from trw_mcp.tools._review_provenance import (
+    classify_review_independence as classify_review_independence,
+)
+from trw_mcp.tools._review_provenance import (
+    review_receipt_satisfied as review_receipt_satisfied,
 )
 
 logger = structlog.get_logger(__name__)
@@ -75,195 +107,17 @@ REVIEW_SCOPE_FILE_THRESHOLD = 5
 COMPLEXITY_DRIFT_MULTIPLIER = 2
 
 
-def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, object]]:
-    """Read events.jsonl for a run, returning empty list on any error.
-
-    Centralised helper — called once by ``check_delivery_gates`` and passed
-    to individual gate functions so events.jsonl is read at most once.
-    """
-    events_path = run_path / "meta" / "events.jsonl"
-    try:
-        if reader.exists(events_path):
-            return reader.read_jsonl(events_path)
-    except Exception:  # justified: fail-open, event read must not block delivery
-        logger.warning("run_events_read_failed", run_path=str(run_path), exc_info=True)
-    return []
-
-
-def _count_file_modified(events: list[dict[str, object]]) -> int:
-    """Count ``file_modified`` events in a pre-read event list."""
-    return sum(1 for ev in events if str(ev.get("event", "")) == "file_modified")
-
-
-def _events_since_last_session_start(events: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Return events STRICTLY AFTER the last ``session_start``; all on no boundary.
-
-    The slice starts at ``last_session_idx + 1`` so the ``session_start``
-    boundary event itself is excluded — it belongs to the boundary, not the
-    current-session work window. This matches the docstring contract ("after")
-    and the only consumers (``_count_file_modified_current_session`` and
-    ``_check_complexity_drift``) count ``file_modified`` events, which a
-    ``session_start`` event is never one of, so excluding it is a pure
-    correctness fix with no gate-decision change.
-    """
-    last_session_idx = -1
-    for i, ev in enumerate(events):
-        if str(ev.get("event", "")) == "session_start":
-            last_session_idx = i
-    return events if last_session_idx < 0 else events[last_session_idx + 1 :]
-
-
-def _count_file_modified_current_session(events: list[dict[str, object]]) -> int:
-    """Count ``file_modified`` events in the current session only.
-
-    Uses ``session_start`` as the session boundary marker. Events from
-    previous sessions (before the last ``session_start``) are excluded.
-    """
-    session_events = _events_since_last_session_start(events)
-    return _count_file_modified(session_events)
-
-
-def _read_run_yaml(run_path: Path, reader: FileStateReader) -> dict[str, object]:
-    """Read run.yaml, returning empty dict on any error."""
-    run_yaml_path = run_path / "meta" / "run.yaml"
-    try:
-        if run_yaml_path.exists():
-            return reader.read_yaml(run_yaml_path)
-    except Exception:  # justified: fail-open, run.yaml read must not block delivery
-        logger.warning("run_yaml_read_failed", run_path=str(run_path), exc_info=True)
-    return {}
-
-
-def _read_complexity_class(run_path: Path, reader: FileStateReader) -> str:
-    """Read the complexity_class from run.yaml, or return empty string."""
-    run_data = _read_run_yaml(run_path, reader)
-    return str(run_data.get("complexity_class", ""))
-
-
-def _check_complexity_drift(
-    run_data: dict[str, object],
-    events: list[dict[str, object]],
-) -> str | None:
-    """Detect when actual work scope significantly exceeds the initial classification.
-
-    Uses pre-read ``run_data`` and ``events`` (shared with other gate checks)
-    so events.jsonl is read only once per delivery.
-
-    Fires a WARNING (not a block) when:
-      - ``complexity_class`` is ``MINIMAL``
-      - actual file_modified count > REVIEW_SCOPE_FILE_THRESHOLD
-      - actual count > COMPLEXITY_DRIFT_MULTIPLIER * planned files
-
-    Returns:
-        A warning string if complexity drift is detected, or None.
-    """
-    try:
-        complexity_class = str(run_data.get("complexity_class", ""))
-        if complexity_class != "MINIMAL":
-            return None
-
-        signals = run_data.get("complexity_signals")
-        if not isinstance(signals, dict):
-            return None
-        planned_files = int(str(signals.get("files_affected", 0)))
-
-        actual_files = _count_file_modified_current_session(events)
-
-        if actual_files > REVIEW_SCOPE_FILE_THRESHOLD and actual_files > COMPLEXITY_DRIFT_MULTIPLIER * planned_files:
-            logger.info(
-                "complexity_drift_detected",
-                complexity_class=complexity_class,
-                planned_files=planned_files,
-                actual_files=actual_files,
-            )
-            return (
-                f"Complexity drift detected: classified MINIMAL "
-                f"({planned_files} files planned) but {actual_files} files "
-                f"were modified. Consider re-evaluating — tasks of this scope "
-                f"typically require STANDARD complexity with mandatory REVIEW phase."
-            )
-
-    except Exception:  # justified: fail-open, complexity drift check must not block delivery
-        logger.warning("complexity_drift_check_failed", exc_info=True)
-
-    return None
-
-
-def _check_review_gate(
-    run_path: Path,
-    reader: FileStateReader,
-) -> tuple[str | None, str | None, str | None]:
-    """Check review gate and return (block, warning, advisory) if found.
-
-    A ``review.yaml`` with ``verdict=block`` + critical findings is the deepest
-    truthfulness gate — it exists to catch false completions. For STANDARD /
-    COMPREHENSIVE runs that block verdict is promoted to a hard ``block`` so
-    ``trw_deliver`` actually refuses to ship (overridable via
-    ``allow_unverified`` — CONSTITUTION Deliver Gate Path 3). For MINIMAL /
-    light complexity the historical advisory ``warning`` is retained so trivial
-    work is not over-blocked.
-    """
-    # trw:intentional verdict=block on STANDARD+ runs must HARD-BLOCK deliver — a
-    # block review is the primary truthfulness gate; downgrading it to a warning
-    # (the pre-fix behavior) let critical-finding deliveries return success=True.
-    block: str | None = None
-    warning: str | None = None
-    advisory: str | None = None
-
-    review_path = run_path / "meta" / "review.yaml"
-    if review_path.exists():
-        try:
-            review_data = reader.read_yaml(review_path)
-            rv_verdict = str(review_data.get("verdict", ""))
-            rv_critical = int(str(review_data.get("critical_count", 0)))
-            if rv_verdict == "block" and rv_critical > 0:
-                complexity_class = _read_complexity_class(run_path, reader)
-                if complexity_class in ("STANDARD", "COMPREHENSIVE"):
-                    block = (
-                        f"Review verdict is 'block' with {rv_critical} critical finding(s) "
-                        f"(complexity: {complexity_class}). Delivery blocked. Fix the critical "
-                        "review findings before delivering, or — only for a documented "
-                        "acceptable failure — retry with allow_unverified=true and a concrete "
-                        "unverified_reason."
-                    )
-                else:
-                    # MINIMAL/light complexity: keep the historical soft warning so
-                    # trivial work is not over-blocked.
-                    warning = (
-                        f"Review has {rv_critical} critical findings. "
-                        f"Delivery proceeding but review issues should be addressed."
-                    )
-        except Exception:  # justified: fail-open, review gate check must not block delivery
-            logger.warning("maintenance_review_gate_failed", exc_info=True)
-    else:
-        # Check complexity — STANDARD+ tasks MUST have review (Sprint 68 enforcement)
-        complexity_class = _read_complexity_class(run_path, reader)
-        if complexity_class in ("STANDARD", "COMPREHENSIVE"):
-            # PRD-CORE-192-FR02: review_gate_mode escalates this warning to a hard
-            # block. Default ``warn`` keeps the historical soft posture; ``block``
-            # refuses delivery (overridable via allow_unverified). NFR02: any
-            # config-read / resolution failure fails OPEN to the warning, never a
-            # spurious block.
-            if _review_gate_mode_is_block(complexity_class):
-                block = (
-                    f"No trw_review was run before delivery (complexity: {complexity_class}) "
-                    "and review_gate_mode=block. Review is MANDATORY for STANDARD+ tasks — "
-                    "adversarial audit catches false completions that self-review misses. "
-                    "Run trw_review() or /trw-audit before delivering, or — only for a "
-                    "documented acceptable failure — retry with allow_unverified=true and a "
-                    "structured acceptable-failure record."
-                )
-            else:
-                warning = (
-                    f"No trw_review was run before delivery (complexity: {complexity_class}). "
-                    "Review is MANDATORY for STANDARD+ tasks — adversarial audit catches "
-                    "false completions that self-review misses. "
-                    "Run trw_review() or /trw-audit before delivering."
-                )
-        else:
-            advisory = "No trw_review was run before delivery. Consider running trw_review for quality assurance."
-
-    return block, warning, advisory
+from trw_mcp.tools._delivery_event_checks import (
+    _check_complexity_drift as _check_complexity_drift,
+    _count_file_modified as _count_file_modified,
+    _count_file_modified_current_session as _count_file_modified_current_session,
+    _events_since_last_session_start as _events_since_last_session_start,
+    _normalize_event_path as _normalize_event_path,
+    _project_root_from_run as _project_root_from_run,
+    _read_complexity_class as _read_complexity_class,
+    _read_run_events as _read_run_events,
+    _read_run_yaml as _read_run_yaml,
+)
 
 
 def _check_integration_review_gate(
@@ -330,6 +184,7 @@ def _check_untracked_files(run_path: Path) -> str | None:
 def _check_review_file_count_gate(
     run_path: Path,
     events: list[dict[str, object]],
+    session_id: str | None = None,
 ) -> str | None:
     """Block delivery when >REVIEW_SCOPE_FILE_THRESHOLD file_modified events and no review (R-01).
 
@@ -344,10 +199,14 @@ def _check_review_file_count_gate(
     """
     try:
         review_path = run_path / "meta" / "review.yaml"
-        if review_path.exists():
+        if _review_artifact_is_substantive(review_path, FileStateReader()):
             return None
 
-        file_modified_count = _count_file_modified_current_session(events)
+        file_modified_count = _count_file_modified_current_session(
+            events,
+            _project_root_from_run(run_path),
+            session_id,
+        )
 
         if file_modified_count > REVIEW_SCOPE_FILE_THRESHOLD:
             return (
@@ -409,15 +268,12 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
         )
 
         config = get_config()
-        mode = config.effective_tool_exposure_mode
+        mode = config.tool_resolution_mode
         if mode == "all":
-            # All tools exposed — no parity mismatch possible
+            # Full eligible surface exposed — no parity mismatch possible
             return None
 
-        exposed = resolve_exposed_tools(
-            mode=mode,
-            custom_list=config.tool_exposure_list,
-        )
+        exposed = resolve_exposed_tools(mode=mode)
 
         # Walk up from run_path to find project root (parent of .trw/)
         project_root = run_path
@@ -436,6 +292,7 @@ def check_delivery_gates(
     run_path: Path | None,
     reader: FileStateReader,
     trw_dir: Path | None = None,
+    session_id: str | None = None,
 ) -> DeliveryGatesDict:
     """Check review/build gates and premature delivery guard.
 
@@ -451,7 +308,7 @@ def check_delivery_gates(
     result: DeliveryGatesDict = {}
 
     if run_path is None:
-        build_warning = _check_no_active_run_build_gate(trw_dir, reader)
+        build_warning = _check_no_active_run_build_gate(trw_dir, reader, session_id=session_id)
         if build_warning:
             result["build_gate_warning"] = build_warning
         return result
@@ -486,7 +343,7 @@ def check_delivery_gates(
         result["integration_review_warning"] = int_warning
 
     # Review scope block — hard gate when >5 files modified without review (R-01)
-    review_scope_block = _check_review_file_count_gate(run_path, events)
+    review_scope_block = _check_review_file_count_gate(run_path, events, session_id)
     if review_scope_block:
         result["review_scope_block"] = review_scope_block
 
@@ -513,6 +370,15 @@ def check_delivery_gates(
     # cascade, so this never weakens truthfulness — it only avoids forcing a
     # redundant re-run of a still-valid build across a session boundary.
     build_warning, premature_warning = _check_build_and_work_events(events)
+    # PRD-CORE-205-FR05: content-bound build staleness. When the latest per-run
+    # BuildReceipt's bound bytes changed after the check, surface a content-stale
+    # warning even if timestamps did not order the edit after the build. Prefer
+    # the content-bound reason over the timestamp-only message when both fire.
+    from trw_mcp.tools._delivery_build_gates import build_receipt_content_stale_warning
+
+    content_stale_warning = build_receipt_content_stale_warning(run_path)
+    if content_stale_warning:
+        build_warning = content_stale_warning
     if build_warning:
         result["build_gate_warning"] = build_warning
     if premature_warning:
@@ -526,7 +392,7 @@ def check_delivery_gates(
         _apply_deliver_gate_mode(result, run_data)
 
     # Complexity drift detection (R-02 + R-05, uses shared events + run_data)
-    drift_warning = _check_complexity_drift(run_data, events)
+    drift_warning = _check_complexity_drift(run_data, events, session_id)
     if drift_warning:
         result["complexity_drift_warning"] = drift_warning
 

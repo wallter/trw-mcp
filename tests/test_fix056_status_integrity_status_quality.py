@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import textwrap
+from unittest.mock import patch
+
+import pytest
 
 from tests._fix056_status_integrity_support import (
     _FR_WITH_STATUS,
@@ -47,6 +50,19 @@ class TestStatusDriftDetection:
         assert "done" in warnings[0]
         assert "draft" in warnings[0]
 
+    def test_drift_detected_in_quick_reference_without_colon(self) -> None:
+        from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
+
+        content = _make_prd(fm_status="done", prose_status="Draft").replace(
+            "**Quick Reference**:", "**Quick Reference**"
+        )
+
+        warnings = _check_status_drift(parse_frontmatter(content), content)
+
+        assert len(warnings) == 1
+        assert "Status drift" in warnings[0]
+
     def test_no_drift_no_quick_reference_block(self) -> None:
         """When no prose Quick Reference block exists, drift check skips gracefully."""
         from trw_mcp.state.prd_utils import parse_frontmatter
@@ -73,6 +89,31 @@ class TestStatusDriftDetection:
         warnings = _check_status_drift(fm, content)
         assert warnings == [], "Should skip gracefully when no prose status line found"
 
+    def test_unrelated_requirement_status_is_not_quick_reference_drift(self) -> None:
+        from trw_mcp.state.prd_utils import parse_frontmatter
+        from trw_mcp.state.validation.prd_quality import _check_status_drift
+
+        content = textwrap.dedent("""\
+            ---
+            prd:
+              id: PRD-TEST-001
+              title: Test
+              version: '1.0'
+              status: draft
+              priority: P1
+              category: TEST
+            ---
+
+            # PRD-TEST-001: Test
+
+            ## Functional Requirements
+
+            ### FR-1: Example
+            - **Status**: done
+        """)
+
+        assert _check_status_drift(parse_frontmatter(content), content) == []
+
     def test_validate_v2_includes_drift_warnings(self) -> None:
         """validate_prd_quality_v2 populates status_drift_warnings when drift found."""
         from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
@@ -92,6 +133,33 @@ class TestStatusDriftDetection:
         drift_msgs = [w for w in result.status_drift_warnings if "Status drift" in w]
         assert drift_msgs == [], f"Expected no drift warnings, got: {drift_msgs}"
 
+    @pytest.mark.parametrize("failing_check", ["status_drift", "fr_annotations", "partially_implemented"])
+    def test_integrity_detectors_fail_open_independently(self, failing_check: str) -> None:
+        """One broken advisory detector must not suppress later warnings."""
+        from trw_mcp.state.validation.prd_quality import validate_prd_quality_v2
+
+        content = _make_prd(fm_status="draft", prose_status="Draft")
+        with (
+            patch("trw_mcp.state.validation.prd_quality._check_status_drift") as status_drift,
+            patch("trw_mcp.state.validation.prd_quality._check_fr_annotations") as fr_annotations,
+            patch("trw_mcp.state.validation.prd_quality._check_partially_implemented") as partially_implemented,
+        ):
+            checks = {
+                "status_drift": status_drift,
+                "fr_annotations": fr_annotations,
+                "partially_implemented": partially_implemented,
+            }
+            for name, check in checks.items():
+                check.return_value = [f"{name} warning"]
+            checks[failing_check].side_effect = RuntimeError("broken")
+            result = validate_prd_quality_v2(content, include_dynamic_checks=False)
+
+        assert result.status_drift_warnings == [
+            f"{name} warning"
+            for name in ("status_drift", "fr_annotations", "partially_implemented")
+            if name != failing_check
+        ]
+
 
 class TestFRStatusAnnotation:
     """Tests for FR-level **Status**: active injection in _substitute_template."""
@@ -108,7 +176,7 @@ class TestFRStatusAnnotation:
             priority="P1",
             confidence=0.7,
         )
-        assert "**Status**: active" in body, "Expected '**Status**: active' to appear in generated FR body"
+        assert body.count("**Status**: active") == 1
 
     def test_status_annotation_follows_priority(self) -> None:
         """**Status**: active appears immediately after **Priority**: in FR blocks."""

@@ -51,3 +51,33 @@ class TestUpdateFrontmatterProseSyncFR02:
         assert all(status.lower() == "review" for status in prose_status_lines), (
             f"Found prose status lines not updated: {prose_status_lines}"
         )
+
+    def test_status_update_does_not_rewrite_requirement_without_quick_reference(self, tmp_path: Path) -> None:
+        from trw_mcp.state.prd_utils import update_frontmatter
+
+        prd_file = tmp_path / "PRD-TEST-002.md"
+        prd_file.write_text(
+            textwrap.dedent("""\
+                ---
+                prd:
+                  id: PRD-TEST-002
+                  title: Test PRD
+                  version: '1.0'
+                  status: draft
+                  priority: P1
+                  category: TEST
+                ---
+
+                # PRD-TEST-002: Test PRD
+
+                ## Functional Requirements
+
+                ### FR-1: Example
+                - **Status**: active
+            """),
+            encoding="utf-8",
+        )
+
+        update_frontmatter(prd_file, {"status": "done"})
+
+        assert "- **Status**: active" in prd_file.read_text(encoding="utf-8")

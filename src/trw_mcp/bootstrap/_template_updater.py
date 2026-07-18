@@ -12,7 +12,6 @@ lives in ``_ide_targets.py`` and is re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -20,6 +19,8 @@ import stat
 from pathlib import Path
 
 import structlog
+
+from trw_mcp.canons.registry import install_view, load_registry
 
 from ._file_ops import read_json_object
 from ._gitignore_merge import _ensure_credentials_gitignored as _ensure_credentials_gitignored
@@ -30,7 +31,6 @@ from ._ide_targets import _update_codex_artifacts as _update_codex_artifacts
 from ._ide_targets import _update_config_target_platforms as _update_config_target_platforms
 from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
-from ._ide_targets import _update_gemini_artifacts as _update_gemini_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
 from ._template_claude_md import (
     _TRW_END_MARKER,
@@ -40,20 +40,20 @@ from ._template_claude_md import (
     _update_claude_md_trw_section,
 )
 from ._utils import (
-    _DATA_DIR,
     ProgressCallback,
     _ensure_dir,
     _files_identical,
     _merge_mcp_json,
     _minimal_claude_md,
 )
+from ._version_manifest import _framework_content_hashes as _framework_content_hashes
+from ._version_manifest import _is_user_modified as _is_user_modified
 
 logger = structlog.get_logger(__name__)
 
 # Files that are always overwritten during update (framework-managed).
 _ALWAYS_UPDATE: list[tuple[str, str]] = [
-    ("framework.md", ".trw/frameworks/FRAMEWORK.md"),
-    ("framework.md", "FRAMEWORK.md"),
+    *install_view(load_registry()),
     ("behavioral_protocol.yaml", ".trw/context/behavioral_protocol.yaml"),
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
@@ -145,7 +145,13 @@ def _update_always_overwrite_files(
     on_progress: ProgressCallback = None,
 ) -> None:
     """Update framework files in ``_ALWAYS_UPDATE`` (always overwritten)."""
+    canon_destinations = {
+        destination for _, destination in install_view(load_registry()) if destination.startswith(".trw/frameworks/")
+    }
     for data_name, dest_rel in _ALWAYS_UPDATE:
+        # Atomically promoted by _write_version_yaml after all ordinary files.
+        if dest_rel in canon_destinations:
+            continue
         src = effective_data / data_name
         dest = target_dir / dest_rel
         _update_or_report(src, dest, result, dry_run, on_progress=on_progress)
@@ -194,9 +200,6 @@ def _merge_settings_json(
         # New install — copy bundled template directly
         _update_or_report(src, dest, result, dry_run)
         return
-    if dry_run:
-        result["updated"].append(f"would merge: {dest}")
-        return
 
     bundled = read_json_object(src, context="settings_merge_bundled")
     if bundled is None:
@@ -231,12 +234,65 @@ def _merge_settings_json(
             existing_hooks.setdefault(hook_event, hook_list)
         existing["hooks"] = existing_hooks
 
+    # No-op detection (aligns with _update_or_report's _files_identical): when
+    # the merge output is byte-identical to what is already on disk there is
+    # nothing to change — report ``preserved`` and skip, so both dry-run and
+    # real runs stop claiming "would merge"/"updated" on an unchanged file.
+    merged_text = json.dumps(existing, indent=2) + "\n"
     try:
-        dest.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        current_text: str | None = dest.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        current_text = None
+    if current_text == merged_text:
+        result.setdefault("preserved", []).append(str(dest))
+        return
+
+    if dry_run:
+        result["updated"].append(f"would merge: {dest}")
+        return
+
+    try:
+        dest.write_text(merged_text, encoding="utf-8")
         result["updated"].append(str(dest))
     except OSError:
         # Structural reason only — never echo the raw exception text.
         result["errors"].append(f"Failed to write merged settings.json: {dest}")
+
+
+def _guarded_copy_update(
+    src: Path,
+    dest: Path,
+    manifest_key: str,
+    result: dict[str, list[str]],
+    dry_run: bool,
+    manifest_hashes: dict[str, str] | None,
+    *,
+    make_executable: bool = False,
+    on_progress: ProgressCallback = None,
+) -> None:
+    """Copy *src*→*dest* unless the user edited *dest* since last install.
+
+    PRD-FIX-068-FR05: extends the modified-file guard (previously agents-only)
+    to any raw-copy artifact (hooks, skills). When *dest*'s current hash differs
+    from the manifest hash under *manifest_key*, the file is preserved and
+    reported in ``result['modified']`` instead of being clobbered.
+
+    Hooks/skills are not tier-resolved, but they DO need a framework-content
+    baseline: unlike agents they carried no baseline before, so when
+    ``managed-artifacts.yaml`` is missing/corrupt/pre-hash (``manifest_hashes``
+    is ``None``) a genuinely user-edited hook/skill would have been silently
+    overwritten. We derive the baseline directly from the bundled source *src*
+    (its shipped SHA256) so :func:`_is_user_modified` can decide "matches shipped
+    content → safe to update" vs "diverged → preserve" without a manifest — and
+    when neither baseline is available AND the dest differs from the bundled
+    content, it fails toward preservation.
+    """
+    framework_hashes = _framework_content_hashes(src)
+    if _is_user_modified(dest, manifest_key, manifest_hashes, framework_hashes=framework_hashes):
+        logger.info("artifact_user_modified", path=str(dest))
+        result.setdefault("modified", []).append(str(dest))
+        return
+    _update_or_report(src, dest, result, dry_run, make_executable=make_executable, on_progress=on_progress)
 
 
 def _update_hooks(
@@ -245,18 +301,21 @@ def _update_hooks(
     result: dict[str, list[str]],
     dry_run: bool,
     on_progress: ProgressCallback = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Update hook ``.sh`` files (always overwritten, made executable)."""
+    """Update hook ``.sh`` files (overwritten unless user-modified, made executable)."""
     hooks_source = effective_data / "hooks"
     if hooks_source.is_dir():
         for hook_file in sorted(hooks_source.iterdir()):
             if hook_file.suffix == ".sh":
                 dest = target_dir / ".claude" / "hooks" / hook_file.name
-                _update_or_report(
+                _guarded_copy_update(
                     hook_file,
                     dest,
+                    hook_file.name,
                     result,
                     dry_run,
+                    manifest_hashes,
                     make_executable=True,
                     on_progress=on_progress,
                 )
@@ -268,8 +327,9 @@ def _update_skills(
     result: dict[str, list[str]],
     dry_run: bool,
     on_progress: ProgressCallback = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Update skill directories (always overwritten)."""
+    """Update skill directories (overwritten unless user-modified)."""
     skills_source = effective_data / "skills"
     if skills_source.is_dir():
         for skill_dir in sorted(skills_source.iterdir()):
@@ -280,26 +340,18 @@ def _update_skills(
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
                         dest = dest_skill / skill_file.name
-                        _update_or_report(skill_file, dest, result, dry_run, on_progress=on_progress)
-
-
-def _is_user_modified(
-    dest: Path,
-    name: str,
-    manifest_hashes: dict[str, str] | None,
-) -> bool:
-    """Check if an installed file was modified by the user since last install.
-
-    PRD-FIX-068-FR05: Compares current on-disk SHA256 against the stored
-    manifest hash.  Returns ``True`` when hashes differ (user modification).
-    """
-    if not manifest_hashes or name not in manifest_hashes or not dest.is_file():
-        return False
-    try:
-        current_hash = hashlib.sha256(dest.read_bytes()).hexdigest()
-        return current_hash != manifest_hashes[name]
-    except OSError:
-        return False
+                        # Manifest only hashes each skill's SKILL.md
+                        # (``{name}/SKILL.md``); other files fall through to
+                        # update since they carry no baseline hash.
+                        _guarded_copy_update(
+                            skill_file,
+                            dest,
+                            f"{skill_dir.name}/{skill_file.name}",
+                            result,
+                            dry_run,
+                            manifest_hashes,
+                            on_progress=on_progress,
+                        )
 
 
 def _update_agents(
@@ -310,22 +362,29 @@ def _update_agents(
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Update agent ``.md`` files.
+    """Update agent ``.md`` files, resolving the capability-tier ``model:`` line.
 
-    PRD-FIX-068-FR05: If the installed file's SHA256 differs from the
-    manifest hash, the file is user-modified and is NOT overwritten.
+    sub_5ctrrLJ / PRD-INFRA-104: update-project MUST materialize each agent
+    through the SAME resolve-and-write path as fresh install
+    (:func:`trw_mcp.bootstrap._version_manifest._apply_agent_update`, which calls
+    ``_install_one_agent``) so the bundled ``model: frontier`` tier token is
+    rewritten to the client's model (``model: opus`` for claude-code). A raw copy
+    re-materialized unresolvable tier tokens and broke agent spawns after every
+    upgrade.
+
+    PRD-FIX-068-FR05: genuinely user-edited agents are still preserved + reported
+    (``result['modified']``); an agent matching either framework rendering (raw
+    tier OR resolved) is treated as unmodified so a mis-materialized agent heals.
     """
-    _log = structlog.get_logger(__name__)
+    from ._version_manifest import _apply_agent_update
+
     agents_source = effective_data / "agents"
-    if agents_source.is_dir():
-        for agent_file in sorted(agents_source.iterdir()):
-            if agent_file.suffix == ".md":
-                dest = target_dir / ".claude" / "agents" / agent_file.name
-                if _is_user_modified(dest, agent_file.name, manifest_hashes):
-                    _log.info("artifact_user_modified", path=str(dest))
-                    result.setdefault("modified", []).append(str(dest))
-                    continue
-                _update_or_report(agent_file, dest, result, dry_run, on_progress=on_progress)
+    if not agents_source.is_dir():
+        return
+    dest_root = target_dir / ".claude" / "agents"
+    for agent_file in sorted(agents_source.iterdir()):
+        if agent_file.suffix == ".md":
+            _apply_agent_update(agent_file, dest_root / agent_file.name, result, dry_run, on_progress, manifest_hashes)
 
 
 def _update_framework_files(
@@ -341,8 +400,8 @@ def _update_framework_files(
     Handles:
     - Framework files in ``_ALWAYS_UPDATE`` (always overwritten).
     - Never-overwrite files in ``_NEVER_OVERWRITE`` (preserved reporting).
-    - Hook ``.sh`` files (always overwritten, made executable).
-    - Skill directories (always overwritten).
+    - Hook ``.sh`` files (overwritten unless user-modified, made executable).
+    - Skill directories (overwritten unless user-modified per PRD-FIX-068-FR05).
     - Agent ``.md`` files (overwritten unless user-modified per PRD-FIX-068-FR05).
 
     Args:
@@ -369,8 +428,8 @@ def _update_framework_files(
     # existing install (gitignore.txt is only deployed on INIT, so update-project
     # would otherwise never refresh a custom .trw/.gitignore).
     _ensure_credentials_gitignored(target_dir, result, dry_run, on_progress)
-    _update_hooks(target_dir, effective_data, result, dry_run, on_progress)
-    _update_skills(target_dir, effective_data, result, dry_run, on_progress)
+    _update_hooks(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
+    _update_skills(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
     _update_agents(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
 
 
@@ -447,90 +506,10 @@ def _update_mcp_config(
 
 
 # ---------------------------------------------------------------------------
-# Artifact name discovery
+# Artifact name discovery — extracted to ``_artifact_names.py`` (350-eLOC gate).
+# Re-exported here for back-compat with callers/tests importing via this facade.
 # ---------------------------------------------------------------------------
 
 
-def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
-    """Return sorted lists of bundled artifact names by category."""
-    effective = data_dir or _DATA_DIR
-    skills_source = effective / "skills"
-    agents_source = effective / "agents"
-    hooks_source = effective / "hooks"
-    opencode_root = effective / "opencode"
-    opencode_commands = opencode_root / "commands"
-    opencode_agents = opencode_root / "agents"
-    opencode_skills = opencode_root / "skills"
-    return {
-        "skills": sorted(d.name for d in skills_source.iterdir() if d.is_dir()) if skills_source.is_dir() else [],
-        "agents": sorted(f.name for f in agents_source.iterdir() if f.suffix == ".md")
-        if agents_source.is_dir()
-        else [],
-        "hooks": sorted(f.name for f in hooks_source.iterdir() if f.suffix == ".sh") if hooks_source.is_dir() else [],
-        "opencode_commands": sorted(f.name for f in opencode_commands.iterdir() if f.suffix == ".md")
-        if opencode_commands.is_dir()
-        else [],
-        "opencode_agents": sorted(f.name for f in opencode_agents.iterdir() if f.suffix == ".md")
-        if opencode_agents.is_dir()
-        else [],
-        "opencode_skills": sorted(d.name for d in opencode_skills.iterdir() if d.is_dir())
-        if opencode_skills.is_dir()
-        else [],
-    }
-
-
-def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
-    """Return sorted lists of user-created artifact names not in bundled data."""
-    bundled = _get_bundled_names(data_dir)
-    bundled_skills = set(bundled["skills"])
-    bundled_agents = set(bundled["agents"])
-    bundled_hooks = set(bundled["hooks"])
-    bundled_opencode_commands = set(bundled.get("opencode_commands", []))
-    bundled_opencode_agents = set(bundled.get("opencode_agents", []))
-    bundled_opencode_skills = set(bundled.get("opencode_skills", []))
-    result: dict[str, list[str]] = {
-        "skills": [],
-        "agents": [],
-        "hooks": [],
-        "opencode_commands": [],
-        "opencode_agents": [],
-        "opencode_skills": [],
-    }
-
-    skills_dir = target_dir / ".claude" / "skills"
-    if skills_dir.is_dir():
-        result["skills"] = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and d.name not in bundled_skills)
-
-    agents_dir = target_dir / ".claude" / "agents"
-    if agents_dir.is_dir():
-        result["agents"] = sorted(
-            f.name for f in agents_dir.iterdir() if f.suffix == ".md" and f.name not in bundled_agents
-        )
-
-    hooks_dir = target_dir / ".claude" / "hooks"
-    if hooks_dir.is_dir():
-        result["hooks"] = sorted(
-            f.name for f in hooks_dir.iterdir() if f.suffix == ".sh" and f.name not in bundled_hooks
-        )
-
-    opencode_commands_dir = target_dir / ".opencode" / "commands"
-    if opencode_commands_dir.is_dir():
-        result["opencode_commands"] = sorted(
-            f.name
-            for f in opencode_commands_dir.iterdir()
-            if f.suffix == ".md" and f.name not in bundled_opencode_commands
-        )
-
-    opencode_agents_dir = target_dir / ".opencode" / "agents"
-    if opencode_agents_dir.is_dir():
-        result["opencode_agents"] = sorted(
-            f.name for f in opencode_agents_dir.iterdir() if f.suffix == ".md" and f.name not in bundled_opencode_agents
-        )
-
-    opencode_skills_dir = target_dir / ".opencode" / "skills"
-    if opencode_skills_dir.is_dir():
-        result["opencode_skills"] = sorted(
-            d.name for d in opencode_skills_dir.iterdir() if d.is_dir() and d.name not in bundled_opencode_skills
-        )
-
-    return result
+from ._artifact_names import _get_bundled_names as _get_bundled_names
+from ._artifact_names import _get_custom_names as _get_custom_names

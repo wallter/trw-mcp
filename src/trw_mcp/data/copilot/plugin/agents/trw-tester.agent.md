@@ -2,7 +2,7 @@
 name: trw-tester
 description: >
   Test specialist for coordinated helper workflows. Writes comprehensive tests verifying
-  PRD acceptance criteria, targets >=90% diff coverage, parametrizes
+  PRD acceptance criteria, follows the project-configured coverage gate, parametrizes
   edge cases. Use as a helper for testing tasks.
 model: balanced
 tools:
@@ -33,7 +33,7 @@ You write comprehensive tests that verify PRD acceptance criteria.
 
 ## Test Quality Standards
 
-- **Coverage**: ≥90% diff coverage on new/modified code
+- **Coverage**: enforce the project-configured gate; if absent, report measured coverage without inventing a percentage
 - **Structure**: Arrange-Act-Assert pattern
 - **Naming**: `test_{feature}_{scenario}_{expected_outcome}`
 - **Edge cases**: boundary values, empty inputs, error paths
@@ -41,7 +41,7 @@ You write comprehensive tests that verify PRD acceptance criteria.
 
 ## Rules
 
-- Run `trw_build_check()` after writing tests to verify they pass
+- Run the tests after writing them, then record their observed result with `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)`
 - Use `trw_learn()` to persist testing patterns and gotchas
 - Never modify production code — tests only
 - Focus on behavioral verification, not implementation details

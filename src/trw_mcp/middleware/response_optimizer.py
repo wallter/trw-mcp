@@ -17,6 +17,7 @@ __all__ = ["ResponseOptimizerMiddleware"]
 
 import io
 import json
+from typing import cast
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -116,6 +117,18 @@ class ResponseOptimizerMiddleware(Middleware):
         """Intercept tool responses to compact and re-serialize content."""
         result: ToolResult = await call_next(context)
         fmt = _get_response_format()
+
+        # Compact structured_content too — clients that prefer it over the
+        # text block (Claude Code does) otherwise receive the raw dict with
+        # every null/empty field intact, bypassing this middleware entirely.
+        # Tool result TypedDicts are total=False (PRD-FIX-084), so dropping
+        # null-valued keys cannot violate a required output-schema property.
+        structured = getattr(result, "structured_content", None)
+        if isinstance(structured, dict):
+            try:
+                result.structured_content = cast("dict[str, object]", _compact(structured))
+            except Exception:  # justified: fail-open — optimization must never break a response
+                logger.debug("structured_content_compact_failed", exc_info=True)
 
         for i, block in enumerate(result.content):
             if not isinstance(block, TextContent):

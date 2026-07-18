@@ -163,7 +163,6 @@ async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pyte
         return_value=(
             {"localhost": {"error": None}},
             PushResult(pushed=1, failed=0, skipped=0),
-            True,
         )
     )
 
@@ -426,7 +425,6 @@ async def test_run_one_cycle_reports_partial_target_failures_truthfully(
                 }
             },
             PushResult(pushed=0, failed=2, skipped=98),
-            False,
         )
     )
     log = MagicMock()

@@ -74,10 +74,13 @@ def execute_checkpoint(
         message=message[:80],
         wave_id=wave_id,
     )
+    # Truncated echo: the caller already has its own message; the full text is
+    # persisted in checkpoints.jsonl. Echoing it back verbatim doubled the
+    # token cost of every long checkpoint call.
     result: dict[str, str] = {
         "timestamp": ts,
         "status": "checkpoint_created",
-        "message": message,
+        "message": message if len(message) <= 120 else message[:120] + "…",
     }
     if wave_id:
         result["wave_id"] = wave_id

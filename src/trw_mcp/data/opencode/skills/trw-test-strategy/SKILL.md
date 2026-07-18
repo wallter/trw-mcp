@@ -5,13 +5,13 @@ description: >
   Use: /trw-test-strategy [module or 'all']
 user-invocable: true
 argument-hint: "[module or 'all']"
-allowed-tools: Read, Glob, Grep, Bash, mcp__trw__trw_build_check
+allowed-tools: Read, Glob, Grep, Bash
 ---
 
 # OpenCode Test Strategy Skill
 
 1. Determine the module or project scope.
-2. Run the project-appropriate test/coverage command when it is evident, then call `trw_build_check(scope="{actual command}")` with the observed result.
+2. Run the project-appropriate test/coverage command when evident. Report its exact scope, outcome, counts, and coverage provenance to the owning orchestrator; this read-only audit must not record build-gate state.
 3. Inspect source and test files using the project's layout and test conventions for missing coverage, weak assertions, missing edge cases, and absent vertical-slice proof.
 4. Report coverage gaps, public-boundary/deep-module coverage, and the highest-priority tests to add next.
 

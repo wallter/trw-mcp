@@ -93,23 +93,6 @@ class TestOfflineParity:
         assert payload["status"] == "recorded"
         assert isinstance(payload["learning_id"], str)
 
-    def test_nudge_selection_deterministic_without_bandit(self) -> None:
-        """Nudge selection uses deterministic ranking without local policy code."""
-        from trw_mcp.state._nudge_rules import select_nudge_learning
-        from trw_mcp.state._nudge_state import CeremonyState
-
-        state = CeremonyState()
-        candidates = [
-            {"id": "L-1", "summary": "First learning"},
-            {"id": "L-2", "summary": "Second learning"},
-        ]
-
-        # Without bandit, deterministic path returns first eligible
-        selected, is_fallback = select_nudge_learning(state, candidates, "implement")
-        assert selected is not None
-        assert selected["id"] == "L-1"
-        assert is_fallback is False
-
     def test_session_recall_helpers_works_offline(self, tmp_path: Path) -> None:
         """_session_recall_helpers works offline without backend-only intelligence."""
         trw_dir = _prepare_trw_dir(tmp_path)
@@ -148,41 +131,22 @@ class TestOfflineParity:
         assert payload["success"] is True
         assert payload["errors"] == []
 
-    def test_no_meta_tune_in_tool_registry(self) -> None:
-        """The active tool registry loads offline and excludes trw_meta_tune."""
-        # Import must succeed
-        import asyncio
-
+    def test_meta_tune_propose_is_operator_only(self) -> None:
+        """The tool registry loads offline; the self-modifying trw_meta_tune_propose
+        is operator-only (never in the eligible public surface). PRD-CORE-218:
+        tools are registered then MASKED per session by SurfaceAuthorityMiddleware,
+        so this checks the manifest authority, not a boot-time preset filter."""
         import trw_mcp  # noqa: F401
+        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS
+        from trw_mcp.server._surface_manifest_registry import eligible_tool_names
+        from trw_mcp.server._tools import raw_registered_tool_names
 
-        # Check that meta_tune is not in the registered tools
-        from trw_mcp.models.config import get_config
-        from trw_mcp.models.config._defaults import TOOL_PRESETS
-        from trw_mcp.server._tools import mcp
+        registered = raw_registered_tool_names()
+        eligible = set(eligible_tool_names())
 
-        async def _list() -> list[str]:
-            tools = await mcp.list_tools()
-            return [t.name for t in tools]
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                tool_names = pool.submit(asyncio.run, _list()).result()
-        else:
-            tool_names = asyncio.run(_list())
-
-        config = get_config()
-        expected_tools = (
-            set(config.tool_exposure_list)
-            if config.effective_tool_exposure_mode == "custom"
-            else set(TOOL_PRESETS[config.effective_tool_exposure_mode])
-        )
-
-        assert set(tool_names) == expected_tools
-        assert "trw_meta_tune" not in tool_names
+        # meta_tune_propose is REGISTERED (grantable) but NOT in the eligible surface.
+        assert "trw_meta_tune_propose" in registered
+        assert "trw_meta_tune_propose" not in eligible
+        assert "trw_meta_tune_propose" in OPERATOR_ONLY_TOOLS
+        # The eligible surface is exactly the registered tools minus operator-only.
+        assert eligible == registered - set(OPERATOR_ONLY_TOOLS)

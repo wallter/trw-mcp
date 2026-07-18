@@ -16,11 +16,16 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 
 import structlog
+from typing_extensions import TypedDict
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.server._version_status_layers import (
+    historical_installer_layer,
+    live_process_layer,
+)
 from trw_mcp.state.persistence import FileStateReader
 
 if sys.version_info >= (3, 11):
@@ -51,6 +56,8 @@ class VersionStatus(TypedDict):
     taxonomy: dict[str, str]
     versions: VersionValues
     compatibility_matrix: dict[str, object]
+    live_process: dict[str, object]
+    historical: dict[str, object]
     compatible: bool
     mismatches: list[str]
     warnings: list[str]
@@ -78,21 +85,70 @@ class InstalledAssetResult:
 PACKAGE_KEY_TRW_MCP = "trw-mcp"
 PACKAGE_KEY_TRW_MEMORY = "trw-memory"
 PACKAGE_KEY_MEMORY_TS = "memory-ts"
+
+# Publicly-shipped packages only. This module ships inside the public ``trw-mcp``
+# wheel, so it must not enumerate the monorepo's proprietary siblings. The full
+# monorepo package taxonomy (proprietary API/frontend/eval/pipeline packages)
+# lives in the canonical, non-shipped ``release-packages.yaml`` at the monorepo
+# root and is loaded on demand by :func:`_extended_package_manifests`. When that
+# file is absent (any public install), only these public packages are checked.
 PYPROJECT_PACKAGE_KEYS: tuple[tuple[str, str], ...] = (
     (PACKAGE_KEY_TRW_MCP, "trw-mcp"),
     (PACKAGE_KEY_TRW_MEMORY, "trw-memory"),
-    ("trw-eval", "trw-eval"),
-    ("backend", "backend"),
-    ("trw-distill", "trw-distill"),
-    ("trw-loop", "trw-loop"),
-    ("trw-swarm", "trw-swarm"),
-    ("trw-autoresearch", "trw-autoresearch"),
 )
-PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = (
-    (PACKAGE_KEY_MEMORY_TS, "packages/memory-ts"),
-    ("platform", "platform"),
-    ("trw-video", "trw-video"),
-)
+PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = ((PACKAGE_KEY_MEMORY_TS, "packages/memory-ts"),)
+
+#: Canonical monorepo release-topology manifest (NOT shipped in the trw-mcp
+#: subtree). Lives at the monorepo root and is the single source of truth for
+#: the proprietary package taxonomy.
+_RELEASE_TOPOLOGY_FILENAME = "release-packages.yaml"
+
+#: Package keys already covered by the hardcoded public lists above — skipped
+#: when merging the external topology so they are never double-counted.
+_PUBLIC_PACKAGE_KEYS: frozenset[str] = frozenset({PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY, PACKAGE_KEY_MEMORY_TS})
+
+
+def _extended_package_manifests(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Load the monorepo's non-public package taxonomy from ``release-packages.yaml``.
+
+    Returns ``(pyproject_entries, package_json_entries)`` where each entry is
+    ``(package_key, package_dir)``. Public packages are omitted (already handled
+    by the hardcoded lists). Fails open to empty lists when the manifest is
+    absent (public installs) or unreadable, so version status never crashes and
+    the shipped wheel carries no proprietary package names.
+    """
+    manifest_path = root / _RELEASE_TOPOLOGY_FILENAME
+    if not manifest_path.exists():
+        return [], []
+    try:
+        data = FileStateReader(base_dir=root).read_yaml(manifest_path)
+    except StateError as exc:
+        logger.warning(
+            "release_topology_unreadable",
+            op="version_status",
+            outcome="degraded",
+            path=str(manifest_path),
+            error=str(exc),
+        )
+        return [], []
+    packages = data.get("packages")
+    if not isinstance(packages, list):
+        return [], []
+    pyproject: list[tuple[str, str]] = []
+    package_json: list[tuple[str, str]] = []
+    for entry in packages:
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("key")
+        directory = entry.get("dir")
+        kind = entry.get("manifest_kind")
+        if not isinstance(key, str) or not isinstance(directory, str) or key in _PUBLIC_PACKAGE_KEYS:
+            continue
+        if kind == "pyproject":
+            pyproject.append((key, directory))
+        elif kind == "package.json":
+            package_json.append((key, directory))
+    return pyproject, package_json
 
 
 def _read_pyproject_version(path: Path) -> str:
@@ -217,8 +273,9 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
     mismatches: list[str] = []
     asset_result = _read_installed_asset_versions(root)
     asset = asset_result.data
+    extended_pyproject, extended_package_json = _extended_package_manifests(root)
     package_versions: PackageVersions = {}
-    for package_key, package_dir in PYPROJECT_PACKAGE_KEYS:
+    for package_key, package_dir in (*PYPROJECT_PACKAGE_KEYS, *extended_pyproject):
         result = _read_pyproject_version_or_unknown(
             root / package_dir / "pyproject.toml",
             label=package_key,
@@ -234,7 +291,7 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
             mismatches=mismatches,
             mismatch_id="trw_mcp_package_manifest_unreadable" if package_key == PACKAGE_KEY_TRW_MCP else None,
         )
-    for package_key, package_dir in PACKAGE_JSON_KEYS:
+    for package_key, package_dir in (*PACKAGE_JSON_KEYS, *extended_package_json):
         result = _read_package_json_version_or_unknown(
             root / package_dir / "package.json",
             label=package_key,
@@ -264,12 +321,20 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
         mismatches.append("trw_mcp_package_vs_installed_asset")
     if mcp_package_version != "unknown" and live_server_version != mcp_package_version:
         mismatches.append("trw_mcp_package_vs_live_server")
+    live_process = live_process_layer()
+    live_currentness = str(live_process.get("currentness") or "unknown")
+    if live_currentness != "current":
+        mismatches.append(f"live_process_currentness_{live_currentness}")
+        errors.append(f"live process currentness is {live_currentness}; release requires current")
+    historical = historical_installer_layer(root)
     status: VersionStatus = {
         "taxonomy": {
             "package_version": "package manifest version (pyproject.toml/package.json)",
             "framework_protocol_version": "TRWConfig.framework_version",
             "installed_asset_version": ".trw/frameworks/VERSION.yaml framework_version",
             "live_server_version": "imported trw_mcp.__version__ for the running process",
+            "live_process": "frozen connected-process fingerprint currentness (canon registry + realized surface)",
+            "historical": "install-time snapshot; historical only, never a current authority",
         },
         "versions": {
             "packages": package_versions,
@@ -287,6 +352,8 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
                 ["framework_protocol_version", "installed_asset_version"],
             ],
         },
+        "live_process": live_process,
+        "historical": historical,
         "compatible": not mismatches,
         "mismatches": mismatches,
         "warnings": warnings,
@@ -316,6 +383,8 @@ def assert_version_status_compatible(project_root: Path | None = None) -> Versio
 
 def _run_build_release(args: argparse.Namespace) -> None:
     """Handle the ``build-release`` subcommand."""
+    assert_version_status_compatible(Path.cwd())
+
     from trw_mcp.release_builder import build_release_bundle
 
     version: str | None = getattr(args, "version", None)

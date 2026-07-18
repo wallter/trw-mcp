@@ -9,7 +9,6 @@ Post-fix, named factories enumerate the actual usage patterns:
 - recall_recent_bypass: session_start L-fovv recency bypass
 - recall_for_nudge_pool: nudge content selection
 - recall_for_review_tags: claude_md review/publish
-- recall_for_learning_injection: task-relevant active learnings
 """
 
 from __future__ import annotations
@@ -90,20 +89,6 @@ def test_recall_for_review_tags_pins_status_active(tmp_path: Path) -> None:
     assert kwargs["status"] == "active"
 
 
-def test_recall_for_learning_injection_pins_status_active(tmp_path: Path) -> None:
-    """recall_for_learning_injection pins status='active' and propagates task description."""
-    with patch.object(recall_factories, "_default_recall", return_value=_captured_call):
-        recall_factories.recall_for_learning_injection(
-            tmp_path, "fix auth bug", tags=["security"], min_impact=0.5, max_results=10
-        )
-    kwargs = _captured_call.kwargs  # type: ignore[attr-defined]
-    assert kwargs["query"] == "fix auth bug"
-    assert kwargs["tags"] == ["security"]
-    assert kwargs["min_impact"] == 0.5
-    assert kwargs["max_results"] == 10
-    assert kwargs["status"] == "active"
-
-
 @pytest.mark.parametrize(
     ("factory", "args", "kwargs"),
     [
@@ -112,7 +97,6 @@ def test_recall_for_learning_injection_pins_status_active(tmp_path: Path) -> Non
         ("recall_recent_bypass", (), {"max_results": 5, "min_impact": 0.3}),
         ("recall_for_nudge_pool", (), {"max_results": 5}),
         ("recall_for_review_tags", (), {"tags": ["pattern"], "min_impact": 0.7, "max_results": 5}),
-        ("recall_for_learning_injection", ("fix auth bug",), {"max_results": 5}),
     ],
 )
 def test_every_factory_passes_nonempty_query(
@@ -162,9 +146,8 @@ def test_factories_pass_query_positional_to_real_recall_signature(tmp_path: Path
         recall_factories.recall_recent_bypass(tmp_path, max_results=5, min_impact=0.2)
         recall_factories.recall_for_nudge_pool(tmp_path, max_results=5)
         recall_factories.recall_for_review_tags(tmp_path, tags=["pattern"], min_impact=0.7, max_results=5)
-        recall_factories.recall_for_learning_injection(tmp_path, "task", max_results=5)
 
-    assert len(bound_calls) == 6
+    assert len(bound_calls) == 5
     for call in bound_calls:
         call.apply_defaults()
         assert str(call.arguments["query"]).strip() != ""

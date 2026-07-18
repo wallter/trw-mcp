@@ -1,35 +1,26 @@
 ---
 name: trw-audit
-context: fork
-agent: general-purpose
 description: >
   Adversarial spec-vs-code audit. Verifies implementation against PRD acceptance
   criteria, runs mandatory NFR checklist, assesses test quality. Independent from
   the implementer to break confirmation bias.
   Use: /trw-audit PRD-CORE-055
-user-invocable: true
-argument-hint: "[PRD-ID or file path]"
 ---
 
 > Codex adaptation: `AGENTS.md` is the primary instruction file. If a step mentions legacy Claude-specific workflow, follow the equivalent Codex skill/subagent flow instead.
+
+Run the audit with a reviewer independent from the implementer when subagents are available. Otherwise perform a
+separate evidence pass and disclose that independence was unavailable.
 
 # Adversarial Spec-vs-Code Audit Skill
 
 Use when: adversarially checking implementation behavior against a PRD before declaring it done.
 
-Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review (use `/trw-review-pr` for that). This audit answers one question: **does the code do what the PRD says it should?**
-
-## Why This Exists
-
-Sprint 29 proved that "all tests pass" is insufficient:
-1. Agents who write code also write tests → confirmation bias
-2. Self-reported exit criteria mask gaps → agents declare FRs "done" when tests pass
-3. NFRs (pagination, auth, error handling) are consistently skipped
-4. Tests validate status codes but not response bodies, happy paths but not edge cases
+Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review; use the packaged `trw-reviewer` helper or a client-native code-review workflow for that. This audit answers one question: **does the code do what the PRD says it should?**
 
 ## Path Discovery
 
-Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs. Audit reports are stored in `scratch/audits/`.
+Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs.
 
 
 ## Preflight Verification Contract
@@ -55,8 +46,12 @@ Check `$ARGUMENTS` for a PRD ID or file path:
 
 ### Step 2: Validate Readiness
 
-Call `trw_prd_validate(prd_path)` to check PRD quality:
-- If score < 0.85: abort with "PRD is not sprint-ready (score: {score}). Run /trw-prd-ready {PRD-ID} first."
+Call `trw_prd_validate(prd_path)` in full mode and record `total_score`, `quality_tier`, `valid`, and
+`validation_partial`. Use `total_score` only for reporting; do not gate on the deprecated `completeness_score`.
+- If validation is partial, rerun in full mode or disclose the skipped checks.
+- If the PRD is invalid or below the risk-scaled `approved` tier, record the specification risk and continue when the
+  requirements remain auditable. Mark ambiguous criteria uncertain. Do not abort an adversarial audit solely because
+  the PRD score or tier is weak.
 
 Verify implementation exists:
 - Use Grep/Glob to find source files referenced in the PRD's Technical Approach
@@ -65,14 +60,13 @@ Verify implementation exists:
 
 ### Step 2a: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
 
-From each FR's acceptance criteria (Given/When/Then), extract key technical terms:
+From each FR's acceptance criteria, regardless of requirement syntax or verification method, extract useful search terms:
 - Function/class/method/component/command/schema/event/API names mentioned in the spec
 - Field names, status codes, error messages, boundary values
 - Configuration keys and thresholds
 
-Use these keywords to grep the implementation and test code. Report a "keyword match score" per FR:
-- `keywords_found / total_keywords` as a percentage
-- Score < 50% → P1 finding "Acceptance criteria keywords not reflected in implementation"
+Use these keywords as search hints for implementation and verification evidence. Naming overlap is not behavioral
+proof: never assign a verdict or severity from a keyword-match percentage.
 
 ### Step 3: Locate Code and Tests
 
@@ -82,15 +76,18 @@ For each FR in the PRD:
 3. **Build mapping** — FR → implementation files → test files
 
 If a FR has NO implementation: mark as MISSING (P0) immediately.
-If a FR has NO tests: mark as UNTESTED (P1) immediately.
+Apply the PRD's declared verification method. Machine-observable behavior without an executable behavioral test is
+UNTESTED (P1) unless the PRD explicitly justifies another method; evaluate Analysis, Inspection, or Demonstration
+evidence on its own terms.
 
 ### Step 3a: Wiring Check (PRD-QUAL-045-FR03)
 
 For each new public symbol, exported component, command, endpoint, schema, event, or adapter defined in the implementation:
-1. Verify it is actually wired through at least one caller, route, registry, export, command table, test, or integration path
-2. Use Grep/Glob across the repo-detected source and test roots (for example `src/`, `packages/`, `apps/`, `cmd/`, `crates/`, `tests/`, or colocated tests)
+1. Verify it is actually wired through at least one production caller, route, registry, export, command table, or integration path
+2. Use Grep/Glob across repo-detected production roots, then inspect tests separately
 3. Public definitions that are never wired → P1 "dead code — defined but not wired"
 4. Exclude private helpers called only within the same file (these are OK)
+5. Test-only reachability is not production wiring; report it as unwired or uncertain according to the available evidence
 
 ### Step 4: Audit Each FR
 
@@ -115,7 +112,7 @@ For each FR, answer three questions by reading the actual code:
 
 ### Step 5: NFR Checklist
 
-Run EVERY item against EVERY endpoint/component. Do NOT skip items.
+Evaluate every checklist item for each audited surface. Mark non-applicable items `NA` only with concrete justification.
 
 | # | NFR | Check | Common Miss |
 |---|-----|-------|-------------|
@@ -173,7 +170,7 @@ nfr_audit:
     verdict: PASS|FAIL|NA
     evidence: "Specific code reference"
     finding: "Description if FAIL"
-  # ... all 10 items
+  # ... one row per checklist item above
 
 summary:
   total_frs: 5
@@ -209,17 +206,7 @@ Output a markdown summary:
 - Top 3 most critical findings with fix recommendations
 - Audit report file path
 
-If findings exist, call `trw_learn` to record the pattern for future sessions.
-
-## Rationalization Watchlist
-
-If you catch yourself thinking any of these, stop and follow the process:
-
-| Thought | Why it's wrong | Consequence |
-|---------|---------------|-------------|
-| "The tests pass, so this FR is fine" | Tests validate the implementation, not the specification — they confirm the code works as written, not as specified | Sprint 29: 12 gaps survived "all tests pass" |
-| "This NFR isn't relevant to this type of endpoint" | NFR checklist is cross-cutting — skipping items is how gaps accumulate across sprints | Pagination, auth, error handling skipped on "simple" endpoints |
-| "I'll mark this PARTIAL instead of FAIL to avoid blocking" | Accuracy matters more than velocity — downgraded findings ship to production | Accurate findings get fixed; downgraded findings become tech debt |
+Call `trw_learn` only when findings reveal a non-obvious reusable pattern, not for routine audit status.
 
 ## Assertion Verification (PRD-CORE-086)
 
@@ -235,6 +222,7 @@ When auditing FRs that include `Assertions:` blocks, use them as objective evide
 
 - NEVER modify code files — this skill is read-only (except writing the audit report)
 - NEVER accept "tests pass" as evidence of spec compliance
+- NEVER use PARTIAL to soften a failed acceptance criterion; PARTIAL requires concrete implemented behavior plus an explicit remaining gap
 - NEVER skip NFR checklist items — mark NA with justification if truly not applicable
 - NEVER downgrade severity to avoid blocking — P0 is P0
 - ALWAYS read implementation code directly — tests are not a proxy for behavior

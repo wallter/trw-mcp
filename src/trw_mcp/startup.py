@@ -67,6 +67,12 @@ def init_security(config: MCPSecurityConfig | None = None) -> MCPSecurityMiddlew
     """Build the mounted MCP security middleware or raise fail-loud."""
 
     resolved = config or MCPSecurityConfig()
+    if resolved.anomaly.mode == "enforce":
+        raise MCPSecurityConfigError(
+            "MCP anomaly enforcement is unavailable because no validated production "
+            "rate-baseline loader exists; "
+            "set security.mcp.anomaly.mode to 'shadow'"
+        )
     canonical_path = _resolve_repo_anchored_path(resolved.allowlist_path)
     if not canonical_path.exists():
         raise MCPSecurityConfigError(f"MCP allowlist not found: {canonical_path}")

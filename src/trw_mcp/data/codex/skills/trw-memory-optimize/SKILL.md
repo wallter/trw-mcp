@@ -5,85 +5,68 @@ description: "Optimize learning memory. Prunes stale entries, consolidates dupli
 
 > Codex-specific skill: this version is authored for Codex. Follow Codex-native skill and subagent flows, and ignore Claude-only references if any remain.
 
-# Memory Optimization Skill
+# Memory Optimization
 
-Optimize the TRW self-learning layer by pruning low-value entries, consolidating duplicates, and rebalancing tags. Interactive — always confirms before making destructive changes.
+Interactive, evidence-backed maintenance of learning memory. Audit first, present exact proposed mutations, and obtain confirmation before changing any entry.
 
-## Workflow
+## 1. Build a grounded plan
 
-1. **Audit first**: Run the same analysis as `/trw-memory-audit`:
-   - Call `trw_recall('*', compact=true)` for all learnings
-   - Read `.trw/learnings/index.yaml`
-   - Analyze tags, impact, staleness, duplicates
+1. Run `/trw-memory-audit` and retain its provenance/coverage limitations.
+2. For each candidate, recall the full current entry and nearby semantic matches.
+3. Classify the proposed action:
+   - `RETAIN`: distinct and still useful;
+   - `UPDATE`: correct the summary/detail/tags/assertions/status with current evidence;
+   - `CONSOLIDATE`: choose a survivor, preserve unique constraints/provenance, then obsolete true duplicates;
+   - `OBSOLETE`: retire knowledge proven stale or superseded;
+   - `INVESTIGATE`: evidence is incomplete or conflicts with current code.
+4. Record exact learning IDs, before/after fields, evidence, uncertainty, and rollback/recovery approach.
 
-2. **Build optimization plan**:
-   - **Prune candidates**: Entries with impact < 0.4, entries tagged `repeated` with count suffix, entries referencing removed features
-   - **Consolidate candidates**: Near-duplicate entries that can be merged into a single compendium entry
-   - **Tag cleanup**: Orphan tags to remove, inconsistent tag names to normalize
-   - **Impact recalibration**: Entries whose impact scores seem miscalibrated based on actual utility
+Optimize retrieval usefulness and domain coverage—not a fixed global count, entries-per-domain formula, impact threshold, or compendium size.
 
-3. **Present plan**: Show the user:
-   - Entries to delete (with summary and current impact)
-   - Entries to consolidate (showing which merge into what)
-   - Tag changes proposed
-   - Ask for confirmation before proceeding
+The optional `trw-distill maintain optimize` workflow may generate a machine-readable plan when installed. Use it for planning only: verify its version/command, review the dry-run output under the same rules, and never treat optional LLM scoring as authoritative evidence. Do not invoke `trw-distill maintain optimize --apply`; the current CLI rebuilds an unbound plan instead of applying an immutable reviewed receipt. Apply confirmed IDs and fields narrowly through `trw_learn_update`.
 
-4. **Execute** (only after user confirmation):
-   - For deletions: Read each entry YAML file, update status to `obsolete` (do not delete the file — TRW tracks obsolete entries)
-   - For consolidations: Create a new compendium entry via `trw_learn`, then mark originals as `obsolete`
-   - For tag cleanup: Edit entry YAML files to update tags
+## 2. Confirm destructive/semantic changes
 
-5. **Sync**: Run delivery sync so AGENTS.md reflects the optimized learning set.
+Present the full plan. Require explicit user confirmation before obsoleting entries, merging meaning, renaming tags broadly, or applying an external batch plan. Do not interpret approval of one candidate as approval of the batch.
 
-6. **Report**: Before/after summary:
-   - Active entries: before → after
-   - Entries made obsolete
-   - Entries consolidated
-   - Tags normalized
-   - AGENTS.md updated
+Checkpoint the accepted plan before mutation when a run is active.
 
-## Sizing Guidelines
+## 3. Apply narrowly
 
-The optimal learning count scales with project complexity — do NOT use a fixed target.
+- Prefer `trw_learn_update` for explicit per-entry changes.
+- Retire with `status="obsolete"`; do not hard-delete learning storage.
+- Apply consolidations in a recoverable order: update/create the survivor, verify it, then obsolete duplicates.
+- Re-read an entry immediately before mutation so a stale plan does not overwrite concurrent changes.
 
-**Formula**: Target = (distinct domain count) × 3-5 entries per domain, with a floor of 20.
+`trw_instructions_sync` is not a memory-index refresh and does not place the optimized learning set into client instructions. Do not call it for that purpose. Learnings surface through `trw_session_start` and `trw_recall`.
 
-**How to calculate**:
-1. Identify distinct topic clusters (e.g., "hallucination", "testing", "ollama", "transcription")
-2. Each cluster should consolidate to 3-5 entries depending on depth:
-   - Simple domain (few gotchas): 2-3 entries
-   - Complex domain (many patterns, edge cases): 5-8 entries
-3. A project with 12 domains should target ~50-70 active entries, not 30
+## 4. Verify
 
-**Consolidation depth limit**: Never merge more than 10-15 entries into a single compendium. If a topic has 60+ entries, create 5-8 sub-topic compendiums (e.g., "hallucination-grounding", "hallucination-detection", "hallucination-mitigation") rather than one mega-entry.
+Re-run bounded recall/audit queries and confirm:
 
-**Domain coverage rule**: Every distinct domain MUST retain at least 1 detailed entry after optimization. If consolidation would leave a domain with 0 entries, it's too aggressive.
+- updated/surviving entries are retrievable for intended queries;
+- obsolete entries no longer appear in default active recall;
+- unique constraints and domain coverage remain;
+- assertions and referenced paths are valid or explicitly queued for investigation;
+- no unrelated entries changed.
 
-## Constraints
+If only a sampled audit is possible, label the before/after comparison partial.
 
-- NEVER delete learning YAML files — mark as `obsolete` status instead
-- ALWAYS present the plan and get user confirmation before any changes
-- ALWAYS preserve high-impact (>= 0.7) entries unless clearly outdated
-- ALWAYS run delivery sync after changes to keep AGENTS.md current
-- NEVER collapse all entries in a domain into a single compendium — maintain sub-topic granularity
+## Report
 
-## Assertion Verification Wave (PRD-CORE-086)
+```markdown
+## TRW Memory Optimization
+- Audit source/coverage: <...>
+- Confirmed plan: <receipt/checkpoint>
 
-After standard pruning and consolidation, run an assertion verification wave:
+| ID(s) | Action | Before -> after | Evidence | Verification |
+|---|---|---|---|---|
 
-1. **Collect**: Identify all learnings with non-empty assertions via `trw_recall(query="*", max_results=0)` and filter for entries with `assertion_status`
-2. **Verify**: For each entry with failing assertions, spawn a subagent to investigate:
-   - Read the referenced files in the codebase
-   - Determine root cause: Is the learning outdated? Is the assertion pattern wrong? Is the code violating the convention?
-   - Recommend one of:
-     - `UPDATE_LEARNING`: Learning text needs revision (provide new text)
-     - `UPDATE_ASSERTION`: Assertion pattern is wrong (provide corrected pattern)
-     - `RETIRE_LEARNING`: Knowledge is obsolete (provide reason)
-     - `CODE_VIOLATION`: Code is wrong, learning is right (flag for human review)
-3. **Apply**: For each recommendation, use `trw_learn_update()` to apply changes (with user confirmation for retirements)
-4. **Report**: Summary table of verification results — passing, fixed, retired, flagged
+### Retrieval checks
+- <query>: <observed result>
 
-## Notes
+### Deferred/uncertain candidates
+- <ID, missing evidence, owner/next action>
+```
 
-- Run after major milestones (strip-downs, sprint completions) when many entries may be stale
-- Use `/trw-memory-audit` first for a read-only preview
+Record a new learning only if this maintenance reveals a non-obvious reusable system behavior; routine optimization results belong in the run/report.

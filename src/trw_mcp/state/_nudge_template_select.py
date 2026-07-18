@@ -252,7 +252,7 @@ def _context_reactive_message(
     if tool == ToolName.DELIVER:
         return _deliver_message(state)
     if tool == ToolName.INIT:
-        return "Run bootstrapped. NEXT: Begin the work. THEN: trw_checkpoint() at first milestone."
+        return "Run bootstrapped. Begin the planned work; checkpoint at the first milestone."
     if tool == ToolName.RECALL:
         return "Learnings recalled. Review them for relevant patterns before proceeding."
     if tool == ToolName.STATUS:
@@ -260,5 +260,5 @@ def _context_reactive_message(
     if tool == ToolName.PRD_CREATE:
         return "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before the work starts."
     if tool == ToolName.PRD_VALIDATE:
-        return "PRD validated. NEXT: trw_init() to bootstrap the run. THEN: begin the work."
+        return "PRD validated. NEXT: trw_init() to bootstrap the governed run."
     return None

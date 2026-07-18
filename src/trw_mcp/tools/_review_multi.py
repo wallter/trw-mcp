@@ -49,7 +49,7 @@ def _run_multi_reviewer_analysis(
 
     When called without pre-collected reviewer_findings, performs
     basic structural analysis only. The actual multi-agent spawning
-    is handled client-side by the /trw-review-pr skill.
+    is handled by the packaged trw-reviewer helper or a client-native review workflow.
 
     Because this path runs ONLY a TODO/FIXME/HACK/XXX marker scan (never
     the multi-reviewer roles or cross-model review), the returned result is

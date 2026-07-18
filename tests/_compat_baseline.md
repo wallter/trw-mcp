@@ -2,9 +2,10 @@
 
 ## Source Commit
 
-Generated from the tree state of commit `3613eedc2` (the commit immediately
-preceding PRD-CORE-141 landing in `7273de366`).  The file list is byte-for-byte
-identical to `git ls-files --with-tree=3613eedc2 'trw-mcp/tests/test_*.py' | sort`.
+Originally generated from the tree state of commit `3613eedc2` (the commit
+immediately preceding PRD-CORE-141 landing in `7273de366`). The current list
+excludes tests intentionally retired with their proven-dead production paths;
+those deviations are recorded below.
 
 ## Caveat — Three Files Were Modified In-Place
 
@@ -34,11 +35,18 @@ lambda signatures (the new code passes `context=` positionally as a kwarg),
 which is the expected FR15 boundary: legacy stdio callers pass no ctx; the
 monkeypatch lambdas in unit tests were the only consumers forced to update.
 
+## Intentional Dead-Test Retirements
+
+- `trw-mcp/tests/test_llm_helpers.py` — removed when the abandoned event-to-learning helper was retired.
+- `trw-mcp/tests/test_reflection_state.py` — removed with the abandoned full-reflect module; its live FR06
+  follow-through coverage moved to `trw-mcp/tests/test_reflection_followthrough.py`.
+
+These paths are omitted rather than left as missing entries that make the FR15 command fail before collection.
+
 ## FR15 Check Protocol
 
 ```bash
-cd trw-mcp
-xargs -n 30 .venv/bin/python -m pytest --tb=line -q < tests/_compat_baseline.txt
+xargs -n 30 .venv/bin/python -m pytest --tb=line -q < trw-mcp/tests/_compat_baseline.txt
 ```
 
 All files in the baseline must pass against HEAD's `src/`.

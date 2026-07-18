@@ -213,10 +213,13 @@ class TierManager:
 
         if MemoryStore.available() and embedding is not None:
             store = get_memory_store(db_path)
-            store.upsert(entry_id, embedding, {"source": "warm_tier"})
-        else:
-            # Fallback: write to a JSON sidecar for keyword search
-            self._warm_sidecar_upsert(entry_id, entry_data)
+            if store.connected:
+                store.upsert(entry_id, embedding, {"source": "warm_tier"})
+                logger.debug("warm_tier_add", entry_id=entry_id, has_embedding=True)
+                return
+
+        # Fallback: write to a JSON sidecar for keyword search
+        self._warm_sidecar_upsert(entry_id, entry_data)
 
         logger.debug("warm_tier_add", entry_id=entry_id, has_embedding=embedding is not None)
 
@@ -262,7 +265,8 @@ class TierManager:
         db_path = self._get_warm_db_path()
         if MemoryStore.available():
             store = get_memory_store(db_path)
-            store.delete(entry_id)
+            if store.connected:
+                store.delete(entry_id)
 
         # Also purge from sidecar
         sidecar = self._warm_sidecar_path()
@@ -308,8 +312,9 @@ class TierManager:
 
         if MemoryStore.available() and query_embedding is not None:
             store = get_memory_store(db_path)
-            raw = store.search(query_embedding, top_k=top_k)
-            return [{"id": entry_id, "score": float(1.0 - dist)} for entry_id, dist in raw]
+            if store.connected:
+                raw = store.search(query_embedding, top_k=top_k)
+                return [{"id": entry_id, "score": float(1.0 - dist)} for entry_id, dist in raw]
 
         # Keyword LIKE fallback via sidecar
         return self._warm_keyword_search(query_tokens, top_k)
@@ -532,6 +537,8 @@ class TierManager:
         cfg = self._config or get_config()
         entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
         distribution: TierDistribution = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        missing_yaml_count = 0
+        missing_yaml_sample: list[str] = []
         t0 = time.monotonic()
 
         try:
@@ -552,7 +559,9 @@ class TierManager:
             slug = re.sub(r"[^a-zA-Z0-9_\-]", "-", entry_id)
             yaml_path = entries_dir / f"{slug}.yaml"
             if not yaml_path.exists():
-                logger.debug("assign_impact_tiers_no_yaml", entry_id=entry_id)
+                missing_yaml_count += 1
+                if len(missing_yaml_sample) < 5:
+                    missing_yaml_sample.append(entry_id)
                 continue
 
             try:
@@ -571,6 +580,12 @@ class TierManager:
                 )
 
         duration_ms = round((time.monotonic() - t0) * 1000, 2)
+        if missing_yaml_count:
+            logger.debug(
+                "assign_impact_tiers_no_yaml",
+                missing_count=missing_yaml_count,
+                entry_id_sample=missing_yaml_sample,
+            )
         logger.info("tier_assignment_complete", distribution=distribution, duration_ms=duration_ms)
         return distribution
 

@@ -20,7 +20,8 @@ from trw_mcp.tools._orchestration_phase import (
 def test_orchestration_module_stays_within_500_lines() -> None:
     """CORE-089 keeps orchestration.py at or under the documented size gate."""
     module_path = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "tools" / "orchestration.py"
-    assert sum(1 for _ in module_path.open("r", encoding="utf-8")) <= 500
+    with module_path.open("r", encoding="utf-8") as module_file:
+        assert sum(1 for _ in module_file) <= 500
 
 
 @pytest.mark.parametrize(
@@ -48,6 +49,11 @@ class TestTrwInit:
         assert "run_path" in result
         assert result["status"] == "initialized"
         assert len(result["task_profile_hash"]) == 16
+        assert result["capability_tier"] == "balanced"
+        assert result["model_tier"] == result["capability_tier"]
+        assert result["recommended_effort"] == "medium"
+        assert result["effort_source"] == "task_complexity"
+        assert result["effort_adapter_status"] == "advisory"
 
         trw_dir = tmp_path / ".trw"
         assert trw_dir.exists()
@@ -79,6 +85,12 @@ class TestTrwInit:
         assert run_yaml["status"] == "active"
         assert run_yaml["phase"] == "research"
         assert run_yaml["task_profile"]["complexity_class"] == "STANDARD"
+        assert run_yaml["task_profile"]["capability_tier"] == "balanced"
+        assert run_yaml["task_profile"]["recommended_effort"] == "medium"
+        assert run_yaml["task_profile"]["effort_source"] == "task_complexity"
+        assert run_yaml["task_profile"]["effort_adapter_status"] == "advisory"
+        assert "model_tier" not in run_yaml["task_profile"]
+        assert "reasoning_effort" not in run_yaml["task_profile"]
         assert len(run_yaml["task_profile"]["profile_hash"]) == 16
 
     def test_init_easy_hint_persists_minimal_task_profile(self, orch_tools: dict[str, Any]) -> None:
@@ -106,6 +118,11 @@ class TestTrwStatus:
         assert status["event_count"] >= 1
         assert status["phase_durations"]["active_phase"] == "research"
         assert status["phase_durations"]["phase_seconds"]["research"] >= 0.0
+        assert status["capability_tier"] == "balanced"
+        assert status["model_tier"] == status["capability_tier"]
+        assert status["recommended_effort"] == "medium"
+        assert status["effort_source"] == "task_complexity"
+        assert status["effort_adapter_status"] == "advisory"
 
     def test_torn_events_line_does_not_abort_status(self, orch_tools: dict[str, Any]) -> None:
         """A torn concurrent append in events.jsonl must not brick trw_status.
@@ -117,8 +134,8 @@ class TestTrwStatus:
         "drop that one line", not raise StateError and abort the whole status
         read — trw_status is invoked on every resume/compaction, so aborting it
         blinds the agent to its own run. Mirrors the resilient-read fixes
-        already applied to the _do_reflect and collect_reflection_inputs seams
-        over this same log (regression guard).
+        already applied to the live _do_reflect seam over this same log
+        (regression guard).
         """
         init_result = orch_tools["trw_init"].fn(task_name="torn-status-task")
         run_path = init_result["run_path"]

@@ -19,6 +19,7 @@ PRD-DIST-2405 FR37-FR40.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import structlog
@@ -27,6 +28,7 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "EXPLORER_AGENT_RELPATH",
+    "EXPLORER_MODEL_ENV_VAR",
     "EXPLORER_QUOTA_BYTES",
     "get_explorer_agent_content",
     "install_cc05_subagent",
@@ -34,6 +36,14 @@ __all__ = [
 
 EXPLORER_AGENT_RELPATH: str = ".claude/agents/trw-distill-explorer.md"
 EXPLORER_QUOTA_BYTES: int = 8192
+
+# PRD-CORE-210 FR07 (FUTURE-WORK §3a): operator override for the CC-05 model,
+# resolved at template-render time. Allowlisted so a typo or a disallowed
+# tier (fable is main-loop only by operator rule) can never land in the
+# generated agent file.
+EXPLORER_MODEL_ENV_VAR: str = "CLAUDE_CODE_EXPLORER_MODEL"
+_EXPLORER_DEFAULT_MODEL: str = "haiku"
+_EXPLORER_ALLOWED_MODELS: frozenset[str] = frozenset({"haiku", "sonnet"})
 
 _EXPLORER_CONTENT = """\
 ---
@@ -43,7 +53,7 @@ description: >
   Use when you need: full codebase risk analysis, entity risk map, ordering comparison,
   top-N hotspot ranking, and convention summaries.
   Do NOT use for single-file pre-edit hints — use the PreToolUse hook instead.
-model: haiku
+model: {model}
 maxTurns: 20
 effort: medium
 memory: project
@@ -128,9 +138,30 @@ Maximum 600 tokens total. Truncate if needed with "... (truncated for brevity)".
 """
 
 
+def _resolve_explorer_model() -> str:
+    """Resolve the explorer model at render time (PRD-CORE-210 FR07).
+
+    ``CLAUDE_CODE_EXPLORER_MODEL`` may name an allowlisted model alias;
+    anything else (including ``fable`` — main-loop only by operator rule)
+    logs a warning and falls back to the haiku default.
+    """
+    requested = os.environ.get(EXPLORER_MODEL_ENV_VAR, "").strip().lower()
+    if not requested:
+        return _EXPLORER_DEFAULT_MODEL
+    if requested in _EXPLORER_ALLOWED_MODELS:
+        return requested
+    log.warning(
+        "cc05_explorer_model_rejected",
+        requested=requested,
+        allowed=sorted(_EXPLORER_ALLOWED_MODELS),
+        fallback=_EXPLORER_DEFAULT_MODEL,
+    )
+    return _EXPLORER_DEFAULT_MODEL
+
+
 def get_explorer_agent_content() -> str:
-    """Return the static content for ``trw-distill-explorer.md``."""
-    return _EXPLORER_CONTENT
+    """Return the content for ``trw-distill-explorer.md`` (render-time model)."""
+    return _EXPLORER_CONTENT.format(model=_resolve_explorer_model())
 
 
 def install_cc05_subagent(repo_root: Path) -> bool:

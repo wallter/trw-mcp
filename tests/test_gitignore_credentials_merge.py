@@ -28,7 +28,6 @@ logs/
 *.jsonl
 *.lock
 knowledge.db
-mcp-server.pid
 
 # User's own custom ignore
 my-private-notes/

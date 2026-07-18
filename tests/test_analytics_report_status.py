@@ -41,6 +41,37 @@ class TestStaleCountInStatus:
         assert "3 stale run(s)" in str(result["stale_runs_advisory"])
         mock_count.assert_called_once()
 
+    def test_stale_advisory_shown_once_then_bare_count(self, tmp_path: Path, sample_run_dir: Path) -> None:
+        """The advisory prose fires on the first status check, then only stale_count remains."""
+        from fastmcp import FastMCP
+
+        from trw_mcp.tools.orchestration import register_orchestration_tools
+
+        server = FastMCP("test")
+        register_orchestration_tools(server)
+
+        tools = get_tools_sync(server)
+        status_tool = tools["trw_status"]
+
+        with (
+            patch(
+                "trw_mcp.tools.orchestration.resolve_run_path",
+                return_value=sample_run_dir,
+            ),
+            patch(
+                "trw_mcp.tools.orchestration.count_stale_runs",
+                return_value=3,
+            ),
+        ):
+            first = status_tool.fn()
+            second = status_tool.fn()
+
+        # First call surfaces the one-time prose hint.
+        assert "stale_runs_advisory" in first
+        # Second call omits the repeated prose but keeps the bare signal.
+        assert "stale_runs_advisory" not in second
+        assert second["stale_count"] == 3
+
     def test_stale_count_zero_no_advisory(self, tmp_path: Path, sample_run_dir: Path) -> None:
         """When stale count is 0, no advisory is shown."""
         from fastmcp import FastMCP

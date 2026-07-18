@@ -5,7 +5,7 @@ Create or groom a PRD to sprint-ready quality (draft → groom → review → ex
 ## When to use
 
 - When you have a rough idea that needs to become a formal requirement.
-- When a PRD is in DRAFT state and needs to be groomed to READY.
+- When a draft PRD needs a verified readiness result before lifecycle approval.
 - When a backlog item needs a full exec plan before sprint assignment.
 - Before scheduling a PRD for implementation.
 
@@ -15,9 +15,10 @@ Invokes the TRW `trw-prd-ready` skill via the MCP server:
 
 1. Reads the target PRD (or creates a new one from your description).
 2. Fills in missing sections: problem statement, FRs, non-FRs, test plan.
-3. Validates quality gates (no vague FRs, no missing acceptance criteria).
+3. Requires full validation with `validation_partial: false`, `valid: true`, and risk-scaled
+   `quality_tier: approved`; `total_score` is reported, not used as a fixed threshold.
 4. Produces or updates the execution plan.
-5. Sets status to READY when all gates pass.
+5. Reports readiness without inventing a `READY` lifecycle status; lifecycle transitions remain explicit and separate.
 
 ## Usage
 

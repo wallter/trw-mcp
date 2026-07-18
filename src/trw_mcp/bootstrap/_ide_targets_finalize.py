@@ -48,9 +48,14 @@ def _update_config_target_platforms(
         are preserved.
       - Legacy profile identifiers (currently: ``cursor`` → ``cursor-ide``)
         are silently migrated. See ``_LEGACY_PROFILE_RENAMES``.
+      - Retired identifiers (``gemini``, ``aider`` — 2026-07-11) are DROPPED
+        from the list (not migrated to a replacement, since the artifacts
+        differ) and a result warning records the retirement + migration hint.
+        Existing ``.gemini/`` files on disk are left untouched; uninstall
+        handles their cleanup on demand.
       - Duplicates are de-duplicated, preserving first occurrence.
-      - When the merged list equals the existing list (no new IDEs and no
-        legacy rename triggered), the file is preserved (not rewritten).
+      - When the merged list equals the existing list (no new IDEs, no legacy
+        rename, and no retired id dropped), the file is preserved (not rewritten).
       - All other config fields preserved.
 
     Prior behavior (pre-0.44.1) replaced the entire list with ``ide_targets``,
@@ -61,6 +66,8 @@ def _update_config_target_platforms(
     other dispatch steps.
     """
     import yaml
+
+    from ._utils import _RETIRED_IDES
 
     config_path = target_dir / ".trw" / "config.yaml"
     if not config_path.exists():
@@ -73,15 +80,22 @@ def _update_config_target_platforms(
 
         # Build the merged list:
         #   1. Migrate legacy identifiers in existing entries
-        #   2. Deduplicate (first occurrence wins)
-        #   3. Append any ide_targets entries not already present
+        #   2. Drop retired identifiers (record a warning + migration hint)
+        #   3. Deduplicate (first occurrence wins)
+        #   4. Append any ide_targets entries not already present
         merged: list[str] = []
         for entry in existing:
             normalized = _LEGACY_PROFILE_RENAMES.get(entry, entry)
+            if normalized in _RETIRED_IDES:
+                result.setdefault("warnings", []).append(f"{normalized} support retired — {_RETIRED_IDES[normalized]}")
+                logger.info("target_platform_retired_dropped", client=normalized)
+                continue
             if normalized not in merged:
                 merged.append(normalized)
         added: list[str] = []
         for new_id in ide_targets:
+            if new_id in _RETIRED_IDES:
+                continue
             if new_id not in merged:
                 merged.append(new_id)
                 added.append(new_id)

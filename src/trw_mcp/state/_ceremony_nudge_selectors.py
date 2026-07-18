@@ -21,6 +21,7 @@ import structlog
 from trw_mcp.state._nudge_state import CeremonyState, NudgeContext
 
 logger = structlog.get_logger(__name__)
+_LEARNING_INJECTION_MIN_SCORE = 0.70
 
 
 def _select_learning_injection_candidate(
@@ -77,6 +78,20 @@ def _select_learning_injection_candidate(
             summary = str(learning.get("summary", "")).strip()
             if not learning_id or not summary or learning_id in seen_ids:
                 continue
+            # Filter LOW-scored candidates only. Entries from the keyword
+            # recall path carry no score field at all (the adapter emits
+            # combined_score when ranking ran) — a missing score must pass,
+            # not default to 0.0, or every unscored entry is silently dropped
+            # and the learning-injection pool goes permanently dark.
+            score_raw = learning.get("score", learning.get("similarity", learning.get("combined_score")))
+            if score_raw is not None:
+                try:
+                    score = float(score_raw)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    if score < _LEARNING_INJECTION_MIN_SCORE:
+                        continue
             seen_ids.add(learning_id)
             if skip_phase_duplicates and learning_id in state.nudge_history:
                 phases_shown = state.nudge_history[learning_id].get("phases_shown", [])
@@ -209,11 +224,21 @@ def select_learning_injection_content(
         learning_id = str(selected_learning.get("id", "")).strip()
         summary = str(selected_learning.get("summary", "")).strip()
         clipped_summary = summary[:120] + ("..." if len(summary) > 120 else "")
+        score_raw = selected_learning.get("score", selected_learning.get("similarity", 0.0))
+        score = float(score_raw) if isinstance(score_raw, (int, float)) else 0.0
         status_line = _build_minimal_status_line(state)
         message = (
             f"{_MINIMAL_HEADER}\n"
             f"{status_line}\n"
-            f"[!] Past learning on {target_label}: {clipped_summary}. Source: {learning_id}."
+            f"[!] Past learning ({score:.0%} match) on {target_label}: "
+            f"{clipped_summary}. Source: {learning_id}.\n"
+            "Consider before next edit."
+        )
+        logger.info(
+            "learning_injection_match",
+            learning_id=learning_id,
+            score=round(score, 4),
+            target_file=target_label or "",
         )
         rendered = message if len(message) <= 400 else message[:397] + "..."
         return rendered, learning_id, target_label

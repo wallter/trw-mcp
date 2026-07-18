@@ -7,9 +7,6 @@ sub-package holds supporting helpers and per-family opencode renderers.
 from __future__ import annotations
 
 from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-    render_gemini_instructions as render_gemini_instructions,
-)
-from trw_mcp.state.claude_md.renderers._review_and_opencode import (
     render_opencode_claude as render_opencode_claude,
 )
 from trw_mcp.state.claude_md.renderers._review_and_opencode import (
@@ -23,7 +20,6 @@ from trw_mcp.state.claude_md.renderers._review_and_opencode import (
 )
 
 __all__ = [
-    "render_gemini_instructions",
     "render_opencode_claude",
     "render_opencode_generic",
     "render_opencode_gpt",

@@ -20,7 +20,7 @@ channels:
     quota_total_bytes: 6144
     human_edit_detection: SHA256_SEGMENT
     description: "opencode AGENTS.md distill segment — top-5 hotspots + top-3 conventions"
-    regenerate_cmd: "trw-distill self-improve risk-report --repo . --persist-sidecar"
+    regenerate_cmd: "MCP tool: trw_codebase_risk_report(top_n=20)"
     sidecar_schema: "risk-report-sidecar/v0"
 
   - id: opencode-custom-cmd-before-edit

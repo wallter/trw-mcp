@@ -99,6 +99,9 @@ def render_agents_trw_section(
     The loader is imported function-locally to avoid a ``sections`` <->
     ``_renderer`` module-import cycle (established pattern, ``_renderer.py``).
     """
+    from trw_mcp.bootstrap._client_integration_appendix import (
+        render_client_integration_appendix,
+    )
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
     from trw_mcp.state.claude_md.sections._tool_lifecycle import (
         render_deliver_gate_statement,
@@ -126,7 +129,13 @@ def render_agents_trw_section(
         "4. **Finish**: call `trw_deliver()` to persist your work for future sessions\n"
         "\n" + render_deliver_gate_statement() + "\n"
         "## Session Boundaries\n"
-        "\n" + _SESSION_BOUNDARY_TEXT
+        "\n"
+        + _SESSION_BOUNDARY_TEXT
+        + "\n\n"
+        # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: every supported client's
+        # generated AGENTS.md carries the transport-loss retry protocol and the
+        # live three-class capability listing.
+        + render_client_integration_appendix("agents")
     )
 
 
@@ -141,6 +150,9 @@ def render_codex_trw_section(
     inline string, so the Codex AGENTS.md root path can never report
     missing_gate / stale_sync. Function-local import avoids a module cycle.
     """
+    from trw_mcp.bootstrap._client_integration_appendix import (
+        render_client_integration_appendix,
+    )
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
     from trw_mcp.state.claude_md.sections._tool_lifecycle import (
         render_deliver_gate_statement,
@@ -171,12 +183,17 @@ def render_codex_trw_section(
         "\n"
         "- Codex reads `AGENTS.md` files from global/project/current-directory scope in precedence order, subject to runtime size limits\n"
         "- `.codex/agents/*.toml` custom agents are explicit helpers; do not assume hidden background delegation\n"
-        "- Hooks are experimental and optional; core ceremony guarantees come from TRW tools and middleware rather than hook interception\n"
+        "- Codex hooks are stable but optional and trust-gated; core ceremony guarantees come from TRW tools and middleware rather than hook interception\n"
         "\n"
         "## OpenAI Docs\n"
         "\n"
         "If the task depends on current OpenAI or Codex behavior, use the OpenAI developer docs MCP server before relying on memory.\n"
         "\n"
         "## Session Boundaries\n"
-        "\n" + _SESSION_BOUNDARY_TEXT
+        "\n"
+        + _SESSION_BOUNDARY_TEXT
+        + "\n\n"
+        # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: Codex AGENTS.md carries the
+        # transport-loss retry protocol and the live capability listing too.
+        + render_client_integration_appendix("codex")
     )

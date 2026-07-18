@@ -76,7 +76,7 @@ fi
 if [ "$_phase_suppressed" = "0" ]; then
   case "$_phase" in
     none)
-      echo "TRW: Call trw_session_start(query='your task domain') to load context, then read .trw/frameworks/FRAMEWORK.md — it defines the methodology your tools implement."
+      echo "TRW: Call trw_session_start(query='your task domain') to load context, then read .trw/frameworks/FRAMEWORK-CORE.md — it defines the methodology your tools implement."
       ;;
     early)
       echo "TRW [RESEARCH/PLAN]: PRD validation gates implementation — trw_prd_validate catches ambiguity before it becomes rework."
@@ -88,7 +88,7 @@ if [ "$_phase_suppressed" = "0" ]; then
       echo "TRW [IMPLEMENT]: Before completing, re-read FRs for coverage gaps. Call trw_checkpoint after milestones — uncheckpointed work is lost on compaction."
       ;;
     validate)
-      echo "TRW [VALIDATE]: trw_build_check(scope='full') is required — a single language-specific test command alone may not satisfy the project-native gate."
+      echo "TRW [VALIDATE]: Run applicable project-native checks, then record observed counts/status with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope). The reporter does not run checks."
       ;;
     deliver)
       echo "TRW [DELIVER]: trw_deliver() persists learnings, syncs the client instruction file, and closes the run — without it, your session's work is invisible to future agents."

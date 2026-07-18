@@ -143,3 +143,13 @@ class TestDetectCurrentPhase:
             assert result is None
         finally:
             unpin_active_run()
+
+    def test_session_id_selects_its_own_pinned_phase(self, tmp_path: Path, writer: FileStateWriter) -> None:
+        runs_root = tmp_path / ".trw" / "runs"
+        run_a = _make_run(runs_root, "task", "run-a", phase="research", writer=writer)
+        run_b = _make_run(runs_root, "task", "run-b", phase="validate", writer=writer)
+        pin_active_run(run_a, session_id="session-a")
+        pin_active_run(run_b, session_id="session-b")
+
+        assert detect_current_phase(session_id="session-a") == "research"
+        assert detect_current_phase(session_id="session-b") == "validate"

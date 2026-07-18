@@ -526,3 +526,230 @@ class TestSyncRoadmapMdHeaderStats:
         updated = roadmap_path.read_text(encoding="utf-8")
         assert "**PRD Total**: 4 (1 done," in updated
         assert "0 total" not in updated
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-121-FR03: single generated active registry drives projections
+# ---------------------------------------------------------------------------
+
+
+def test_prd_qual_121_fr03(tmp_path: Path) -> None:
+    """FR03 acceptance: Given lifecycle or dependency change, When sync runs,
+    Then registry, INDEX, and ROADMAP agree — and hand-edited projection drift
+    fails the drift gate."""
+    import json
+
+    from trw_mcp.state.index_sync import check_projection_drift
+
+    (tmp_path / ".trw").mkdir()
+    prds = tmp_path / "docs" / "requirements-aare-f" / "prds"
+    prds.mkdir(parents=True)
+    prd = prds / "PRD-CORE-001.md"
+    prd.write_text(
+        "---\nprd:\n  id: PRD-CORE-001\n  title: First thing\n  status: draft\n"
+        "  priority: P1\n  category: CORE\n---\n# PRD-CORE-001\n",
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "docs" / "requirements-aare-f" / "INDEX.md"
+    roadmap_path = tmp_path / "docs" / "requirements-aare-f" / "ROADMAP.md"
+
+    sync_index_md(index_path, prds)
+    sync_roadmap_md(roadmap_path, prds)
+
+    # Lifecycle change: draft -> approved. Sync again.
+    prd.write_text(prd.read_text(encoding="utf-8").replace("status: draft", "status: approved"), encoding="utf-8")
+    sync_index_md(index_path, prds)
+    sync_roadmap_md(roadmap_path, prds)
+
+    # Registry, INDEX, and ROADMAP agree on the new lifecycle state.
+    registry_doc = json.loads((tmp_path / ".trw" / "registry" / "requirements-registry.json").read_text())
+    entry = registry_doc["registry"]["entries"][0]
+    assert entry["prd_id"] == "PRD-CORE-001"
+    assert entry["lifecycle_status"] == "approved"
+    assert "| PRD-CORE-001 | First thing | P1 | Approved | CORE |" in index_path.read_text(encoding="utf-8")
+    assert "| PRD-CORE-001 | First thing | P1 | Approved | CORE |" in roadmap_path.read_text(encoding="utf-8")
+
+    # Clean state: no drift.
+    assert check_projection_drift(index_path, roadmap_path, prds) == []
+
+    # Negative: hand-editing a projection row is detected as drift.
+    hand_edited = index_path.read_text(encoding="utf-8").replace("First thing", "Renamed by hand")
+    index_path.write_text(hand_edited, encoding="utf-8")
+    findings = check_projection_drift(index_path, roadmap_path, prds)
+    assert any("index" in finding and "drift" in finding for finding in findings)
+
+
+# --- PRD-QUAL-122: labeled-header preservation (FR05) ---
+
+
+LABELED_ROADMAP_HEADER = (
+    "# TRW Framework Roadmap\n"
+    "\n"
+    "**Current Framework**: v9.9_TRW (authority: .trw/config.yaml framework_version)\n"
+    "**Target Release**: To be assigned at the release gate\n"
+    "**Roadmap Updated**: 2026-07-11 (fixture)\n"
+    "**AARE-F**: v1.2.3 (build/inventory.json)\n"
+    "**PRD Total**: 0 (0 done, 0 draft)\n"
+    "\n"
+    "---\n"
+)
+
+
+class TestLabeledHeaderPreservation:
+    """PRD-QUAL-122-FR05: sync never rewrites the labeled header fields."""
+
+    def test_roadmap_sync_preserves_labeled_header(self, tmp_path: Path, prds_dir: Path) -> None:
+        roadmap_path = tmp_path / "ROADMAP.md"
+        content = (
+            LABELED_ROADMAP_HEADER + "\n" + ROADMAP_CATALOGUE_START + "\nold table\n" + ROADMAP_CATALOGUE_END + "\n"
+        )
+        roadmap_path.write_text(content, encoding="utf-8")
+
+        header_lines = None
+        for _ in range(2):
+            sync_roadmap_md(roadmap_path, prds_dir)
+            updated = roadmap_path.read_text(encoding="utf-8")
+            current_header = [
+                line for line in updated.splitlines() if line.startswith("**") and "PRD Total" not in line
+            ]
+            if header_lines is not None:
+                assert current_header == header_lines
+            header_lines = current_header
+
+        final = roadmap_path.read_text(encoding="utf-8")
+        assert "**Current Framework**: v9.9_TRW (authority: .trw/config.yaml framework_version)" in final
+        assert "**Target Release**: To be assigned at the release gate" in final
+        assert "**Roadmap Updated**: 2026-07-11 (fixture)" in final
+        assert "**AARE-F**: v1.2.3 (build/inventory.json)" in final
+        assert "**Version**:" not in final
+        # The stats line and catalogue are still maintained by the writer.
+        assert "**PRD Total**: 4 (" in final
+        assert "PRD-CORE-001" in final
+
+    def test_index_sync_preserves_labeled_header(self, tmp_path: Path, prds_dir: Path) -> None:
+        index_path = tmp_path / "INDEX.md"
+        header = (
+            "# Requirements Catalogue (AARE-F)\n"
+            "\n"
+            "**Framework**: AARE-F v1.2.3 (authority: build/inventory.json)\n"
+            "**Roadmap**: [ROADMAP.md](ROADMAP.md) (delivery view)\n"
+            "\n"
+            "## Summary (0 total: 0 done, 0 draft)\n"
+            "\n"
+        )
+        content = header + INDEX_CATALOGUE_START + "\nold table\n" + INDEX_CATALOGUE_END + "\n"
+        index_path.write_text(content, encoding="utf-8")
+
+        for _ in range(2):
+            sync_index_md(index_path, prds_dir)
+            updated = index_path.read_text(encoding="utf-8")
+            assert "**Framework**: AARE-F v1.2.3 (authority: build/inventory.json)" in updated
+            assert "**Roadmap**: [ROADMAP.md](ROADMAP.md) (delivery view)" in updated
+            assert "**Version**:" not in updated
+
+        first = index_path.read_text(encoding="utf-8")
+        sync_index_md(index_path, prds_dir)
+        assert index_path.read_text(encoding="utf-8") == first
+
+    def test_roadmap_sync_idempotent_with_content_after_end_marker(self, tmp_path: Path, prds_dir: Path) -> None:
+        """PRD-QUAL-122: a footer after the end marker must not grow the file per run."""
+        roadmap_path = tmp_path / "ROADMAP.md"
+        content = (
+            LABELED_ROADMAP_HEADER
+            + "\n"
+            + ROADMAP_CATALOGUE_START
+            + "\nold table\n"
+            + ROADMAP_CATALOGUE_END
+            + "\n\n## Footer\n\nKept prose after the catalogue.\n"
+        )
+        roadmap_path.write_text(content, encoding="utf-8")
+        sync_roadmap_md(roadmap_path, prds_dir)
+        first = roadmap_path.read_text(encoding="utf-8")
+        sync_roadmap_md(roadmap_path, prds_dir)
+        second = roadmap_path.read_text(encoding="utf-8")
+        assert first == second
+        assert "Kept prose after the catalogue." in second
+        assert second.endswith("Kept prose after the catalogue.\n")
+
+
+def test_sync_fails_closed_on_stale_scheduling_ledger(tmp_path: Path) -> None:
+    """A rolled-back/tampered ledger must FAIL the projection sync loudly —
+    never silently fall back to the frontmatter authority (audit finding 5)."""
+    import pytest
+
+    from trw_mcp.state.requirements_registry import RegistryWriter, SchedulingLedgerError
+
+    (tmp_path / ".trw").mkdir()
+    prds = tmp_path / "docs" / "requirements-aare-f" / "prds"
+    prds.mkdir(parents=True)
+    (prds / "PRD-CORE-001.md").write_text(
+        "---\nprd:\n  id: PRD-CORE-001\n  title: T\n  status: draft\n  priority: P1\n  category: CORE\n---\n",
+        encoding="utf-8",
+    )
+    ledger = tmp_path / ".trw" / "registry" / "scheduling-ledger.jsonl"
+    writer = RegistryWriter(ledger)
+    writer.advance_evaluation_epoch(authorization_receipt="r1", actor="op")
+    writer.renew("PRD-CORE-001", authorization_receipt="r1", actor="op")
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    ledger.write_text(lines[0] + "\n", encoding="utf-8")  # rollback
+
+    index_path = tmp_path / "docs" / "requirements-aare-f" / "INDEX.md"
+    with pytest.raises(SchedulingLedgerError, match="projection refused"):
+        sync_index_md(index_path, prds)
+    assert not index_path.exists()  # prior projection state intact (nothing written)
+
+
+def test_projection_renders_registry_distinguishing_state(tmp_path: Path) -> None:
+    """FR03: the rendered projection contains bytes derivable ONLY from the
+    registry (receipt digest, epoch, WIP states) — the frontmatter scan alone
+    can no longer reproduce the projection."""
+    from datetime import date
+
+    from trw_mcp.models.requirements import ExecutionState
+    from trw_mcp.state.requirements_registry import RegistryWriter
+
+    (tmp_path / ".trw").mkdir()
+    prds = tmp_path / "docs" / "requirements-aare-f" / "prds"
+    prds.mkdir(parents=True)
+    (prds / "PRD-CORE-001.md").write_text(
+        "---\nprd:\n  id: PRD-CORE-001\n  title: T\n  status: approved\n  priority: P0\n  category: CORE\n---\n",
+        encoding="utf-8",
+    )
+    ledger = tmp_path / ".trw" / "registry" / "scheduling-ledger.jsonl"
+    writer = RegistryWriter(ledger, utc_today=lambda: date(2026, 7, 11))
+    writer.advance_evaluation_epoch(authorization_receipt="r1", actor="op")
+    writer.set_execution_state(
+        "PRD-CORE-001", ExecutionState.ACTIVE, prds_dir=prds, authorization_receipt="r1", actor="op", owner="team-a"
+    )
+
+    index_path = tmp_path / "docs" / "requirements-aare-f" / "INDEX.md"
+    sync_index_md(index_path, prds)
+    content = index_path.read_text(encoding="utf-8")
+    assert "### Executable Registry (epoch 1 @ 2026-07-11)" in content
+    assert "- registry receipt: `sha256:" in content
+    assert "- ACTIVE: PRD-CORE-001 (team-a)" in content
+
+
+def test_fallback_rows_keep_class_m_and_heading_only_prds_visible(tmp_path: Path) -> None:
+    """Re-audit P2 (2026-07-11): regenerating projections must not drop rows for
+    PRDs whose frontmatter fails to parse (class M) or that are heading-only —
+    values come from line-anchored extraction, never fabrication."""
+    prds = tmp_path / "prds"
+    prds.mkdir()
+    # Class M: --- block exists but does not parse (duplicate key).
+    (prds / "PRD-CORE-001.md").write_text(
+        "---\nid: PRD-CORE-001\ntitle: Broken but visible\nstatus: implemented\n"
+        "priority: P0\ncategory: CORE\nevidence: []\nevidence: {}\n---\nbody\n",
+        encoding="utf-8",
+    )
+    # Heading-only: no frontmatter, prose status line.
+    (prds / "PRD-CORE-002.md").write_text(
+        "# PRD-CORE-002: Heading Only Record\n\n**Status**: done\n",
+        encoding="utf-8",
+    )
+    entries = scan_prd_frontmatters(prds)
+    by_id = {entry.id: entry for entry in entries}
+    assert by_id["PRD-CORE-001"].title == "Broken but visible"
+    assert by_id["PRD-CORE-001"].status == "implemented"
+    assert by_id["PRD-CORE-002"].title == "Heading Only Record"
+    assert by_id["PRD-CORE-002"].status == "done"

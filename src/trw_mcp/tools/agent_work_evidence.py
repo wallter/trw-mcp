@@ -9,22 +9,12 @@ from fastmcp import Context, FastMCP
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.agent_work_evidence import AgentWorkEvidence, validate_agent_work_evidence
-from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, resolve_run_path
+from trw_mcp.state._call_context import build_call_context as _build_call_context
+from trw_mcp.state._paths import resolve_run_path
 from trw_mcp.state.agent_work_evidence import assemble_agent_work_evidence
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-
-def _build_call_context(ctx: Context | None) -> TRWCallContext:
-    pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    return TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
 
 def register_agent_work_evidence_tools(server: FastMCP) -> None:

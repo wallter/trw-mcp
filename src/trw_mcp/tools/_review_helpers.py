@@ -27,6 +27,7 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools._review_provenance import RunIdentity
 
 logger = structlog.get_logger(__name__)
 
@@ -54,11 +55,27 @@ REVIEWER_ROLES: tuple[str, ...] = (
 )
 
 
-def _get_git_diff() -> str:
-    """Get git diff of HEAD, returning empty string on any error."""
+def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> str:
+    """Get a git diff, returning empty string on any error.
+
+    Default (no args) diffs the working tree against ``HEAD`` — the original
+    contract. PRD-CORE-213-FR04 extends this with:
+      - ``base``: diff ``<base>..HEAD`` (the run's recorded base ref) instead of
+        the uncommitted ``HEAD`` diff, so committed transitions are visible.
+      - ``paths``: a path-limited diff (``git diff ... -- <paths>``) so the
+        transition detector's cost is bounded by the PRD directory (NFR03).
+    All arguments are trusted internal literals / repo-relative paths — never
+    caller-tainted shell input.
+    """
+    cmd = ["git", "diff", f"{base}..HEAD" if base else "HEAD"]
+    if paths:
+        cmd.append("--")
+        cmd.extend(paths)
     try:
-        result = subprocess.run(
-            ["git", "diff", "HEAD"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
+        # git is a well-known VCS tool; all args are static literals / repo-relative
+        # paths, never caller-tainted shell input.
+        result = subprocess.run(  # noqa: S603
+            cmd,
             capture_output=True,
             text=True,
             timeout=30,
@@ -147,6 +164,9 @@ def _persist_review_artifact(
     resolved_run: Path | None,
     review_data: dict[str, object],
     event_fields: dict[str, object],
+    result_payload: dict[str, object] | None = None,
+    *,
+    verified_reviewer_identity: RunIdentity | None = None,
 ) -> str:
     """Write review.yaml and log review_complete event.
 
@@ -173,9 +193,45 @@ def _persist_review_artifact(
     events_path = resolved_run / "meta" / "events.jsonl"
     prd_ids = _resolve_review_prd_ids(resolved_run, reader, event_fields)
     review_payload = dict(review_data)
+    # PRD-CORE-213-FR01: stamp reviewer provenance onto every persisted
+    # review.yaml. Manual mode injects its own block (with any explicit
+    # reviewer_source) upstream; this central call covers auto/cross_model
+    # from their ``mode`` key. Fail-open — never blocks the artifact write.
+    from trw_mcp.tools._review_provenance import ensure_reviewer_block
+
+    ensure_reviewer_block(review_payload, resolved_run, reader, verified_identity=verified_reviewer_identity)
     preflight_checks = _load_preflight_checks(resolved_run, reader, prd_ids)
     if preflight_checks:
         review_payload["preflight_checks"] = preflight_checks
+
+    # CORE-205 FR02/FR03: the typed receipt is authoritative.  review.yaml is
+    # retained only as a derived projection.  Receipt failure is visible and,
+    # under enforce mode, cannot retain a legacy positive ``substantive`` bit.
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._review_receipt_writer import record_review_receipt
+
+    evidence_mode = str(getattr(get_config(), "evidence_receipt_mode", "enforce"))
+    receipt_outcome = record_review_receipt(
+        resolved_run,
+        review_payload,
+        tuple(prd_ids),
+        policy_mode=evidence_mode,
+    )
+    review_payload["review_receipt_id"] = receipt_outcome.receipt_id
+    review_payload["review_plan_id"] = receipt_outcome.plan_id
+    review_payload["typed_receipt_state"] = receipt_outcome.state
+    review_payload["typed_receipt_reason"] = receipt_outcome.reason_code
+    if evidence_mode == "enforce" and not receipt_outcome.ok:
+        review_payload["substantive"] = False
+        review_payload["non_substantive_reason"] = receipt_outcome.reason_code
+    if result_payload is not None:
+        result_payload["review_receipt_id"] = receipt_outcome.receipt_id
+        result_payload["review_plan_id"] = receipt_outcome.plan_id
+        result_payload["typed_receipt_state"] = receipt_outcome.state
+        result_payload["typed_receipt_reason"] = receipt_outcome.reason_code
+        if evidence_mode == "enforce" and not receipt_outcome.ok:
+            result_payload["substantive"] = False
+            result_payload["non_substantive_reason"] = receipt_outcome.reason_code
 
     review_path = resolved_run / "meta" / "review.yaml"
     writer.write_yaml(review_path, review_payload)

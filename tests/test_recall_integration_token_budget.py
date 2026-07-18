@@ -404,7 +404,7 @@ def test_tokens_used_reflects_post_max_results_cap(tmp_path: Path) -> None:
     tokens_used must equal the sum for the capped set — not the pre-cap set.
     This prevents callers from seeing a tokens_used > sum(returned entries).
     """
-    from trw_memory.retrieval.token_budget import estimate_entry_tokens
+    from trw_memory.retrieval.token_budget import estimate_serialized_entry_tokens
 
     from trw_mcp.tools._recall_impl import execute_recall
 
@@ -434,7 +434,7 @@ def test_tokens_used_reflects_post_max_results_cap(tmp_path: Path) -> None:
 
     returned = result["learnings"]
     assert len(returned) == 3, "max_results=3 should limit output to 3 entries"
-    expected_tokens = sum(estimate_entry_tokens(e) for e in returned)
+    expected_tokens = sum(estimate_serialized_entry_tokens(e) for e in returned)
     assert result["tokens_used"] == expected_tokens, (
         f"tokens_used ({result['tokens_used']}) should equal sum of returned "
         f"entries ({expected_tokens}), not pre-cap set"

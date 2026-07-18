@@ -30,11 +30,11 @@ from trw_mcp.state.claude_md._review_md import recall_learnings as _default_reca
 logger = structlog.get_logger(__name__)
 
 RecallFn = Callable[..., list[dict[str, object]]]
-InstructionClientId: TypeAlias = Literal["opencode", "codex", "copilot", "gemini"]
+InstructionClientId: TypeAlias = Literal["opencode", "codex", "copilot"]
 InstructionGeneratorResult: TypeAlias = dict[str, list[str]]
 InstructionSyncGenerator: TypeAlias = Callable[[Path, bool], InstructionGeneratorResult]
 
-_INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = ("opencode", "codex", "copilot", "gemini")
+_INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = ("opencode", "codex", "copilot")
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -128,18 +128,10 @@ def _generate_copilot_instruction_target(project_root: Path, force: bool = False
     return generate_copilot_instructions(project_root, force=force)
 
 
-def _generate_gemini_instruction_target(project_root: Path, force: bool = False) -> InstructionGeneratorResult:
-    """Generate the Gemini CLI instruction file (GEMINI.md)."""
-    from trw_mcp.bootstrap._gemini import generate_gemini_instructions
-
-    return generate_gemini_instructions(project_root, force=force)
-
-
 _INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator] = {
     "opencode": _generate_opencode_instruction_target,
     "codex": _generate_codex_instruction_target,
     "copilot": _generate_copilot_instruction_target,
-    "gemini": _generate_gemini_instruction_target,
 }
 
 
@@ -288,10 +280,7 @@ def _sync_agents_md_if_needed(
     # tools the agent can actually call.
     from trw_mcp.state.claude_md._tool_manifest import resolve_exposed_tools
 
-    exposed = resolve_exposed_tools(
-        mode=config.effective_tool_exposure_mode,
-        custom_list=config.tool_exposure_list,
-    )
+    exposed = resolve_exposed_tools(mode=config.tool_resolution_mode)
 
     if effective_client == "codex":
         agents_body = render_codex_trw_section(exposed_tools=exposed)

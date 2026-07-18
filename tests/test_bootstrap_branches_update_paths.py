@@ -71,6 +71,19 @@ class TestDryRunWouldCreate:
         if (_DATA_DIR / "agents").is_dir():
             assert len(agent_creates) > 0
 
+    def test_dry_run_agent_would_update_when_present(self, initialized_repo: Path) -> None:
+        """Dry-run reports a resolved agent as 'would update', not 'would create'.
+
+        The agent already exists (resolved) after init, so the resolve-aware
+        dry-run compare must classify it as an update.
+        """
+        result = update_project(initialized_repo, dry_run=True)
+        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        # Existing resolved agent must not be reported as a create.
+        assert not any("would create" in c and "trw-implementer.md" in c for c in result["created"])
+        # Nothing changed (already resolved), so it must not be a spurious update either.
+        assert not any("would update" in u and str(agent) in u for u in result["updated"])
+
     def test_dry_run_claude_md_would_create(self, fake_git_repo: Path) -> None:
         """Dry-run reports CLAUDE.md 'would create' when file is missing."""
         (fake_git_repo / ".trw").mkdir()
@@ -139,7 +152,7 @@ class TestUpdateOSErrorPaths:
 
         with patch("shutil.copy2", side_effect=selective_fail):
             result = update_project(initialized_repo)
-        assert any("Failed to copy" in e for e in result["errors"])
+        assert any("Failed to copy" in e or "Failed to snapshot" in e for e in result["errors"])
 
     def test_skill_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during skill file copy adds to errors."""
@@ -161,23 +174,28 @@ class TestUpdateOSErrorPaths:
             result = update_project(initialized_repo)
         assert any("skill" in e.lower() or "Failed to copy" in e for e in result["errors"])
 
-    def test_agent_copy_oserror(self, initialized_repo: Path) -> None:
-        """OSError during agent file copy adds to errors."""
+    def test_agent_write_oserror(self, initialized_repo: Path) -> None:
+        """OSError while writing a resolved agent adds to errors.
+
+        sub_5ctrrLJ: agents are now materialized via the resolve-and-write path
+        (``_install_one_agent`` → ``Path.write_text``), not ``shutil.copy2``, so
+        the failure is scoped to the ``.claude/agents/`` destination write.
+        """
         from trw_mcp.bootstrap import _DATA_DIR
 
         if not (_DATA_DIR / "agents").is_dir():
             pytest.skip("no bundled agents")
 
-        original_copy2 = shutil.copy2
+        original_write = Path.write_text
 
-        def fail_agents(src: Path | str, dst: Path | str, **kwargs: object) -> None:
-            if "agents" in str(src):
-                raise OSError("agent copy failed")
-            return original_copy2(src, dst, **kwargs)
+        def fail_agent_write(self: Path, *args: object, **kwargs: object) -> int:
+            if f"{'/.claude/agents/'}" in str(self) and self.suffix == ".md":
+                raise OSError("agent write failed")
+            return original_write(self, *args, **kwargs)  # type: ignore[arg-type]
 
-        with patch("shutil.copy2", side_effect=fail_agents):
+        with patch.object(Path, "write_text", fail_agent_write):
             result = update_project(initialized_repo)
-        assert any("Failed to copy" in e for e in result["errors"])
+        assert any("Failed to write" in e for e in result["errors"])
 
 
 @pytest.mark.unit

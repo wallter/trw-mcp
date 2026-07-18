@@ -227,7 +227,18 @@ class TestCeremonyHelpersBuildGateCompat:
         event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": True}}
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
-        result = check_delivery_gates(tmp_path, FileStateReader())
+        # Legacy event-coercion contract: opt into observe mode (v26.1
+        # enforce requires a typed BuildReceipt, warned regardless of events).
+        from unittest.mock import patch as _patch
+
+        from trw_mcp.models.config import TRWConfig as _Cfg
+
+        _observe = _Cfg(evidence_receipt_mode="observe")
+        with (
+            _patch("trw_mcp.tools.ceremony.get_config", return_value=_observe),
+            _patch("trw_mcp.tools._delivery_helpers.get_config", return_value=_observe),
+        ):
+            result = check_delivery_gates(tmp_path, FileStateReader())
         assert "build_gate_warning" not in result
 
     def test_build_gate_string_true(self, tmp_path: Path) -> None:
@@ -242,7 +253,18 @@ class TestCeremonyHelpersBuildGateCompat:
         event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": "True"}}
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
-        result = check_delivery_gates(tmp_path, FileStateReader())
+        # Legacy event-coercion contract: opt into observe mode (v26.1
+        # enforce requires a typed BuildReceipt, warned regardless of events).
+        from unittest.mock import patch as _patch
+
+        from trw_mcp.models.config import TRWConfig as _Cfg
+
+        _observe = _Cfg(evidence_receipt_mode="observe")
+        with (
+            _patch("trw_mcp.tools.ceremony.get_config", return_value=_observe),
+            _patch("trw_mcp.tools._delivery_helpers.get_config", return_value=_observe),
+        ):
+            result = check_delivery_gates(tmp_path, FileStateReader())
         assert "build_gate_warning" not in result
 
 

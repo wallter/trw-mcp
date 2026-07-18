@@ -72,9 +72,7 @@ class TestLearnUtilityFilterGate:
             _check_and_handle_dedup=MagicMock(return_value=None),
         )
 
-    def test_filter_disabled_by_default_never_builds_llm_client(
-        self, trw_dir: Path, config: TRWConfig
-    ) -> None:
+    def test_filter_disabled_by_default_never_builds_llm_client(self, trw_dir: Path, config: TRWConfig) -> None:
         """Default config must NOT instantiate LLMClient (no undisclosed API call)."""
         assert config.llm_utility_filter_enabled is False
         with patch("trw_mcp.clients.llm.LLMClient") as mock_client:

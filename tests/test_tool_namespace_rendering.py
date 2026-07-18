@@ -36,8 +36,7 @@ _ALL_PROFILES = [
     "cursor-cli",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
+    "antigravity-cli",
 ]
 
 
@@ -56,7 +55,7 @@ def test_claude_code_profile_has_mcp_trw_prefix() -> None:
 
 @pytest.mark.parametrize(
     "client_id",
-    ["opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "gemini", "aider"],
+    ["opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
 )
 def test_non_claude_code_profiles_have_empty_prefix(client_id: str) -> None:
     p = resolve_client_profile(client_id)

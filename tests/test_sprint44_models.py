@@ -11,10 +11,31 @@ Coverage:
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 from pydantic import ValidationError
 
 from trw_mcp.models.run import IntegrationReviewArtifact, ReviewFinding
+
+
+def _artifact(
+    *,
+    verdict: Literal["pass", "warn", "block"] = "pass",
+    findings: list[ReviewFinding] | None = None,
+) -> IntegrationReviewArtifact:
+    return IntegrationReviewArtifact(
+        run_id="run-abc123",
+        reviewer_id="agent-001",
+        reviewer_role="integration",
+        timestamp="2026-03-03T05:00:00Z",
+        git_diff_hash="abc123def456",
+        shards_reviewed=["shard-01", "shard-02"],
+        checks_performed=["duplicate_functions", "inconsistent_types"],
+        findings=findings or [],
+        verdict=verdict,
+        human_escalation_path="Escalate to team lead via GitHub PR comment",
+    )
 
 
 class TestReviewFindingNewFields:
@@ -71,90 +92,30 @@ class TestReviewFindingNewFields:
     def test_review_finding_is_frozen(self) -> None:
         finding = ReviewFinding(category="quality", severity="warning", description="test")
         with pytest.raises(ValidationError):
-            finding.confidence = 0.5
+            finding.confidence = 0.5  # type: ignore[misc]
 
 
 class TestIntegrationReviewArtifact:
     """Tests for IntegrationReviewArtifact model (INFRA-027-FR03)."""
 
     def test_integration_review_artifact_creation(self) -> None:
-        artifact = IntegrationReviewArtifact(
-            run_id="run-abc123",
-            reviewer_id="agent-001",
-            reviewer_role="integration",
-            timestamp="2026-03-03T05:00:00Z",
-            git_diff_hash="abc123def456",
-            shards_reviewed=["shard-01", "shard-02"],
-            checks_performed=["duplicate_functions", "inconsistent_types"],
-            findings=[],
-            verdict="pass",
-            human_escalation_path="Escalate to team lead via GitHub PR comment",
-        )
+        artifact = _artifact()
         assert artifact.run_id == "run-abc123"
         assert artifact.reviewer_id == "agent-001"
         assert artifact.reviewer_role == "integration"
         assert artifact.verdict == "pass"
         assert artifact.shards_reviewed == ["shard-01", "shard-02"]
 
-    def test_integration_review_artifact_verdict_pass(self) -> None:
-        artifact = IntegrationReviewArtifact(
-            run_id="r",
-            reviewer_id="",
-            reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z",
-            git_diff_hash="",
-            shards_reviewed=[],
-            checks_performed=[],
-            findings=[],
-            verdict="pass",
-            human_escalation_path="",
-        )
-        assert artifact.verdict == "pass"
-
-    def test_integration_review_artifact_verdict_warn(self) -> None:
-        artifact = IntegrationReviewArtifact(
-            run_id="r",
-            reviewer_id="",
-            reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z",
-            git_diff_hash="",
-            shards_reviewed=[],
-            checks_performed=[],
-            findings=[],
-            verdict="warn",
-            human_escalation_path="",
-        )
-        assert artifact.verdict == "warn"
-
-    def test_integration_review_artifact_verdict_block(self) -> None:
-        artifact = IntegrationReviewArtifact(
-            run_id="r",
-            reviewer_id="",
-            reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z",
-            git_diff_hash="",
-            shards_reviewed=[],
-            checks_performed=[],
-            findings=[],
-            verdict="block",
-            human_escalation_path="",
-        )
-        assert artifact.verdict == "block"
+    @pytest.mark.parametrize("verdict", ["pass", "warn", "block"])
+    def test_integration_review_artifact_valid_verdicts(
+        self,
+        verdict: Literal["pass", "warn", "block"],
+    ) -> None:
+        assert _artifact(verdict=verdict).verdict == verdict
 
     def test_integration_review_artifact_invalid_verdict(self) -> None:
         with pytest.raises(ValidationError):
-            IntegrationReviewArtifact(
-                run_id="r",
-                reviewer_id="",
-                reviewer_role="integration",
-                timestamp="2026-03-03T00:00:00Z",
-                git_diff_hash="",
-                shards_reviewed=[],
-                checks_performed=[],
-                findings=[],
-                verdict="unknown",  # type: ignore[arg-type]
-                human_escalation_path="",
-            )
+            _artifact(verdict="unknown")  # type: ignore[arg-type]
 
     def test_integration_review_artifact_with_findings(self) -> None:
         finding = ReviewFinding(
@@ -164,34 +125,12 @@ class TestIntegrationReviewArtifact:
             confidence=0.9,
             reviewer_role="integration",
         )
-        artifact = IntegrationReviewArtifact(
-            run_id="run-xyz",
-            reviewer_id="agent-002",
-            reviewer_role="integration",
-            timestamp="2026-03-03T06:00:00Z",
-            git_diff_hash="deadbeef",
-            shards_reviewed=["shard-03"],
-            checks_performed=["api_contract_mismatch"],
-            findings=[finding],
-            verdict="warn",
-            human_escalation_path="Escalate to team lead via GitHub PR comment",
-        )
+        artifact = _artifact(findings=[finding], verdict="warn")
         assert len(artifact.findings) == 1
         assert artifact.findings[0].severity == "warning"
         assert artifact.findings[0].confidence == 0.9
 
     def test_integration_review_artifact_is_frozen(self) -> None:
-        artifact = IntegrationReviewArtifact(
-            run_id="r",
-            reviewer_id="",
-            reviewer_role="integration",
-            timestamp="2026-03-03T00:00:00Z",
-            git_diff_hash="",
-            shards_reviewed=[],
-            checks_performed=[],
-            findings=[],
-            verdict="pass",
-            human_escalation_path="",
-        )
+        artifact = _artifact()
         with pytest.raises(ValidationError):
-            artifact.verdict = "block"
+            artifact.verdict = "block"  # type: ignore[misc]

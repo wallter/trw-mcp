@@ -44,9 +44,10 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -54,6 +55,7 @@ from typing import Any, cast
 import structlog
 
 from trw_mcp._locking import _lock_ex, _lock_un
+from trw_mcp.exceptions import StateError
 
 logger = structlog.get_logger(__name__)
 
@@ -160,50 +162,14 @@ def _safe_mtime_ns(path: Path) -> int | None:
         return None
 
 
-# --- PID liveness -----------------------------------------------------------
-
-
-def _is_pid_alive(pid: int) -> bool:
-    """Return ``True`` when *pid* names a live process.
-
-    On POSIX uses ``os.kill(pid, 0)`` — catches ``ProcessLookupError``
-    for dead pids and ``PermissionError`` (live process we lack
-    permission to signal — still counts as alive).
-
-    On Windows uses ``psutil.pid_exists`` when ``psutil`` is installed;
-    when it is not, logs a one-time DEBUG and returns True so the entry
-    is preserved (better to retain a possibly-orphan pin than to drop a
-    live one on the platform where we cannot probe).
-    """
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        try:
-            import psutil  # type: ignore[import-not-found]
-        except ImportError:
-            _runtime_logger().debug("pid_check_skipped_no_psutil", pid=pid)
-            return True
-        return bool(psutil.pid_exists(pid))
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # justified: signal denied implies the process exists
-        return True
-    except OSError:
-        # Other errno — treat as alive to avoid evicting live pins on exotic errors.
-        return True
-    return True
-
-
 # --- Load path ---------------------------------------------------------------
 
 
 def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Drop entries with stale ``run_path`` or orphan ``pid``.
+    """Drop malformed entries and pins whose ``run_path`` disappeared.
 
-    Emits ``pin_stale_run_path_evicted`` and ``pin_orphan_evicted`` WARN
-    logs per dropped entry so analytics can track eviction velocity.
+    Creator PIDs are diagnostic only: pins intentionally survive MCP process
+    restarts. Heartbeat expiry and explicit adoption govern live ownership.
     """
     survivors: dict[str, dict[str, Any]] = {}
     for pin_key, entry in raw.items():
@@ -229,17 +195,6 @@ def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str
             )
             continue
 
-        # Orphan pid eviction.
-        pid_raw = entry.get("pid")
-        if isinstance(pid_raw, int) and not _is_pid_alive(pid_raw):
-            _runtime_logger().warning(
-                "pin_orphan_evicted",
-                pin_key=pin_key,
-                pid=pid_raw,
-                run_path=run_path_raw,
-            )
-            continue
-
         survivors[pin_key] = entry
     return survivors
 
@@ -249,7 +204,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
 
     Fail-open on malformed JSON: logs ``pin_store_malformed_fallback``
     at WARN level and returns ``{}``.  Each load applies the stale-path
-    and orphan-pid eviction passes before caching.
+    and stale-path eviction before caching.
     """
     global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
 
@@ -311,10 +266,10 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
 
 
 def prune_pin_store_orphans() -> int:
-    """Persist eviction of stale-path / orphan-pid entries to disk.
+    """Persist eviction of malformed or stale-path entries to disk.
 
-    ``load_pin_store`` evicts orphans in-memory only, so an orphan keeps
-    showing up in every load (with a fresh ``pin_orphan_evicted`` warning)
+    ``load_pin_store`` evicts stale entries in-memory only, so one keeps
+    showing up in every load (with a fresh warning)
     until something writes the store. This helper performs an explicit
     load → diff → save cycle so the orphan disappears from the file.
 
@@ -328,7 +283,7 @@ def prune_pin_store_orphans() -> int:
     pins_path = pin_store_path()
     if not pins_path.exists():
         return 0
-    with _pin_store_threading_lock:
+    with _pin_store_threading_lock, _pin_store_file_lock():
         try:
             with pins_path.open("r", encoding="utf-8") as fh:
                 raw = json.load(fh)
@@ -351,7 +306,7 @@ def prune_pin_store_orphans() -> int:
         if removed <= 0:
             return 0
         try:
-            _save_pin_store_locked(survivors)
+            _write_pin_store_locked(survivors)
         except OSError as exc:
             _runtime_logger().warning(
                 "pin_store_prune_save_failed",
@@ -422,6 +377,31 @@ def save_pin_store(store: dict[str, dict[str, Any]]) -> None:
         _save_pin_store_locked(store)
 
 
+@contextmanager
+def _pin_store_file_lock() -> Iterator[None]:
+    """Hold the cross-process pin-store lock for one disk transaction."""
+    pins_path = pin_store_path()
+    os.makedirs(pins_path.parent, exist_ok=True)
+    lock_fd = open(pin_store_lock_path(), "a+")  # noqa: SIM115
+    try:
+        _lock_ex(lock_fd.fileno())
+        yield
+    finally:
+        try:
+            _lock_un(lock_fd.fileno())
+        finally:
+            lock_fd.close()
+
+
+def _write_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
+    """Write while both the process and file locks are already held."""
+    _atomic_write_json(pin_store_path(), store)
+    global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
+    _pin_store_cache = None
+    _pin_store_cache_ts = 0.0
+    _pin_store_cache_mtime_ns = None
+
+
 def _save_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
     """Save path executed with ``_pin_store_threading_lock`` already held.
 
@@ -430,33 +410,8 @@ def _save_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
     → mutate → save cycle without releasing-then-reacquiring, which
     would allow an interleaving thread to lose its update.
     """
-    pins_path = pin_store_path()
-    lock_path = pin_store_lock_path()
-
-    # Lazy directory creation (``.trw/runtime/`` does not exist on a fresh
-    # project).  ``exist_ok=True`` makes the call idempotent.
-    os.makedirs(pins_path.parent, exist_ok=True)
-
-    # Open the lock sentinel.  "a+" creates the file if missing and
-    # never truncates — the file's content is irrelevant (we only use
-    # its FD for flock).
-    lock_fd = open(lock_path, "a+")  # noqa: SIM115 — FD ownership is manual so the file lock spans the write
-    try:
-        _lock_ex(lock_fd.fileno())
-        try:
-            _atomic_write_json(pins_path, store)
-            # CRITICAL (FR04): invalidate the 1-second cache
-            # immediately after os.replace completes.  Without this,
-            # a concurrent reader may serve stale state for up to 1
-            # second, reintroducing the pin-collision race condition.
-            global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
-            _pin_store_cache = None
-            _pin_store_cache_ts = 0.0
-            _pin_store_cache_mtime_ns = None
-        finally:
-            _lock_un(lock_fd.fileno())
-    finally:
-        lock_fd.close()
+    with _pin_store_file_lock():
+        _write_pin_store_locked(store)
 
 
 def _load_pin_store_uncached() -> dict[str, dict[str, Any]]:
@@ -472,6 +427,95 @@ def _load_pin_store_uncached() -> dict[str, dict[str, Any]]:
     _pin_store_cache_ts = 0.0
     _pin_store_cache_mtime_ns = None
     return load_pin_store()
+
+
+def _load_pin_store_strict_locked() -> dict[str, dict[str, Any]]:
+    """Read and validate ownership state while the file lock is held."""
+    pins_path = pin_store_path()
+    if not pins_path.exists():
+        return {}
+    try:
+        raw: object = json.loads(pins_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise StateError(f"pin ownership marker is unreadable: {exc}", path=str(pins_path)) from exc
+    if not isinstance(raw, dict):
+        raise StateError(
+            f"pin ownership marker root must be a mapping, got {type(raw).__name__}",
+            path=str(pins_path),
+        )
+    store: dict[str, dict[str, Any]] = {}
+    for pin_key, entry in raw.items():
+        if not isinstance(pin_key, str) or not pin_key:
+            raise StateError("pin ownership marker contains an invalid pin key", path=str(pins_path))
+        if not isinstance(entry, dict):
+            raise StateError(f"pin ownership marker for {pin_key} must be a mapping", path=str(pins_path))
+        run_path = entry.get("run_path")
+        if not isinstance(run_path, str) or not run_path:
+            raise StateError(f"pin ownership marker for {pin_key} missing run_path", path=str(pins_path))
+        store[pin_key] = dict(entry)
+    return store
+
+
+def transfer_pin_entry(
+    caller_pin_key: str,
+    run_path: Path,
+    *,
+    force: bool,
+    pin_ttl_hours: float,
+) -> tuple[dict[str, Any], str | None, float | None, bool]:
+    """Validate ownership and transfer a run pin in one disk transaction."""
+    target = str(run_path.resolve())
+    now_dt = datetime.now(timezone.utc)
+    now = _iso_now()
+    with _pin_store_threading_lock, _pin_store_file_lock():
+        store = _load_pin_store_strict_locked()
+        previous_pin_key: str | None = None
+        previous_entry: dict[str, Any] | None = None
+        for pin_key, entry in store.items():
+            if str(Path(str(entry["run_path"])).resolve()) == target:
+                previous_pin_key = pin_key
+                previous_entry = entry
+                break
+
+        heartbeat_age_hours: float | None = None
+        owner_was_live = False
+        if previous_entry is not None:
+            heartbeat = previous_entry.get("last_heartbeat_ts")
+            if not isinstance(heartbeat, str):
+                raise StateError("pin ownership marker has invalid last_heartbeat_ts", path=str(pin_store_path()))
+            try:
+                parsed = datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("timezone missing")
+            except ValueError as exc:
+                raise StateError(
+                    "pin ownership marker has invalid last_heartbeat_ts",
+                    path=str(pin_store_path()),
+                    pin_key=previous_pin_key,
+                ) from exc
+            heartbeat_age_hours = (now_dt - parsed.astimezone(timezone.utc)).total_seconds() / 3600.0
+            owner_was_live = heartbeat_age_hours < pin_ttl_hours
+        if owner_was_live and previous_pin_key != caller_pin_key and not force:
+            raise StateError(
+                "run is actively held by a live pin; pass force=True to override",
+                path=target,
+                pin_key=previous_pin_key,
+            )
+
+        existing = store.get(caller_pin_key)
+        created_ts = existing.get("created_ts") if isinstance(existing, dict) else None
+        record: dict[str, Any] = {
+            "run_path": target,
+            "created_ts": created_ts if isinstance(created_ts, str) and created_ts else now,
+            "last_heartbeat_ts": now,
+            "client_hint": None,
+            "pid": os.getpid(),
+        }
+        if previous_pin_key is not None and previous_pin_key != caller_pin_key:
+            store.pop(previous_pin_key, None)
+        store[caller_pin_key] = record
+        _write_pin_store_locked(store)
+    return record, previous_pin_key, heartbeat_age_hours, owner_was_live
 
 
 # --- Mutation helpers used by _paths pin-helper shims -----------------------
@@ -498,7 +542,7 @@ def upsert_pin_entry(
     other's updates via interleaved reads of a stale snapshot.
     """
     now = _iso_now()
-    with _pin_store_threading_lock:
+    with _pin_store_threading_lock, _pin_store_file_lock():
         store = _load_pin_store_uncached()
         existing = store.get(pin_key)
         created_ts = now
@@ -514,7 +558,7 @@ def upsert_pin_entry(
             "pid": os.getpid(),
         }
         store[pin_key] = record
-        _save_pin_store_locked(store)
+        _write_pin_store_locked(store)
     return record
 
 
@@ -524,12 +568,12 @@ def remove_pin_entry(pin_key: str) -> bool:
     Holds :data:`_pin_store_threading_lock` across the load-mutate-save
     cycle (see :func:`upsert_pin_entry` for the rationale).
     """
-    with _pin_store_threading_lock:
+    with _pin_store_threading_lock, _pin_store_file_lock():
         store = _load_pin_store_uncached()
         if pin_key not in store:
             return False
         store.pop(pin_key, None)
-        _save_pin_store_locked(store)
+        _write_pin_store_locked(store)
     return True
 
 

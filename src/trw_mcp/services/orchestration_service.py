@@ -14,9 +14,9 @@ import json
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
 
 import structlog
+from typing_extensions import TypedDict
 
 _logger = structlog.get_logger(__name__)
 

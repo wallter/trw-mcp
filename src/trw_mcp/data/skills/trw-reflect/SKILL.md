@@ -18,8 +18,6 @@ slowed the session down or what's missing (commands, skills, agents, indexes,
 docs, conventions) and drives accepted fixes to implementation instead of
 leaving a report behind.
 
-Run this BEFORE `trw_deliver` so accepted learnings ride the delivery ceremony.
-
 ## Depth
 
 `$ARGUMENTS` selects depth (default `standard`):
@@ -39,7 +37,7 @@ pay down accumulated ledger-only debt.
 ## Step 0: Recurrence check (mandatory first)
 
 List `.trw/reflections/*.md` ledger entries — ignore `*-L-*.yaml` files there
-(those are delivery-ceremony reflect shards owned by `_do_reflect`, not
+(those are legacy reflection records from the retired full-reflect pipeline, not
 ledgers). Order by file MODIFICATION time, not filename date — filenames carry
 the session's date, and concurrent instances write same-day entries. Name the
 ledger files you actually found in your header; claim "first reflection" only
@@ -54,11 +52,21 @@ routed item (treat `recorded-only` rows as unimplemented):
 
 Never claim recurrence without citing the prior ledger entry (NFR04).
 
-Tally the open `recorded-only` + `deferred` items across prior ledgers and
-include the count in your Step 3 presentation (offer them for routing
-alongside new opportunities, or suggest `/trw-reflect action`). A ledger that
-only ever accumulates recorded-only rows has not closed the follow-through
-loop — say so plainly when the debt grows.
+Tally the open `recorded-only` + `deferred` items with
+`python3 scripts/count-reflection-debt.py` when present. Otherwise count ledger
+status cells, report the method, and list free-form ledgers you could not parse. Include the count in your
+Step 3 presentation (offer open items for routing alongside new
+opportunities, or suggest `/trw-reflect action`). A ledger that only ever
+accumulates recorded-only rows has not closed the follow-through loop — say
+so plainly when the debt grows.
+
+**Delta mode (same-session re-reflection)**: if the most recently modified
+ledger's recorded run/session ID equals the current immutable identity, or its
+exact path was created earlier in the current conversation, do not re-run the full protocol over already-
+ledgered ground. Collect signals only for the window since that ledger was
+written, append a clearly-headed `## Delta reflection — <ISO timestamp>`
+section to the SAME file (append-only), and carry the original entry's
+"Next reflection — verify" forward unchanged unless a delta item modifies it.
 
 ## Step 1: Collect signals (external evidence only)
 
@@ -78,6 +86,22 @@ events; rely on git + in-context evidence):
 6. **Tool friction** (standard/deep): denied permission calls, dead-end
    searches, tools/skills/agents that were needed but missing, oversized
    reads that went unused.
+7. **Ceremony-surface pathologies** (standard/deep) — check each explicitly:
+   - *Timed-out-but-persisted ceremony calls*: any `trw_*` call that returned a
+     client timeout — verify whether it persisted anyway (learnings dir, run
+     `events.jsonl`, PRD files) before counting it as a failure.
+   - *Contradictory guidance*: hook output vs tool output disagreeing on
+     tier/phase/requirements within the same session.
+   - *Ungrounded nudges*: `nudge_content` unrelated to the current action
+     (evidence for nudge-relevance work, not something to silently skim).
+   - *Perverse incentives* (Truthfulness-critical): any moment a gate or
+     ceremony made the honest record and the passing record diverge — e.g.
+     having to downgrade a finding's severity, soften a status, or relabel a
+     provenance to satisfy a verdict. These outrank all other findings.
+   - *Doc↔code gate gaps* (deep): for any gate touched this session, grep its
+     governing doc for "OR" / "permitted" / "exception" / "unless" and confirm
+     each documented branch has a code path — a gate stricter OR looser than
+     its documented policy trains bypass either way.
 
 At `standard`+ depth, you MAY delegate (2) and (6) to an Explore sub-agent;
 keep the conclusions, not the dumps.
@@ -104,9 +128,8 @@ Then **dedup** before presenting:
 
 - `trw_recall(query=<topic>)` — if an existing learning already covers it, the
   opportunity becomes recurrence evidence on that learning, not a new row.
-- Grep `docs/documentation/improvement-backlog.md` (create it with a one-line
-  header if missing) — matches move to a "recurring" section with a pointer to
-  the existing entry.
+- Grep `docs/documentation/improvement-backlog.md` when it exists; a missing file means no backlog match. Matches
+  move to a "recurring" section with a pointer to the existing entry only after approval in Step 4.
 
 Respect the depth cap by dropping the rows with the lowest impact-to-effort
 ratio (score H=3/M=2/L=1; rank by impact ÷ effort). State that rows were
@@ -146,11 +169,14 @@ Route each approved opportunity to exactly one channel:
    Otherwise implement NOW, inline, and validate with the narrowest
    project-native check.
 2. **PRD** — anything structural (new tool/skill/agent, schema change,
-   cross-package behavior). Invoke the PRD pipeline (`/trw-prd-new "<title>"`,
-   or draft per `docs/requirements-aare-f/CLAUDE.md` including the mandatory
-   search-scope greps). The change then follows
+   cross-package behavior). Invoke `/trw-prd-new "<title>"`; if unavailable,
+   follow the repository's discovered PRD instructions and search-scope contract. The change then follows
    RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER — never implement
    structural changes ad hoc from a reflection.
+   **Executability contract**: the PRD must carry the redacted observed evidence
+   (counts, IDs, file:symbol citations, and exact error text), proposed FR sketch,
+   acceptance sketch, and real surfaces needed by a zero-context implementer.
+   A ledger-only pointer is insufficient; the ledger cites the PRD ID, and the PRD stands alone.
 3. **learning** — durable gotcha/pattern: `trw_learn(summary, detail, tags,
    impact)` with the evidence citation in the detail.
 4. **backlog** — valuable but not now: append to
@@ -159,13 +185,15 @@ Route each approved opportunity to exactly one channel:
 
 ## Step 5: Write the ledger
 
-Append (never overwrite) `.trw/reflections/YYYY-MM-DD-<session-slug>.md`,
-where `<session-slug>` is the active run's task name, or a 2-4 word
-kebab-case session summary when there is no run:
+Append (never overwrite) `.trw/reflections/YYYY-MM-DD-<session-slug>-<identity-short>.md`,
+where `<identity-short>` comes from the immutable active run/session ID. Without a run, use UTC time plus a short unique
+token. A task-name slug alone never proves ledger ownership. Record the full identity in the header; if a computed path
+already belongs to another identity, choose a unique path and never append to it.
 
 ```markdown
 # Reflection — <date> — <one-line session description>
 Reflected-at: <ISO timestamp> | Depth: <quick|standard|deep>
+Run/session-id: <immutable identity>
 Prior ledgers checked: <filenames found, or "first reflection">
 <if ledger-only mode: one line citing the operator directive>
 
@@ -216,3 +244,12 @@ shipped (with validation evidence), PRDs created, and a pointer to the ledger's
   approved targets; nothing destructive.
 - **Truthful routing**: a routed item is not a completed item — never report
   PRD-routed work as "done"; Step 0 of the next reflection holds the score.
+
+## Typed follow-through lifecycle (PRD-QUAL-120-FR06)
+
+Every routed improvement uses the typed lifecycle: proposed, approved, routed,
+implementing, verified_closed, rejected. Routing an item to a PRD or backlog
+is FILING, not closure — debt stays open until the TARGET shows verified
+implementation (implemented status with functionality_level live). The
+recorded state is an input, never the verdict: closure derives from current
+target evidence (scripts/count-reflection-debt.py --typed reconciles it).

@@ -11,6 +11,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import step_sync_health
@@ -208,6 +209,21 @@ def test_step_embed_health_still_present() -> None:
 
     result = step_embed_health()
     assert "advisory" in result
+
+
+def test_embed_health_failure_uses_noncritical_degradation_path() -> None:
+    import pytest
+
+    from trw_mcp.tools._ceremony_helpers import step_embed_health
+    from trw_mcp.tools._ceremony_step_table import SESSION_START_STEPS
+
+    embed_step = next(step for step in SESSION_START_STEPS if step.key == "embed_health")
+    assert embed_step.critical is False
+    with (
+        patch("trw_mcp.state.memory_adapter.check_embeddings_status", side_effect=RuntimeError("health failed")),
+        pytest.raises(RuntimeError, match="health failed"),
+    ):
+        step_embed_health()
 
 
 def test_session_start_contains_sync_health(tmp_path: Path) -> None:

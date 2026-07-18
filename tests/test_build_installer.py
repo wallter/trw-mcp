@@ -134,3 +134,49 @@ class TestBuildAssertion:
 
         with pytest.raises(SystemExit):
             build_env.build_installer()
+
+
+def _make_wheel_with_metadata(path: Path, dist_name: str) -> None:
+    """Write a minimal real zip wheel whose METADATA declares *dist_name*."""
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            f"{dist_name.replace('-', '_')}-1.0.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {dist_name}\nVersion: 1.0\n",
+        )
+
+
+@pytest.mark.integration
+class TestProprietaryRefusal:
+    """PRD-INFRA-126 FR06: proprietary wheels must never embed — rename-proof."""
+
+    def test_prefix_named_proprietary_wheel_refused(self, tmp_path: Path) -> None:
+        module = _load_build_installer()
+        wheel = tmp_path / "trw_distill-1.0-py3-none-any.whl"
+        wheel.write_bytes(b"not-even-a-zip")
+        with pytest.raises(SystemExit) as exc:
+            module._refuse_proprietary_wheel(wheel)
+        assert exc.value.code == 2
+
+    def test_renamed_proprietary_wheel_refused_via_metadata(self, tmp_path: Path) -> None:
+        """A re-tagged wheel (innocent filename) is caught by dist-info Name."""
+        module = _load_build_installer()
+        wheel = tmp_path / "totally_innocent-1.0-py3-none-any.whl"
+        _make_wheel_with_metadata(wheel, "trw-distill")
+        with pytest.raises(SystemExit) as exc:
+            module._refuse_proprietary_wheel(wheel)
+        assert exc.value.code == 2
+
+    def test_public_wheel_passes_both_checks(self, tmp_path: Path) -> None:
+        module = _load_build_installer()
+        wheel = tmp_path / "trw_mcp-1.0-py3-none-any.whl"
+        _make_wheel_with_metadata(wheel, "trw-mcp")
+        module._refuse_proprietary_wheel(wheel)  # must not raise
+
+    def test_unreadable_wheel_with_innocent_name_passes(self, tmp_path: Path) -> None:
+        """Filename check stays primary; unreadable metadata never blocks."""
+        module = _load_build_installer()
+        wheel = tmp_path / "some_public_pkg-1.0-py3-none-any.whl"
+        wheel.write_bytes(b"corrupt zip bytes")
+        module._refuse_proprietary_wheel(wheel)  # must not raise

@@ -60,7 +60,7 @@ def test_all_builtin_profiles_parse_without_error() -> None:
     """Importing _PROFILES already constructed every profile; if any had
     an invalid feedback_skill value, this module would have raised at
     import time. Assert the dict is populated as a smoke check."""
-    assert len(_PROFILES) >= 8
+    assert len(_PROFILES) >= 7
     for profile in _PROFILES.values():
         # Re-validate via model_dump round-trip to catch silent field drops.
         dumped = profile.model_dump()

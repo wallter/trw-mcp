@@ -183,70 +183,6 @@ def _reversion_prompt(context: NudgeContext | None, state: CeremonyState) -> str
 
 
 # ---------------------------------------------------------------------------
-# PRD-CORE-103: Learning nudge deduplication
-# ---------------------------------------------------------------------------
-
-
-def select_nudge_learning(
-    state: CeremonyState,
-    candidates: list[dict[str, object]],
-    current_phase: str,
-    *,
-    bandit: object | None = None,
-    previous_phase: str = "",
-    client_class: str = "full_mode",
-    burst_items: list[dict[str, object]] | None = None,
-) -> tuple[dict[str, object] | None, bool]:
-    """Select the best learning for nudge display with deduplication.
-
-    The public client now always uses deterministic ranking. ``bandit`` and
-    the related compatibility parameters remain in the signature so legacy
-    callers do not break, but they no longer enable local policy execution.
-
-    Filters candidates by nudge eligibility (not shown in current phase),
-    then returns the top remaining candidate. If all candidates are
-    already shown, falls back to the least-recently-shown candidate.
-
-    Args:
-        state: Current ceremony state with nudge_history.
-        candidates: Ranked learning dicts (best first).
-        current_phase: Current ceremony phase.
-        bandit: Ignored compatibility parameter retained for API stability.
-        previous_phase: Previous phase for transition detection.
-        client_class: Ignored compatibility parameter retained for API stability.
-        burst_items: Optional mutable list retained for API stability. The
-            deterministic path never appends burst items.
-
-    Returns:
-        Tuple of (selected_learning_dict_or_None, is_fallback).
-        is_fallback is True if we fell back to least-recently-shown.
-    """
-    from trw_mcp.state._nudge_state import is_nudge_eligible
-
-    # --- Deterministic ranking path (original / fallback behavior) ---
-
-    # Filter to eligible candidates
-    eligible = [c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), current_phase)]
-
-    if eligible:
-        return eligible[0], False
-
-    # Fallback: least recently shown candidate
-    if candidates:
-
-        def _last_shown_turn(c: dict[str, object]) -> int:
-            lid = str(c.get("id", ""))
-            if lid in state.nudge_history:
-                return state.nudge_history[lid]["last_shown_turn"]
-            return 0
-
-        fallback = min(candidates, key=_last_shown_turn)
-        return fallback, True
-
-    return None, False
-
-
-# ---------------------------------------------------------------------------
 # FR12: Local model detection (PRD-CORE-074)
 # ---------------------------------------------------------------------------
 
@@ -390,6 +326,14 @@ def _select_nudge_pool(
         if weight <= 0:
             continue
         if is_pool_in_cooldown(state, pool):
+            skip_reason = "pool_cooldown"
+            try:
+                from trw_mcp.models.config import get_config
+
+                if get_config().effective_nudge_density == "low":
+                    skip_reason = "density_suppressed"
+            except Exception:  # justified: telemetry classification must fail open
+                pass
             logger.debug(
                 "nudge_pool_suppressed",
                 pool=pool,
@@ -399,14 +343,14 @@ def _select_nudge_pool(
             with suppress(Exception):  # justified: fail-open per NFR02
                 structlog.get_logger(__name__).debug(
                     "nudge_skipped",
-                    reason="pool_cooldown",
+                    reason=skip_reason,
                     pool=pool,
                     learning_id="",
                     client_id=_resolve_client_id(),
                 )
                 _emit_debug_capture_event(
                     "nudge_skipped",
-                    reason="pool_cooldown",
+                    reason=skip_reason,
                     pool=pool,
                     learning_id="",
                     client_id=_resolve_client_id(),

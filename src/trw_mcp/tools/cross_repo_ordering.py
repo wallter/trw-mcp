@@ -29,6 +29,7 @@ from trw_mcp.tools._sidecar_substrate import (
     check_tier_for_feature,
     load_envelope,
     resolve_repo_root,
+    tier_required_action,
 )
 from trw_mcp.tools.ordering_compare import RiskOrderingComparisonPayload
 
@@ -152,10 +153,7 @@ def compute_cross_repo_ordering(
         return CrossRepoOrderingResult(
             tier=gate.tier,
             distill_status="tier_required",
-            distill_action=(
-                "Acquire team/pro/enterprise tier to enable trw-distill "
-                "sidecar consumption (see https://trwframework.com/tier)"
-            ),
+            distill_action=tier_required_action(),
             distill_sidecar_path=str(resolved_sidecar_path),
         )
 

@@ -11,6 +11,7 @@ huggingface.co download of all-MiniLM-L6-v2. The warmup path now:
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -96,3 +97,17 @@ def test_offline_env_helper() -> None:
     assert _memory_connection._embeddings_offline({"TRW_OFFLINE": "0"}) is False
     assert _memory_connection._embeddings_offline({}) is False
     assert isinstance(_memory_connection._embeddings_offline(dict(os.environ)), bool)
+
+
+def test_ceremony_behavior_server_defaults_embedding_downloads_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generic ceremony tests must not launch an unowned Hugging Face client."""
+    import os
+
+    from tests._ceremony_helpers import make_ceremony_server
+
+    monkeypatch.delenv("TRW_OFFLINE", raising=False)
+    make_ceremony_server(monkeypatch, tmp_path)
+
+    assert os.environ["TRW_OFFLINE"] == "1"

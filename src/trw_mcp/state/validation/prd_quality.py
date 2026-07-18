@@ -9,6 +9,9 @@ All previously public names are re-exported so that existing imports
 work without modification.
 """
 
+# The dynamic refresh facade import is intentionally late to avoid a cycle.
+# ruff: noqa: E402, I001
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -21,7 +24,6 @@ from trw_mcp.models.requirements import (
     ImprovementSuggestion,
     PRDQualityGates,
     SmellFinding,
-    ValidationFailure,
     ValidationResultV2,
 )
 from trw_mcp.state.validation import _prd_scoring_smells as _smells
@@ -109,10 +111,30 @@ from trw_mcp.state.validation._prd_validation import (
 from trw_mcp.state.validation._prd_validation import (
     validate_prd_quality as validate_prd_quality,
 )
-from trw_mcp.state.validation.prd_integrity import run_prd_integrity_checks
+from trw_mcp.state.validation._prd_validation import (
+    validate_verification_mappings as validate_verification_mappings,
+)
 from trw_mcp.state.validation.risk_profiles import derive_risk_level, get_risk_scaled_config
+from trw_mcp.state.validation.prd_integrity import run_prd_integrity_checks as run_prd_integrity_checks
 
 logger = structlog.get_logger(__name__)
+
+
+def _build_smell_suggestion(findings: list[SmellFinding]) -> ImprovementSuggestion | None:
+    """Build the bounded advisory without letting summarization block validation."""
+    try:
+        message = _smells.summarize_smells(findings)
+    except Exception:  # advisory formatter must fail open
+        logger.warning("smell_summarization_failed", exc_info=True)
+        return None
+    if message is None:
+        return None
+    warning_count = sum(finding.severity == "warning" for finding in findings)
+    return ImprovementSuggestion(
+        dimension="smell",
+        priority="high" if warning_count >= 5 else "medium",
+        message=message,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +149,7 @@ def validate_prd_quality_v2(
     risk_level: str | None = None,
     *,
     project_root: str | None = None,
+    include_dynamic_checks: bool = True,
 ) -> ValidationResultV2:
     """Validate a PRD with multi-dimension semantic scoring.
 
@@ -149,9 +172,11 @@ def validate_prd_quality_v2(
             V1 computation (GAP-FR-007 optimization).
         risk_level: Optional explicit risk level override. If None,
             derived from frontmatter priority field.
-        project_root: Optional project root path for sprint deferral detection
-            (R-03). When provided, sprint docs are scanned for deferral language
-            near the PRD ID.
+        project_root: Optional project root used by repository-grounded scoring,
+            integrity checks, sprint deferral detection, and wiring checks.
+        include_dynamic_checks: When false, compute only content/config-derived
+            output suitable for persistent caching. Repository/date-dependent
+            diagnostics are added later by :func:`refresh_dynamic_prd_validation`.
 
     Returns:
         ValidationResultV2 with all dimension scores and metadata.
@@ -172,9 +197,10 @@ def validate_prd_quality_v2(
     _config = get_risk_scaled_config(_config, effective_risk)
     is_risk_scaled = effective_risk != "medium" and _config.risk_scaling_enabled
 
-    from pathlib import Path as _Path
-
-    _proj_root_path = _Path(project_root) if project_root else None
+    # Persistent cache entries must not contain repository/date truth. Dynamic
+    # versions of the two grounded dimensions are applied after the pure result
+    # is loaded or computed.
+    _proj_root_path = None
 
     # Score active dimensions -- density, structure, implementation readiness,
     # and traceability.
@@ -217,10 +243,13 @@ def validate_prd_quality_v2(
     # unchanged -- these populate informational diagnostics that were empty stubs.
     try:
         smell_findings: list[SmellFinding] = detect_smells(content)
-        ears_classifications: list[dict[str, object]] = classify_ears(content)
     except Exception:  # justified: fail-open, advisory diagnostics must not block scoring
-        logger.warning("smell_ears_detection_failed", exc_info=True)
+        logger.warning("smell_detection_failed", exc_info=True)
         smell_findings = []
+    try:
+        ears_classifications: list[dict[str, object]] = classify_ears(content)
+    except Exception:  # independent advisory; one detector must not erase the other
+        logger.warning("ears_classification_failed", exc_info=True)
         ears_classifications = []
     readability_metrics: dict[str, float] = {}
 
@@ -248,10 +277,9 @@ def validate_prd_quality_v2(
     # advisory suggestion so the grooming workflow sees them. Looked up via the
     # module so test monkeypatches on ``summarize_smells`` propagate. Informational
     # only: this does NOT change total_score (NFR01) nor valid/tier (FR03).
-    smell_advisory = _smells.summarize_smells(smell_findings)
-    if smell_advisory is not None:
-        priority = "high" if len([f for f in smell_findings if f.severity == "warning"]) >= 5 else "medium"
-        suggestions.append(ImprovementSuggestion(dimension="smell", priority=priority, message=smell_advisory))
+    smell_suggestion = _build_smell_suggestion(smell_findings)
+    if smell_suggestion is not None:
+        suggestions.append(smell_suggestion)
 
     # V1-compatible fields -- use pre-computed result if provided (GAP-FR-007)
     if v1_result is not None:
@@ -274,65 +302,27 @@ def validate_prd_quality_v2(
     # Compute ambiguity rate from content (FR02 -- PRD-FIX-054)
     ambiguity_rate = _compute_ambiguity_rate(content)
 
+    verification_failures, verification_mapping_coverage = validate_verification_mappings(
+        frontmatter,
+        content,
+        effective_risk_level=effective_risk,
+    )
+    is_valid = is_valid and not any(failure.severity == "error" for failure in verification_failures)
+
     # PRD-FIX-056: Status integrity checks (informational -- never block scoring)
     status_drift_warnings: list[str] = []
-    try:
-        status_drift_warnings.extend(_check_status_drift(frontmatter, content))
-        status_drift_warnings.extend(_check_fr_annotations(content))
-        status_drift_warnings.extend(_check_partially_implemented(frontmatter))
-        # R-03: Sprint doc deferral detection
-        if project_root is not None:
-            from pathlib import Path as _Path
-
-            status_drift_warnings.extend(_check_sprint_deferral(frontmatter, project_root=_Path(project_root)))
-    except Exception:  # justified: fail-open, integrity checks must not block scoring
-        logger.warning("status_integrity_check_failed", exc_info=True)
-
-    integrity_failures: list[ValidationFailure] = []
-    integrity_warnings: list[str] = []
-    if project_root is not None:
+    status_integrity_checks: tuple[tuple[str, Callable[[], list[str]]], ...] = (
+        ("status_drift", lambda: _check_status_drift(frontmatter, content)),
+        ("fr_annotations", lambda: _check_fr_annotations(content)),
+        ("partially_implemented", lambda: _check_partially_implemented(frontmatter)),
+    )
+    for check_name, check in status_integrity_checks:
         try:
-            from pathlib import Path as _Path
+            status_drift_warnings.extend(check())
+        except Exception:  # justified: each advisory detector fails open independently
+            logger.warning("status_integrity_check_failed", check=check_name, exc_info=True)
 
-            _pr = _Path(project_root)
-            # Multi-repo workspace support (Potemkin defect B): resolve any
-            # configured sibling roots (absolute or relative to project root).
-            _extra_roots = [
-                (r if (r := _Path(raw)).is_absolute() else _pr / r)
-                for raw in getattr(_config, "additional_repo_roots", []) or []
-            ]
-            integrity_failures, integrity_warnings = run_prd_integrity_checks(
-                content,
-                frontmatter,
-                project_root=_pr,
-                prds_relative_path=_config.prds_relative_path,
-                extra_roots=_extra_roots,
-            )
-        except Exception:  # justified: fail-open, validation must still return scoring output
-            logger.warning("prd_integrity_check_failed", exc_info=True)
-
-    # PRD-CORE-190 FR03: wiring gate. In warn mode (default) this only ADDS
-    # advisory wiring_gate_warning / seam_schema_warning suggestions — it never
-    # flips valid or alters failures (FR05 backward-compat guarantee). In block
-    # mode (opt-in via config.wiring_gate_mode) an unwired public-surface FR
-    # adds a WIRING_GATE_FAIL failure and sets valid=False. Looked up via the
-    # module so test monkeypatches propagate; fail-open so a gate error never
-    # blocks scoring output.
-    wiring_failures: list[ValidationFailure] = []
-    try:
-        from trw_mcp.state.validation._prd_scoring_wiring import check_wiring_gate
-
-        _wiring_mode = str(getattr(_config, "wiring_gate_mode", "warn") or "warn")
-        wiring_warnings, wiring_failures = check_wiring_gate(
-            content, frontmatter, mode=_wiring_mode, project_root=_proj_root_path
-        )
-        for _wmsg in wiring_warnings:
-            suggestions.append(ImprovementSuggestion(dimension="wiring", priority="medium", message=_wmsg))
-    except Exception:  # justified: fail-open, advisory gate must not block scoring
-        logger.warning("wiring_gate_check_failed", exc_info=True)
-
-    combined_failures = [*v1_failures, *integrity_failures, *wiring_failures]
-    is_valid = is_valid and not integrity_failures and not wiring_failures
+    combined_failures = [*v1_failures, *verification_failures]
 
     # PRD-QUAL-096 FR01: informational measured traceability coverage ratio
     # (FRs with both impl + test refs / total FRs). Additive only — does NOT affect
@@ -349,6 +339,8 @@ def validate_prd_quality_v2(
         completeness_score=v1_completeness,
         traceability_coverage=v1_trace_coverage,
         measured_traceability_coverage=measured_trace_cov,
+        implementation_test_link_coverage=measured_trace_cov,
+        verification_mapping_coverage=verification_mapping_coverage,
         consistency_score=0.0,
         # V2 fields
         total_score=total_score,
@@ -365,7 +357,7 @@ def validate_prd_quality_v2(
         risk_scaled=is_risk_scaled,
         # Status integrity warnings (PRD-FIX-056)
         status_drift_warnings=status_drift_warnings,
-        integrity_warnings=integrity_warnings,
+        integrity_warnings=[],
     )
 
     logger.info(
@@ -377,4 +369,41 @@ def validate_prd_quality_v2(
         effective_risk_level=effective_risk,
         risk_scaled=is_risk_scaled,
     )
+    if include_dynamic_checks:
+        return refresh_dynamic_prd_validation(
+            result,
+            content,
+            config=config,
+            project_root=project_root,
+        )
     return result
+
+
+from trw_mcp.state.validation._prd_quality_refresh import (
+    DYNAMIC_CHECK_GROUPS as DYNAMIC_CHECK_GROUPS,
+    refresh_dynamic_prd_validation as _refresh_dynamic_prd_validation,
+)
+
+
+def refresh_dynamic_prd_validation(
+    base_result: ValidationResultV2,
+    content: str,
+    *,
+    config: TRWConfig | None = None,
+    project_root: str | None = None,
+    deadline: float | None = None,
+    fast: bool = False,
+    budget_report: dict[str, object] | None = None,
+) -> ValidationResultV2:
+    """Refresh dynamic checks while preserving the integrity-check patch seam."""
+    return _refresh_dynamic_prd_validation(
+        base_result,
+        content,
+        config=config,
+        project_root=project_root,
+        deadline=deadline,
+        fast=fast,
+        budget_report=budget_report,
+        integrity_checker=run_prd_integrity_checks,
+        traceability_scorer=score_traceability_v2,
+    )

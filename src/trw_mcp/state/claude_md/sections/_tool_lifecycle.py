@@ -49,14 +49,17 @@ _FALLBACK_TOOL_LIFECYCLE = """# TRW Tool Lifecycle
 
 Delegate to focused helpers when the harness supports it and file ownership is clear. When it does not, run the same shards sequentially. Delegation is an optimization — the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
 
-## Deliver Gate (v26)
+## Deliver Gate (v26.1)
 
 Do NOT call `trw_deliver` unless at least one of:
 - (a) `trw_build_check` returned `build_check_result=pass`, **or**
-- (b) a `review_verdict` carries an explicit `acceptable-failure` label, **or**
-- (c) an explicit override justification is included in the deliver message.
+- (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
+  acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
+  `expiry_iso`, **or**
+- (c) an authorized operator/config override is recorded with technical rationale.
 
-For task types `coding`, `rca`, `eval` the gate blocks by default (`deliver_gate_mode: block_coding`). Docs, research, planning, and unknown types remain advisory.
+A review-verdict label or free-text reason alone is not an acceptable-failure record.
+For task types `coding`, `rca`, `eval` the gate blocks by default (`deliver_gate_mode: block_coding`). Docs, research, planning, and unknown types remain advisory and surface the missing-build warning without requiring an exception record.
 """
 
 
@@ -169,29 +172,15 @@ def render_codex_instructions() -> str:
         "\n"
         "## Instruction Sources\n"
         "\n"
-        "- Codex reads `AGENTS.md` files before work, layering global and project guidance by directory precedence\n"
+        "- Codex layers global and project `AGENTS.md` guidance before work\n"
         "- TRW uses `.codex/INSTRUCTIONS.md` as the repo-local Codex instruction file\n"
         "- `.codex/agents/*.toml` custom agents are optional explicit helpers, not assumed background workers\n"
-        "- Codex hooks are experimental and optional; core TRW correctness lives in the tools and middleware\n"
-        "\n"
-        "## Codex Workflow\n"
-        "\n"
-        "1. **Start**: call `trw_session_start()` — loads prior learnings and any active run\n"
-        "2. **Delegate**: use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
-        "3. **Verify**: keep the working set small and run project-native checks after meaningful changes\n"
-        "4. **Learn**: Call `trw_learn()` for reusable gotchas or patterns\n"
-        "5. **Finish**: call `trw_deliver()` — persists work for future sessions\n"
-        "\n"
-        "## Ceremony Protocol\n"
-        "\n"
-        "- `trw_checkpoint(message)` — saves progress so you can resume after context compaction\n"
-        "- `trw_learn(summary, detail)` — record durable technical discoveries (no status reports)\n"
-        "- `trw_deliver()` — persists everything in one call when done\n"
+        "- Hooks are stable in current Codex but optional and trust-gated; correctness lives in TRW tools/middleware\n"
+        "- Generic TRW lifecycle/project rules come from `AGENTS.md`; only Codex deltas live here\n"
         "\n"
         "## Runtime Guardrails\n"
         "\n"
         "- Prefer explicit file paths, concrete project-native verification steps, and small diffs\n"
-        "- Use custom agents or subagents only when you explicitly ask Codex to spawn them\n"
         "- Follow TRW tool and middleware guidance even when no hook fires\n"
         "- If current Codex behavior matters, check the OpenAI developer docs before assuming runtime details\n"
         "\n"

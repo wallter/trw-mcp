@@ -130,12 +130,10 @@ def test_append_ceremony_status_p95_under_5ms(warm_trw_dir: Path) -> None:
     p95 = _percentile(samples, 95)
     p99 = _percentile(samples, 99)
 
-    # CI tolerance: looser than NFR01's 5ms/10ms dev target.
-    # NFR01 dev targets: p95 < 5ms, p99 < 10ms.
-    # CI thresholds: p95 < 10ms, p99 < 25ms (shared-runner variance).
-    assert p95 < 10.0, (
-        f"p95 latency {p95:.3f}ms exceeds CI threshold 10ms (NFR01 dev target <5ms). p50={p50:.3f}ms p99={p99:.3f}ms"
-    )
+    # The requirement is the gate: do not silently weaken it in CI. The
+    # disabled-nudge path returns before process census and writer-pressure
+    # bookkeeping, keeping this deterministic on shared runners.
+    assert p95 < 5.0, f"p95 latency {p95:.3f}ms exceeds NFR01 threshold 5ms. p50={p50:.3f}ms p99={p99:.3f}ms"
     assert p99 < 25.0, (
         f"p99 latency {p99:.3f}ms exceeds CI threshold 25ms "
         f"(NFR01 rollback trigger 10ms). p50={p50:.3f}ms p95={p95:.3f}ms"

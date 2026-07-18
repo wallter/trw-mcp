@@ -92,6 +92,21 @@ def score_implementation_readiness(
     if profile:
         details["validation_profile"] = profile
 
+    # Verification design is method-neutral for every PRD variant. Test-shaped
+    # references remain diagnostics but never earn unique readiness credit.
+    try:
+        from trw_mcp.state.validation._verification_mappings import validate_verification_mappings
+
+        _, verification_design_ratio = validate_verification_mappings(
+            frontmatter,
+            content,
+            effective_risk_level="medium",
+        )
+    except Exception:  # justified: scoring remains fail-open and bounded
+        verification_design_ratio = 0.0
+    details["verification_design_ratio"] = round(verification_design_ratio, 4)
+    details["verification_design_semantics"] = "planned_method_neutral"
+
     if profile == "content_docs":
         file_path_ratio = min(impl_refs / fr_count, 1.0)
         test_ref_ratio = min(test_refs / fr_count, 1.0)
@@ -105,8 +120,8 @@ def score_implementation_readiness(
         )
         composite = (
             file_path_ratio * 0.30
-            + max(test_ref_ratio, assertion_ratio) * 0.25
-            + verification_ratio * 0.25
+            + assertion_ratio * 0.25
+            + verification_design_ratio * 0.25
             + rollout_ratio * 0.10
             + completion_ratio * 0.10
         )
@@ -140,12 +155,11 @@ def score_implementation_readiness(
         test_ref_ratio = min(test_refs / fr_count, 1.0)
         verification_ratio = min(verification_commands / fr_count, 1.0)
         test_plan_ratio = (test_subsection_ratio * 0.5) + (test_ref_ratio * 0.3) + (verification_ratio * 0.2)
-        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
         composite = (
             control_ratio * 0.20
             + behavior_switch_ratio * 0.20
             + file_map_ratio * 0.20
-            + test_plan_ratio * 0.25
+            + verification_design_ratio * 0.25
             + completion_ratio * 0.15
         )
         details.update(
@@ -178,12 +192,12 @@ def score_implementation_readiness(
         file_map_ratio = min(max(impl_refs, 1 if "Key Files" in present_subheadings else 0) / fr_count, 1.0)
         test_ref_ratio = min(test_refs / fr_count, 1.0)
         verification_ratio = min(max(test_ref_ratio, verification_commands / fr_count), 1.0)
-        completion_ratio = (completion_ratio * 0.8) + (verification_ratio * 0.2)
+        completion_ratio = (completion_ratio * 0.8) + (verification_design_ratio * 0.2)
         composite = (
             root_cause_ratio * 0.30
             + regression_ratio * 0.20
             + file_map_ratio * 0.20
-            + verification_ratio * 0.15
+            + verification_design_ratio * 0.15
             + completion_ratio * 0.15
         )
         details.update(
@@ -204,7 +218,7 @@ def score_implementation_readiness(
             )
             / 3
         )
-        evidence_ratio = min((impl_refs + test_refs + verification_commands) / 3, 1.0)
+        evidence_ratio = verification_design_ratio
         composite = (research_ratio * 0.65) + (evidence_ratio * 0.20) + (completion_ratio * 0.15)
         details.update(
             {

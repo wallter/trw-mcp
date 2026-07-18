@@ -560,7 +560,9 @@ def test_trw_prd_validate_surfaces_wiring_gate_warnings(tmp_path: Path) -> None:
     fn = extract_tool_fn(make_test_server("requirements"), "trw_prd_validate")
     prd = tmp_path / "PRD-TEST-904.md"
     prd.write_text(_read("prd_unwired_public.md"), encoding="utf-8")
-    result = fn(prd_path=str(prd))
+    # Token-bloat W5: verbose mode returns the FR03 un-truncated wiring set
+    # (compact mode dedups warnings already echoed in improvement_suggestions).
+    result = fn(prd_path=str(prd), verbose=True)
     assert "wiring_gate_warnings" in result
     warnings = result["wiring_gate_warnings"]
     assert any("wiring_gate_warning" in w and "FR01" in w for w in warnings)

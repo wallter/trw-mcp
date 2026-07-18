@@ -9,8 +9,7 @@ re-exported here for backward-compatible test imports.
 
 from __future__ import annotations
 
-import hashlib
-import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -31,8 +30,10 @@ from trw_mcp.models.requirements import (
     PRDFrontmatter,
     PRDQualityGates,
     PRDTraceability,
+    PRDVerification,
     Priority,
     RiskLevel,
+    VerificationMapping,
 )
 from trw_mcp.models.typed_dicts import (
     PrdCreateResultDict,
@@ -40,7 +41,7 @@ from trw_mcp.models.typed_dicts import (
     ValidateResultDict,
 )
 from trw_mcp.state._paths import resolve_project_root
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
+from trw_mcp.state.persistence import FileStateWriter, model_to_dict
 from trw_mcp.state.prd_utils import (
     _FRONTMATTER_RE as _FRONTMATTER_RE,
 )
@@ -48,14 +49,32 @@ from trw_mcp.state.prd_utils import (
     extract_sections as _extract_sections,
 )
 from trw_mcp.state.prd_utils import (
+    find_identity_collisions,
     next_prd_sequence,
+    parse_frontmatter,
 )
 from trw_mcp.state.validation import (
-    _EXPECTED_SECTION_NAMES as _EXPECTED_SECTIONS,
-)
-from trw_mcp.state.validation import (
-    extract_wiring_warnings,
+    refresh_dynamic_prd_validation,
     validate_prd_quality_v2,
+)
+from trw_mcp.state.validation.template_variants import get_required_sections
+from trw_mcp.tools._prd_validate_payload import build_validate_payload
+from trw_mcp.tools._prd_validation_cache import (
+    CacheBounds as _PRDValidationCacheBounds,
+)
+from trw_mcp.tools._prd_validation_cache import (
+    cache_key as _prd_validation_cache_key,
+)
+from trw_mcp.tools._prd_validation_cache import (
+    cache_metadata as _prd_validation_cache_metadata,
+)
+from trw_mcp.tools._prd_validation_cache import (
+    cache_path as _prd_validation_cache_path,
+)
+from trw_mcp.tools._prd_validation_cache import (
+    load_pure_result_with_reason,
+    retire_legacy_cache,
+    store_pure_result,
 )
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -82,35 +101,6 @@ _PRIORITY_CONFIDENCE: dict[str, float] = {
     "P2": 0.6,
     "P3": 0.5,
 }
-_PRD_VALIDATOR_VERSION = "prd-quality-v2:2026-05-21"
-
-
-def _prd_validation_config_hash(config: object) -> str:
-    payload = {
-        "ambiguity_rate_max": getattr(config, "ambiguity_rate_max", None),
-        "completeness_min": getattr(config, "completeness_min", None),
-        "traceability_coverage_min": getattr(config, "traceability_coverage_min", None),
-        "extra_prd_categories": getattr(config, "extra_prd_categories", None),
-    }
-    raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
-
-
-def _prd_validation_cache_metadata(content: str, config: object) -> dict[str, str]:
-    return {
-        "content_hash": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
-        "config_hash": _prd_validation_config_hash(config),
-        "validator_version": _PRD_VALIDATOR_VERSION,
-    }
-
-
-def _prd_validation_cache_key(content: str, config: object) -> str:
-    payload = _prd_validation_cache_metadata(content, config)
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
-
-
-def _prd_validation_cache_path(project_root: Path) -> Path:
-    return project_root / ".trw" / "cache" / "prd-validation.yaml"
 
 
 def register_requirements_tools(server: FastMCP) -> None:
@@ -131,6 +121,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         title: str = "",
         sequence: int = 1,
         risk_level: str = "",
+        verification_mappings: list[dict[str, object]] | None = None,
     ) -> PrdCreateResultDict:
         """Generate an AARE-F compliant PRD from a feature description.
 
@@ -139,7 +130,8 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         - Before writing code for a P0/P1/P2 feature or risky behavioral change.
         - You want auto-incremented PRD ID, YAML frontmatter, and catalogue sync.
 
-        Produces 12 standard sections, confidence scores, and traceability links.
+        Produces category-appropriate sections, confidence scores, traceability
+        links, and typed AARE-F 3.2 verification mappings.
         Updates INDEX.md/ROADMAP.md when ``index_auto_sync_on_status_change`` is on.
 
         Input:
@@ -150,6 +142,9 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         - title: auto-generated from input_text when empty.
         - sequence: auto-increments from existing catalogue when default (1).
         - risk_level: optional critical|high|medium|low — scales validation strictness.
+        - verification_mappings: optional list of mappings with requirement_id,
+          acceptance_criteria, method (test|analysis|inspection|demonstration),
+          evidence_artifact, pass_condition, and optional automation fields.
 
         Output: PrdCreateResultDict with fields
         {prd_id: str, title: str, category: str, priority: str, output_path: str,
@@ -190,11 +185,26 @@ def _register_prd_create_tool(server: FastMCP) -> None:
             ) from err
 
         # Auto-increment sequence when using default value (1)
+        prds_dir_for_seq = resolve_project_root() / config.prds_relative_path
         if sequence == 1:
-            prds_dir_for_seq = resolve_project_root() / config.prds_relative_path
             sequence = next_prd_sequence(prds_dir_for_seq, category.upper())
 
         prd_id = f"PRD-{category.upper()}-{sequence:03d}"
+
+        # PRD-QUAL-121-FR02: allocation shares the root collision rule — an
+        # active or archived file already owning this identifier blocks the
+        # write entirely and the failure names every conflicting path.
+        collisions = find_identity_collisions(prds_dir_for_seq, prd_id)
+        if collisions:
+            intended = str(prds_dir_for_seq / f"{prd_id}.md")
+            raise ValidationError(
+                f"PRD identifier collision: {prd_id} is already owned by "
+                f"{', '.join(collisions)}; refusing to write {intended}. "
+                "A collision blocks allocation until the conflicting record is migrated.",
+                prd_id=prd_id,
+                conflicting_paths=", ".join(collisions),
+                intended_path=intended,
+            )
 
         if not title:
             first_line = input_text.strip().split("\n")[0]
@@ -227,6 +237,16 @@ def _register_prd_create_tool(server: FastMCP) -> None:
                     risk_level=risk_level,
                 ) from err
 
+        typed_verification_mappings: list[VerificationMapping] = []
+        for index, raw_mapping in enumerate(verification_mappings or []):
+            try:
+                typed_verification_mappings.append(VerificationMapping.model_validate(raw_mapping, strict=False))
+            except Exception as err:
+                raise ValidationError(
+                    f"Invalid verification_mappings[{index}]: {err}",
+                    mapping_index=index,
+                ) from err
+
         # Build frontmatter
         frontmatter = PRDFrontmatter(
             id=prd_id,
@@ -239,7 +259,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
                 implementation_feasibility=base_confidence,
                 requirement_clarity=base_confidence,
                 estimate_confidence=max(base_confidence - 0.1, 0.4),
-                test_coverage_target=0.85,
+                test_coverage_target=None,
             ),
             evidence=PRDEvidence(
                 level=EvidenceLevel.MODERATE,
@@ -251,6 +271,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
                 completeness_min=config.completeness_min,
                 traceability_coverage_min=config.traceability_coverage_min,
             ),
+            verification=PRDVerification(mappings=typed_verification_mappings),
             dates=PRDDates(
                 created=datetime.now(tz=timezone.utc).date(),
                 updated=datetime.now(tz=timezone.utc).date(),
@@ -296,7 +317,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
             "priority": priority,
             "output_path": output_path,
             "content": prd_content,
-            "sections_generated": len(_EXPECTED_SECTIONS),
+            "sections_generated": len(get_required_sections(category)),
             "index_synced": index_synced,
         }
 
@@ -320,6 +341,8 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
     def trw_prd_validate(
         ctx: Context | None = None,
         prd_path: str = "",
+        fast: bool = False,
+        verbose: bool = False,
     ) -> ValidateResultDict:
         """Score a PRD against the V2 validation suite before implementation.
 
@@ -332,19 +355,39 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         Input:
         - prd_path: path to the PRD markdown file (required).
+        - fast: when True (PRD-FIX-112), skip the repo-grounded dynamic checks
+          entirely and return a visibly PARTIAL result (``validation_partial=true``,
+          ``checks_skipped`` naming every dynamic group). Use for a quick
+          text-only score; re-run without ``fast`` for a fully-grounded verdict.
+        - verbose: when True, return the full diagnostic payload (per-occurrence
+          ``smell_findings``, per-line ``ears_classifications`` with text, the
+          cache addressing hashes, and the un-deduped ``wiring_gate_warnings``).
+          The default compact response groups/caps those diagnostics to cut token
+          cost; scoring and gate verdicts are identical in both modes.
+
+        Every call is bounded by ``prd_validate_budget_seconds`` (default 60s):
+        if the dynamic checks exceed the budget the remaining groups are skipped
+        and the result is flagged ``validation_partial`` rather than hanging.
 
         Output: ValidateResultDict with fields
         {total_score: float (0-100), quality_tier: str, grade: str,
          valid: bool, ambiguity_rate: float, completeness_score: float,
-         traceability_coverage: float,
+         traceability_coverage: float, measured_traceability_coverage: float,
+         verification_mapping_coverage: float, prd_status: str,
          improvement_suggestions: list[ImprovementSuggestionDict],
          failures: list[ValidationFailureDict], dimensions: list[DimensionScoreDict],
          path: str, sections_found: list[str], sections_expected: list[str],
-         smell_findings: list[dict], ears_classifications: list[dict],
-         readability: dict[str, float], section_scores: list[SectionScoreDict],
-         effective_risk_level: str, risk_scaled: bool,
+         smell_findings: list[dict] (grouped-by-category in compact mode),
+         ears_classifications: dict (counts + actionable_lines) in compact mode,
+         section_scores: list[SectionScoreDict],
+         effective_risk_level: str, risk_scaled: bool, compact: bool,
          status_drift_warnings: list[str], integrity_warnings: list[str],
-         cache: dict}.
+         validation_partial: bool, checks_skipped: list[str], cache: dict}.
+
+        validation_partial is True (PRD-FIX-112) when fast mode was requested or
+        the budget was exceeded mid-run; checks_skipped then names the skipped
+        dynamic check groups and integrity_warnings carries a loud
+        ``validation_partial:`` marker. A partial result is never a silent pass.
 
         quality_tier values: "skeleton" | "draft" | "review" | "approved"
         (QualityTier enum; no "PRODUCTION" tier exists).
@@ -377,25 +420,50 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         config = get_config()
         cache_path = _prd_validation_cache_path(project_root)
+        cache_bounds = _PRDValidationCacheBounds.from_config(config)
+        # One-time retirement of the disposable legacy monolithic YAML cache.
+        try:
+            retire_legacy_cache(project_root)
+        except Exception:  # justified: legacy retirement never blocks validation
+            logger.debug("prd_validation_legacy_retire_failed", exc_info=True)
         cache_metadata = _prd_validation_cache_metadata(content, config)
         cache_key = _prd_validation_cache_key(content, config)
-        reader = FileStateReader()
-        if cache_path.exists():
-            cached = reader.read_yaml(cache_path).get(cache_key)
-            if isinstance(cached, dict):
-                cached_result = cast("ValidateResultDict", dict(cached))
-                cached_result["path"] = str(path)
-                cached_result["cache"] = {
-                    "hit": True,
-                    "key": cache_key,
-                    **cache_metadata,
-                }
-                return cached_result
+        try:
+            pure_result, cache_miss_reason = load_pure_result_with_reason(
+                cache_path, cache_key, max_entry_bytes=cache_bounds.max_entry_bytes
+            )
+        except Exception:  # justified: any cache-load fault degrades to a miss
+            logger.debug("prd_validation_cache_load_failed", path=str(cache_path), exc_info=True)
+            pure_result, cache_miss_reason = None, "corrupt"
+        cache_hit = pure_result is not None
 
-        # Single V2 validation call --- subsumes all V1 checks (PRD-FIX-011)
-        v2_result = validate_prd_quality_v2(content, config, project_root=str(project_root))
+        if pure_result is None:
+            pure_result = validate_prd_quality_v2(content, config, include_dynamic_checks=False)
+            try:
+                store_pure_result(cache_path, cache_key, pure_result, bounds=cache_bounds)
+            except Exception:  # justified: cache failure degrades to fresh validation
+                logger.debug("prd_validation_cache_write_failed", path=str(cache_path), exc_info=True)
+
+        # Repository, wiring, duplicate, and seam-expiry truth is deliberately
+        # recomputed on every call even when pure text scoring is a cache hit.
+        # PRD-FIX-112: bound the dynamic portion by a monotonic-clock deadline so
+        # a future slowdown can never re-train gate bypass; ``fast`` skips the
+        # dynamic portion entirely. Both surface the SAME visibly-partial shape.
+        budget_report: dict[str, object] = {}
+        deadline = time.monotonic() + max(float(config.prd_validate_budget_seconds), 0.0)
+        v2_result = refresh_dynamic_prd_validation(
+            pure_result,
+            content,
+            config=config,
+            project_root=str(project_root),
+            deadline=deadline,
+            fast=fast,
+            budget_report=budget_report,
+        )
 
         sections = _extract_sections(content)
+        frontmatter = parse_frontmatter(content)
+        sections_expected = get_required_sections(str(frontmatter.get("category", "") or ""))
 
         # Auto-update phase to PLAN (PRD-CORE-141 FR03/FR05: ctx-aware
         # find_active_run suppresses mtime-scan hijack for fresh sessions).
@@ -427,89 +495,36 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             failures=len(v2_result.failures),
         )
         _min_threshold = config.completeness_min
-        if v2_result.total_score < _min_threshold:
+        if v2_result.completeness_score < _min_threshold:
             logger.warning(
                 "prd_validate_below_threshold",
                 prd_id=_prd_id_str,
-                score=v2_result.total_score,
+                score=v2_result.completeness_score,
                 threshold=_min_threshold,
             )
 
-        validate_result: ValidateResultDict = {
-            # V1 fields (backward compatible, from V2 inline computation)
-            "path": str(path),
-            "valid": v2_result.valid,
-            "completeness_score": v2_result.completeness_score,
-            "traceability_coverage": v2_result.traceability_coverage,
-            "ambiguity_rate": v2_result.ambiguity_rate,
-            "sections_found": sections,
-            "sections_expected": _EXPECTED_SECTIONS,
-            "failures": [
-                {
-                    "field": f.field,
-                    "rule": f.rule,
-                    "message": f.message,
-                    "severity": f.severity,
-                }
-                for f in v2_result.failures
-            ],
-            # V2 fields (PRD-CORE-008)
-            "total_score": v2_result.total_score,
-            "quality_tier": v2_result.quality_tier,
-            "grade": v2_result.grade,
-            "dimensions": [
-                {
-                    "name": d.name,
-                    "score": d.score,
-                    "max_score": d.max_score,
-                    "details": d.details,
-                }
-                for d in v2_result.dimensions
-            ],
-            "improvement_suggestions": [
-                {
-                    "dimension": s.dimension,
-                    "priority": s.priority,
-                    "message": s.message,
-                    "current_score": s.current_score,
-                    "potential_gain": s.potential_gain,
-                }
-                for s in v2_result.improvement_suggestions[:5]
-            ],
-            # Rich diagnostics (PRD-FIX-011: previously discarded)
-            "smell_findings": [
-                {
-                    "category": sf.category,
-                    "matched_text": sf.matched_text,
-                    "line_number": sf.line_number,
-                    "severity": sf.severity,
-                    "suggestion": sf.suggestion,
-                }
-                for sf in v2_result.smell_findings
-            ],
-            "ears_classifications": v2_result.ears_classifications,
-            "readability": v2_result.readability,
-            "section_scores": [
-                {
-                    "section_name": ss.section_name,
-                    "density": ss.density,
-                    "substantive_lines": ss.substantive_lines,
-                }
-                for ss in v2_result.section_scores
-            ],
-            # Risk scaling metadata (PRD-QUAL-013)
-            "effective_risk_level": v2_result.effective_risk_level,
-            "risk_scaled": v2_result.risk_scaled,
-            "status_drift_warnings": v2_result.status_drift_warnings,
-            "integrity_warnings": v2_result.integrity_warnings,
-            # PRD-CORE-190 FR03: full wiring set, un-truncated (helper docs).
-            "wiring_gate_warnings": extract_wiring_warnings(v2_result),
-            "cache": {
-                "hit": False,
-                "key": cache_key,
-                **cache_metadata,
-            },
-        }
+        validate_result: ValidateResultDict = build_validate_payload(
+            v2_result,
+            path=path,
+            sections=sections,
+            sections_expected=sections_expected,
+            frontmatter=frontmatter,
+            cache_hit=cache_hit,
+            cache_key=cache_key,
+            cache_miss_reason=cache_miss_reason,
+            cache_metadata=cache_metadata,
+            verbose=verbose,
+        )
+
+        # PRD-FIX-112: surface the budget/fast partial markers on the wire dict.
+        # The loud ``validation_partial:`` warning already rides in
+        # integrity_warnings (copied by build_validate_payload); these two fields
+        # are the machine-readable form. Default calls (no fast, generous budget)
+        # yield validation_partial=False + checks_skipped=[] — byte-identical
+        # otherwise to the pre-change payload.
+        validate_result["validation_partial"] = bool(budget_report.get("validation_partial", False))
+        _skipped = budget_report.get("checks_skipped", [])
+        validate_result["checks_skipped"] = _skipped if isinstance(_skipped, list) else []
 
         # Substrate-First gate (PRD-DIST-218 FR-2). Heuristic check:
         # flag PRDs that propose module-level hardcoded vocabulary
@@ -527,15 +542,6 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
                 )
         except Exception:  # justified: gate must not break prd_validate
             logger.debug("substrate_first_check_skipped", exc_info=True)
-
-        try:
-            writer = FileStateWriter()
-            writer.ensure_dir(cache_path.parent)
-            existing_cache = reader.read_yaml(cache_path) if cache_path.exists() else {}
-            existing_cache[cache_key] = json.loads(json.dumps(validate_result, default=str))
-            writer.write_yaml(cache_path, existing_cache)
-        except OSError:
-            logger.debug("prd_validation_cache_write_failed", path=str(cache_path), exc_info=True)
 
         # Inject ceremony progress summary.
         try:

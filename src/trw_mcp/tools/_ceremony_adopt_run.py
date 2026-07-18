@@ -12,10 +12,8 @@ the 350-LOC gate.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -24,12 +22,9 @@ from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_pin_key
 from trw_mcp.state._pin_store import (
     _iso_now,
-    pin_store_path,
-    remove_pin_entry,
-    upsert_pin_entry,
+    transfer_pin_entry,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
-from trw_mcp.tools._ceremony_runtime_helpers import _parse_iso_utc
 
 if TYPE_CHECKING:
     from fastmcp import Context
@@ -62,51 +57,13 @@ def _validate_adoptable_run(resolved: Path, project_root: Path) -> str:
         )
     events_jsonl = meta_dir / "events.jsonl"
     if events_jsonl.exists():
-        reader.read_jsonl(events_jsonl)
+        # trw:intentional strict=True — these reads are adoption integrity probes;
+        # a malformed line must refuse adoption, not be leniently skipped.
+        reader.read_jsonl(events_jsonl, strict=True)
     for checkpoints_jsonl in (meta_dir / "checkpoints.jsonl", resolved / "reports" / "checkpoints.jsonl"):
         if checkpoints_jsonl.exists():
-            reader.read_jsonl(checkpoints_jsonl)
+            reader.read_jsonl(checkpoints_jsonl, strict=True)
     return str(data.get("status", "unknown"))
-
-
-def _load_pin_store_for_adoption(target_run: Path) -> dict[str, dict[str, Any]]:
-    """Strictly load ownership markers before adopt-run mutates pin state."""
-    pins_path = pin_store_path()
-    if not pins_path.exists():
-        return {}
-    try:
-        raw = json.loads(pins_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        raise StateError(
-            f"pin ownership marker is unreadable: {exc}",
-            path=str(pins_path),
-        ) from exc
-    if not isinstance(raw, dict):
-        raise StateError(
-            f"pin ownership marker root must be a mapping, got {type(raw).__name__}",
-            path=str(pins_path),
-        )
-
-    store: dict[str, dict[str, Any]] = {}
-    target_str = str(target_run)
-    for pin_key, entry in raw.items():
-        if not isinstance(pin_key, str) or not pin_key:
-            raise StateError("pin ownership marker contains an invalid pin key", path=str(pins_path))
-        if not isinstance(entry, dict):
-            raise StateError(f"pin ownership marker for {pin_key} must be a mapping", path=str(pins_path))
-        run_path_raw = entry.get("run_path")
-        if not isinstance(run_path_raw, str) or not run_path_raw:
-            raise StateError(f"pin ownership marker for {pin_key} missing run_path", path=str(pins_path))
-        if str(Path(run_path_raw).resolve()) == target_str:
-            heartbeat_raw = entry.get("last_heartbeat_ts")
-            if not isinstance(heartbeat_raw, str) or _parse_iso_utc(heartbeat_raw) is None:
-                raise StateError(
-                    f"pin ownership marker for {pin_key} has invalid last_heartbeat_ts",
-                    path=str(pins_path),
-                    pin_key=pin_key,
-                )
-        store[pin_key] = dict(entry)
-    return store
 
 
 def adopt_run(
@@ -146,42 +103,13 @@ def adopt_run(
             status=target_status,
         )
 
-    # Find existing pin entry for the target run path.
-    store = _load_pin_store_for_adoption(resolved)
-    previous_pin_key: str | None = None
-    previous_entry: dict[str, Any] | None = None
-    target_str = str(resolved)
-    for pkey, pentry in store.items():
-        if not isinstance(pentry, dict):
-            continue
-        if str(pentry.get("run_path", "")) == target_str:
-            previous_pin_key = pkey
-            previous_entry = pentry
-            break
-
-    # Live-owner check.
-    from_owner_was_live = False
-    previous_owner_heartbeat_age_hours: float | None = None
     config = get_config()
-    if previous_entry is not None:
-        prev_last_ts = _parse_iso_utc(str(previous_entry.get("last_heartbeat_ts", "") or ""))
-        if prev_last_ts is not None:
-            age_s = (datetime.now(timezone.utc) - prev_last_ts).total_seconds()
-            previous_owner_heartbeat_age_hours = age_s / 3600.0
-            if age_s < float(config.pin_ttl_hours) * 3600.0:
-                from_owner_was_live = True
-
-    if from_owner_was_live and not force:
-        raise StateError(
-            "run is actively held by a live pin; pass force=True to override",
-            path=str(resolved),
-            pin_key=previous_pin_key,
-        )
-
-    # Atomic-across-two-saves: file lock in the pin store serializes both writes.
-    if previous_pin_key is not None and previous_pin_key != caller_pin_key:
-        remove_pin_entry(previous_pin_key)
-    upsert_pin_entry(caller_pin_key, resolved)
+    _, previous_pin_key, previous_owner_heartbeat_age_hours, from_owner_was_live = transfer_pin_entry(
+        caller_pin_key,
+        resolved,
+        force=force,
+        pin_ttl_hours=float(config.pin_ttl_hours),
+    )
     adopted_ts = _iso_now()
 
     if from_owner_was_live and force:
@@ -214,10 +142,11 @@ def adopt_run(
         from_owner_was_live=from_owner_was_live,
     )
 
+    # Response carries previous_pin_key only; the run_adopted event keeps the
+    # from/to naming — returning both names for the same value was duplication.
     return {
         "adopted_run_id": resolved.name,
         "previous_pin_key": previous_pin_key,
-        "from_pin_key": previous_pin_key,
         "to_pin_key": caller_pin_key,
         "adopted_ts": adopted_ts,
         "from_owner_was_live": from_owner_was_live,

@@ -141,6 +141,7 @@ def step_log_session_event(
     results: dict[str, object],
     query: str,
     is_focused: bool,
+    session_id: str = "",
 ) -> None:
     """Log session_start event to events.jsonl (FR01, PRD-CORE-031).
 
@@ -164,6 +165,7 @@ def step_log_session_event(
         "run_detected": run_dir is not None,
         "query": query if is_focused else "*",
         "surface_snapshot_id": str(results.get("surface_snapshot_id", "")),
+        "session_id": session_id,
     }
     if run_dir is not None:
         events_path = run_dir / "meta" / "events.jsonl"
@@ -184,9 +186,7 @@ def step_increment_session_counter() -> None:
     increment_session_start_counter(_resolve_trw_dir_compat())
 
 
-def step_sanitize_and_maintain(
-    run_dir: Path | None,
-) -> AutoMaintenanceDict:
+def step_sanitize_and_maintain() -> AutoMaintenanceDict:
     """Sanitize ceremony feedback, then run auto-maintenance.
 
     Wraps ``sanitize_ceremony_feedback`` + ``run_auto_maintenance`` in
@@ -207,7 +207,7 @@ def step_sanitize_and_maintain(
     except Exception:  # justified: fail-open, sanitization must not block session start
         logger.warning("ceremony_feedback_sanitize_failed", exc_info=True)
 
-    return run_auto_maintenance(_resolve_trw_dir_compat(), config, run_dir)
+    return run_auto_maintenance(_resolve_trw_dir_compat(), config)
 
 
 def step_embed_health() -> dict[str, object]:
@@ -215,27 +215,21 @@ def step_embed_health() -> dict[str, object]:
 
     Returns:
         Dict with enabled, available, advisory, recent_failures keys.
-        Falls back to a safe default dict if the check fails.
+
+    Failures propagate to the non-critical step-table driver, which records a
+    typed degradation without blocking session start.
     """
-    try:
-        from trw_mcp.state.memory_adapter import check_embeddings_status
+    from trw_mcp.state.memory_adapter import check_embeddings_status
 
-        embed_status = check_embeddings_status(allow_initialize=False)
-        return dict(embed_status)
-    except Exception:  # justified: fail-open, embed health check must not block session start
-        return {
-            "enabled": False,
-            "available": False,
-            "advisory": "",
-            "recent_failures": 0,
-        }
+    embed_status = check_embeddings_status(allow_initialize=False)
+    return dict(embed_status)
 
 
-def step_mark_session_started() -> None:
+def step_mark_session_started(session_id: str | None = None) -> None:
     """Mark session started in ceremony state tracker (PRD-CORE-074 FR04)."""
     from trw_mcp.state.ceremony_progress import mark_session_started
 
-    mark_session_started(_resolve_trw_dir_compat())
+    mark_session_started(_resolve_trw_dir_compat(), session_id=session_id)
 
 
 def step_ceremony_status(
@@ -307,7 +301,6 @@ def _check_version_sentinel(
 def run_auto_maintenance(
     trw_dir: Path,
     config: TRWConfig,
-    run_dir: Path | None = None,
 ) -> AutoMaintenanceDict:
     """Run auto-upgrade check, stale run close, and embeddings backfill.
 
@@ -339,12 +332,7 @@ def run_auto_maintenance(
     # Auto-upgrade check (PRD-INFRA-014)
     try:
         if defer_memory_heavy:
-            maintenance["auto_upgrade_check_deferred"] = {
-                "reason": defer_reason,
-                "writer_pids": writer_pids,
-                "writer_count": len(writer_pids),
-                "threshold": config.session_start_writer_pressure_threshold,
-            }
+            maintenance["auto_upgrade_check_deferred"] = _writer_pressure_details(config, defer_reason, writer_pids)
             logger.warning(
                 "auto_upgrade_check_deferred",
                 reason=defer_reason,
@@ -363,11 +351,6 @@ def run_auto_maintenance(
 
                     upgrade_result = perform_upgrade(update_info)
                     if upgrade_result.get("applied"):
-                        parts: list[str] = []
-                        parts.append(
-                            f"Auto-upgraded to v{upgrade_result.get('version', '?')}: "
-                            f"{upgrade_result.get('details', '')}"
-                        )
                         maintenance["auto_upgrade"] = upgrade_result
     except Exception:  # justified: fail-open, auto-upgrade must not block session start
         logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
@@ -376,13 +359,12 @@ def run_auto_maintenance(
     try:
         if config.run_auto_close_enabled:
             if defer_memory_heavy:
-                maintenance["stale_runs_deferred"] = {
-                    "reason": "writer_pressure",
-                    "defer_reason": defer_reason,
-                    "writer_pids": writer_pids,
-                    "writer_count": len(writer_pids),
-                    "threshold": config.session_start_writer_pressure_threshold,
-                }
+                maintenance["stale_runs_deferred"] = _writer_pressure_details(
+                    config,
+                    defer_reason,
+                    writer_pids,
+                    retain_legacy_reason=True,
+                )
                 logger.warning(
                     "stale_runs_close_deferred",
                     reason=defer_reason,
@@ -413,15 +395,52 @@ def run_auto_maintenance(
         writer_pids=writer_pids,
     )
 
-    # WAL checkpoint (PRD-QUAL-050-FR05)
+    _run_wal_maintenance(
+        trw_dir,
+        config,
+        maintenance,
+        defer_memory_heavy=defer_memory_heavy,
+        defer_reason=defer_reason,
+        writer_pids=writer_pids,
+    )
+
+    logger.debug(
+        "auto_maintenance_complete",
+        keys=list(maintenance.keys()),
+    )
+    return maintenance
+
+
+def _writer_pressure_details(
+    config: TRWConfig,
+    defer_reason: str,
+    writer_pids: list[int],
+    *,
+    retain_legacy_reason: bool = False,
+) -> dict[str, object]:
+    from trw_mcp.state.memory_pressure import writer_pressure_details
+
+    return writer_pressure_details(
+        defer_reason,
+        writer_pids,
+        threshold=config.session_start_writer_pressure_threshold,
+        retain_legacy_reason=retain_legacy_reason,
+    )
+
+
+def _run_wal_maintenance(
+    trw_dir: Path,
+    config: TRWConfig,
+    maintenance: AutoMaintenanceDict,
+    *,
+    defer_memory_heavy: bool,
+    defer_reason: str,
+    writer_pids: list[int],
+) -> None:
+    """Run or defer the WAL checkpoint without coupling its failures to other maintenance."""
     try:
         if defer_memory_heavy:
-            maintenance["wal_checkpoint_deferred"] = {
-                "reason": defer_reason,
-                "writer_pids": writer_pids,
-                "writer_count": len(writer_pids),
-                "threshold": config.session_start_writer_pressure_threshold,
-            }
+            maintenance["wal_checkpoint_deferred"] = _writer_pressure_details(config, defer_reason, writer_pids)
             logger.warning(
                 "wal_checkpoint_deferred",
                 reason=defer_reason,
@@ -437,9 +456,3 @@ def run_auto_maintenance(
                 maintenance["wal_checkpoint"] = wal_result
     except Exception:  # justified: fail-open, WAL checkpoint must not block session start
         logger.warning("maintenance_wal_checkpoint_failed", exc_info=True)
-
-    logger.debug(
-        "auto_maintenance_complete",
-        keys=list(maintenance.keys()),
-    )
-    return maintenance

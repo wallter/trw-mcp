@@ -65,7 +65,7 @@ class TestFR01ToolDescriptionCues:
         assert "compact" in desc.lower() or "resume" in desc.lower()
 
     def test_fr01_trw_deliver_docstring_has_self_reflection(self) -> None:
-        """trw_deliver docstring includes self-reflection prompt (AC02)."""
+        """trw_deliver prompts reflection without manufacturing a learning (AC02)."""
         from tests.conftest import get_tools_sync, make_test_server
 
         server = make_test_server("ceremony")
@@ -75,6 +75,8 @@ class TestFR01ToolDescriptionCues:
         desc = deliver_tool.description or ""
         # AC02: Self-reflection prompt about trw_learn
         assert "trw_learn" in desc.lower() or "discovery" in desc.lower()
+        normalized = " ".join(desc.lower().split())
+        assert "do not manufacture a learning" in normalized
 
     def test_fr01_trw_prd_create_docstring_has_when_to_call(self) -> None:
         """trw_prd_create docstring includes temporal anchoring cue."""
@@ -159,15 +161,17 @@ class TestFR03NudgeMessages:
         assert msg is not None
         # Must mention trw_learn or discovery recording
         assert "trw_learn" in msg.lower() or "discover" in msg.lower() or "learn" in msg.lower()
+        assert "do not manufacture" in " ".join(msg.lower().split())
 
-    def test_fr03_session_start_full_mode_has_framework_ref(self) -> None:
-        """AC10: Session start nudge in full mode references FRAMEWORK.md."""
+    def test_fr03_session_start_full_mode_has_protocol_ref(self) -> None:
+        """AC10: Full-mode session-start nudge references the project protocol or framework."""
         ctx = NudgeContext(tool_name=ToolName.SESSION_START)
         state = CeremonyState()
-        # Default (full mode) should reference FRAMEWORK
+        # The portable wording need not assume a particular framework filename.
         msg = _context_reactive_message(ctx, state)
         assert msg is not None
-        assert "FRAMEWORK" in msg
+        lower = msg.lower()
+        assert "protocol" in lower or "framework.md" in lower
 
     def test_fr03_session_start_light_mode_skips_framework(self) -> None:
         """AC10: Session start nudge in light mode skips FRAMEWORK.md reference."""
@@ -342,7 +346,9 @@ class TestFR05DeliverSelfReflection:
 
         msg = _learning_reflection_message(0)
         assert "no discoveries" in msg.lower() or "no learning" in msg.lower() or "0" in msg
-        assert "root cause" in msg.lower() or "consider" in msg.lower() or "next agent" in msg.lower()
+        normalized = " ".join(msg.lower().split())
+        assert "non-obvious reusable insight" in normalized
+        assert "otherwise no learning is required" in normalized
 
     def test_fr05_positive_learnings_includes_reinforcement(self, tmp_path: Path) -> None:
         """AC18: When learnings > 0, deliver response includes positive reinforcement."""

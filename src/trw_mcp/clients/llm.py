@@ -157,6 +157,19 @@ class LLMClient:
                     logger.debug("usage_token_parse_failed", exc_info=True)
             self._append_usage_record(resolved_model, input_tokens, output_tokens, latency_ms, success=True)
 
+            # PRD-CORE-210 FR04: Claude-5-family models return HTTP-200
+            # refusals (stop_reason="refusal") with empty or PARTIAL content.
+            # Branch before reading content so a partial is never returned
+            # as a complete answer; None keeps the graceful-degrade contract.
+            if getattr(response, "stop_reason", None) == "refusal":
+                stop_details = getattr(response, "stop_details", None)
+                logger.warning(
+                    "llm_call_refused",
+                    model=resolved_model,
+                    category=getattr(stop_details, "category", None),
+                )
+                return None
+
             if response.content:
                 return str(response.content[0].text) if hasattr(response.content[0], "text") else None
             return None
@@ -273,7 +286,7 @@ class LLMClient:
         Returns:
             The assistant's text response, or ``None`` on failure/unavailability.
         """
-        if not self._available:
+        if not self.available:
             return None
 
         coro = self.ask(prompt, system=system, model=model, max_turns=max_turns)

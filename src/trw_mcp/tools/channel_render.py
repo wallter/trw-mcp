@@ -16,13 +16,14 @@ IP boundary: zero ``trw_distill`` imports permitted here.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import structlog
 from fastmcp import FastMCP
+
+from trw_mcp.tools._sidecar_substrate import resolve_git_sha as _resolve_sidecar_sha
+from trw_mcp.tools._sidecar_substrate import resolve_repo_root as _resolve_repo_root
 
 log = structlog.get_logger(__name__)
 
@@ -41,51 +42,30 @@ __all__ = [
 ]
 
 
-def _resolve_repo_root(repo_root: str | None) -> Path | None:
-    """Resolve git repo root via subprocess or explicit override."""
-    if repo_root is not None:
-        return Path(repo_root)
-    git = shutil.which("git")
-    if git is None:
-        return None
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [git, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            stripped = proc.stdout.strip()
-            if stripped:
-                return Path(stripped)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _resolve_sidecar_sha(repo_root: Path) -> str | None:
-    """Return current git HEAD SHA, or None on failure."""
-    git = shutil.which("git")
-    if git is None:
-        return None
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [git, "rev-parse", "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            sha = proc.stdout.strip()
-            if sha and len(sha) == 40:
-                return sha
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
+def _render_result(
+    *,
+    channel_id: str,
+    status: str,
+    tier_used: str | None = None,
+    tokens_emitted: int | None = None,
+    bytes_written: int | None = None,
+    conflict_detected: bool = False,
+    ttl_commits_remaining: int | None = None,
+    would_write: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Build the stable FR17 result envelope."""
+    return {
+        "channel_id": channel_id,
+        "status": status,
+        "tier_used": tier_used,
+        "tokens_emitted": tokens_emitted,
+        "bytes_written": bytes_written,
+        "conflict_detected": conflict_detected,
+        "ttl_commits_remaining": ttl_commits_remaining,
+        "would_write": would_write,
+        "error": error,
+    }
 
 
 def compute_channel_render(
@@ -126,29 +106,13 @@ def compute_channel_render(
             channel_id=channel_id,
             manifest_path=str(manifest_path),
         )
-        return {
-            "channel_id": channel_id,
-            "status": "not_found",
-            "tier_used": None,
-            "tokens_emitted": None,
-            "bytes_written": None,
-            "conflict_detected": False,
-            "ttl_commits_remaining": None,
-            "would_write": None,
-            "error": "Manifest was missing; auto-recreated empty manifest. Re-register channel and retry.",
-        }
+        return _render_result(
+            channel_id=channel_id,
+            status="not_found",
+            error="Manifest was missing; auto-recreated empty manifest. Re-register channel and retry.",
+        )
     except ManifestValidationError as exc:
-        return {
-            "channel_id": channel_id,
-            "status": "error",
-            "tier_used": None,
-            "tokens_emitted": None,
-            "bytes_written": None,
-            "conflict_detected": False,
-            "ttl_commits_remaining": None,
-            "would_write": None,
-            "error": f"Manifest validation error: {exc}",
-        }
+        return _render_result(channel_id=channel_id, status="error", error=f"Manifest validation error: {exc}")
 
     # Find the channel entry.
     entry: ChannelEntry | None = None
@@ -158,50 +122,32 @@ def compute_channel_render(
             break
 
     if entry is None:
-        return {
-            "channel_id": channel_id,
-            "status": "not_found",
-            "tier_used": None,
-            "tokens_emitted": None,
-            "bytes_written": None,
-            "conflict_detected": False,
-            "ttl_commits_remaining": None,
-            "would_write": None,
-            "error": f"Channel '{channel_id}' not found in manifest",
-        }
+        return _render_result(
+            channel_id=channel_id,
+            status="not_found",
+            error=f"Channel '{channel_id}' not found in manifest",
+        )
 
     # Use enum value or string for surface comparison.
     surface_val: str = entry.surface.value if hasattr(entry.surface, "value") else str(entry.surface)
 
     if surface_val not in _INSTRUCTION_SURFACES:
-        return {
-            "channel_id": channel_id,
-            "status": "unsupported_surface_in_substrate",
-            "tier_used": None,
-            "tokens_emitted": None,
-            "bytes_written": None,
-            "conflict_detected": False,
-            "ttl_commits_remaining": None,
-            "would_write": None,
-            "error": (
+        return _render_result(
+            channel_id=channel_id,
+            status="unsupported_surface_in_substrate",
+            error=(
                 f"Surface '{surface_val}' is not handled by the substrate renderer. "
                 "Downstream PRDs (2401/2405/2406) implement this surface."
             ),
-        }
+        )
 
     # Dispatch to instruction_segment renderer.
     if resolved_root is None:
-        return {
-            "channel_id": channel_id,
-            "status": "error",
-            "tier_used": None,
-            "tokens_emitted": None,
-            "bytes_written": None,
-            "conflict_detected": False,
-            "ttl_commits_remaining": None,
-            "would_write": None,
-            "error": "Could not resolve git repo root; pass repo_root explicitly",
-        }
+        return _render_result(
+            channel_id=channel_id,
+            status="error",
+            error="Could not resolve git repo root; pass repo_root explicitly",
+        )
 
     from trw_mcp.channels.instruction_segment import render_instruction_segment
 
@@ -231,17 +177,17 @@ def compute_channel_render(
         force=force,
     )
 
-    return {
-        "channel_id": channel_id,
-        "status": result.status,
-        "tier_used": result.tier_used,
-        "tokens_emitted": result.tokens_estimated,
-        "bytes_written": result.bytes_written,
-        "conflict_detected": result.conflict_detected,
-        "ttl_commits_remaining": result.ttl_commits_remaining,
-        "would_write": result.would_write,
-        "error": result.error,
-    }
+    return _render_result(
+        channel_id=channel_id,
+        status=result.status,
+        tier_used=result.tier_used,
+        tokens_emitted=result.tokens_estimated,
+        bytes_written=result.bytes_written,
+        conflict_detected=result.conflict_detected,
+        ttl_commits_remaining=result.ttl_commits_remaining,
+        would_write=result.would_write,
+        error=result.error,
+    )
 
 
 def register_channel_render_tools(server: FastMCP) -> None:
@@ -276,14 +222,4 @@ def register_channel_render_tools(server: FastMCP) -> None:
                 tier_override=tier_override,
             )
         except Exception as exc:  # justified: absolute fail-open — never propagate to MCP client
-            return {
-                "channel_id": channel_id,
-                "status": "error",
-                "tier_used": None,
-                "tokens_emitted": None,
-                "bytes_written": None,
-                "conflict_detected": False,
-                "ttl_commits_remaining": None,
-                "would_write": None,
-                "error": str(exc),
-            }
+            return _render_result(channel_id=channel_id, status="error", error=str(exc))

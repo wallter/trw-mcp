@@ -1,20 +1,14 @@
-"""Tests for shared marker-based smart-merge utilities and the hardened
-Gemini settings.json write path.
+"""Tests for shared marker-based smart-merge utilities.
 
-Issue 2 (Mac install): the user had a pre-existing ``GEMINI.md`` and the
-install ``erred out``. The legacy code paths in ``_gemini.py`` and
-``_copilot.py`` had identical smart-merge logic with copy-pasted differences,
-and the Gemini ``settings.json`` writer had no schema validation against
-user-authored / Gemini-CLI-authored existing files.
-
-This test file covers the consolidated helpers in ``_file_ops.py``:
-``smart_merge_marker_section`` and ``write_instruction_file_with_merge``,
-plus the hardened ``generate_gemini_mcp_config`` schema-recovery behavior.
+The per-client instruction generators historically had identical smart-merge
+logic with copy-pasted differences; that logic was consolidated into the
+``_file_ops.py`` helpers ``smart_merge_marker_section`` and
+``write_instruction_file_with_merge`` (covered here). The Copilot generator
+exercises the shared path via the cross-client parity check.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -92,6 +86,41 @@ class TestSmartMergeMarkerSection:
         out = smart_merge_marker_section("   \n\n", _section("body"), start_marker=_START, end_marker=_END)
         # No leading separator because existing strips to empty.
         assert out.startswith(_START)
+
+    def test_inline_prose_mention_not_treated_as_section_start(self) -> None:
+        """An inline prose mention of the start marker must NOT open the section.
+
+        Marker matching is line-anchored; a marker referenced mid-paragraph
+        (e.g. inside backticks) is not a whole-line delimiter. With no real
+        markers present the section is appended and the inline mention survives
+        verbatim — the substring form would have spliced from the mention and
+        destroyed surrounding user prose (the 705-line ROADMAP incident).
+        """
+        existing = "intro line\nuse `<!-- trw:test:start -->` to open the block\nmore prose\n"
+        section = _section("trw body")
+
+        out = smart_merge_marker_section(existing, section, start_marker=_START, end_marker=_END)
+
+        assert "use `<!-- trw:test:start -->` to open the block" in out
+        assert "more prose" in out
+        assert out.rstrip("\n").endswith(_END)
+        assert out.count("trw body") == 1
+
+    def test_inline_mention_above_real_markers_replaces_only_whole_line_section(self) -> None:
+        """A whole-line section is replaced even when an inline mention precedes it.
+
+        The line-anchored search must skip the earlier backticked mention and
+        bind to the real whole-line start marker, so only the genuine section is
+        swapped and the user's prose (including the inline mention) is preserved.
+        """
+        existing = "prose with `<!-- trw:test:start -->` inline\n\n" + _section("OLD body") + "\n\ntail\n"
+
+        out = smart_merge_marker_section(existing, _section("NEW body"), start_marker=_START, end_marker=_END)
+
+        assert "prose with `<!-- trw:test:start -->` inline" in out
+        assert "OLD body" not in out
+        assert "NEW body" in out
+        assert "tail" in out
 
 
 # ── write_instruction_file_with_merge ────────────────────────────────────
@@ -198,123 +227,15 @@ class TestWriteInstructionFileWithMerge:
                 assert "FOO.md" in result["preserved"]
 
 
-# ── Gemini settings.json hardening ───────────────────────────────────────
-
-
-class TestGenerateGeminiMcpConfigHardening:
-    """Issue 2 — hardened settings.json schema recovery."""
-
-    def _import_under_test(self):
-        from trw_mcp.bootstrap._gemini import generate_gemini_mcp_config
-
-        return generate_gemini_mcp_config
-
-    def test_writes_fresh_when_settings_missing(self, tmp_path: Path) -> None:
-        gen = self._import_under_test()
-        result = gen(tmp_path)
-
-        settings = tmp_path / ".gemini" / "settings.json"
-        assert settings.is_file()
-        data = json.loads(settings.read_text())
-        assert "mcpServers" in data
-        assert "trw" in data["mcpServers"]
-        assert data["mcpServers"]["trw"]["trust"] is True
-        assert result["errors"] == []
-
-    def test_preserves_unrelated_user_keys(self, tmp_path: Path) -> None:
-        settings = tmp_path / ".gemini" / "settings.json"
-        settings.parent.mkdir()
-        settings.write_text(
-            json.dumps(
-                {
-                    "theme": "dark",
-                    "mcpServers": {
-                        "other-server": {"command": "/usr/bin/other"},
-                    },
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-        gen = self._import_under_test()
-        gen(tmp_path)
-
-        data = json.loads(settings.read_text())
-        assert data["theme"] == "dark"
-        assert "other-server" in data["mcpServers"], "other servers preserved"
-        assert "trw" in data["mcpServers"], "trw server added"
-
-    def test_idempotent_second_run_is_preserved(self, tmp_path: Path) -> None:
-        gen = self._import_under_test()
-        first = gen(tmp_path)
-        second = gen(tmp_path)
-
-        # First run created. Second run sees identical bytes → preserved.
-        assert any("settings.json" in p for p in first["created"])
-        assert any("settings.json" in p for p in second.get("preserved", []))
-
-    def test_recovers_from_invalid_json_with_backup(self, tmp_path: Path) -> None:
-        settings = tmp_path / ".gemini" / "settings.json"
-        settings.parent.mkdir()
-        settings.write_text("this is not { valid json", encoding="utf-8")
-
-        gen = self._import_under_test()
-        result = gen(tmp_path)
-
-        # Backup exists with the user content; settings.json is now valid.
-        backup = settings.with_suffix(settings.suffix + ".bak")
-        assert backup.is_file()
-        assert "this is not { valid json" in backup.read_text()
-        new_data = json.loads(settings.read_text())
-        assert "mcpServers" in new_data
-        assert any("not valid JSON" in w for w in result.get("warnings", []))
-        # Errors list stays empty — recovery is non-fatal.
-        assert result["errors"] == []
-
-    def test_recovers_from_non_object_root_with_backup(self, tmp_path: Path) -> None:
-        settings = tmp_path / ".gemini" / "settings.json"
-        settings.parent.mkdir()
-        settings.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
-
-        gen = self._import_under_test()
-        result = gen(tmp_path)
-
-        backup = settings.with_suffix(settings.suffix + ".bak")
-        assert backup.is_file()
-        new_data = json.loads(settings.read_text())
-        assert isinstance(new_data, dict)
-        assert any("not a JSON object" in w for w in result.get("warnings", []))
-
-    def test_replaces_non_dict_mcpServers(self, tmp_path: Path) -> None:
-        settings = tmp_path / ".gemini" / "settings.json"
-        settings.parent.mkdir()
-        settings.write_text(
-            json.dumps({"theme": "light", "mcpServers": "this should be a dict"}),
-            encoding="utf-8",
-        )
-
-        gen = self._import_under_test()
-        gen(tmp_path)
-
-        data = json.loads(settings.read_text())
-        assert data["theme"] == "light"
-        assert isinstance(data["mcpServers"], dict)
-        assert "trw" in data["mcpServers"]
-
-
 # ── Cross-client parity check ────────────────────────────────────────────
 
 
 class TestClientParityGoldenPath:
-    """Both Gemini and Copilot instruction generators must follow the same
-    contract now that they share the underlying helper.
-    """
+    """The Copilot instruction generator follows the shared-helper contract."""
 
     @pytest.mark.parametrize(
         "module_path,filename,marker_start",
         [
-            ("trw_mcp.bootstrap._gemini", "GEMINI.md", "<!-- trw:gemini:start -->"),
             (
                 "trw_mcp.bootstrap._copilot",
                 ".github/copilot-instructions.md",
@@ -328,11 +249,7 @@ class TestClientParityGoldenPath:
         import importlib
 
         module = importlib.import_module(module_path)
-        # Both modules expose generate_*_instructions(target_dir, *, force=False).
-        if module_path.endswith("_gemini"):
-            gen = module.generate_gemini_instructions
-        else:
-            gen = module.generate_copilot_instructions
+        gen = module.generate_copilot_instructions
 
         target = tmp_path / filename
         target.parent.mkdir(parents=True, exist_ok=True)
