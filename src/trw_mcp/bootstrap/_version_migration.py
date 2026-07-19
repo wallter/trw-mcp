@@ -66,6 +66,9 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "prd-review": "trw-prd-review",
         "project-health": "trw-project-health",
         "review-pr": None,
+        # Retired 2026-07-19 (operator: internal dev-only skill, must not ship in
+        # the install). Archived at docs/archive/retired/2026-07-19-trw-release-verify/.
+        "trw-release-verify": None,
         "security-check": "trw-security-check",
         # Retired 2026-07-19 (operator direction). The skill is archived at
         # docs/archive/retired/2026-07-19-trw-simplify/. Both the trw- name and

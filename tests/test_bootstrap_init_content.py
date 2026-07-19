@@ -299,7 +299,6 @@ class TestSkills:
         "trw-prd-review",
         "trw-project-health",
         "trw-reflect",
-        "trw-release-verify",
         "trw-security-check",
         "trw-self-review",
         "trw-sprint-finish",
@@ -310,7 +309,7 @@ class TestSkills:
     ]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 27 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ has 26 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 

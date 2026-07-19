@@ -19,7 +19,7 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->46<!-- /inv --> tools, <!-- inv:skills -->27<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->46<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What it does
@@ -164,7 +164,7 @@ The table below covers the most-used tools out of the full <!-- inv:tools -->46<
 | **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `codebase_risk_report`, `entity_risk_map` | Repo-aware search, symbol lookup, and risk signals |
 | **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
-## Skills (<!-- inv:skills -->27<!-- /inv -->)
+## Skills (<!-- inv:skills -->26<!-- /inv -->)
 
 Slash-command workflows — zero tokens until triggered. Full skill reference at [trwframework.com/docs](https://trwframework.com/docs).
 

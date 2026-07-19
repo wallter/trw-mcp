@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-07-19
+
+### Removed
+
+- **Retired the internal `trw-release-verify` skill — it no longer ships in the install.** `trw-release-verify` was an internal, dev-only pre-release GO/NO-GO verification gate with no place in an end-user install. Removed from the bundled/distributed surface (`data/skills/` + the `data/codex/skills/` and `data/copilot/skills/` variants) and archived at `docs/archive/retired/2026-07-19-trw-release-verify/`. `PREDECESSOR_MAP` maps `trw-release-verify → None` so `trw-mcp update-project` removes the materialized copy from existing installs. Bundled skill count 27 → 26.
+
 ## [0.59.0] — 2026-07-19
 
 ### Removed
