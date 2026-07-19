@@ -98,8 +98,8 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
         agent_paths = [p for p in result["created"] if p.endswith(".md") and "agents" in p]
-        # Bundle ships 12 agents; installer must create all of them.
-        assert len(agent_paths) == 12
+        # Bundle ships 11 agents; installer must create all of them.
+        assert len(agent_paths) == 11
 
     def test_idempotent_second_run_skips(self, empty_target: Path) -> None:
         """A second install (without ``force``) skips existing files."""
@@ -111,7 +111,7 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         # Second run produces no creates and several skips.
         assert not [p for p in second["created"] if "agents" in p]
         skipped_agents = [p for p in second["skipped"] if "agents" in p]
-        assert len(skipped_agents) == 12
+        assert len(skipped_agents) == 11
 
     def test_force_overwrites_with_resolved_value(self, empty_target: Path) -> None:
         """A pre-existing file with a stale tier is overwritten on force."""
@@ -207,7 +207,7 @@ class TestInstallAgentsClientPassthrough:
         for agent in [
             "trw-traceability-checker.md",
             "trw-auditor.md",
-            "trw-code-simplifier.md",
+            "trw-reviewer.md",
         ]:
             path = empty_target / ".claude" / "agents" / agent
             assert _read_model_line(path) == "inherit"

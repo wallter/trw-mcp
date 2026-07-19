@@ -67,7 +67,14 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "project-health": "trw-project-health",
         "review-pr": None,
         "security-check": "trw-security-check",
-        "simplify": "trw-simplify",
+        # Retired 2026-07-19 (operator direction). The skill is archived at
+        # docs/archive/retired/2026-07-19-trw-simplify/. Both the trw- name and
+        # the legacy non-prefixed predecessor map DIRECTLY to None (retirement
+        # chains must collapse — see test_retirement_chains_collapse_to_direct_
+        # deletion) so update-project removes the materialized copy from any
+        # existing install regardless of which name it carries.
+        "simplify": None,
+        "trw-simplify": None,
         "sprint-finish": "trw-sprint-finish",
         "sprint-init": "trw-sprint-init",
         "sprint-team": "trw-sprint-team",
@@ -78,7 +85,11 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
     },
     "agents": {
         # PRD-FIX-032: Non-prefixed → trw- prefixed migration
-        "code-simplifier.md": "trw-code-simplifier.md",
+        # Retired 2026-07-19 with the trw-simplify skill it ran (operator
+        # direction). Archived at docs/archive/retired/2026-07-19-trw-simplify/.
+        # Both names map directly to None (chain must collapse).
+        "code-simplifier.md": None,
+        "trw-code-simplifier.md": None,
         "implementer.md": "trw-implementer.md",
         "lead.md": "trw-lead.md",
         "researcher.md": "trw-researcher.md",

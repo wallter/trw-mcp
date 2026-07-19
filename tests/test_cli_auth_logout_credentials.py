@@ -6,7 +6,7 @@ Before this fix, ``device_auth_logout`` only blanked ``config.yaml``'s
 ``auth status`` (and the runtime resolver) still reported authenticated.
 
 These tests assert that after logout NO source resolves a key
-(env > credentials.yaml > config.yaml), via ``resolve_platform_api_key``.
+(env > credentials.yaml), via ``resolve_platform_api_key``.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from trw_mcp.cli.auth import device_auth_logout, device_auth_status
 from trw_mcp.models.config._credentials import (
     credentials_path_for,
     read_key_from_file,
-    reset_deprecation_state,
     resolve_platform_api_key,
     write_credentials_key,
 )
@@ -27,9 +26,9 @@ from trw_mcp.models.config._credentials import (
 
 @pytest.fixture(autouse=True)
 def _no_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure the enterprise env var never masks on-disk resolution in tests."""
+    """Ensure the enterprise env vars never mask on-disk resolution in tests."""
     monkeypatch.delenv("TRW_PLATFORM_API_KEY", raising=False)
-    reset_deprecation_state()
+    monkeypatch.delenv("TRW_API_KEY", raising=False)
 
 
 def test_logout_removes_credentials_yaml_key(tmp_path: Path) -> None:
@@ -40,13 +39,13 @@ def test_logout_removes_credentials_yaml_key(tmp_path: Path) -> None:
     write_credentials_key(creds, "trw_dk_secret123")
 
     # Sanity: a key resolves before logout.
-    assert resolve_platform_api_key(cfg, config_key=None) == "trw_dk_secret123"
+    assert resolve_platform_api_key(cfg) == "trw_dk_secret123"
 
     removed = device_auth_logout(cfg)
 
     assert removed is True
     # Credential no longer resolvable from any source.
-    assert resolve_platform_api_key(cfg, config_key=read_key_from_file(cfg) or None) == ""
+    assert resolve_platform_api_key(cfg) == ""
     assert read_key_from_file(creds) == ""
 
 

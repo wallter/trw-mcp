@@ -98,13 +98,17 @@ def test_status_reads_key_from_credentials_file(config_path: Path) -> None:
     assert str(status["key_prefix"]).startswith("trw_dk_in_")
 
 
-def test_status_falls_back_to_config_key(tmp_path: Path) -> None:
-    """Legacy install: status resolves from config.yaml when no creds file."""
+def test_status_never_reads_key_from_config_yaml(tmp_path: Path) -> None:
+    """A key left in the git-tracked config.yaml must NOT authenticate.
+
+    Post-SEC-005 the config.yaml fallback is removed: an un-migrated legacy key
+    is not a resolution source. `auth status` reports unauthenticated until the
+    key is migrated into credentials.yaml (by `trw-mcp update-project`).
+    """
     cfg = tmp_path / ".trw" / "config.yaml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text('platform_api_key: "trw_dk_legacy_only"\n', encoding="utf-8")
 
     status = device_auth_status(cfg, "https://api.example.com")
 
-    assert status["authenticated"] is True
-    assert str(status["key_prefix"]).startswith("trw_dk_leg")
+    assert status["authenticated"] is False

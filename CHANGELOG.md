@@ -4,6 +4,16 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-07-19
+
+### Removed
+
+- **Retired the `trw-simplify` skill and its dedicated `trw-code-simplifier` agent** (operator direction, archived not deleted). Both are preserved for reference at `docs/archive/retired/2026-07-19-trw-simplify/` and removed from the bundled/distributed surface (`data/skills/`, `data/codex/skills/`, `data/copilot/skills/`, `data/agents/`). `PREDECESSOR_MAP` now maps `simplify`/`trw-simplify` → None (skills) and `code-simplifier.md`/`trw-code-simplifier.md` → None (agents) — chains collapse directly to None — so `trw-mcp update-project` actively removes the materialized copies from existing installs. Bundled skill count 28 → 27, agent count 12 → 11.
+
+### Fixed
+
+- **Synced the credential test suite to the SEC-005 no-fallback source.** The 0.58.0 SEC-005 change removed the `config.yaml` deprecation machinery from the source but three credential test files still referenced the removed `reset_deprecation_state()` / deprecation-warning paths; updated `test_auth_credentials`, `test_cli_auth_logout_credentials`, and `test_config_loader_credentials` to the env→credentials.yaml-only behavior.
+
 ## [0.58.0] — 2026-07-18
 
 ### Fixed

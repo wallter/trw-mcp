@@ -302,7 +302,6 @@ class TestSkills:
         "trw-release-verify",
         "trw-security-check",
         "trw-self-review",
-        "trw-simplify",
         "trw-sprint-finish",
         "trw-sprint-init",
         "trw-sprint-team",
@@ -407,89 +406,6 @@ class TestSkills:
         )
 
 
-# ── Simplify Skill Content Tests ────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestSimplifySkillContent:
-    """Test that bundled simplify skill contains only generic, portable content."""
-
-    BUNDLED_SKILL_DIR = _DATA_DIR / "skills" / "trw-simplify"
-    BUNDLED_SKILL = BUNDLED_SKILL_DIR / "SKILL.md"
-    BUNDLED_VARIANTS = (
-        BUNDLED_SKILL,
-        _DATA_DIR / "codex" / "skills" / "trw-simplify" / "SKILL.md",
-        _DATA_DIR / "copilot" / "skills" / "trw-simplify" / "SKILL.md",
-    )
-    TRW_SPECIFIC_TERMS = ["lock_for_rmw", "TRWConfig", "trw://config", "FastMCP"]
-
-    def test_bundled_simplify_skill_is_generic(self) -> None:
-        """Bundled simplify SKILL.md contains no trw-mcp-specific terms."""
-        for skill_path in self.BUNDLED_VARIANTS:
-            content = skill_path.read_text(encoding="utf-8")
-            for term in (*self.TRW_SPECIFIC_TERMS, "Codex adaptation:"):
-                assert term not in content, f"Found client/package-specific term '{term}' in {skill_path}"
-
-    def test_bundled_simplify_is_slim_and_preserves_invariant_groups(self) -> None:
-        """The prompt stays compact without dropping its five safety groups."""
-        content = self.BUNDLED_SKILL.read_text(encoding="utf-8")
-        assert len(content.split()) <= 750
-        assert "Mandatory preservation invariants" in content
-        for heading in (
-            "Contracts and data",
-            "Safety mechanics",
-            "Indirect dependencies",
-            "Observability",
-            "Intent evidence",
-        ):
-            assert f"**{heading}:**" in content
-
-    def test_bundled_simplify_variants_preserve_semantic_contract(self) -> None:
-        """Every client variant retains the compact, evidence-first workflow."""
-        required_guidance = (
-            "behavior slice",
-            "shared or dirty workspace",
-            "generated or client projections",
-            "standalone deployment artifacts",
-            "including `trw-distill` when available",
-            "Prove value",
-            "evidence, not proof",
-            "representative positive and negative controls",
-            "Test-only use is neither proof of life nor death",
-            "including non-code consumers",
-            "**remove**, **consolidate**, **retain**, or **uncertain**",
-            "no consumer, no unique behavior, and no contract",
-            "do not retain two sources of truth",
-            "Never weaken regression",
-            "filesystem root containment and symlink policy",
-            "close check/use gaps with pinned",
-            "project-native tests and static checks",
-            "justified no-change result",
-        )
-        for skill_path in self.BUNDLED_VARIANTS:
-            content = skill_path.read_text(encoding="utf-8")
-            for guidance in required_guidance:
-                assert guidance in content, f"{skill_path} is missing simplification guidance: {guidance}"
-            assert skill_path.read_bytes() == self.BUNDLED_SKILL.read_bytes()
-
-    def test_bundled_simplify_no_conventions_file(self) -> None:
-        """Bundled simplify skill directory contains no conventions.md."""
-        conventions_path = self.BUNDLED_SKILL_DIR / "conventions.md"
-        assert not conventions_path.exists(), "conventions.md should not be bundled"
-
-    def test_eval_local_simplify_mirror_matches_current_contract(self) -> None:
-        """The eval harness must not exercise its retired no-validation simplifier prompt."""
-        repo_root = Path(__file__).resolve().parents[2]
-        eval_data = repo_root / "trw-eval" / "trw-mcp-local" / "src" / "trw_mcp" / "data"
-        if not eval_data.is_dir():
-            pytest.skip("eval-local mirror is absent from the standalone trw-mcp repository")
-
-        pairs = (
-            (self.BUNDLED_SKILL, eval_data / "skills" / "trw-simplify" / "SKILL.md"),
-            (self.BUNDLED_VARIANTS[1], eval_data / "codex" / "skills" / "trw-simplify" / "SKILL.md"),
-        )
-        for source, mirror in pairs:
-            assert mirror.read_bytes() == source.read_bytes(), mirror
 
 
 @pytest.mark.unit
@@ -534,7 +450,6 @@ class TestAgents:
     EXPECTED_AGENTS = [
         "trw-adversarial-auditor.md",
         "trw-auditor.md",
-        "trw-code-simplifier.md",
         "trw-implementer.md",
         "trw-lead.md",
         "trw-prd-groomer.md",

@@ -88,10 +88,10 @@ class TestPrefixMigrationExtra:
         skills_dir.mkdir(parents=True)
         agents_dir.mkdir(parents=True)
 
-        (skills_dir / "simplify").mkdir()
-        (skills_dir / "simplify" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-simplify").mkdir()
-        (skills_dir / "trw-simplify" / "SKILL.md").write_text("new", encoding="utf-8")
+        (skills_dir / "audit").mkdir()
+        (skills_dir / "audit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-audit").mkdir()
+        (skills_dir / "trw-audit" / "SKILL.md").write_text("new", encoding="utf-8")
 
         (agents_dir / "researcher.md").write_text("old", encoding="utf-8")
         (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
@@ -99,9 +99,9 @@ class TestPrefixMigrationExtra:
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _migrate_prefix_predecessors(target, result)
 
-        assert not (skills_dir / "simplify").exists()
+        assert not (skills_dir / "audit").exists()
         assert not (agents_dir / "researcher.md").exists()
-        assert (skills_dir / "trw-simplify").exists()
+        assert (skills_dir / "trw-audit").exists()
         assert (agents_dir / "trw-researcher.md").exists()
         migrated = [e for e in result["updated"] if "migrated:" in e]
         assert len(migrated) == 2
@@ -168,7 +168,7 @@ class TestMigratePredecessorSuccessorAbsent:
         skills_dir = tmp_path / ".claude" / "skills"
         skills_dir.mkdir(parents=True)
 
-        predecessor = skills_dir / "simplify"
+        predecessor = skills_dir / "audit"
         predecessor.mkdir()
         (predecessor / "SKILL.md").write_text("old", encoding="utf-8")
 

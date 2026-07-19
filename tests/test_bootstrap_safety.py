@@ -108,7 +108,7 @@ def test_update_project_rolls_back_new_managed_directories_after_late_failure(in
 @pytest.mark.parametrize(
     ("ide", "relative_path"),
     [
-        ("codex", ".agents/skills/trw-simplify/SKILL.md"),
+        ("codex", ".agents/skills/trw-audit/SKILL.md"),
         ("copilot", ".vscode/mcp.json"),
     ],
 )

@@ -26,12 +26,6 @@ DEFAULT_LOC_THRESHOLD = 350
 LOC_OVERRIDES: dict[str, int] = {
     "trw-team-playbook": 300,
     "trw-sprint-team": 280,
-    # ALLOW-LIST JUSTIFICATION (PRD-QUAL-074): non-TRW design-system skills
-    # carry large reference tables (color tokens, component catalogs) inline;
-    # they are out-of-scope for this PRD and tracked separately. Raise the
-    # per-skill limit rather than truncate reference material.
-    "tailwind-design-system": 800,
-    "ui-component-patterns": 500,
 }
 
 _HTML_COMMENT_ONLY = re.compile(r"^\s*<!--.*-->\s*$")
