@@ -277,11 +277,12 @@ def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     Returns ``{"authenticated": True, "key_prefix": "trw_dk_...", "org_name": ..., "user_email": ...}``
     if a platform API key is configured, otherwise ``{"authenticated": False}``.
     """
-    # PRD-SEC-005: the bearer credential now lives in the ignored
-    # credentials.yaml; fall back to config.yaml for legacy installs.
+    # PRD-SEC-005: the bearer credential lives ONLY in the ignored 0600
+    # credentials.yaml. The git-tracked config.yaml is never read for the
+    # secret (a legacy tracked key is migrated to credentials.yaml by
+    # `trw-mcp update-project`); config.yaml is still read below for the
+    # non-secret org/email metadata.
     key_value = read_key_from_file(credentials_path_for(config_path))
-    if not key_value:
-        key_value = read_key_from_file(config_path)
 
     lines = _read_config_lines(config_path)
     if lines is None and not key_value:

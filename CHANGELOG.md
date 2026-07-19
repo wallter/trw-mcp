@@ -4,6 +4,20 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-07-18
+
+### Fixed
+
+- **`update-project` no longer aborts on unmanaged nested symlinks — the fix for local projects stuck at `v25_TRW` after the installer ran.** `_validate_transaction_surface` rglob-scanned every managed client dir and rejected *any* symlink, so the update aborted on Claude Code agent worktrees (`.claude/worktrees/.../evals/LATEST`), `.opencode/node_modules/.bin` npm shims, and `.antigravitycli` session-json symlinks — leaving `FRAMEWORK.md` at v25 and never writing `FRAMEWORK-CORE.md`. The transaction now prunes unmanaged nested runtime dirs (worktrees / `node_modules` / venvs / nested git repos) from the walk+snapshot, rejects only symlinked *directories* (which can redirect a recursive managed write) while allowing symlink files, and preserves pruned children on rollback (a newly-created managed dir is still fully removed on rollback). (`a329c702f5`)
+
+### Added
+
+- **The installer auto-runs `trw-mcp update-project` when a prior install's deployed framework is out of date.** The upgrade path detects a stale deployed framework version per prior target and migrates it in place, so `curl … | bash` re-run brings existing projects to the current framework instead of silently skipping project setup. (`b058b5f681`)
+
+### Changed
+
+- **SEC-005: a single DRY resolver for `platform_api_key`; the git-tracked `config.yaml` is never read for the secret.** `resolve_platform_api_key` is now the sole resolution path (`TRW_PLATFORM_API_KEY`/`TRW_API_KEY` env > `.trw/credentials.yaml`), with no `config.yaml` back-compat fallback and no dual code-path (the deprecation-warning machinery is gone). `update-project` migrates any legacy tracked key into the ignored 0600 `credentials.yaml` and blanks it in `config.yaml`. (`a4ca4382c2`)
+
 ## [0.57.0] — 2026-07-18
 
 ### Added

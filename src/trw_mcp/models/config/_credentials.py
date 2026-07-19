@@ -11,27 +11,33 @@ logic without importing heavy dependencies.
 
 Resolution precedence (highest wins) -- PRD-SEC-005-FR03:
 
-1. ``TRW_PLATFORM_API_KEY`` environment variable (enterprise path).
+1. ``TRW_PLATFORM_API_KEY`` / ``TRW_API_KEY`` environment variable
+   (enterprise path; inject from a secret manager, no on-disk key required).
 2. ``.trw/credentials.yaml`` (``platform_api_key`` field).
-3. ``.trw/config.yaml`` (``platform_api_key`` field) -- DEPRECATED
-   backward-compat fallback; emits exactly one deprecation warning per
-   process (FR04).
+
+The git-tracked ``.trw/config.yaml`` is NEVER a resolution source: the
+credential is a secret and must not live in a tracked file. A legacy tracked
+key is migrated into ``credentials.yaml`` (and blanked in config.yaml) by
+``migrate_config_key`` on ``trw-mcp update-project``; the resolver itself has
+no config.yaml fallback.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import sys
-import threading
 from pathlib import Path
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Environment variable that takes top precedence (FR03).
+# Environment variables that take top precedence (FR03). ``TRW_PLATFORM_API_KEY``
+# is the canonical enterprise variable; ``TRW_API_KEY`` is accepted as an alias
+# because the installer (``scripts/install.sh``) and ``publish-release.sh`` export
+# the key under that name.
 ENV_VAR = "TRW_PLATFORM_API_KEY"
+ALT_ENV_VAR = "TRW_API_KEY"
 
 # Filename of the ignored credential store, sibling to ``config.yaml``.
 CREDENTIALS_FILENAME = "credentials.yaml"
@@ -42,11 +48,6 @@ _KEY_FIELD = "platform_api_key"
 # credential file is intentionally a tiny flat mapping, so a regex line scan
 # is sufficient and avoids a PyYAML dependency in the installer template.
 _KEY_RE = re.compile(r"^(\s*)platform_api_key\s*:\s*(.*)$")
-
-# One-shot guard so the deprecation warning is emitted at most once per
-# process (FR04: "exactly one deprecation warning ... per process").
-_deprecation_lock = threading.Lock()
-_deprecation_emitted = False
 
 
 def credentials_path_for(config_path: Path) -> Path:
@@ -129,69 +130,30 @@ def remove_credentials_key(credentials_path: Path) -> bool:
     return True
 
 
-def _emit_deprecation_warning(config_path: Path) -> None:
-    """Emit exactly one deprecation warning per process (FR04)."""
-    global _deprecation_emitted
-    with _deprecation_lock:
-        if _deprecation_emitted:
-            return
-        _deprecation_emitted = True
-    logger.warning(
-        "platform_api_key_from_deprecated_config",
-        config_path=str(config_path),
-        guidance="run 'trw-mcp update-project .' to migrate the key to .trw/credentials.yaml",
-    )
-    print(
-        "TRW: WARNING — platform_api_key was read from the deprecated, "
-        f"git-tracked {config_path}. Run 'trw-mcp update-project .' to move it "
-        "into .trw/credentials.yaml (mode 0600, gitignored), then rotate any "
-        "key already committed to git history.",
-        file=sys.stderr,
-    )
+def resolve_platform_api_key(config_path: Path) -> str:
+    """Resolve the platform API key by precedence (FR03).
 
+    This is the SINGLE source of truth for the package's ``platform_api_key``
+    resolution — every package consumer reads the key that this function feeds
+    into ``TRWConfig.platform_api_key`` (via ``_loader.py``). There is NO
+    ``config.yaml`` fallback: the credential is a secret and must never be read
+    from the git-tracked config.
 
-def reset_deprecation_state() -> None:
-    """Reset the one-shot deprecation guard (test isolation only)."""
-    global _deprecation_emitted
-    with _deprecation_lock:
-        _deprecation_emitted = False
-
-
-def resolve_platform_api_key(
-    config_path: Path,
-    *,
-    config_key: str | None = None,
-) -> str:
-    """Resolve the platform API key by precedence (FR03/FR04).
-
-    Precedence: ``TRW_PLATFORM_API_KEY`` env > ``credentials.yaml`` >
-    *config_key* (the value already parsed from ``config.yaml``). If the key
-    is resolved from the deprecated *config_key* path, a one-shot deprecation
-    warning is emitted.
+    Precedence (highest wins): ``TRW_PLATFORM_API_KEY`` env > ``TRW_API_KEY``
+    env > ``.trw/credentials.yaml``.
 
     Args:
-        config_path: Path to ``.trw/config.yaml`` (used to locate the sibling
-            ``credentials.yaml`` and for the deprecation message).
-        config_key: The ``platform_api_key`` already read from ``config.yaml``
-            by the caller (the loader already parsed the YAML). ``None``/``""``
-            means config.yaml carries no key.
+        config_path: Path to ``.trw/config.yaml`` (used only to locate the
+            sibling ``credentials.yaml``).
 
     Returns:
         The resolved key, or ``""`` if no source supplies one.
     """
-    env_key = os.environ.get(ENV_VAR, "").strip()
+    env_key = os.environ.get(ENV_VAR, "").strip() or os.environ.get(ALT_ENV_VAR, "").strip()
     if env_key:
         return env_key
 
-    creds_key = read_key_from_file(credentials_path_for(config_path))
-    if creds_key:
-        return creds_key
-
-    if config_key:
-        _emit_deprecation_warning(config_path)
-        return config_key
-
-    return ""
+    return read_key_from_file(credentials_path_for(config_path))
 
 
 def _blank_config_key(config_path: Path) -> bool:

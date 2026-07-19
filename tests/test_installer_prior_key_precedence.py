@@ -8,8 +8,9 @@ credential into the ignored ``.trw/credentials.yaml``, both prior-key detection
 migrated installs.
 
 These tests load the template as a module and assert the resolution precedence
-env > credentials.yaml > config.yaml, and that the resolved key flows into the
-prior-config dict that drives proprietary auto-derivation.
+env > credentials.yaml (the git-tracked config.yaml is NEVER read for the
+secret), and that the resolved key flows into the prior-config dict that drives
+proprietary auto-derivation.
 """
 
 from __future__ import annotations
@@ -73,11 +74,16 @@ def test_migrated_install_resolves_from_credentials_only(installer, tmp_path: Pa
     assert prior["api_key"] == "trw_dk_migrated"
 
 
-def test_legacy_install_falls_back_to_config(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
-    """Pre-migration install: no credentials.yaml, key still in config.yaml."""
+def test_config_yaml_key_is_never_read(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """A key left in the git-tracked config.yaml must NOT resolve.
+
+    The deprecated config.yaml fallback is removed: an un-migrated legacy key
+    is not a resolution source. `update-project` migrates it into
+    credentials.yaml on the upgrade path before the fallback is needed.
+    """
     _seed(tmp_path, config_key="trw_dk_legacy")
     prior = installer._load_prior_config(tmp_path)
-    assert prior["api_key"] == "trw_dk_legacy"
+    assert "api_key" not in prior
 
 
 def test_no_key_anywhere_omits_api_key(installer, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

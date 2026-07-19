@@ -603,22 +603,23 @@ def _read_credentials_key(credentials_path: Path) -> str:
     return ""
 
 
-def _resolve_prior_api_key(target_dir: Path, flat: dict[str, str]) -> str:
+def _resolve_prior_api_key(target_dir: Path) -> str:
     """Resolve the platform API key by SEC-005 precedence (highest wins).
 
     Precedence (PRD-SEC-005-FR03 + PRD-INFRA-129 FR05): ``TRW_API_KEY`` env >
-    ``TRW_PLATFORM_API_KEY`` env > ``.trw/credentials.yaml`` >
-    ``.trw/config.yaml`` (deprecated fallback).
+    ``TRW_PLATFORM_API_KEY`` env > ``.trw/credentials.yaml``.
 
     ``TRW_API_KEY`` is consulted FIRST because ``scripts/install.sh`` reads the
     key from ``credentials.yaml`` and exports it ONLY under that name; before
     PRD-INFRA-129 the installer checked ``TRW_PLATFORM_API_KEY`` alone, so a
     user with a valid, just-used key hit a raw argparse error
     (sub_x2O2h3CYyzKZWLu2#c). ``TRW_PLATFORM_API_KEY`` remains accepted for the
-    trw-mcp runtime config resolver's name (NFR08 — no source removed).
+    trw-mcp runtime config resolver's name (NFR08).
 
-    *flat* is the already-parsed config.yaml mapping so config.yaml is not
-    re-read.
+    The git-tracked ``.trw/config.yaml`` is NEVER read for the secret. A legacy
+    tracked key is migrated into ``credentials.yaml`` (and blanked in
+    config.yaml) by ``trw-mcp update-project``, which the installer runs on the
+    upgrade path — so dropping the config.yaml fallback cannot strand a key.
     """
     trw_api_key = os.environ.get("TRW_API_KEY", "").strip()
     if trw_api_key:
@@ -626,10 +627,7 @@ def _resolve_prior_api_key(target_dir: Path, flat: dict[str, str]) -> str:
     env_key = os.environ.get("TRW_PLATFORM_API_KEY", "").strip()
     if env_key:
         return env_key
-    creds_key = _read_credentials_key(target_dir / ".trw" / "credentials.yaml")
-    if creds_key:
-        return creds_key
-    return flat.get("platform_api_key", "").strip()
+    return _read_credentials_key(target_dir / ".trw" / "credentials.yaml")
 
 
 def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, object]:
@@ -653,10 +651,10 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
         if "installation_id" in flat:
             prior["project_name"] = flat["installation_id"]
         # PRD-SEC-005-FR03: resolve the credential by precedence
-        # (env > credentials.yaml > config.yaml). Reading config.yaml ONLY
-        # broke prior-key detection + --with-proprietary auto-derive on
-        # migrated installs where the key moved to the ignored credentials.yaml.
-        resolved_api_key = _resolve_prior_api_key(target_dir, flat)
+        # (env > credentials.yaml). The git-tracked config.yaml is never read
+        # for the secret; a legacy tracked key is migrated to credentials.yaml
+        # by `trw-mcp update-project` on the upgrade path.
+        resolved_api_key = _resolve_prior_api_key(target_dir)
         if resolved_api_key:
             prior["api_key"] = resolved_api_key
         if "platform_telemetry_enabled" in flat:
@@ -3180,10 +3178,11 @@ def _resolve_proprietary_license(
       consulted source (PRD-INFRA-129 FR05/FR06) — never a raw argparse dump.
 
     PRD-INFRA-129 FR05: when *target_dir* is provided the platform key is
-    resolved through ``_resolve_prior_api_key`` (env > credentials.yaml >
-    config.yaml) so the precondition consults the SAME locations the rest of
-    the install flow uses. When *target_dir* is None the resolver falls back to
-    the already-resolved ``prior_config['api_key']`` (NFR08 backward compat).
+    resolved through ``_resolve_prior_api_key`` (env > credentials.yaml; the
+    git-tracked config.yaml is never read for the secret) so the precondition
+    consults the SAME locations the rest of the install flow uses. When
+    *target_dir* is None the resolver falls back to the already-resolved
+    ``prior_config['api_key']`` (NFR08 backward compat).
     """
     auto_derive = with_proprietary and not explicit_license_key
     if not auto_derive:
@@ -3191,15 +3190,11 @@ def _resolve_proprietary_license(
 
     platform_api_key = ""
     if target_dir is not None:
-        # FR05: resolve via the canonical precedence (env > credentials.yaml
-        # > config.yaml). config.yaml's flat map is already parsed into
-        # prior_config['api_key'] by _load_prior_config; pass it as the
-        # config.yaml-tier fallback so it is honoured without re-reading.
-        raw_cfg = prior_config.get("api_key", "") if prior_config else ""
-        cfg_fallback = raw_cfg.strip() if isinstance(raw_cfg, str) else ""
-        platform_api_key = _resolve_prior_api_key(
-            target_dir, {"platform_api_key": cfg_fallback}
-        )
+        # FR05: resolve via the canonical SEC-005 precedence (env >
+        # credentials.yaml). The git-tracked config.yaml is NEVER read for the
+        # secret — the upgrade path's `trw-mcp update-project` has already
+        # migrated any legacy tracked key into credentials.yaml.
+        platform_api_key = _resolve_prior_api_key(target_dir)
     else:
         raw = prior_config.get("api_key", "") if prior_config else ""
         platform_api_key = raw.strip() if isinstance(raw, str) else ""
@@ -3573,6 +3568,37 @@ def write_proprietary_marker(
     return marker
 
 
+def _deployed_framework_is_stale(target_dir: Path, python: str, pip_target: str = "") -> bool:
+    """True when the project's DEPLOYED framework version differs from the
+    freshly-installed package's framework version.
+
+    An ``--upgrade`` run bumps the trw-mcp package but skips project setup, so the
+    deployed framework bodies + config (``.trw/frameworks/``, ``.trw/config.yaml``)
+    can drift behind the package (e.g. a ``v25_TRW`` project on a ``v26.1`` package).
+    Detect that via ``trw-mcp version-status``, comparing the package's
+    ``framework_protocol_version`` to the deployed ``installed_asset_version``.
+    Best-effort: any probe failure returns False, so a detection error never
+    blocks the upgrade or spuriously re-runs update-project.
+    """
+    trw_cmd = find_trw_cmd(python, pip_target=pip_target)
+    try:
+        proc = subprocess.run(
+            trw_cmd + ["version-status", "--project-root", str(target_dir)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        data = json.loads(proc.stdout or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    versions = data.get("versions", {}) if isinstance(data, dict) else {}
+    if versions.get("installed_asset_present") is False:
+        return True
+    pkg_fw = versions.get("framework_protocol_version")
+    deployed_fw = versions.get("installed_asset_version")
+    return bool(pkg_fw and deployed_fw and pkg_fw != deployed_fw)
+
+
 def phase_project_setup(
     ui: UI,
     step: int,
@@ -3589,7 +3615,35 @@ def phase_project_setup(
     ui.step_header(step, total, "Setting up project")
 
     if upgrade_only:
-        ui.step_ok("Upgrade complete — skipping project setup")
+        # An --upgrade run bumps the package but otherwise skips project setup, so
+        # a prior install's deployed framework bodies + config can drift out of
+        # date (e.g. a v25_TRW project on a v26.1 package). When the deployed
+        # framework is stale/deprecated relative to the freshly-installed package,
+        # refresh it with `trw-mcp update-project` (idempotent; preserves user
+        # config). Skip when there is no prior install or it is already current.
+        prior = _load_prior_config(target_dir, ui)
+        prior_targets = prior.get("target_platforms", [])
+        if not isinstance(prior_targets, list):
+            prior_targets = []
+        has_prior_install = (
+            (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
+        )
+        if has_prior_install and _deployed_framework_is_stale(target_dir, python, pip_target):
+            targets = _normalize_ide_targets([str(t) for t in prior_targets]) or ["claude-code"]
+            trw_cmd = find_trw_cmd(python, pip_target=pip_target)
+            ui.step_ok("Deployed framework is out of date — refreshing with update-project")
+            for selected_ide in targets:
+                cmd = trw_cmd + ["update-project", str(target_dir), "--ide", selected_ide]
+                ok = run_with_progress(
+                    ui, f"Updating framework for {_ide_label(selected_ide)}...", cmd
+                )
+                ui.stop_spinner(
+                    ok,
+                    f"{_ide_label(selected_ide)} framework updated",
+                    f"update-project failed for {_ide_label(selected_ide)}",
+                )
+        else:
+            ui.step_ok("Upgrade complete — framework already current")
         return []
 
     if not (target_dir / ".git").is_dir():

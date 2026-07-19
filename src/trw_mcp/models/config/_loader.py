@@ -143,22 +143,16 @@ def _build_config() -> TRWConfig:
         # Deep merge: machine is the base, project overrides per key.
         merged = _deep_merge(machine_overrides, project_overrides)
 
-        # PRD-SEC-005-FR03/FR04: resolve platform_api_key by precedence
-        # (TRW_PLATFORM_API_KEY env > .trw/credentials.yaml > config.yaml),
-        # emitting a one-shot deprecation warning when the key still comes
-        # from the deprecated, git-tracked config.yaml. The credential file
-        # read is the only NEW file access (NFR01) and adds no network call.
-        config_key_raw = merged.get("platform_api_key")
-        resolved_key = resolve_platform_api_key(
-            project_config_path,
-            config_key=str(config_key_raw) if config_key_raw else None,
-        )
+        # PRD-SEC-005-FR03: resolve platform_api_key by precedence
+        # (TRW_PLATFORM_API_KEY/TRW_API_KEY env > .trw/credentials.yaml). The
+        # git-tracked config.yaml is NEVER a source: any key still present in
+        # the merged config.yaml overrides is DROPPED here so a tracked secret
+        # can never resolve. Legacy tracked keys are migrated to
+        # credentials.yaml by `trw-mcp update-project`.
+        merged.pop("platform_api_key", None)
+        resolved_key = resolve_platform_api_key(project_config_path)
         if resolved_key:
             merged["platform_api_key"] = resolved_key
-        else:
-            # No source supplies a key — drop any empty placeholder so the
-            # field default (empty SecretStr) is used.
-            merged.pop("platform_api_key", None)
 
         if merged:
             # Exclude keys overridden by a TRW_ env var (env wins). The
