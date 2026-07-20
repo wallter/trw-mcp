@@ -89,7 +89,9 @@ class TestEntityRiskMapTool:
         assert result.tier == "free"
         assert result.distill_status == "tier_required"
         assert result.entity_count == 0
-        assert "tier" in (result.distill_action or "").lower()
+        # trw-distill absent + no sentinel: unavailable but QUIET — no paid-tier
+        # remediation nag (would burn tokens on every call). 2026-07-19.
+        assert result.distill_action is None
 
     def test_missing_sidecar_returns_actionable_status(self, tmp_path: Path) -> None:
         _make_git_repo(tmp_path)

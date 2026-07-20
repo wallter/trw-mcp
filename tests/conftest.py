@@ -402,6 +402,23 @@ def _reset_config_singleton() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _default_distill_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the proprietary trw-distill package as ABSENT by default (hermetic).
+
+    ``_sidecar_substrate.distill_installed`` (2026-07-19) opens the distill-
+    sidecar tier gate whenever ``trw_distill`` is importable — proof of a paid
+    entitlement. Whether it is installed in the test venv is an ENVIRONMENT
+    accident (the monorepo dev venv has an editable ``trw-distill``; a clean CI
+    venv does not), which would make every tier-gate assertion non-deterministic
+    across environments. Pin it to ``False`` so the suite exercises the
+    entitlement-sentinel path deterministically. Tests that verify the
+    package-presence unlock override this with
+    ``monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)``.
+    """
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_run_pin() -> Iterator[None]:
     """Reset active run pin + pin-store cache for test isolation.
 

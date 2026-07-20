@@ -41,9 +41,9 @@ from pydantic import BaseModel, ConfigDict, Field
 # c749 (PRD-DIST-2002): LearningSummary extracted to shared
 # `_learnings_collector` module. Re-exported here for backward
 # compatibility with callers that still import from this module.
+from trw_mcp.tools import _sidecar_substrate
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
 from trw_mcp.tools._learnings_collector import LearningSummary
-from trw_mcp.tools._sidecar_substrate import tier_required_action
 
 _SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
@@ -262,6 +262,19 @@ def compute_before_edit_hint(
     trw_dir = (resolved_repo_root / ".trw") if resolved_repo_root is not None else resolve_trw_dir()
     entitlement = load_entitlement(trw_dir)
 
+    # Entitlement resolves via EITHER an installed trw-distill package (proof
+    # of a paid entitlement — the installer historically never wrote the
+    # `.trw/entitlements.yaml` sentinel, so an entitled install otherwise
+    # resolved tier="free") OR a valid entitlement sentinel.
+    distill_present = _sidecar_substrate.distill_installed()
+    feature_allowed = distill_present or entitlement.has_feature("trw_before_edit_hint:distill_sidecar")
+
+    # Display tier: reflect the package-presence unlock so a working hint is
+    # never labelled tier="free".
+    display_tier: str = entitlement.tier
+    if distill_present and entitlement.tier == "free":
+        display_tier = "proprietary"
+
     distill_hint: BeforeYouEditHintPayload | None = None
     distill_status: Literal[
         "hint_available",
@@ -273,11 +286,15 @@ def compute_before_edit_hint(
         "stale_sha",
         "ok",
     ] = "tier_required"
-    distill_action: str | None = tier_required_action()
+    # No remediation nag by default: when trw-distill is not installed the
+    # sidecar feature is simply unavailable, and emitting a paid-tier remediation
+    # on every edit would burn caller tokens for a feature not opted into. The
+    # learnings half below always returns, preserving value at any tier.
+    distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
 
-    if entitlement.has_feature("trw_before_edit_hint:distill_sidecar"):
+    if feature_allowed:
         if resolved_repo_root is None:
             distill_status = "sidecar_missing"
             distill_action = "Could not resolve git repo root — pass --repo or run from inside a git checkout"
@@ -301,7 +318,7 @@ def compute_before_edit_hint(
 
     return BeforeEditHintResult(
         file_path=file_path,
-        tier=entitlement.tier,
+        tier=display_tier,
         distill_hint=distill_hint,
         distill_status=distill_status,
         distill_action=distill_action,

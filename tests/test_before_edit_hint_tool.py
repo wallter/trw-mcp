@@ -82,7 +82,11 @@ def _write_sidecar(
 
 
 class TestFreeTier:
-    def test_no_entitlement_returns_tier_required(self, tmp_path: Path) -> None:
+    def test_no_entitlement_and_no_distill_is_quiet(self, tmp_path: Path) -> None:
+        # trw-distill NOT installed (pinned absent by the conftest autouse
+        # fixture) + no entitlement sentinel: the sidecar feature is unavailable,
+        # but the tool must stay QUIET — no paid-tier remediation nag (it would
+        # burn caller tokens on every edit).
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_sidecar(cache_dir, sha, "foo.py")  # exists but not consumable
@@ -93,7 +97,24 @@ class TestFreeTier:
         assert r.tier == "free"
         assert r.distill_status == "tier_required"
         assert r.distill_hint is None
-        assert "tier" in (r.distill_action or "").lower()
+        assert r.distill_action is None  # no nag when the feature is unavailable
+
+    def test_installed_distill_unlocks_without_a_sentinel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The 2026-07-19 fix: trw-distill installed => entitled, even with no
+        # .trw/entitlements.yaml (the installer never wrote one). The gate opens
+        # and the tool consumes the sidecar instead of nagging about tiers.
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_sidecar(cache_dir, sha, "foo.py")
+        r = compute_before_edit_hint(
+            file_path="foo.py",
+            repo_root=str(tmp_path),
+        )
+        assert r.tier == "proprietary"
+        assert r.distill_status != "tier_required"
 
     def test_free_tier_still_returns_learnings(self, tmp_path: Path) -> None:
         # Learnings half is always available — operator gets value at free tier.

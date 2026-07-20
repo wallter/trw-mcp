@@ -311,9 +311,14 @@ def add_operational_subcommands(
     )
 
     # tier show
-    tier_sub.add_parser(
+    show_parser = tier_sub.add_parser(
         "show",
         help="Print resolved tier + status from .trw/entitlements.yaml",
+    )
+    show_parser.add_argument(
+        "--trw-dir",
+        default=".trw",
+        help="Target .trw/ directory (default: ./.trw)",
     )
     status_parser = tier_sub.add_parser(
         "status",

@@ -92,3 +92,34 @@ class TestCrossRepoOrderingBetaUnlock:
         )
         assert result.tier == "beta"
         assert result.distill_status != "tier_required"
+
+
+class TestDistillPresenceUnlock:
+    """Package presence unlocks the gate even with NO entitlement sentinel.
+
+    This is the 2026-07-19 fix: the installer provisions the proprietary
+    trw-distill package but historically never wrote ``.trw/entitlements.yaml``,
+    so an entitled install resolved ``tier="free"`` and was nagged to buy a
+    paid tier on every edit. trw-distill's presence is now proof of entitlement.
+    """
+
+    @pytest.mark.parametrize("tool_name", sorted(_UNIFORM_TOOLS))
+    def test_installed_distill_opens_gate_at_free_tier(
+        self, tmp_path: Path, tool_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No entitlements.yaml written — pure "free" tier — but trw-distill IS installed.
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+        result = _UNIFORM_TOOLS[tool_name](repo_root=str(tmp_path))
+        assert result.distill_status != "tier_required", tool_name
+        assert result.tier == "proprietary", tool_name
+
+    @pytest.mark.parametrize("tool_name", sorted(_UNIFORM_TOOLS))
+    def test_absent_distill_free_tier_is_quiet_no_nag(
+        self, tmp_path: Path, tool_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # trw-distill NOT installed + no sentinel: the feature is unavailable,
+        # but the tool must NOT emit a paid-tier remediation (token waste).
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: False)
+        result = _UNIFORM_TOOLS[tool_name](repo_root=str(tmp_path))
+        assert result.distill_status == "tier_required", tool_name
+        assert result.distill_action is None, tool_name

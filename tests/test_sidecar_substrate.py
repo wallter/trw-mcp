@@ -209,12 +209,25 @@ class TestResolveCurrentSidecar:
 
 
 class TestTierGate:
+    # trw-distill is pinned ABSENT by the conftest `_default_distill_absent`
+    # autouse fixture, so these assertions exercise the entitlement-sentinel
+    # path deterministically. `test_installed_distill_opens_gate` overrides it.
     def test_no_entitlement_returns_free_blocked(self, tmp_path: Path) -> None:
         from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
 
         r = check_tier_for_feature(tmp_path, "trw_before_edit_hint:distill_sidecar")
         assert r.allowed is False
         assert r.tier == "free"
+
+    def test_installed_distill_opens_gate(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Package presence unlocks the feature even with NO entitlement file."""
+        from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
+
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+        r = check_tier_for_feature(tmp_path, "trw_before_edit_hint:distill_sidecar")
+        assert r.allowed is True
+        assert r.tier == "proprietary"
+        assert r.reason == "distill_installed"
 
     @pytest.mark.parametrize("tier", ["team", "pro", "enterprise", "beta"])
     def test_entitled_tier_unlocks_feature(self, tmp_path: Path, tier: str) -> None:

@@ -19,6 +19,7 @@ sidecar envelope ``risk-report-sidecar/v0``.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 from dataclasses import dataclass
@@ -27,6 +28,27 @@ from typing import Any, Literal
 
 SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
+
+
+def distill_installed() -> bool:
+    """True when the proprietary ``trw-distill`` package is importable.
+
+    Presence is treated as proof of entitlement: ``trw-distill`` is only
+    installable via a valid backend proprietary license (the installer's
+    ``--with-proprietary`` path), so if it is on the import path the operator
+    is entitled to the distill-sidecar feature. This closes a real gap — the
+    installer provisions the proprietary package but NEVER writes the
+    ``.trw/entitlements.yaml`` sentinel, so an entitled install otherwise
+    resolved ``tier="free"`` and was shown a paid-tier remediation on every
+    edit (2026-07-19).
+
+    IP boundary: uses :func:`importlib.util.find_spec` — it never IMPORTS
+    ``trw_distill`` (this module must not import the proprietary package).
+    """
+    try:
+        return importlib.util.find_spec("trw_distill") is not None
+    except (ImportError, ValueError):
+        return False
 
 # Single source of truth for the operator remediation shown when the
 # distill-sidecar feature is tier-gated. Shared by all six sidecar-consuming
@@ -153,9 +175,20 @@ def check_tier_for_feature(
     """Resolve entitlement + check if the given feature is enabled.
 
     NEVER raises. Returns ``allowed=False, tier="free"`` for any error path.
+
+    Entitlement resolves in two ways (either grants the feature):
+    1. ``trw-distill`` is installed — proof of a paid entitlement (see
+       :func:`distill_installed`). This is the PRIMARY path: it self-heals
+       every entitled install whose ``.trw/entitlements.yaml`` the installer
+       never wrote.
+    2. A valid ``.trw/entitlements.yaml`` sentinel grants ``feature`` — the
+       explicit, expiry-bearing path (``trw-mcp tier issue``).
     """
     from trw_mcp.state._entitlements import load_entitlement
     from trw_mcp.state._paths import resolve_trw_dir
+
+    if distill_installed():
+        return TierGateResult(allowed=True, tier="proprietary", reason="distill_installed")
 
     trw_dir = (repo_root / ".trw") if repo_root is not None else resolve_trw_dir()
     entitlement = load_entitlement(trw_dir)
@@ -269,11 +302,16 @@ def resolve_current_sidecar(
 
     gate = check_tier_for_feature(resolved_repo_root, feature)
     if not gate.allowed:
+        # Not allowed now means trw-distill is NOT installed AND no sentinel
+        # grants the feature — the sidecar cannot exist, so the feature is
+        # simply unavailable. Return quietly (action=None): do NOT emit the
+        # tier-remediation nag, which would burn tokens on every call for a
+        # proprietary feature the operator has not opted into (2026-07-19).
         return CurrentSidecarResult(
             tier=gate.tier,
             payload=None,
             status="tier_required",
-            action=tier_required_action(),
+            action=None,
         )
 
     git_sha = resolve_git_sha(resolved_repo_root)
@@ -314,6 +352,7 @@ __all__ = [
     "SidecarLoadResult",
     "TierGateResult",
     "check_tier_for_feature",
+    "distill_installed",
     "load_envelope",
     "load_sidecar_with_sha_check",
     "resolve_current_sidecar",

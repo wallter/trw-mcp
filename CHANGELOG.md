@@ -4,6 +4,14 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-07-19
+
+### Fixed
+
+- **`trw_before_edit_hint` (and the other sidecar tools) now unlock the trw-distill sidecar when trw-distill is installed — no more "Acquire team/pro/enterprise tier" on every edit for an entitled install.** The distill-sidecar feature was gated ONLY on a self-signed `.trw/entitlements.yaml` sentinel that the installer never writes, so a fully-entitled `--with-proprietary` install (trw-distill wheels present) still resolved `tier="free"` and was nagged to buy a tier. The installed trw-distill package is now treated as proof of entitlement (`importlib.util.find_spec` — no import, so the public/proprietary IP boundary holds) and opens the gate, self-healing existing installs. The entitlement-sentinel path (`trw-mcp tier issue`) is preserved.
+- **No token waste when trw-distill is not installed.** When neither trw-distill nor a sentinel is present the sidecar tools return `distill_action=null` instead of a paid-tier remediation, so they don't burn caller tokens on every edit for a feature not opted into; the learnings half still returns.
+- **`trw-mcp tier show` accepts `--trw-dir`** (parity with `tier status`).
+
 ## [0.60.0] — 2026-07-19
 
 ### Removed
