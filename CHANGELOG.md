@@ -4,6 +4,12 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-07-20
+
+### Fixed
+
+- **The installer now prompts for client selection under `curl … | bash`.** A fresh install via the piped bootstrap never asked which clients (Claude Code, Codex, Cursor, …) to configure — it silently auto-configured whatever it detected. Root cause: interactivity was gated on `sys.stdin.isatty()` alone, which is False when stdin is the pipe, so the client-selection prompt was skipped even though the prompts read from `/dev/tty`. Interactivity now also honors a controlling TTY (readable `/dev/tty` + terminal stdout), so `curl | bash` in a real terminal prompts; headless/CI runs and `--script` stay non-interactive.
+
 ## [0.61.0] — 2026-07-19
 
 ### Fixed

@@ -292,3 +292,31 @@ class TestInstallerTemplateAntigravityContract:
             "install-trw.template.py _IDE_META is missing an 'antigravity-cli' entry. "
             "The interactive menu will show a blank or raise KeyError for antigravity-cli."
         )
+
+    @pytest.mark.unit
+    def test_interactive_determination_honors_controlling_tty(self) -> None:
+        """Regression guard: the interactive-mode determination must NOT gate on
+        ``sys.stdin.isatty()`` alone.
+
+        Under ``curl … | bash`` (the standard install path) install-trw.py's
+        stdin is the pipe, so ``sys.stdin.isatty()`` is False. The prompts read
+        from ``/dev/tty`` (``_open_tty``), so a fresh install must still ASK which
+        clients to configure. Gating interactivity on stdin alone silently
+        skipped the client-selection prompt and auto-configured detected clients.
+        The determination must fall back to a controlling-TTY check.
+        """
+        import re
+
+        text = self._TEMPLATE.read_text(encoding="utf-8")
+        assert "def _has_controlling_tty" in text, (
+            "installer template must define _has_controlling_tty() so curl|bash "
+            "installs can detect a reachable /dev/tty and prompt for clients."
+        )
+        match = re.search(r"^\s*interactive = .*$", text, re.MULTILINE)
+        assert match is not None, "could not find the `interactive = ...` determination"
+        determination = match.group(0)
+        assert "_has_controlling_tty" in determination, (
+            "the `interactive = ...` determination must fall back to "
+            "_has_controlling_tty() — gating on sys.stdin.isatty() alone skips the "
+            f"client-selection prompt under curl|bash. Found: {determination.strip()!r}"
+        )

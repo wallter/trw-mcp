@@ -331,6 +331,27 @@ def _open_tty() -> TextIO | None:
     return None
 
 
+def _has_controlling_tty() -> bool:
+    """True when an interactive terminal is reachable for prompts.
+
+    Every installer prompt (client selection, features, telemetry) reads from
+    ``/dev/tty`` via :func:`_open_tty`, so they work even when ``sys.stdin`` is a
+    pipe — which it ALWAYS is under ``curl … | bash`` (the standard install
+    path). Interactivity must therefore be gated on the presence of a
+    controlling terminal (a readable ``/dev/tty`` with a terminal ``stdout`` to
+    render the prompt into), NOT on ``sys.stdin.isatty()`` alone — which is False
+    under curl|bash and silently suppressed the client-selection prompt (an
+    entire fresh install auto-configured detected clients without ever asking).
+    """
+    if not (hasattr(sys.stdout, "isatty") and sys.stdout.isatty()):
+        return False
+    tty = _open_tty()
+    if tty is None:
+        return False
+    tty.close()
+    return True
+
+
 def prompt_yes_no(question: str, default: str = "n") -> bool:
     """Prompt for yes/no. Returns True for yes."""
     hint = "[Y/n]" if default == "y" else "[y/N]"
@@ -4280,8 +4301,11 @@ def main() -> None:
     }:
         set_allow_system_python(True)
 
-    # Mode detection
-    interactive = (not args.script) and sys.stdin.isatty()
+    # Mode detection. Interactive when a controlling terminal is reachable —
+    # NOT stdin.isatty() alone: under `curl … | bash` (the standard install
+    # path) stdin is the pipe, but the prompts read from /dev/tty, so a fresh
+    # install must still ask which clients to configure. `--script` forces off.
+    interactive = (not args.script) and (sys.stdin.isatty() or _has_controlling_tty())
 
     # Script-mode defaults
     install_ai = args.install_ai
